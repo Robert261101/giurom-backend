@@ -7,6 +7,9 @@ import {
   IsOptional,
   Length,
   Matches,
+  IsDecimal,
+  Min,
+  Max,
 } from 'class-validator';
 
 export class CreateWorkLocationDto {
@@ -120,4 +123,37 @@ export class CreateWorkLocationDto {
   @IsOptional()
   @Length(0, 1000, { message: 'Notele nu pot depăși 1000 de caractere' })
   notes?: string;
+
+  @ApiProperty({
+    description: 'Latitudinea GPS a locației',
+    example: 44.4268,
+    required: false,
+  })
+  @IsNumber({}, { message: 'Latitudinea GPS trebuie să fie un număr' })
+  @IsOptional()
+  @Min(-90, { message: 'Latitudinea trebuie să fie între -90 și 90' })
+  @Max(90, { message: 'Latitudinea trebuie să fie între -90 și 90' })
+  gps_lat?: number;
+
+  @ApiProperty({
+    description: 'Longitudinea GPS a locației',
+    example: 26.1025,
+    required: false,
+  })
+  @IsNumber({}, { message: 'Longitudinea GPS trebuie să fie un număr' })
+  @IsOptional()
+  @Min(-180, { message: 'Longitudinea trebuie să fie între -180 și 180' })
+  @Max(180, { message: 'Longitudinea trebuie să fie între -180 și 180' })
+  gps_lng?: number;
+
+  @ApiProperty({
+    description: 'Raza GPS în metri pentru geofencing',
+    example: 50,
+    required: false,
+  })
+  @IsNumber({}, { message: 'Raza GPS trebuie să fie un număr' })
+  @IsOptional()
+  @Min(1, { message: 'Raza GPS trebuie să fie cel puțin 1 metru' })
+  @Max(10000, { message: 'Raza GPS nu poate depăși 10000 metri' })
+  gps_radius_m?: number;
 } 

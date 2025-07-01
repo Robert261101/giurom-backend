@@ -11,6 +11,8 @@ import { Company } from './company/entity/company.entity';
 import { CompanyDocument } from './company/entity/company-document.entity';
 import { WorkLocation } from './locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
+import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
+import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
 import { Employee } from './employee/entity/employee.entity';
 import { EmployeeWorkLocationHistory } from './employee/entity/employee-work-location-history.entity';
 import { EmployeeFiles } from './employee/entity/employee-files.entity';
@@ -58,6 +60,8 @@ import { GeneratedDocuments } from './employee/entity/generated-documents.entity
         // Entități locații
         WorkLocation,
         WorkLocationTaskTemplate,
+        WorkLocationDepartments,
+        WorkLocationDepartmentPositions,
         // Entități angajați
         Employee,
         EmployeeWorkLocationHistory,

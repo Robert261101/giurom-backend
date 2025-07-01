@@ -114,7 +114,7 @@
 
 ## 📍 Locations Module - Date de Testare (Existente)
 
-### 🔧 Endpoint: `POST /locations`
+### 🔧 Endpoint: `POST /locations` - Locație cu coordonate GPS
 
 ```json
 {
@@ -127,7 +127,115 @@
   "phone_number": "+40264123456",
   "email": "cluj@giurom.ro",
   "employee_id": 1,
-  "notes": "Biroul principal din Cluj-Napoca"
+  "notes": "Biroul principal din Cluj-Napoca cu geofencing",
+  "gps_lat": 46.7712,
+  "gps_lng": 23.6236,
+  "gps_radius_m": 100
+}
+```
+
+### 🔧 Endpoint: `POST /locations` - Locație București cu GPS
+
+```json
+{
+  "company_id": 1,
+  "location_name": "Sediul Central București",
+  "address": "Bulevardul Ion Mihalache nr. 104-106",
+  "city": "București",
+  "county": "București",
+  "postal_code": "011171",
+  "phone_number": "+40212345678",
+  "email": "bucuresti@giurom.ro",
+  "employee_id": 1,
+  "notes": "Sediul central cu sistem de pontaj GPS",
+  "gps_lat": 44.4268,
+  "gps_lng": 26.1025,
+  "gps_radius_m": 50
+}
+```
+
+---
+
+## 🏢 Work Location Departments - Date de Testare
+
+### 🔧 Endpoint: `POST /locations/departments` - Departament IT
+
+```json
+{
+  "name": "Departamentul IT",
+  "code": "IT001",
+  "description": "Departament responsabil pentru infrastructura IT, dezvoltarea software și suportul tehnic pentru toate proiectele companiei",
+  "work_location_id": 1
+}
+```
+
+### 🔧 Endpoint: `POST /locations/departments` - Departament HR
+
+```json
+{
+  "name": "Resurse Umane",
+  "code": "HR001", 
+  "description": "Departament responsabil pentru recrutarea, formarea și managementul resurselor umane ale companiei",
+  "work_location_id": 1
+}
+```
+
+### 🔧 Endpoint: `POST /locations/departments` - Departament Financiar
+
+```json
+{
+  "name": "Departamentul Financiar",
+  "code": "FIN001",
+  "description": "Departament responsabil pentru contabilitatea, bugetul și planificarea financiară",
+  "work_location_id": 1
+}
+```
+
+---
+
+## 👤 Work Location Department Positions - Date de Testare
+
+### 🔧 Endpoint: `POST /locations/department-positions` - Dezvoltator Senior
+
+```json
+{
+  "name": "Dezvoltator Software Senior",
+  "code": "DEV_SR_001",
+  "description": "Responsabil pentru dezvoltarea aplicațiilor web complexe, mentorarea dezvoltatorilor juniori și arhitectura sistemelor",
+  "department_id": 1
+}
+```
+
+### 🔧 Endpoint: `POST /locations/department-positions` - Team Lead
+
+```json
+{
+  "name": "Team Lead IT",
+  "code": "TL_IT_001",
+  "description": "Coordonează echipa de dezvoltatori, planifică sprinturile și asigură calitatea deliverables-urilor",
+  "department_id": 1
+}
+```
+
+### 🔧 Endpoint: `POST /locations/department-positions` - HR Specialist
+
+```json
+{
+  "name": "Specialist Resurse Umane",
+  "code": "HR_SP_001",
+  "description": "Responsabil pentru procesele de recrutare, onboarding-ul angajaților noi și menținerea relațiilor cu angajații",
+  "department_id": 2
+}
+```
+
+### 🔧 Endpoint: `POST /locations/department-positions` - Contabil
+
+```json
+{
+  "name": "Contabil Principal",
+  "code": "ACC_PR_001",
+  "description": "Responsabil pentru înregistrarea operațiunilor contabile, întocmirea bilanțurilor și raportărilor financiare",
+  "department_id": 3
 }
 ```
 
