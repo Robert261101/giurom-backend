@@ -4,12 +4,19 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { ConfigModule } from '@nestjs/config';
 import { CompanyModule } from './company/company.module';
 import { LocationsModule } from './locations/locations.module';
+import { EmployeeModule } from './employee/employee.module';
 
 // Entitățile pentru auto-import
 import { Company } from './company/entity/company.entity';
 import { CompanyDocument } from './company/entity/company-document.entity';
 import { WorkLocation } from './locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
+import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
+import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
+import { Employee } from './employee/entity/employee.entity';
+import { EmployeeWorkLocationHistory } from './employee/entity/employee-work-location-history.entity';
+import { EmployeeFiles } from './employee/entity/employee-files.entity';
+import { GeneratedDocuments } from './employee/entity/generated-documents.entity';
 
 @Module({
   imports: [
@@ -47,10 +54,19 @@ import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-
       password: process.env.DB_PASSWORD || 'root',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [
+        // Entități companii
         Company,
         CompanyDocument,
+        // Entități locații
         WorkLocation,
         WorkLocationTaskTemplate,
+        WorkLocationDepartments,
+        WorkLocationDepartmentPositions,
+        // Entități angajați
+        Employee,
+        EmployeeWorkLocationHistory,
+        EmployeeFiles,
+        GeneratedDocuments,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -74,6 +90,7 @@ import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-
     // Modulele aplicației
     CompanyModule,
     LocationsModule,
+    EmployeeModule,
   ],
   controllers: [],
   providers: [],

@@ -11,6 +11,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { Company } from '../../company/entity/company.entity';
 import { WorkLocationTaskTemplate } from './work-location-task-template.entity';
+import { WorkLocationDepartments } from './work-location-departments.entity';
 
 @Entity('work_locations')
 export class WorkLocation {
@@ -161,6 +162,43 @@ export class WorkLocation {
   notes: string;
 
   @ApiProperty({
+    description: 'Latitudinea GPS a locației',
+    example: 44.4268,
+    required: false,
+  })
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 6,
+    nullable: true,
+  })
+  gps_lat: number;
+
+  @ApiProperty({
+    description: 'Longitudinea GPS a locației',
+    example: 26.1025,
+    required: false,
+  })
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 6,
+    nullable: true,
+  })
+  gps_lng: number;
+
+  @ApiProperty({
+    description: 'Raza GPS în metri pentru geofencing',
+    example: 50,
+    required: false,
+  })
+  @Column({
+    type: 'int',
+    nullable: true,
+  })
+  gps_radius_m: number;
+
+  @ApiProperty({
     description: 'Data când a fost creată înregistrarea',
     example: '2023-12-15T10:30:00Z',
   })
@@ -199,4 +237,18 @@ export class WorkLocation {
     },
   )
   task_templates: WorkLocationTaskTemplate[];
+
+  @ApiProperty({
+    description: 'Departamentele din această locație',
+    type: () => [WorkLocationDepartments],
+  })
+  @OneToMany(
+    () => WorkLocationDepartments,
+    (department) => department.work_location,
+    {
+      cascade: true,
+      eager: false,
+    },
+  )
+  departments: WorkLocationDepartments[];
 } 
