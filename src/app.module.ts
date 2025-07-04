@@ -13,10 +13,16 @@ import { WorkLocation } from './locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
 import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
+
+// Entități Pontaj
+import { Shift } from './attendance/entities/shift.entity';
+import { Presence } from './attendance/entities/presence.entity';
+import { PresenceInflexion } from './attendance/entities/presence-inflexion.entity';
 import { Employee } from './employee/entity/employee.entity';
 import { EmployeeWorkLocationHistory } from './employee/entity/employee-work-location-history.entity';
 import { EmployeeFiles } from './employee/entity/employee-files.entity';
 import { GeneratedDocuments } from './employee/entity/generated-documents.entity';
+import { AttendanceModule } from './attendance/attendance.module';
 
 @Module({
   imports: [
@@ -67,6 +73,10 @@ import { GeneratedDocuments } from './employee/entity/generated-documents.entity
         EmployeeWorkLocationHistory,
         EmployeeFiles,
         GeneratedDocuments,
+        // Entități pontaj
+        Shift,
+        Presence,
+        PresenceInflexion,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -91,6 +101,7 @@ import { GeneratedDocuments } from './employee/entity/generated-documents.entity
     CompanyModule,
     LocationsModule,
     EmployeeModule,
+    AttendanceModule,
   ],
   controllers: [],
   providers: [],
