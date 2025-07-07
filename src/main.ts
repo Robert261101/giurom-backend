@@ -44,6 +44,7 @@ async function bootstrap() {
     .addTag('employee-work-location-history', 'Istoricul mutărilor angajaților între locațiile de lucru')
     .addTag('employee-files', 'Gestionarea fișierelor din dosarele angajaților')
     .addTag('generated-documents', 'Generarea și managementul documentelor pentru angajați')
+    .addTag('attendance', 'Modulul de pontaj și business intelligence - schimburi, prezențe și puncte de inflexiune')
     .addBearerAuth()
     .addServer('http://localhost:3001', 'Development Server')
     .addServer('https://api.giurom.com', 'Production Server')
