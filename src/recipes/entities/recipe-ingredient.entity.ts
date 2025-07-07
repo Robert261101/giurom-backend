@@ -1,0 +1,97 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { ApiProperty } from '@nestjs/swagger';
+import { Recipe } from './recipe.entity';
+import { Ingredient } from './ingredient.entity';
+
+@Entity('recipe_ingredients')
+export class RecipeIngredient {
+  @ApiProperty({
+    description: 'ID-ul unic al asocierii rețetă-ingredient',
+    example: 1,
+  })
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @ApiProperty({
+    description: 'ID-ul rețetei',
+    example: 1,
+  })
+  @Column()
+  recipe_id: number;
+
+  @ApiProperty({
+    description: 'ID-ul ingredientului',
+    example: 1,
+  })
+  @Column()
+  ingredient_id: number;
+
+  @ApiProperty({
+    description: 'Cantitatea în grame',
+    example: 500,
+  })
+  @Column({
+    type: 'decimal',
+    precision: 8,
+    scale: 2,
+  })
+  quantity_grams: number;
+
+  @ApiProperty({
+    description: 'Note suplimentare despre ingredient în rețetă',
+    example: 'Tăiați cubulețe mici',
+    required: false,
+  })
+  @Column({
+    type: 'text',
+    nullable: true,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci'
+  })
+  notes: string;
+
+  @ApiProperty({
+    description: 'Data când a fost creată asocierea',
+    example: '2024-01-15T10:30:00Z',
+  })
+  @CreateDateColumn({ type: 'datetime' })
+  created_at: Date;
+
+  @ApiProperty({
+    description: 'Data când a fost actualizată asocierea',
+    example: '2024-01-15T10:30:00Z',
+  })
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at: Date;
+
+  // Relații
+  @ApiProperty({
+    description: 'Rețeta care folosește ingredientul',
+    type: () => Recipe,
+  })
+  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_ingredients, { 
+    onDelete: 'CASCADE', 
+    onUpdate: 'CASCADE' 
+  })
+  @JoinColumn({ name: 'recipe_id' })
+  recipe: Recipe;
+
+  @ApiProperty({
+    description: 'Ingredientul folosit în rețetă',
+    type: () => Ingredient,
+  })
+  @ManyToOne(() => Ingredient, (ingredient) => ingredient.recipe_ingredients, { 
+    onDelete: 'CASCADE', 
+    onUpdate: 'CASCADE' 
+  })
+  @JoinColumn({ name: 'ingredient_id' })
+  ingredient: Ingredient;
+} 
