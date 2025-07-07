@@ -45,6 +45,7 @@ async function bootstrap() {
     .addTag('employee-files', 'Gestionarea fișierelor din dosarele angajaților')
     .addTag('generated-documents', 'Generarea și managementul documentelor pentru angajați')
     .addTag('attendance', 'Modulul de pontaj și business intelligence - schimburi, prezențe și puncte de inflexiune')
+    .addTag('recipes', 'Modulul Rețetar - gestionarea rețetelor, categoriilor și ingredientelor cu relații many-to-many')
     .addBearerAuth()
     .addServer('http://localhost:3001', 'Development Server')
     .addServer('https://api.giurom.com', 'Production Server')

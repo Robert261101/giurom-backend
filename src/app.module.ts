@@ -23,6 +23,14 @@ import { EmployeeWorkLocationHistory } from './employee/entity/employee-work-loc
 import { EmployeeFiles } from './employee/entity/employee-files.entity';
 import { GeneratedDocuments } from './employee/entity/generated-documents.entity';
 import { AttendanceModule } from './attendance/attendance.module';
+import { RecipesModule } from './recipes/recipes.module';
+
+// Entități Rețetar
+import { Recipe } from './recipes/entities/recipe.entity';
+import { RecipeCategory } from './recipes/entities/recipe-category.entity';
+import { Ingredient } from './recipes/entities/ingredient.entity';
+import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
+
 
 @Module({
   imports: [
@@ -77,6 +85,11 @@ import { AttendanceModule } from './attendance/attendance.module';
         Shift,
         Presence,
         PresenceInflexion,
+        // Entități rețetar
+        Recipe,
+        RecipeCategory,
+        Ingredient,
+        RecipeIngredient,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -102,6 +115,7 @@ import { AttendanceModule } from './attendance/attendance.module';
     LocationsModule,
     EmployeeModule,
     AttendanceModule,
+    RecipesModule,
   ],
   controllers: [],
   providers: [],
