@@ -1,11 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, BadRequestException } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as helmet from 'helmet';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Body parser config
+  app.use(bodyParser.json({ limit: '50mb' }));
+  app.use(bodyParser.urlencoded({ extended: true }));
 
   // Securitate - Helmet
   app.use(helmet.default());
@@ -25,6 +30,29 @@ async function bootstrap() {
       transform: true,
       transformOptions: {
         enableImplicitConversion: true,
+        exposeDefaultValues: true,
+      },
+      validateCustomDecorators: true,
+      stopAtFirstError: true,
+      exceptionFactory: (errors) => {
+        console.log('Validation errors:', JSON.stringify(errors, null, 2));
+        const firstError = errors[0];
+        console.log('First error details:', {
+          property: firstError?.property,
+          value: firstError?.value,
+          constraints: firstError?.constraints,
+          target: firstError?.target
+        });
+        const constraints = firstError?.constraints;
+        const message = constraints ? Object.values(constraints)[0] : 'Date de intrare invalide';
+        return new BadRequestException({
+          statusCode: 400,
+          error: 'Bad Request',
+          message,
+          field: firstError?.property,
+          value: firstError?.value,
+          constraints: firstError?.constraints
+        });
       },
     }),
   );
