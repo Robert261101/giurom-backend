@@ -31,6 +31,13 @@ import { RecipeCategory } from './recipes/entities/recipe-category.entity';
 import { Ingredient } from './recipes/entities/ingredient.entity';
 import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
 
+// Entități Stoc
+import { Product } from './stock/entities/product.entity';
+import { Locator } from './stock/entities/locator.entity';
+import { Stock as StockEntity } from './stock/entities/stock.entity';
+import { StockTransaction } from './stock/entities/stock-transaction.entity';
+import { RecipeUsage } from './stock/entities/recipe-usage.entity';
+import { StockModule } from './stock/stock.module';
 
 @Module({
   imports: [
@@ -90,6 +97,12 @@ import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
         RecipeCategory,
         Ingredient,
         RecipeIngredient,
+        // Entități stoc
+        Product,
+        Locator,
+        StockEntity,
+        StockTransaction,
+        RecipeUsage,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -116,6 +129,7 @@ import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
     EmployeeModule,
     AttendanceModule,
     RecipesModule,
+    StockModule,
   ],
   controllers: [],
   providers: [],
