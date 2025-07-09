@@ -14,6 +14,10 @@ import {
 import { DifficultyLevel } from '../entities/recipe.entity';
 
 export class CreateRecipeDto {
+  constructor() {
+    console.log('CreateRecipeDto constructor called');
+  }
+
   @ApiProperty({
     description: 'Numele rețetei',
     example: 'Supă de legume cu cartofi',
@@ -21,7 +25,8 @@ export class CreateRecipeDto {
   })
   @IsString({ message: 'Numele rețetei trebuie să fie un string' })
   @IsNotEmpty({ message: 'Numele rețetei este obligatoriu' })
-  @Length(2, 200, { message: 'Numele rețetei trebuie să aibă între 2 și 200 de caractere' })
+  // Temporarily comment out Length validator to see if that's the issue
+  // @Length(2, 200, { message: 'Numele rețetei trebuie să aibă între 2 și 200 de caractere' })
   name: string;
 
   @ApiProperty({
