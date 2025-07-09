@@ -10,7 +10,11 @@ import {
   UseGuards,
   HttpStatus,
   ParseIntPipe,
+  Req,
+  RawBodyRequest,
+  BadRequestException,
 } from '@nestjs/common';
+import { Request } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -260,7 +264,30 @@ export class RecipesController {
     status: HttpStatus.NOT_FOUND,
     description: 'Categoria specificată nu a fost găsită',
   })
-  async createRecipe(@Body() createRecipeDto: CreateRecipeDto): Promise<Recipe> {
+  async createRecipe(@Req() req: Request, @Body() createRecipeDto: CreateRecipeDto): Promise<Recipe> {
+    console.log('=== Request Debug Info ===');
+    console.log('Headers:', req.headers);
+    console.log('Raw body:', req.body);
+    
+    console.log('=== DTO Debug Info ===');
+    console.log('Received DTO:', createRecipeDto);
+    
+    // Manual instantiation test
+    const manualDto = new CreateRecipeDto();
+    Object.assign(manualDto, req.body);
+    console.log('Manual DTO:', manualDto);
+    
+    if (!createRecipeDto.name) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Debug Info',
+        message: 'Name is missing',
+        receivedBody: req.body,
+        receivedDto: createRecipeDto,
+        manualDto: manualDto
+      });
+    }
+
     return await this.recipesService.createRecipe(createRecipeDto);
   }
 

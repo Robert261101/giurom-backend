@@ -39,6 +39,10 @@ import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { RecipeUsage } from './stock/entities/recipe-usage.entity';
 import { StockModule } from './stock/stock.module';
 
+// Entități Recipe Preparations
+import { RecipePreparationsModule } from './recipe-preparations/recipe-preparations.module';
+import { RecipePreparation } from './recipe-preparations/entities/recipe-preparation.entity';
+
 @Module({
   imports: [
     // Configurarea variabilelor de mediu
@@ -103,6 +107,8 @@ import { StockModule } from './stock/stock.module';
         StockEntity,
         StockTransaction,
         RecipeUsage,
+        // Entități recipe preparations
+        RecipePreparation,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -130,6 +136,7 @@ import { StockModule } from './stock/stock.module';
     AttendanceModule,
     RecipesModule,
     StockModule,
+    RecipePreparationsModule,
   ],
   controllers: [],
   providers: [],
