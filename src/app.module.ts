@@ -34,6 +34,8 @@ import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
 // Entități Recipe Preparations
 import { RecipePreparationsModule } from './recipe-preparations/recipe-preparations.module';
 import { RecipePreparation } from './recipe-preparations/entities/recipe-preparation.entity';
+import { RecipeLabel } from './recipe-labels/entities/recipe-label.entity';
+import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
 
 @Module({
   imports: [
@@ -95,6 +97,7 @@ import { RecipePreparation } from './recipe-preparations/entities/recipe-prepara
         RecipeIngredient,
         // Entități recipe preparations
         RecipePreparation,
+        RecipeLabel,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -122,6 +125,7 @@ import { RecipePreparation } from './recipe-preparations/entities/recipe-prepara
     AttendanceModule,
     RecipesModule,
     RecipePreparationsModule,
+    RecipeLabelsModule,
   ],
   controllers: [],
   providers: [],

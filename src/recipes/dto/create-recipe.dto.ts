@@ -127,4 +127,15 @@ export class CreateRecipeDto {
   @IsOptional()
   @Length(2, 100, { message: 'Numele autorului trebuie să aibă între 2 și 100 de caractere' })
   author?: string;
+
+  @ApiProperty({
+    description: 'Număr de zile până la expirare după preparare',
+    example: 7,
+    required: false,
+  })
+  @IsNumber({}, { message: 'expiration_days trebuie să fie număr' })
+  @IsOptional()
+  @Min(1, { message: 'expiration_days trebuie să fie cel puțin 1' })
+  @Max(365, { message: 'expiration_days nu poate depăși 365' })
+  expiration_days?: number;
 } 

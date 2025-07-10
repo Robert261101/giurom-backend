@@ -5,9 +5,10 @@ import { RecipePreparationsController } from './recipe-preparations.controller';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from '../recipes/entities/recipe.entity';
 import { Employee } from '../employee/entity/employee.entity';
+import { RecipeLabelsModule } from '../recipe-labels/recipe-labels.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RecipePreparation, Recipe, Employee])],
+  imports: [TypeOrmModule.forFeature([RecipePreparation, Recipe, Employee]), RecipeLabelsModule],
   controllers: [RecipePreparationsController],
   providers: [RecipePreparationsService],
   exports: [RecipePreparationsService],
