@@ -103,6 +103,14 @@ export class Recipe {
   difficulty: DifficultyLevel;
 
   @ApiProperty({
+    description: 'Număr de zile până la expirare după preparare',
+    example: 7,
+    required: false,
+  })
+  @Column({ type: 'int', nullable: true })
+  expiration_days?: number;
+
+  @ApiProperty({
     description: 'Calorii per porție',
     example: 250,
     required: false,

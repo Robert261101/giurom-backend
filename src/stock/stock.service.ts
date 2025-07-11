@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { Locator } from './entities/locator.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
@@ -117,6 +117,47 @@ export class StockService {
   async deleteStock(id: number): Promise<void> {
     const stock = await this.findStock(id);
     await this.stockRepo.remove(stock);
+  }
+
+  /*
+   * Consumă cantitatea specificată din stocurile valide (FIFO)
+   */
+  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation'): Promise<void> {
+    let remaining = quantity;
+
+    // FIFO: cele mai vechi entry_date primele
+    const stocks = await this.stockRepo.find({
+      where: { product_id: productId, status: StockStatus.VALID, quantity: MoreThan(0) },
+      order: { entry_date: 'ASC' },
+    });
+
+    for (const s of stocks) {
+      if (remaining <= 0) break;
+
+      const take = Math.min(s.quantity, remaining);
+
+      // Creează tranzacție EXIT
+      const tx = this.txRepo.create({
+        stock: s,
+        stock_id: s.id,
+        type: TransactionType.EXIT,
+        quantity: take,
+        location: 'production',
+        target,
+      });
+      await this.txRepo.save(tx);
+
+      // Actualizează stoc
+      s.quantity -= take;
+      s.last_update = new Date();
+      await this.stockRepo.save(s);
+
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      throw new BadRequestException(`Cantitate insuficientă în stoc pentru produsul ${productId}. Lipsesc ${remaining}`);
+    }
   }
 
   /* STOCK TRANSACTIONS */

@@ -1,7 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn, OneToOne } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Recipe } from '../../recipes/entities/recipe.entity';
 import { Employee } from '../../employee/entity/employee.entity';
+import { RecipeLabel } from '../../recipe-labels/entities/recipe-label.entity';
 
 @Entity('recipe_preparations')
 export class RecipePreparation {
@@ -25,13 +26,12 @@ export class RecipePreparation {
   @Column({ type: 'datetime' })
   produced_at: Date;
 
-  @ApiProperty({ description: 'Data expirării', example: '2025-07-14T09:00:00Z' })
-  @Column({ type: 'datetime' })
-  expires_at: Date;
-
   @ApiProperty({ description: 'Etichetat sau nu', example: true })
   @Column({ type: 'bool', default: false })
   is_labeled: boolean;
+
+  // Relation to label
+  // Will be defined in RecipeLabel entity as OneToOne back-reference
 
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
@@ -47,4 +47,7 @@ export class RecipePreparation {
   @ManyToOne(() => Employee, (employee) => employee.id, { onDelete: 'SET NULL', onUpdate: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'employee_id' })
   produced_by: Employee | null;
+
+  @OneToOne(() => RecipeLabel, (label) => label.preparation)
+  label: RecipeLabel;
 } 

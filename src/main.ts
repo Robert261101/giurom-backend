@@ -59,11 +59,10 @@ async function bootstrap() {
 
   // Swagger Configuration
   const config = new DocumentBuilder()
-    .setTitle('Giurom API - Punct de Lucru și Adăugare Firmă')
+    .setTitle('Giurom API')
     .setDescription(
-      'API pentru modulele Punct de Lucru și Adăugare Firmă. ' +
-      'Acest API permite gestionarea companiilor, documentelor acestora, ' +
-      'locațiilor de lucru și template-urilor de sarcini.',
+      'API pentru modulele ' +
+      'Acest API permite gestionarea companiilor, documentelor acestora, '
     )
     .setVersion('1.0')
     .addTag('companies', 'Operațiuni pentru companii și documentele acestora')
@@ -74,6 +73,9 @@ async function bootstrap() {
     .addTag('generated-documents', 'Generarea și managementul documentelor pentru angajați')
     .addTag('attendance', 'Modulul de pontaj și business intelligence - schimburi, prezențe și puncte de inflexiune')
     .addTag('recipes', 'Modulul Rețetar - gestionarea rețetelor, categoriilor și ingredientelor cu relații many-to-many')
+    .addTag('stock', 'Modulul Stoc - produse, cantități, tranzacții')
+    .addTag('recipe-labels', 'Modulul Etichete - PDF cu date identificare preparare')
+    .addTag('waste-records', 'Modulul pierderi - înregistrarea pierderilor de produse/rețete')
     .addBearerAuth()
     .addServer('http://localhost:3001', 'Development Server')
     .addServer('https://api.giurom.com', 'Production Server')

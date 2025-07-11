@@ -33,10 +33,12 @@
     "helmet": "^7.1.0",
     "mariadb": "^3.2.3",
     "mysql2": "^3.14.1",
+    "pdfkit": "^0.17.1",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.0",
-    "typeorm": "^0.3.19"
+    "typeorm": "^0.3.19",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.0",

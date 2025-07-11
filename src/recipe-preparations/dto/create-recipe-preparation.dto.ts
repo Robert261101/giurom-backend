@@ -21,10 +21,6 @@ export class CreateRecipePreparationDto {
   @IsDateString({}, { message: 'produced_at trebuie să fie dată ISO' })
   produced_at: string;
 
-  @ApiProperty({ example: '2025-07-14T09:00:00Z', description: 'Data expirării (ISO)' })
-  @IsDateString({}, { message: 'expires_at trebuie să fie dată ISO' })
-  expires_at: string;
-
   @ApiProperty({ example: true, description: 'Este etichetat' })
   @IsBoolean()
   is_labeled: boolean;

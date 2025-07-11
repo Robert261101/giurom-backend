@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
@@ -6,6 +6,9 @@ import { CreateRecipePreparationDto } from './dto/create-recipe-preparation.dto'
 import { UpdateRecipePreparationDto } from './dto/update-recipe-preparation.dto';
 import { Recipe } from '../recipes/entities/recipe.entity';
 import { Employee } from '../employee/entity/employee.entity';
+import { RecipeLabelsService } from '../recipe-labels/recipe-labels.service';
+import { RecipeIngredient } from '../recipes/entities/recipe-ingredient.entity';
+import { StockService } from '../stock/stock.service';
 
 @Injectable()
 export class RecipePreparationsService {
@@ -16,6 +19,10 @@ export class RecipePreparationsService {
     private readonly recipeRepo: Repository<Recipe>,
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
+    private readonly labelsService: RecipeLabelsService,
+    @InjectRepository(RecipeIngredient)
+    private readonly recipeIngredientRepo: Repository<RecipeIngredient>,
+    private readonly stockService: StockService,
   ) {}
 
   private async assertForeignKeys(dto: Partial<CreateRecipePreparationDto>) {
@@ -29,20 +36,30 @@ export class RecipePreparationsService {
     }
   }
 
-  private validateDates(prod: Date, exp: Date) {
-    if (prod >= exp) throw new BadRequestException('expires_at trebuie să fie după produced_at');
-  }
-
   async create(dto: CreateRecipePreparationDto): Promise<RecipePreparation> {
     await this.assertForeignKeys(dto);
-    this.validateDates(new Date(dto.produced_at), new Date(dto.expires_at));
     const entity = this.prepRepo.create({
       ...dto,
       produced_at: new Date(dto.produced_at),
-      expires_at: new Date(dto.expires_at),
     } as Partial<RecipePreparation>);
 
-    return this.prepRepo.save(entity) as Promise<RecipePreparation>;
+    const saved = await this.prepRepo.save(entity);
+
+    if (dto.is_labeled) {
+      await this.labelsService.generateForPreparation(saved.id);
+    }
+
+    // Consumă ingredientele din stoc
+    const recipeIngredients = await this.recipeIngredientRepo.find({ where: { recipe_id: dto.recipe_id } });
+    for (const ri of recipeIngredients) {
+      const qty = Number(ri.quantity_grams);
+      if (qty > 0) {
+        // presupunem că ingredient_id == product_id în modul Stock
+        await this.stockService.consumeProduct(ri.ingredient_id, qty, `recipe-preparation ${saved.id}`);
+      }
+    }
+
+    return saved;
   }
 
   findAll(): Promise<RecipePreparation[]> {
@@ -58,11 +75,7 @@ export class RecipePreparationsService {
   async update(id: number, dto: UpdateRecipePreparationDto): Promise<RecipePreparation> {
     const prep = await this.findOne(id);
     await this.assertForeignKeys(dto);
-    if (dto.produced_at || dto.expires_at) {
-      const prod = dto.produced_at ? new Date(dto.produced_at) : prep.produced_at;
-      const exp = dto.expires_at ? new Date(dto.expires_at) : prep.expires_at;
-      this.validateDates(prod, exp);
-    }
+    // Nothing special yet
     Object.assign(prep, dto);
     return this.prepRepo.save(prep);
   }
