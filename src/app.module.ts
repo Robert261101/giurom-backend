@@ -44,6 +44,8 @@ import { RecipePreparationsModule } from './recipe-preparations/recipe-preparati
 import { RecipePreparation } from './recipe-preparations/entities/recipe-preparation.entity';
 import { RecipeLabel } from './recipe-labels/entities/recipe-label.entity';
 import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
+import { WasteRecord } from './waste-records/entities/waste-record.entity';
+import { WasteRecordsModule } from './waste-records/waste-records.module';
 
 @Module({
   imports: [
@@ -112,6 +114,7 @@ import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
         // Entități recipe preparations
         RecipePreparation,
         RecipeLabel,
+        WasteRecord,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -141,6 +144,7 @@ import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
     StockModule,
     RecipePreparationsModule,
     RecipeLabelsModule,
+    WasteRecordsModule,
   ],
   controllers: [],
   providers: [],

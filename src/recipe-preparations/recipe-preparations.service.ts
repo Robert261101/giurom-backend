@@ -7,6 +7,8 @@ import { UpdateRecipePreparationDto } from './dto/update-recipe-preparation.dto'
 import { Recipe } from '../recipes/entities/recipe.entity';
 import { Employee } from '../employee/entity/employee.entity';
 import { RecipeLabelsService } from '../recipe-labels/recipe-labels.service';
+import { RecipeIngredient } from '../recipes/entities/recipe-ingredient.entity';
+import { StockService } from '../stock/stock.service';
 
 @Injectable()
 export class RecipePreparationsService {
@@ -18,6 +20,9 @@ export class RecipePreparationsService {
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
     private readonly labelsService: RecipeLabelsService,
+    @InjectRepository(RecipeIngredient)
+    private readonly recipeIngredientRepo: Repository<RecipeIngredient>,
+    private readonly stockService: StockService,
   ) {}
 
   private async assertForeignKeys(dto: Partial<CreateRecipePreparationDto>) {
@@ -42,6 +47,16 @@ export class RecipePreparationsService {
 
     if (dto.is_labeled) {
       await this.labelsService.generateForPreparation(saved.id);
+    }
+
+    // Consumă ingredientele din stoc
+    const recipeIngredients = await this.recipeIngredientRepo.find({ where: { recipe_id: dto.recipe_id } });
+    for (const ri of recipeIngredients) {
+      const qty = Number(ri.quantity_grams);
+      if (qty > 0) {
+        // presupunem că ingredient_id == product_id în modul Stock
+        await this.stockService.consumeProduct(ri.ingredient_id, qty, `recipe-preparation ${saved.id}`);
+      }
     }
 
     return saved;
