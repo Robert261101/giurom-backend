@@ -59,11 +59,10 @@ async function bootstrap() {
 
   // Swagger Configuration
   const config = new DocumentBuilder()
-    .setTitle('Giurom API - Punct de Lucru și Adăugare Firmă')
+    .setTitle('Giurom API')
     .setDescription(
-      'API pentru modulele Punct de Lucru și Adăugare Firmă. ' +
-      'Acest API permite gestionarea companiilor, documentelor acestora, ' +
-      'locațiilor de lucru și template-urilor de sarcini.',
+      'API pentru modulele ' +
+      'Acest API permite gestionarea companiilor, documentelor acestora, '
     )
     .setVersion('1.0')
     .addTag('companies', 'Operațiuni pentru companii și documentele acestora')

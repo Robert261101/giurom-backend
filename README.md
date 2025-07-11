@@ -1,6 +1,6 @@
 # Giurom Backend - Punct de Lucru și Adăugare Firmă
 
-Backend API pentru modulele **Punct de Lucru** și **Adăugare Firmă** din aplicația Giurom, construit cu NestJS și MariaDB.
+Backend API din aplicația Giurom, construit cu NestJS și MariaDB.
 
 ## 📋 Caracteristici
 
