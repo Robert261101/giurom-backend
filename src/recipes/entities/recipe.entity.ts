@@ -10,7 +10,7 @@ import {
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { RecipeCategory } from './recipe-category.entity';
-import { RecipeIngredient } from './recipe-ingredient.entity';
+import { RecipeProduct } from './recipe-product.entity';
 
 export enum DifficultyLevel {
   EASY = 'easy',
@@ -175,12 +175,12 @@ export class Recipe {
   category: RecipeCategory;
 
   @ApiProperty({
-    description: 'Ingredientele folosite în rețetă',
-    type: () => [RecipeIngredient],
+    description: 'Produsele folosite în rețetă',
+    type: () => [RecipeProduct],
   })
-  @OneToMany(() => RecipeIngredient, (recipeIngredient) => recipeIngredient.recipe, {
+  @OneToMany(() => RecipeProduct, (recipeProduct) => recipeProduct.recipe, {
     cascade: true,
     eager: false,
   })
-  recipe_ingredients: RecipeIngredient[];
+  recipe_products: RecipeProduct[];
 } 

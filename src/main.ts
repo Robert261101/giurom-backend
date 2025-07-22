@@ -72,7 +72,7 @@ async function bootstrap() {
     .addTag('employee-files', 'Gestionarea fișierelor din dosarele angajaților')
     .addTag('generated-documents', 'Generarea și managementul documentelor pentru angajați')
     .addTag('attendance', 'Modulul de pontaj și business intelligence - schimburi, prezențe și puncte de inflexiune')
-    .addTag('recipes', 'Modulul Rețetar - gestionarea rețetelor, categoriilor și ingredientelor cu relații many-to-many')
+    .addTag('recipes', 'Modulul Rețetar - gestionarea rețetelor, categoriilor și produselor cu relații many-to-many')
     .addTag('stock', 'Modulul Stoc - produse, cantități, tranzacții')
     .addTag('recipe-labels', 'Modulul Etichete - PDF cu date identificare preparare')
     .addTag('waste-records', 'Modulul pierderi - înregistrarea pierderilor de produse/rețete')

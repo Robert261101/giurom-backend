@@ -11,7 +11,6 @@ import {
   HttpStatus,
   ParseIntPipe,
   Req,
-  RawBodyRequest,
   BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -30,20 +29,18 @@ import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
-import { CreateIngredientDto } from './dto/create-ingredient.dto';
-import { UpdateIngredientDto } from './dto/update-ingredient.dto';
-import { CreateRecipeIngredientDto } from './dto/create-recipe-ingredient.dto';
-import { UpdateRecipeIngredientDto } from './dto/update-recipe-ingredient.dto';
+import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
+import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
 import { Recipe, DifficultyLevel } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
-import { Ingredient } from './entities/ingredient.entity';
-import { RecipeIngredient } from './entities/recipe-ingredient.entity';
+import { RecipeProduct } from './entities/recipe-product.entity';
+import { Product } from '../stock/entities/product.entity';
 
 @ApiTags('recipes')
 @Controller('recipes')
 @UseGuards(ThrottlerGuard)
 @ApiBearerAuth()
-@ApiExtraModels(Recipe, RecipeCategory, Ingredient, RecipeIngredient)
+@ApiExtraModels(Recipe, RecipeCategory, RecipeProduct, Product)
 export class RecipesController {
   constructor(private readonly recipesService: RecipesService) {}
 
@@ -145,106 +142,6 @@ export class RecipesController {
     return await this.recipesService.deleteRecipeCategory(id);
   }
 
-  // INGREDIENT ENDPOINTS
-  @Post('ingredients')
-  @ApiOperation({
-    summary: 'Creează un nou ingredient',
-    description: 'Adaugă un ingredient nou în baza de date cu validare de unicitate.',
-  })
-  @ApiResponse({
-    status: HttpStatus.CREATED,
-    description: 'Ingredientul a fost creat cu succes',
-    type: Ingredient,
-  })
-  @ApiResponse({
-    status: HttpStatus.CONFLICT,
-    description: 'Ingredientul cu acest nume există deja',
-  })
-  async createIngredient(@Body() createIngredientDto: CreateIngredientDto): Promise<Ingredient> {
-    return await this.recipesService.createIngredient(createIngredientDto);
-  }
-
-  @Get('ingredients')
-  @ApiOperation({
-    summary: 'Listează toate ingredientele',
-    description: 'Returnează o listă paginată cu toate ingredientele cu opțiuni de filtrare și căutare.',
-  })
-  @ApiQuery({ name: 'page', required: false, description: 'Numărul paginii', example: 1 })
-  @ApiQuery({ name: 'limit', required: false, description: 'Numărul de rezultate pe pagină', example: 10 })
-  @ApiQuery({ name: 'search', required: false, description: 'Căutare după numele ingredientului', example: 'cartofi' })
-  @ApiQuery({ name: 'category', required: false, description: 'Filtrare după categoria ingredientului', example: 'legume' })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Lista ingredientelor a fost returnată cu succes',
-  })
-  async findAllIngredients(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
-    @Query('search') search?: string,
-    @Query('category') category?: string,
-  ) {
-    return await this.recipesService.findAllIngredients(page, limit, search, category);
-  }
-
-  @Get('ingredients/:id')
-  @ApiOperation({
-    summary: 'Obține un ingredient după ID',
-    description: 'Returnează detaliile complete ale unui ingredient inclusiv rețetele în care este folosit.',
-  })
-  @ApiParam({ name: 'id', description: 'ID-ul ingredientului', example: 1 })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Ingredientul a fost găsit cu succes',
-    type: Ingredient,
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'Ingredientul nu a fost găsit',
-  })
-  async findIngredientById(@Param('id', ParseIntPipe) id: number): Promise<Ingredient> {
-    return await this.recipesService.findIngredientById(id);
-  }
-
-  @Patch('ingredients/:id')
-  @ApiOperation({
-    summary: 'Actualizează un ingredient',
-    description: 'Actualizează datele unui ingredient existent cu validare de unicitate.',
-  })
-  @ApiParam({ name: 'id', description: 'ID-ul ingredientului', example: 1 })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Ingredientul a fost actualizat cu succes',
-    type: Ingredient,
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'Ingredientul nu a fost găsit',
-  })
-  async updateIngredient(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() updateIngredientDto: UpdateIngredientDto,
-  ): Promise<Ingredient> {
-    return await this.recipesService.updateIngredient(id, updateIngredientDto);
-  }
-
-  @Delete('ingredients/:id')
-  @ApiOperation({
-    summary: 'Șterge un ingredient',
-    description: 'Șterge un ingredient doar dacă nu este folosit în nicio rețetă.',
-  })
-  @ApiParam({ name: 'id', description: 'ID-ul ingredientului', example: 1 })
-  @ApiResponse({
-    status: HttpStatus.NO_CONTENT,
-    description: 'Ingredientul a fost șters cu succes',
-  })
-  @ApiResponse({
-    status: HttpStatus.BAD_REQUEST,
-    description: 'Ingredientul nu poate fi șters pentru că este folosit în rețete',
-  })
-  async deleteIngredient(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return await this.recipesService.deleteIngredient(id);
-  }
-
   // RECIPE ENDPOINTS
   @Post()
   @ApiOperation({
@@ -320,7 +217,7 @@ export class RecipesController {
   @Get(':id')
   @ApiOperation({
     summary: 'Obține o rețetă după ID',
-    description: 'Returnează detaliile complete ale unei rețete inclusiv categoria și ingredientele.',
+    description: 'Returnează detaliile complete ale unei rețete inclusiv categoria și produsele.',
   })
   @ApiParam({ name: 'id', description: 'ID-ul rețetei', example: 1 })
   @ApiResponse({
@@ -361,7 +258,7 @@ export class RecipesController {
   @Delete(':id')
   @ApiOperation({
     summary: 'Șterge o rețetă',
-    description: 'Șterge definitiv o rețetă și toate asocierile cu ingredientele.',
+    description: 'Șterge definitiv o rețetă și toate asocierile cu produsele.',
   })
   @ApiParam({ name: 'id', description: 'ID-ul rețetei', example: 1 })
   @ApiResponse({
@@ -376,88 +273,88 @@ export class RecipesController {
     return await this.recipesService.deleteRecipe(id);
   }
 
-  // RECIPE INGREDIENT ENDPOINTS
-  @Post('recipe-ingredients')
+  // RECIPE PRODUCT ENDPOINTS
+  @Post('recipe-products')
   @ApiOperation({
-    summary: 'Adaugă un ingredient la o rețetă',
-    description: 'Creează o asociere între o rețetă și un ingredient cu cantitatea specificată.',
+    summary: 'Adaugă un produs la o rețetă',
+    description: 'Creează o asociere între o rețetă și un produs cu cantitatea specificată.',
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
-    description: 'Ingredientul a fost adăugat cu succes la rețetă',
-    type: RecipeIngredient,
+    description: 'Produsul a fost adăugat cu succes la rețetă',
+    type: RecipeProduct,
   })
   @ApiResponse({
     status: HttpStatus.CONFLICT,
-    description: 'Ingredientul este deja adăugat în rețetă',
+    description: 'Produsul este deja adăugat în rețetă',
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
-    description: 'Rețeta sau ingredientul nu a fost găsit',
+    description: 'Rețeta sau produsul nu a fost găsit',
   })
-  async addIngredientToRecipe(@Body() createRecipeIngredientDto: CreateRecipeIngredientDto): Promise<RecipeIngredient> {
-    return await this.recipesService.addIngredientToRecipe(createRecipeIngredientDto);
+  async addProductToRecipe(@Body() createRecipeProductDto: CreateRecipeProductDto): Promise<RecipeProduct> {
+    return await this.recipesService.addProductToRecipe(createRecipeProductDto);
   }
 
-  @Get(':recipe_id/ingredients')
+  @Get(':recipe_id/products')
   @ApiOperation({
-    summary: 'Listează ingredientele unei rețete',
-    description: 'Returnează toate ingredientele folosite într-o rețetă cu cantitățile specificate.',
+    summary: 'Listează produsele unei rețete',
+    description: 'Returnează toate produsele folosite într-o rețetă cu cantitățile specificate.',
   })
   @ApiParam({ name: 'recipe_id', description: 'ID-ul rețetei', example: 1 })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista ingredientelor a fost returnată cu succes',
+    description: 'Lista produselor a fost returnată cu succes',
   })
-  async findRecipeIngredients(@Param('recipe_id', ParseIntPipe) recipe_id: number): Promise<RecipeIngredient[]> {
-    return await this.recipesService.findRecipeIngredients(recipe_id);
+  async findRecipeProducts(@Param('recipe_id', ParseIntPipe) recipe_id: number): Promise<RecipeProduct[]> {
+    return await this.recipesService.findRecipeProducts(recipe_id);
   }
 
-  @Patch('recipe-ingredients/:id')
+  @Patch('recipe-products/:id')
   @ApiOperation({
-    summary: 'Actualizează cantitatea unui ingredient în rețetă',
-    description: 'Modifică cantitatea sau notele pentru un ingredient dintr-o rețetă.',
+    summary: 'Actualizează cantitatea unui produs în rețetă',
+    description: 'Modifică cantitatea sau notele pentru un produs dintr-o rețetă.',
   })
-  @ApiParam({ name: 'id', description: 'ID-ul asocierii rețetă-ingredient', example: 1 })
+  @ApiParam({ name: 'id', description: 'ID-ul asocierii rețetă-produs', example: 1 })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Asocierea a fost actualizată cu succes',
-    type: RecipeIngredient,
+    type: RecipeProduct,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Asocierea nu a fost găsită',
   })
-  async updateRecipeIngredient(
+  async updateRecipeProduct(
     @Param('id', ParseIntPipe) id: number,
-    @Body() updateRecipeIngredientDto: UpdateRecipeIngredientDto,
-  ): Promise<RecipeIngredient> {
-    return await this.recipesService.updateRecipeIngredient(id, updateRecipeIngredientDto);
+    @Body() updateRecipeProductDto: UpdateRecipeProductDto,
+  ): Promise<RecipeProduct> {
+    return await this.recipesService.updateRecipeProduct(id, updateRecipeProductDto);
   }
 
-  @Delete('recipe-ingredients/:id')
+  @Delete('recipe-products/:id')
   @ApiOperation({
-    summary: 'Elimină un ingredient din rețetă',
-    description: 'Șterge asocierea dintre o rețetă și un ingredient.',
+    summary: 'Elimină un produs din rețetă',
+    description: 'Șterge asocierea dintre o rețetă și un produs.',
   })
-  @ApiParam({ name: 'id', description: 'ID-ul asocierii rețetă-ingredient', example: 1 })
+  @ApiParam({ name: 'id', description: 'ID-ul asocierii rețetă-produs', example: 1 })
   @ApiResponse({
     status: HttpStatus.NO_CONTENT,
-    description: 'Ingredientul a fost eliminat cu succes din rețetă',
+    description: 'Produsul a fost eliminat cu succes din rețetă',
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Asocierea nu a fost găsită',
   })
-  async removeIngredientFromRecipe(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return await this.recipesService.removeIngredientFromRecipe(id);
+  async removeProductFromRecipe(@Param('id', ParseIntPipe) id: number): Promise<void> {
+    return await this.recipesService.removeProductFromRecipe(id);
   }
 
   // STATISTICS ENDPOINT
   @Get('statistics/overview')
   @ApiOperation({
     summary: 'Obține statistici generale despre rețete',
-    description: 'Generează rapoarte și statistici detaliate despre rețete, categorii și ingrediente.',
+    description: 'Generează rapoarte și statistici detaliate despre rețete, categorii și produse.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
