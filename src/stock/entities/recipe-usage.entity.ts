@@ -25,7 +25,7 @@ export class RecipeUsage {
   @Column()
   recipe_id: number;
 
-  @ApiProperty({ description: 'Procent din ingredient față de rețetă', example: 12.5 })
+  @ApiProperty({ description: 'Procent din produs față de rețetă', example: 12.5 })
   @Column({ type: 'decimal', precision: 5, scale: 2 })
   percentage: number;
 
@@ -44,7 +44,7 @@ export class RecipeUsage {
   @JoinColumn({ name: 'product_id' })
   product: Product;
 
-  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_ingredients, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_products, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'recipe_id' })
   recipe: Recipe;
 } 

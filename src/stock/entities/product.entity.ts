@@ -36,4 +36,7 @@ export class Product {
 
   @OneToMany(() => RecipeUsage, (usage) => usage.product)
   recipe_usages: RecipeUsage[];
+
+  @OneToMany('RecipeProduct', 'product')
+  recipe_products: any[];
 } 

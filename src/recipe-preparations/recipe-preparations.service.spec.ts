@@ -4,7 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from '../recipes/entities/recipe.entity';
 import { Employee } from '../employee/entity/employee.entity';
-import { RecipeIngredient } from '../recipes/entities/recipe-ingredient.entity';
+import { RecipeProduct } from '../recipes/entities/recipe-product.entity';
 import { RecipeLabelsService } from '../recipe-labels/recipe-labels.service';
 import { StockService } from '../stock/stock.service';
 
@@ -12,7 +12,7 @@ describe('RecipePreparationsService', () => {
   let service: RecipePreparationsService;
   let stockService: jest.Mocked<StockService>;
   let labelsService: jest.Mocked<RecipeLabelsService>;
-  let recipeIngredientRepo: any;
+  let recipeProductRepo: any;
   let recipeRepo: any;
   let employeeRepo: any;
   let prepRepo: any;
@@ -42,7 +42,7 @@ describe('RecipePreparationsService', () => {
           useValue: mockRepo,
         },
         {
-          provide: getRepositoryToken(RecipeIngredient),
+          provide: getRepositoryToken(RecipeProduct),
           useValue: mockRepo,
         },
         {
@@ -63,7 +63,7 @@ describe('RecipePreparationsService', () => {
     service = module.get<RecipePreparationsService>(RecipePreparationsService);
     stockService = module.get(StockService);
     labelsService = module.get(RecipeLabelsService);
-    recipeIngredientRepo = module.get(getRepositoryToken(RecipeIngredient));
+    recipeProductRepo = module.get(getRepositoryToken(RecipeProduct));
     recipeRepo = module.get(getRepositoryToken(Recipe));
     employeeRepo = module.get(getRepositoryToken(Employee));
     prepRepo = module.get(getRepositoryToken(RecipePreparation));
@@ -75,13 +75,13 @@ describe('RecipePreparationsService', () => {
     expect(service).toBeDefined();
   });
 
-  it('should consume ingredients from stock and generate label when creating labeled preparation', async () => {
+  it('should consume products from stock and generate label when creating labeled preparation', async () => {
     // Arrange
     const mockRecipe = { id: 1, name: 'Supă de legume', expiration_days: 7 };
     const mockEmployee = { id: 1, first_name: 'Ion', last_name: 'Popescu' };
-    const mockIngredients = [
-      { ingredient_id: 10, quantity_grams: 100 }, // cartofi
-      { ingredient_id: 20, quantity_grams: 50 },  // ceapă
+    const mockProducts = [
+      { product_id: 10, quantity_grams: 100 }, // cartofi
+      { product_id: 20, quantity_grams: 50 },  // ceapă
     ];
     const mockPreparation = { id: 1, recipe_id: 1, employee_id: 1, quantity: 4, is_labeled: true };
 
@@ -89,7 +89,7 @@ describe('RecipePreparationsService', () => {
     employeeRepo.findOne.mockResolvedValue(mockEmployee);
     prepRepo.create.mockReturnValue(mockPreparation);
     prepRepo.save.mockResolvedValue(mockPreparation);
-    recipeIngredientRepo.find.mockResolvedValue(mockIngredients);
+    recipeProductRepo.find.mockResolvedValue(mockProducts);
     stockService.consumeProduct.mockResolvedValue(undefined);
     labelsService.generateForPreparation.mockResolvedValue({} as any);
 
@@ -105,7 +105,7 @@ describe('RecipePreparationsService', () => {
     await service.create(createDto);
 
     // Assert
-    // Verifică că ingredientele au fost consumate din stoc
+    // Verifică că produsele au fost consumate din stoc
     expect(stockService.consumeProduct).toHaveBeenCalledWith(10, 100, 'recipe-preparation 1');
     expect(stockService.consumeProduct).toHaveBeenCalledWith(20, 50, 'recipe-preparation 1');
     expect(stockService.consumeProduct).toHaveBeenCalledTimes(2);
@@ -124,7 +124,7 @@ describe('RecipePreparationsService', () => {
     employeeRepo.findOne.mockResolvedValue(mockEmployee);
     prepRepo.create.mockReturnValue(mockPreparation);
     prepRepo.save.mockResolvedValue(mockPreparation);
-    recipeIngredientRepo.find.mockResolvedValue([]);
+    recipeProductRepo.find.mockResolvedValue([]);
 
     const createDto = {
       recipe_id: 1,

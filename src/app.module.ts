@@ -28,8 +28,7 @@ import { RecipesModule } from './recipes/recipes.module';
 // Entități Rețetar
 import { Recipe } from './recipes/entities/recipe.entity';
 import { RecipeCategory } from './recipes/entities/recipe-category.entity';
-import { Ingredient } from './recipes/entities/ingredient.entity';
-import { RecipeIngredient } from './recipes/entities/recipe-ingredient.entity';
+import { RecipeProduct } from './recipes/entities/recipe-product.entity';
 
 // Entități Stoc
 import { Product } from './stock/entities/product.entity';
@@ -103,8 +102,7 @@ import { WasteRecordsModule } from './waste-records/waste-records.module';
         // Entități rețetar
         Recipe,
         RecipeCategory,
-        Ingredient,
-        RecipeIngredient,
+        RecipeProduct,
         // Entități stoc
         Product,
         Locator,

@@ -7,7 +7,7 @@ import { UpdateRecipePreparationDto } from './dto/update-recipe-preparation.dto'
 import { Recipe } from '../recipes/entities/recipe.entity';
 import { Employee } from '../employee/entity/employee.entity';
 import { RecipeLabelsService } from '../recipe-labels/recipe-labels.service';
-import { RecipeIngredient } from '../recipes/entities/recipe-ingredient.entity';
+import { RecipeProduct } from '../recipes/entities/recipe-product.entity';
 import { StockService } from '../stock/stock.service';
 
 @Injectable()
@@ -20,8 +20,8 @@ export class RecipePreparationsService {
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
     private readonly labelsService: RecipeLabelsService,
-    @InjectRepository(RecipeIngredient)
-    private readonly recipeIngredientRepo: Repository<RecipeIngredient>,
+    @InjectRepository(RecipeProduct)
+    private readonly recipeProductRepo: Repository<RecipeProduct>,
     private readonly stockService: StockService,
   ) {}
 
@@ -49,13 +49,12 @@ export class RecipePreparationsService {
       await this.labelsService.generateForPreparation(saved.id);
     }
 
-    // Consumă ingredientele din stoc
-    const recipeIngredients = await this.recipeIngredientRepo.find({ where: { recipe_id: dto.recipe_id } });
-    for (const ri of recipeIngredients) {
-      const qty = Number(ri.quantity_grams);
+    // Consumă produsele din stoc
+    const recipeProducts = await this.recipeProductRepo.find({ where: { recipe_id: dto.recipe_id } });
+    for (const rp of recipeProducts) {
+      const qty = Number(rp.quantity_grams);
       if (qty > 0) {
-        // presupunem că ingredient_id == product_id în modul Stock
-        await this.stockService.consumeProduct(ri.ingredient_id, qty, `recipe-preparation ${saved.id}`);
+        await this.stockService.consumeProduct(rp.product_id, qty, `recipe-preparation ${saved.id}`);
       }
     }
 

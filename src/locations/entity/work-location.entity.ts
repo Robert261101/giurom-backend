@@ -13,7 +13,7 @@ import { Company } from '../../company/entity/company.entity';
 import { WorkLocationTaskTemplate } from './work-location-task-template.entity';
 import { WorkLocationDepartments } from './work-location-departments.entity';
 
-@Entity('work_locations')
+@Entity('work_location')
 export class WorkLocation {
   @ApiProperty({
     description: 'ID-ul unic al punctului de lucru',

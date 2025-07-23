@@ -3,16 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import { Recipe, DifficultyLevel } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
-import { Ingredient } from './entities/ingredient.entity';
-import { RecipeIngredient } from './entities/recipe-ingredient.entity';
+import { RecipeProduct } from './entities/recipe-product.entity';
+import { Product } from '../stock/entities/product.entity';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
-import { CreateIngredientDto } from './dto/create-ingredient.dto';
-import { UpdateIngredientDto } from './dto/update-ingredient.dto';
-import { CreateRecipeIngredientDto } from './dto/create-recipe-ingredient.dto';
-import { UpdateRecipeIngredientDto } from './dto/update-recipe-ingredient.dto';
+import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
+import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
 
 @Injectable()
 export class RecipesService {
@@ -21,10 +19,10 @@ export class RecipesService {
     private readonly recipeRepository: Repository<Recipe>,
     @InjectRepository(RecipeCategory)
     private readonly categoryRepository: Repository<RecipeCategory>,
-    @InjectRepository(Ingredient)
-    private readonly ingredientRepository: Repository<Ingredient>,
-    @InjectRepository(RecipeIngredient)
-    private readonly recipeIngredientRepository: Repository<RecipeIngredient>,
+    @InjectRepository(RecipeProduct)
+    private readonly recipeProductRepository: Repository<RecipeProduct>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
   ) {}
 
   // RECIPE CATEGORY METHODS
@@ -103,85 +101,6 @@ export class RecipesService {
     await this.categoryRepository.remove(category);
   }
 
-  // INGREDIENT METHODS
-  async createIngredient(createIngredientDto: CreateIngredientDto): Promise<Ingredient> {
-    // Verifică unicitatea numelui
-    const existingIngredient = await this.ingredientRepository.findOne({
-      where: { name: createIngredientDto.name },
-    });
-
-    if (existingIngredient) {
-      throw new ConflictException(`Ingredientul "${createIngredientDto.name}" există deja`);
-    }
-
-    const ingredient = this.ingredientRepository.create(createIngredientDto);
-    return await this.ingredientRepository.save(ingredient);
-  }
-
-  async findAllIngredients(
-    page: number = 1,
-    limit: number = 10,
-    search?: string,
-    category?: string,
-  ): Promise<{ data: Ingredient[]; total: number; page: number; limit: number }> {
-    const where: any = {};
-    if (search) where.name = Like(`%${search}%`);
-    if (category) where.category = category;
-
-    const [data, total] = await this.ingredientRepository.findAndCount({
-      where,
-      relations: ['recipe_ingredients', 'recipe_ingredients.recipe'],
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { name: 'ASC' },
-    });
-
-    return { data, total, page, limit };
-  }
-
-  async findIngredientById(id: number): Promise<Ingredient> {
-    const ingredient = await this.ingredientRepository.findOne({
-      where: { id },
-      relations: ['recipe_ingredients', 'recipe_ingredients.recipe'],
-    });
-
-    if (!ingredient) {
-      throw new NotFoundException(`Ingredientul cu ID-ul ${id} nu a fost găsit`);
-    }
-
-    return ingredient;
-  }
-
-  async updateIngredient(id: number, updateIngredientDto: UpdateIngredientDto): Promise<Ingredient> {
-    const ingredient = await this.findIngredientById(id);
-
-    // Verifică unicitatea numelui dacă se schimbă
-    if (updateIngredientDto.name && updateIngredientDto.name !== ingredient.name) {
-      const existingIngredient = await this.ingredientRepository.findOne({
-        where: { name: updateIngredientDto.name },
-      });
-
-      if (existingIngredient) {
-        throw new ConflictException(`Ingredientul "${updateIngredientDto.name}" există deja`);
-      }
-    }
-
-    Object.assign(ingredient, updateIngredientDto);
-    return await this.ingredientRepository.save(ingredient);
-  }
-
-  async deleteIngredient(id: number): Promise<void> {
-    const ingredient = await this.findIngredientById(id);
-
-    // Verifică dacă ingredientul este folosit în rețete
-    const usageCount = await this.recipeIngredientRepository.count({ where: { ingredient_id: id } });
-    if (usageCount > 0) {
-      throw new BadRequestException(`Nu se poate șterge ingredientul. Este folosit în ${usageCount} rețete`);
-    }
-
-    await this.ingredientRepository.remove(ingredient);
-  }
-
   // RECIPE METHODS
   async createRecipe(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
     // Verifică dacă categoria există
@@ -204,8 +123,8 @@ export class RecipesService {
   ): Promise<{ data: Recipe[]; total: number; page: number; limit: number }> {
     const queryBuilder = this.recipeRepository.createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.category', 'category')
-      .leftJoinAndSelect('recipe.recipe_ingredients', 'recipe_ingredients')
-      .leftJoinAndSelect('recipe_ingredients.ingredient', 'ingredient');
+      .leftJoinAndSelect('recipe.recipe_products', 'recipe_products')
+      .leftJoinAndSelect('recipe_products.product', 'product');
 
     if (search) {
       queryBuilder.andWhere('recipe.name LIKE :search OR recipe.description LIKE :search', { search: `%${search}%` });
@@ -236,7 +155,7 @@ export class RecipesService {
   async findRecipeById(id: number): Promise<Recipe> {
     const recipe = await this.recipeRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_ingredients', 'recipe_ingredients.ingredient'],
+      relations: ['category', 'recipe_products', 'recipe_products.product'],
     });
 
     if (!recipe) {
@@ -266,74 +185,74 @@ export class RecipesService {
     await this.recipeRepository.remove(recipe);
   }
 
-  // RECIPE INGREDIENT METHODS
-  async addIngredientToRecipe(createRecipeIngredientDto: CreateRecipeIngredientDto): Promise<RecipeIngredient> {
+  // RECIPE PRODUCT METHODS
+  async addProductToRecipe(createRecipeProductDto: CreateRecipeProductDto): Promise<RecipeProduct> {
     // Verifică dacă rețeta există
-    const recipe = await this.recipeRepository.findOne({ where: { id: createRecipeIngredientDto.recipe_id } });
+    const recipe = await this.recipeRepository.findOne({ where: { id: createRecipeProductDto.recipe_id } });
     if (!recipe) {
-      throw new NotFoundException(`Rețeta cu ID-ul ${createRecipeIngredientDto.recipe_id} nu a fost găsită`);
+      throw new NotFoundException(`Rețeta cu ID-ul ${createRecipeProductDto.recipe_id} nu a fost găsită`);
     }
 
-    // Verifică dacă ingredientul există
-    const ingredient = await this.ingredientRepository.findOne({ where: { id: createRecipeIngredientDto.ingredient_id } });
-    if (!ingredient) {
-      throw new NotFoundException(`Ingredientul cu ID-ul ${createRecipeIngredientDto.ingredient_id} nu a fost găsit`);
+    // Verifică dacă produsul există
+    const product = await this.productRepository.findOne({ where: { id: createRecipeProductDto.product_id } });
+    if (!product) {
+      throw new NotFoundException(`Produsul cu ID-ul ${createRecipeProductDto.product_id} nu a fost găsit`);
     }
 
-    // Verifică dacă ingredientul nu este deja adăugat în rețetă
-    const existingRecipeIngredient = await this.recipeIngredientRepository.findOne({
+    // Verifică dacă produsul nu este deja adăugat în rețetă
+    const existingRecipeProduct = await this.recipeProductRepository.findOne({
       where: {
-        recipe_id: createRecipeIngredientDto.recipe_id,
-        ingredient_id: createRecipeIngredientDto.ingredient_id,
+        recipe_id: createRecipeProductDto.recipe_id,
+        product_id: createRecipeProductDto.product_id,
       },
     });
 
-    if (existingRecipeIngredient) {
-      throw new ConflictException(`Ingredientul "${ingredient.name}" este deja adăugat în rețeta "${recipe.name}"`);
+    if (existingRecipeProduct) {
+      throw new ConflictException(`Produsul "${product.name}" este deja adăugat în rețeta "${recipe.name}"`);
     }
 
-    const recipeIngredient = this.recipeIngredientRepository.create(createRecipeIngredientDto);
-    return await this.recipeIngredientRepository.save(recipeIngredient);
+    const recipeProduct = this.recipeProductRepository.create(createRecipeProductDto);
+    return await this.recipeProductRepository.save(recipeProduct);
   }
 
-  async findRecipeIngredients(recipe_id: number): Promise<RecipeIngredient[]> {
-    return await this.recipeIngredientRepository.find({
+  async findRecipeProducts(recipe_id: number): Promise<RecipeProduct[]> {
+    return await this.recipeProductRepository.find({
       where: { recipe_id },
-      relations: ['recipe', 'ingredient'],
+      relations: ['recipe', 'product'],
       order: { created_at: 'ASC' },
     });
   }
 
-  async updateRecipeIngredient(id: number, updateRecipeIngredientDto: UpdateRecipeIngredientDto): Promise<RecipeIngredient> {
-    const recipeIngredient = await this.recipeIngredientRepository.findOne({
+  async updateRecipeProduct(id: number, updateRecipeProductDto: UpdateRecipeProductDto): Promise<RecipeProduct> {
+    const recipeProduct = await this.recipeProductRepository.findOne({
       where: { id },
-      relations: ['recipe', 'ingredient'],
+      relations: ['recipe', 'product'],
     });
 
-    if (!recipeIngredient) {
-      throw new NotFoundException(`Asocierea rețetă-ingredient cu ID-ul ${id} nu a fost găsită`);
+    if (!recipeProduct) {
+      throw new NotFoundException(`Asocierea rețetă-produs cu ID-ul ${id} nu a fost găsită`);
     }
 
-    Object.assign(recipeIngredient, updateRecipeIngredientDto);
-    return await this.recipeIngredientRepository.save(recipeIngredient);
+    Object.assign(recipeProduct, updateRecipeProductDto);
+    return await this.recipeProductRepository.save(recipeProduct);
   }
 
-  async removeIngredientFromRecipe(id: number): Promise<void> {
-    const recipeIngredient = await this.recipeIngredientRepository.findOne({ where: { id } });
+  async removeProductFromRecipe(id: number): Promise<void> {
+    const recipeProduct = await this.recipeProductRepository.findOne({ where: { id } });
 
-    if (!recipeIngredient) {
-      throw new NotFoundException(`Asocierea rețetă-ingredient cu ID-ul ${id} nu a fost găsită`);
+    if (!recipeProduct) {
+      throw new NotFoundException(`Asocierea rețetă-produs cu ID-ul ${id} nu a fost găsită`);
     }
 
-    await this.recipeIngredientRepository.remove(recipeIngredient);
+    await this.recipeProductRepository.remove(recipeProduct);
   }
 
   // STATISTICS AND REPORTS
   async getRecipeStatistics(): Promise<any> {
-    const [totalRecipes, totalCategories, totalIngredients, recipesByDifficulty] = await Promise.all([
+    const [totalRecipes, totalCategories, totalProducts, recipesByDifficulty] = await Promise.all([
       this.recipeRepository.count(),
       this.categoryRepository.count(),
-      this.ingredientRepository.count(),
+      this.productRepository.count(),
       this.recipeRepository
         .createQueryBuilder('recipe')
         .select('recipe.difficulty', 'difficulty')
@@ -347,12 +266,12 @@ export class RecipesService {
       .select('AVG(recipe.cooking_time)', 'avg')
       .getRawOne();
 
-    const mostUsedIngredients = await this.recipeIngredientRepository
-      .createQueryBuilder('ri')
-      .leftJoin('ri.ingredient', 'ingredient')
-      .select('ingredient.name', 'name')
+    const mostUsedProducts = await this.recipeProductRepository
+      .createQueryBuilder('rp')
+      .leftJoin('rp.product', 'product')
+      .select('product.name', 'name')
       .addSelect('COUNT(*)', 'usage_count')
-      .groupBy('ri.ingredient_id')
+      .groupBy('rp.product_id')
       .orderBy('COUNT(*)', 'DESC')
       .limit(10)
       .getRawMany();
@@ -360,10 +279,10 @@ export class RecipesService {
     return {
       totalRecipes,
       totalCategories,
-      totalIngredients,
+      totalProducts,
       avgCookingTime: avgCookingTime?.avg ? Math.round(avgCookingTime.avg) : 0,
       recipesByDifficulty,
-      mostUsedIngredients,
+      mostUsedProducts,
     };
   }
 }

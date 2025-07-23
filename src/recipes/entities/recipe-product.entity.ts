@@ -9,12 +9,12 @@ import {
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Recipe } from './recipe.entity';
-import { Ingredient } from './ingredient.entity';
+import { Product } from '../../stock/entities/product.entity';
 
-@Entity('recipe_ingredients')
-export class RecipeIngredient {
+@Entity('recipe_products')
+export class RecipeProduct {
   @ApiProperty({
-    description: 'ID-ul unic al asocierii rețetă-ingredient',
+    description: 'ID-ul unic al asocierii rețetă-produs',
     example: 1,
   })
   @PrimaryGeneratedColumn()
@@ -28,11 +28,11 @@ export class RecipeIngredient {
   recipe_id: number;
 
   @ApiProperty({
-    description: 'ID-ul ingredientului',
+    description: 'ID-ul produsului',
     example: 1,
   })
   @Column()
-  ingredient_id: number;
+  product_id: number;
 
   @ApiProperty({
     description: 'Cantitatea în grame',
@@ -46,7 +46,7 @@ export class RecipeIngredient {
   quantity_grams: number;
 
   @ApiProperty({
-    description: 'Note suplimentare despre ingredient în rețetă',
+    description: 'Note suplimentare despre produs în rețetă',
     example: 'Tăiați cubulețe mici',
     required: false,
   })
@@ -74,10 +74,10 @@ export class RecipeIngredient {
 
   // Relații
   @ApiProperty({
-    description: 'Rețeta care folosește ingredientul',
+    description: 'Rețeta care folosește produsul',
     type: () => Recipe,
   })
-  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_ingredients, { 
+  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_products, { 
     onDelete: 'CASCADE', 
     onUpdate: 'CASCADE' 
   })
@@ -85,13 +85,13 @@ export class RecipeIngredient {
   recipe: Recipe;
 
   @ApiProperty({
-    description: 'Ingredientul folosit în rețetă',
-    type: () => Ingredient,
+    description: 'Produsul folosit în rețetă',
+    type: () => Product,
   })
-  @ManyToOne(() => Ingredient, (ingredient) => ingredient.recipe_ingredients, { 
+  @ManyToOne(() => Product, (product) => product.recipe_products, { 
     onDelete: 'CASCADE', 
     onUpdate: 'CASCADE' 
   })
-  @JoinColumn({ name: 'ingredient_id' })
-  ingredient: Ingredient;
-} 
+  @JoinColumn({ name: 'product_id' })
+  product: Product;
+}
