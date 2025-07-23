@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive, IsEnum, IsDateString, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsPositive, IsEnum, IsDate, IsOptional, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { StockStatus } from '../entities/stock.entity';
 
 export class CreateStockDto {
@@ -24,11 +25,13 @@ export class CreateStockDto {
   price: number;
 
   @ApiProperty({ description: 'Data intrării', example: '2024-07-01T10:00:00Z' })
-  @IsDateString()
+  @Transform(({ value }) => new Date(value))
+  @IsDate()
   entry_date: Date;
 
   @ApiProperty({ description: 'Data expirării', example: '2024-09-01T00:00:00Z', required: false })
-  @IsDateString()
+  @Transform(({ value }) => value ? new Date(value) : undefined)
+  @IsDate()
   @IsOptional()
   expiration_date?: Date;
 

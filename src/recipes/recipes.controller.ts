@@ -79,11 +79,13 @@ export class RecipesController {
     description: 'Lista categoriilor a fost returnată cu succes',
   })
   async findAllRecipeCategories(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
   ) {
-    return await this.recipesService.findAllRecipeCategories(page, limit, search);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    return await this.recipesService.findAllRecipeCategories(pageNum, limitNum, search);
   }
 
   @Get('categories/:id')
@@ -178,12 +180,14 @@ export class RecipesController {
     description: 'Lista ingredientelor a fost returnată cu succes',
   })
   async findAllIngredients(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
     @Query('category') category?: string,
   ) {
-    return await this.recipesService.findAllIngredients(page, limit, search, category);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    return await this.recipesService.findAllIngredients(pageNum, limitNum, search, category);
   }
 
   @Get('ingredients/:id')
@@ -307,14 +311,18 @@ export class RecipesController {
     description: 'Lista rețetelor a fost returnată cu succes',
   })
   async findAllRecipes(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
-    @Query('category_id', new ParseIntPipe({ optional: true })) category_id?: number,
+    @Query('category_id') category_id?: string,
     @Query('difficulty') difficulty?: DifficultyLevel,
-    @Query('max_cooking_time', new ParseIntPipe({ optional: true })) max_cooking_time?: number,
+    @Query('max_cooking_time') max_cooking_time?: string,
   ) {
-    return await this.recipesService.findAllRecipes(page, limit, search, category_id, difficulty, max_cooking_time);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const categoryIdNum = category_id ? parseInt(category_id, 10) : undefined;
+    const maxCookingTimeNum = max_cooking_time ? parseInt(max_cooking_time, 10) : undefined;
+    return await this.recipesService.findAllRecipes(pageNum, limitNum, search, categoryIdNum, difficulty, maxCookingTimeNum);
   }
 
   @Get(':id')
