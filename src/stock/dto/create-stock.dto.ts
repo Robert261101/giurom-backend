@@ -9,6 +9,11 @@ export class CreateStockDto {
   @IsPositive()
   product_id: number;
 
+  @ApiProperty({ description: 'ID item comandă furnizor', example: 123, required: false })
+  @IsNumber()
+  @IsOptional()
+  supplier_order_item_id?: number;
+
 
 
   @ApiProperty({ description: 'Cantitate', example: 100 })

@@ -40,7 +40,7 @@ export class RecipeProduct {
   })
   @Column({
     type: 'decimal',
-    precision: 8,
+    precision: 6,
     scale: 2,
   })
   quantity: number;

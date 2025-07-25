@@ -30,9 +30,9 @@ export class RecipePreparationsService {
       const recipe = await this.recipeRepo.findOne({ where: { id: dto.recipe_id } });
       if (!recipe) throw new NotFoundException(`Rețeta ${dto.recipe_id} nu există`);
     }
-    if (dto.employee_id) {
-      const employee = await this.employeeRepo.findOne({ where: { id: dto.employee_id } });
-      if (!employee) throw new NotFoundException(`Angajatul ${dto.employee_id} nu există`);
+    if (dto.produced_by) {
+      const employee = await this.employeeRepo.findOne({ where: { id: dto.produced_by } });
+      if (!employee) throw new NotFoundException(`Angajatul ${dto.produced_by} nu există`);
     }
   }
 
@@ -65,14 +65,14 @@ export class RecipePreparationsService {
 
   findAll(): Promise<RecipePreparation[]> {
     return this.prepRepo.find({ 
-      relations: ['recipe', 'produced_by', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
+      relations: ['recipe', 'employee', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
     });
   }
 
   async findOne(id: number): Promise<RecipePreparation> {
     const prep = await this.prepRepo.findOne({ 
       where: { id }, 
-      relations: ['recipe', 'produced_by', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
+      relations: ['recipe', 'employee', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
     });
     if (!prep) throw new NotFoundException('Prepararea nu a fost găsită');
     return prep;

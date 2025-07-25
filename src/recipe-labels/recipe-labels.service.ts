@@ -23,7 +23,7 @@ export class RecipeLabelsService {
   async generateForPreparation(prepId: number): Promise<RecipeLabel> {
     console.log(`Starting label generation for preparation ${prepId}`);
     
-    const prep = await this.prepRepo.findOne({ where: { id: prepId }, relations: ['recipe', 'produced_by'] });
+    const prep = await this.prepRepo.findOne({ where: { id: prepId }, relations: ['recipe', 'employee'] });
     if (!prep) {
       console.error(`Preparation ${prepId} not found`);
       throw new NotFoundException('Prepararea nu există');
@@ -54,7 +54,7 @@ export class RecipeLabelsService {
         recipeName: prep.recipe?.name || 'Unknown Recipe',
         producedAt: prep.produced_at.toISOString().split('T')[0],
         expirationAt: expHours ? expirationDate.toISOString().split('T')[0] : 'N/A',
-        author: prep.produced_by ? `${prep.produced_by.first_name ?? ''} ${prep.produced_by.last_name ?? ''}` : 'N/A',
+        author: prep.employee ? `${prep.employee.first_name ?? ''} ${prep.employee.last_name ?? ''}` : 'N/A',
       });
       console.log(`PDF generated successfully`);
     } catch (pdfError) {
@@ -107,7 +107,7 @@ export class RecipeLabelsService {
 
   findAll() {
     return this.labelRepo.find({
-      relations: ['preparation', 'preparation.recipe', 'preparation.produced_by']
+      relations: ['preparation', 'preparation.recipe', 'preparation.employee']
     });
   }
 

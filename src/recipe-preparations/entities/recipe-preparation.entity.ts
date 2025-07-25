@@ -16,7 +16,7 @@ export class RecipePreparation {
 
   @ApiProperty({ description: 'ID-ul angajatului care a produs', example: 12, required: false })
   @Column({ nullable: true })
-  employee_id: number | null;
+  produced_by: number | null;
 
   @ApiProperty({ description: 'Cantitatea totală produsă', example: 250.5 })
   @Column({ type: 'decimal', precision: 10, scale: 2 })
@@ -45,8 +45,8 @@ export class RecipePreparation {
   recipe: Recipe;
 
   @ManyToOne(() => Employee, (employee) => employee.id, { onDelete: 'SET NULL', onUpdate: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'employee_id' })
-  produced_by: Employee | null;
+  @JoinColumn({ name: 'produced_by' })
+  employee: Employee | null;
 
   @OneToOne(() => RecipeLabel, (label) => label.preparation)
   label: RecipeLabel;

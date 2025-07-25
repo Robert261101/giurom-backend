@@ -21,29 +21,16 @@ export class RecipeCategory {
   @ApiProperty({
     description: 'Numele categoriei de rețete',
     example: 'Supe și Ciorbe',
-    maxLength: 100,
+    maxLength: 150,
   })
   @Column({
     type: 'varchar',
-    length: 100,
+    length: 150,
     unique: true,
     charset: 'utf8mb4',
     collation: 'utf8mb4_unicode_ci'
   })
   name: string;
-
-  @ApiProperty({
-    description: 'Descrierea categoriei',
-    example: 'Rețete pentru supe, ciorbe și mâncăruri lichide',
-    required: false,
-  })
-  @Column({
-    type: 'text',
-    nullable: true,
-    charset: 'utf8mb4',
-    collation: 'utf8mb4_unicode_ci'
-  })
-  description: string;
 
   @ApiProperty({
     description: 'Data când a fost creată categoria',

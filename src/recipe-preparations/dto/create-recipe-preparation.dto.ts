@@ -11,7 +11,7 @@ export class CreateRecipePreparationDto {
   @IsOptional()
   @IsInt()
   @IsPositive()
-  employee_id?: number;
+  produced_by?: number;
 
   @ApiProperty({ example: 250.75, description: 'Cantitatea produsă' })
   @IsNumber({}, { message: 'quantity trebuie să fie număr' })
