@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
-import { Recipe, DifficultyLevel } from './entities/recipe.entity';
+import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
 import { Product } from '../stock/entities/product.entity';
@@ -118,8 +118,6 @@ export class RecipesService {
     limit: number = 10,
     search?: string,
     category_id?: number,
-    difficulty?: DifficultyLevel,
-    max_cooking_time?: number,
   ): Promise<{ data: Recipe[]; total: number; page: number; limit: number }> {
     const queryBuilder = this.recipeRepository.createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.category', 'category')
@@ -132,14 +130,6 @@ export class RecipesService {
 
     if (category_id) {
       queryBuilder.andWhere('recipe.category_id = :category_id', { category_id });
-    }
-
-    if (difficulty) {
-      queryBuilder.andWhere('recipe.difficulty = :difficulty', { difficulty });
-    }
-
-    if (max_cooking_time) {
-      queryBuilder.andWhere('recipe.cooking_time <= :max_cooking_time', { max_cooking_time });
     }
 
     const total = await queryBuilder.getCount();
@@ -249,21 +239,20 @@ export class RecipesService {
 
   // STATISTICS AND REPORTS
   async getRecipeStatistics(): Promise<any> {
-    const [totalRecipes, totalCategories, totalProducts, recipesByDifficulty] = await Promise.all([
+    const [totalRecipes, totalCategories, totalProducts] = await Promise.all([
       this.recipeRepository.count(),
       this.categoryRepository.count(),
       this.productRepository.count(),
-      this.recipeRepository
-        .createQueryBuilder('recipe')
-        .select('recipe.difficulty', 'difficulty')
-        .addSelect('COUNT(*)', 'count')
-        .groupBy('recipe.difficulty')
-        .getRawMany(),
     ]);
 
-    const avgCookingTime = await this.recipeRepository
+    const avgQuantity = await this.recipeRepository
       .createQueryBuilder('recipe')
-      .select('AVG(recipe.cooking_time)', 'avg')
+      .select('AVG(recipe.quantity)', 'avg')
+      .getRawOne();
+
+    const avgExpirationHours = await this.recipeRepository
+      .createQueryBuilder('recipe')
+      .select('AVG(recipe.expiration_days)', 'avg')
       .getRawOne();
 
     const mostUsedProducts = await this.recipeProductRepository
@@ -280,8 +269,8 @@ export class RecipesService {
       totalRecipes,
       totalCategories,
       totalProducts,
-      avgCookingTime: avgCookingTime?.avg ? Math.round(avgCookingTime.avg) : 0,
-      recipesByDifficulty,
+      avgQuantity: avgQuantity?.avg ? Math.round(avgQuantity.avg) : 1000,
+      avgExpirationHours: avgExpirationHours?.avg ? Math.round(avgExpirationHours.avg) : 48,
       mostUsedProducts,
     };
   }

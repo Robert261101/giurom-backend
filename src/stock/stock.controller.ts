@@ -3,17 +3,13 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@ne
 import { StockService } from './stock.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { CreateLocatorDto } from './dto/create-locator.dto';
-import { UpdateLocatorDto } from './dto/update-locator.dto';
+
 import { CreateStockDto } from './dto/create-stock.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
-import { CreateRecipeUsageDto } from './dto/create-recipe-usage.dto';
 import { Product } from './entities/product.entity';
-import { Locator } from './entities/locator.entity';
 import { Stock } from './entities/stock.entity';
 import { StockTransaction } from './entities/stock-transaction.entity';
-import { RecipeUsage } from './entities/recipe-usage.entity';
 
 @ApiTags('stock')
 @Controller('stock')
@@ -52,27 +48,7 @@ export class StockController {
     return this.stockService.deleteProduct(id);
   }
 
-  /* LOCATORS */
-  @Post('locators')
-  createLocator(@Body() dto: CreateLocatorDto): Promise<Locator> {
-    return this.stockService.createLocator(dto);
-  }
-  @Get('locators')
-  findAllLocators(): Promise<Locator[]> {
-    return this.stockService.findAllLocators();
-  }
-  @Get('locators/:id')
-  findLocator(@Param('id', ParseIntPipe) id: number) {
-    return this.stockService.findLocator(id);
-  }
-  @Patch('locators/:id')
-  updateLocator(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLocatorDto) {
-    return this.stockService.updateLocator(id, dto);
-  }
-  @Delete('locators/:id')
-  deleteLocator(@Param('id', ParseIntPipe) id: number) {
-    return this.stockService.deleteLocator(id);
-  }
+
 
   /* STOCK ITEMS */
   @Post('items')
@@ -106,9 +82,5 @@ export class StockController {
     return this.stockService.findAllTransactions();
   }
 
-  /* RECIPE USAGE */
-  @Post('recipe-usages')
-  createUsage(@Body() dto: CreateRecipeUsageDto): Promise<RecipeUsage> {
-    return this.stockService.createRecipeUsage(dto);
-  }
+
 } 

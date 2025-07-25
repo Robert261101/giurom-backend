@@ -4,8 +4,8 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
 import { Product } from './entities/product.entity';
-import { Locator } from './entities/locator.entity';
-import { RecipeUsage } from './entities/recipe-usage.entity';
+
+
 import { Repository } from 'typeorm';
 
 describe('StockService', () => {
@@ -13,8 +13,7 @@ describe('StockService', () => {
   let stockRepo: jest.Mocked<Repository<Stock>>;
   let transactionRepo: jest.Mocked<Repository<StockTransaction>>;
   let productRepo: jest.Mocked<Repository<Product>>;
-  let locatorRepo: jest.Mocked<Repository<Locator>>;
-  let recipeUsageRepo: jest.Mocked<Repository<RecipeUsage>>;
+
 
   beforeEach(async () => {
     const mockRepo = {
@@ -48,14 +47,7 @@ describe('StockService', () => {
           provide: getRepositoryToken(Product),
           useValue: mockRepo,
         },
-        {
-          provide: getRepositoryToken(Locator),
-          useValue: mockRepo,
-        },
-        {
-          provide: getRepositoryToken(RecipeUsage),
-          useValue: mockRepo,
-        },
+
       ],
     }).compile();
 
@@ -63,8 +55,6 @@ describe('StockService', () => {
     stockRepo = module.get(getRepositoryToken(Stock));
     transactionRepo = module.get(getRepositoryToken(StockTransaction));
     productRepo = module.get(getRepositoryToken(Product));
-    locatorRepo = module.get(getRepositoryToken(Locator));
-    recipeUsageRepo = module.get(getRepositoryToken(RecipeUsage));
 
     // Reset mocks before each test
     jest.clearAllMocks();

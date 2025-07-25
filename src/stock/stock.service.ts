@@ -2,29 +2,25 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException }
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { Product } from './entities/product.entity';
-import { Locator } from './entities/locator.entity';
+
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
-import { RecipeUsage } from './entities/recipe-usage.entity';
+
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { CreateLocatorDto } from './dto/create-locator.dto';
-import { UpdateLocatorDto } from './dto/update-locator.dto';
+
 import { CreateStockDto } from './dto/create-stock.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { UpdateStockTransactionDto } from './dto/update-stock-transaction.dto';
-import { CreateRecipeUsageDto } from './dto/create-recipe-usage.dto';
-import { UpdateRecipeUsageDto } from './dto/update-recipe-usage.dto';
+
 
 @Injectable()
 export class StockService {
   constructor(
     @InjectRepository(Product) private readonly productRepo: Repository<Product>,
-    @InjectRepository(Locator) private readonly locatorRepo: Repository<Locator>,
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
-    @InjectRepository(RecipeUsage) private readonly usageRepo: Repository<RecipeUsage>,
   ) {}
 
   /* PRODUCT CRUD */
@@ -58,52 +54,22 @@ export class StockService {
     await this.productRepo.remove(product);
   }
 
-  /* LOCATOR CRUD */
-  async createLocator(dto: CreateLocatorDto): Promise<Locator> {
-    const existing = await this.locatorRepo.findOne({ where: { name: dto.name } });
-    if (existing) throw new ConflictException('Locatorul există deja');
-    const loc = this.locatorRepo.create(dto);
-    return await this.locatorRepo.save(loc);
-  }
 
-  async findAllLocators(): Promise<Locator[]> {
-    return await this.locatorRepo.find();
-  }
-
-  async findLocator(id: number): Promise<Locator> {
-    const loc = await this.locatorRepo.findOne({ where: { id } });
-    if (!loc) throw new NotFoundException('Locatorul nu a fost găsit');
-    return loc;
-  }
-
-  async updateLocator(id: number, dto: UpdateLocatorDto): Promise<Locator> {
-    const loc = await this.findLocator(id);
-    Object.assign(loc, dto);
-    return await this.locatorRepo.save(loc);
-  }
-
-  async deleteLocator(id: number): Promise<void> {
-    const loc = await this.findLocator(id);
-    const stockCount = await this.stockRepo.count({ where: { locator_id: id } });
-    if (stockCount > 0) throw new BadRequestException('Locatorul este folosit în stocuri');
-    await this.locatorRepo.remove(loc);
-  }
 
   /* STOCK CRUD */
   async createStock(dto: CreateStockDto): Promise<Stock> {
-    // validation product/locator exists
+    // validation product exists
     const product = await this.findProduct(dto.product_id);
-    const locator = await this.findLocator(dto.locator_id);
-    const stock = this.stockRepo.create({ ...dto, product, locator });
+    const stock = this.stockRepo.create({ ...dto, product });
     return await this.stockRepo.save(stock);
   }
 
   async findAllStocks(): Promise<Stock[]> {
-    return await this.stockRepo.find({ relations: ['product', 'locator'] });
+    return await this.stockRepo.find({ relations: ['product'] });
   }
 
   async findStock(id: number): Promise<Stock> {
-    const s = await this.stockRepo.findOne({ where: { id }, relations: ['product', 'locator', 'transactions'] });
+    const s = await this.stockRepo.findOne({ where: { id }, relations: ['product', 'transactions'] });
     if (!s) throw new NotFoundException('Stocul nu a fost găsit');
     return s;
   }
@@ -120,43 +86,77 @@ export class StockService {
   }
 
   /*
-   * Consumă cantitatea specificată din stocurile valide (FIFO)
+   * Consumă cantitatea specificată din stocurile valide (FEFO - First Expired, First Out)
+   * Prioritizează stocurile care expiră cel mai repede pentru a minimiza risipa
    */
   async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation'): Promise<void> {
     let remaining = quantity;
 
-    // FIFO: cele mai vechi entry_date primele
+    // FEFO: cele care expiră cel mai repede primele
+    // Sortează după expiration_date ASC, apoi după entry_date ASC pentru tie-breaking
     const stocks = await this.stockRepo.find({
       where: { product_id: productId, status: StockStatus.VALID, quantity: MoreThan(0) },
-      order: { entry_date: 'ASC' },
+      order: { 
+        expiration_date: 'ASC',
+        entry_date: 'ASC' 
+      },
     });
 
-    for (const s of stocks) {
+    if (stocks.length === 0) {
+      throw new BadRequestException(`Nu există stoc valid pentru produsul ${productId}`);
+    }
+
+    // Calculează cantitatea totală disponibilă pentru verificare
+    const totalAvailable = stocks.reduce((sum, stock) => sum + Number(stock.quantity), 0);
+    if (totalAvailable < quantity) {
+      throw new BadRequestException(
+        `Cantitate insuficientă în stoc pentru produsul ${productId}. ` +
+        `Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`
+      );
+    }
+
+    console.log(`🔄 Consuming ${quantity} from product ${productId} using FEFO strategy:`);
+
+    for (const stock of stocks) {
       if (remaining <= 0) break;
 
-      const take = Math.min(s.quantity, remaining);
+      const availableInStock = Number(stock.quantity);
+      const toConsume = Math.min(availableInStock, remaining);
+
+      console.log(`  📦 Taking ${toConsume} from stock ${stock.id} (expires: ${stock.expiration_date?.toISOString().split('T')[0] || 'N/A'})`);
 
       // Creează tranzacție EXIT
       const tx = this.txRepo.create({
-        stock: s,
-        stock_id: s.id,
+        stock: stock,
+        stock_id: stock.id,
         type: TransactionType.EXIT,
-        quantity: take,
+        quantity: toConsume,
         location: 'production',
         target,
       });
       await this.txRepo.save(tx);
 
       // Actualizează stoc
-      s.quantity -= take;
-      s.last_update = new Date();
-      await this.stockRepo.save(s);
+      stock.quantity = availableInStock - toConsume;
+      stock.last_update = new Date();
+      
+      // Dacă stocul s-a epuizat, marchează-l ca fiind consumat complet
+      if (stock.quantity === 0) {
+        console.log(`  ✅ Stock ${stock.id} fully consumed`);
+      }
+      
+      await this.stockRepo.save(stock);
 
-      remaining -= take;
+      remaining -= toConsume;
     }
 
+    console.log(`✅ Successfully consumed ${quantity} from product ${productId}. Remaining needed: ${remaining}`);
+
+    // Această verificare nu ar trebui să se declanșeze niciodată datorită verificării de mai sus
     if (remaining > 0) {
-      throw new BadRequestException(`Cantitate insuficientă în stoc pentru produsul ${productId}. Lipsesc ${remaining}`);
+      throw new BadRequestException(
+        `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`
+      );
     }
   }
 
@@ -181,23 +181,5 @@ export class StockService {
     return await this.txRepo.find({ relations: ['stock'] });
   }
 
-  /* RECIPE USAGE */
-  async createRecipeUsage(dto: CreateRecipeUsageDto): Promise<RecipeUsage> {
-    const product = await this.findProduct(dto.product_id);
-    const usage = this.usageRepo.create({ ...dto, product });
-    return await this.usageRepo.save(usage);
-  }
 
-  async updateRecipeUsage(id: number, dto: UpdateRecipeUsageDto): Promise<RecipeUsage> {
-    const usage = await this.usageRepo.findOne({ where: { id } });
-    if (!usage) throw new NotFoundException('Utilizarea nu a fost găsită');
-    Object.assign(usage, dto);
-    return await this.usageRepo.save(usage);
-  }
-
-  async deleteRecipeUsage(id: number): Promise<void> {
-    const usage = await this.usageRepo.findOne({ where: { id } });
-    if (!usage) throw new NotFoundException('Utilizarea nu a fost găsită');
-    await this.usageRepo.remove(usage);
-  }
 } 

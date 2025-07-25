@@ -21,35 +21,58 @@ export class RecipeLabelsService {
   ) {}
 
   async generateForPreparation(prepId: number): Promise<RecipeLabel> {
+    console.log(`Starting label generation for preparation ${prepId}`);
+    
     const prep = await this.prepRepo.findOne({ where: { id: prepId }, relations: ['recipe', 'produced_by'] });
-    if (!prep) throw new NotFoundException('Prepararea nu există');
+    if (!prep) {
+      console.error(`Preparation ${prepId} not found`);
+      throw new NotFoundException('Prepararea nu există');
+    }
+
+    console.log(`Found preparation: ${prep.id}, recipe: ${prep.recipe?.name}`);
 
     const label_code = `LBL-${uuidv4()}`;
+    console.log(`Generated label code: ${label_code}`);
 
-    // Determine expiration date based on recipe.expiration_days
-    const expDays = prep.recipe?.expiration_days || 0;
+    // Determine expiration date based on recipe.expiration_days (in hours)
+    const expHours = prep.recipe?.expiration_days || 48; // Default 48 hours
     const expirationDate = new Date(prep.produced_at);
-    expirationDate.setDate(expirationDate.getDate() + expDays);
+    expirationDate.setHours(expirationDate.getHours() + expHours);
 
     // Generate PDF
     const labelsDir = path.join(process.cwd(), 'labels');
-    if (!fs.existsSync(labelsDir)) fs.mkdirSync(labelsDir);
+    if (!fs.existsSync(labelsDir)) {
+      console.log(`Creating labels directory: ${labelsDir}`);
+      fs.mkdirSync(labelsDir);
+    }
     const filePath = path.join(labelsDir, `${label_code}.pdf`);
+    console.log(`PDF will be saved to: ${filePath}`);
 
-    await this.generatePdf({
-      filePath,
-      recipeName: prep.recipe.name,
-      producedAt: prep.produced_at.toISOString().split('T')[0],
-      expirationAt: expDays ? expirationDate.toISOString().split('T')[0] : 'N/A',
-      author: prep.produced_by ? `${prep.produced_by.first_name ?? ''} ${prep.produced_by.last_name ?? ''}` : 'N/A',
-    });
+    try {
+      await this.generatePdf({
+        filePath,
+        recipeName: prep.recipe?.name || 'Unknown Recipe',
+        producedAt: prep.produced_at.toISOString().split('T')[0],
+        expirationAt: expHours ? expirationDate.toISOString().split('T')[0] : 'N/A',
+        author: prep.produced_by ? `${prep.produced_by.first_name ?? ''} ${prep.produced_by.last_name ?? ''}` : 'N/A',
+      });
+      console.log(`PDF generated successfully`);
+    } catch (pdfError) {
+      console.error(`PDF generation failed:`, pdfError);
+      // Continue with label creation even if PDF fails
+    }
 
     const label = this.labelRepo.create({
       recipe_preparation_id: prep.id,
       label_code,
       label_file_path: filePath,
     });
-    return this.labelRepo.save(label);
+    
+    console.log(`Saving label to database...`);
+    const savedLabel = await this.labelRepo.save(label);
+    console.log(`Label saved successfully: ${savedLabel.id}`);
+    
+    return savedLabel;
   }
 
   async generatePdf({ filePath, recipeName, producedAt, expirationAt, author }: { filePath: string; recipeName: string; producedAt: string; expirationAt: string; author: string; }): Promise<void> {
@@ -83,7 +106,9 @@ export class RecipeLabelsService {
   }
 
   findAll() {
-    return this.labelRepo.find();
+    return this.labelRepo.find({
+      relations: ['preparation', 'preparation.recipe', 'preparation.produced_by']
+    });
   }
 
   findOne(id: number) {

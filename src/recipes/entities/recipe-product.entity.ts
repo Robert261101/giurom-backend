@@ -35,7 +35,7 @@ export class RecipeProduct {
   product_id: number;
 
   @ApiProperty({
-    description: 'Cantitatea în grame',
+    description: 'Cantitatea în unitatea produsului',
     example: 500,
   })
   @Column({
@@ -43,7 +43,7 @@ export class RecipeProduct {
     precision: 8,
     scale: 2,
   })
-  quantity_grams: number;
+  quantity: number;
 
   @ApiProperty({
     description: 'Note suplimentare despre produs în rețetă',

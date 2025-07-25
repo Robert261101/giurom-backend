@@ -31,7 +31,7 @@ import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
-import { Recipe, DifficultyLevel } from './entities/recipe.entity';
+import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
 import { Product } from '../stock/entities/product.entity';
@@ -76,11 +76,13 @@ export class RecipesController {
     description: 'Lista categoriilor a fost returnată cu succes',
   })
   async findAllRecipeCategories(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
   ) {
-    return await this.recipesService.findAllRecipeCategories(page, limit, search);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    return await this.recipesService.findAllRecipeCategories(pageNum, limitNum, search);
   }
 
   @Get('categories/:id')
@@ -142,6 +144,7 @@ export class RecipesController {
     return await this.recipesService.deleteRecipeCategory(id);
   }
 
+
   // RECIPE ENDPOINTS
   @Post()
   @ApiOperation({
@@ -197,21 +200,20 @@ export class RecipesController {
   @ApiQuery({ name: 'limit', required: false, description: 'Numărul de rezultate pe pagină', example: 10 })
   @ApiQuery({ name: 'search', required: false, description: 'Căutare după numele sau descrierea rețetei', example: 'supă' })
   @ApiQuery({ name: 'category_id', required: false, description: 'Filtrare după categoria rețetei', example: 1 })
-  @ApiQuery({ name: 'difficulty', required: false, enum: DifficultyLevel, description: 'Filtrare după dificultate' })
-  @ApiQuery({ name: 'max_cooking_time', required: false, description: 'Timpul maxim de gătire în minute', example: 60 })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista rețetelor a fost returnată cu succes',
   })
   async findAllRecipes(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
-    @Query('category_id', new ParseIntPipe({ optional: true })) category_id?: number,
-    @Query('difficulty') difficulty?: DifficultyLevel,
-    @Query('max_cooking_time', new ParseIntPipe({ optional: true })) max_cooking_time?: number,
+    @Query('category_id') category_id?: string,
   ) {
-    return await this.recipesService.findAllRecipes(page, limit, search, category_id, difficulty, max_cooking_time);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const categoryIdNum = category_id ? parseInt(category_id, 10) : undefined;
+    return await this.recipesService.findAllRecipes(pageNum, limitNum, search, categoryIdNum);
   }
 
   @Get(':id')

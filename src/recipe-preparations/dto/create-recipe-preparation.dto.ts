@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsPositive, IsNumber, IsBoolean, IsDateString } from 'class-validator';
+import { IsInt, IsPositive, IsNumber, IsBoolean, IsDateString, IsOptional } from 'class-validator';
 
 export class CreateRecipePreparationDto {
   @ApiProperty({ example: 1, description: 'ID-ul rețetei preparate' })
@@ -7,10 +7,11 @@ export class CreateRecipePreparationDto {
   @IsPositive()
   recipe_id: number;
 
-  @ApiProperty({ example: 1, description: 'ID-ul angajatului care a produs rețeta' })
+  @ApiProperty({ example: 1, description: 'ID-ul angajatului care a produs rețeta', required: false })
+  @IsOptional()
   @IsInt()
   @IsPositive()
-  employee_id: number;
+  employee_id?: number;
 
   @ApiProperty({ example: 250.75, description: 'Cantitatea produsă' })
   @IsNumber({}, { message: 'quantity trebuie să fie număr' })
@@ -21,7 +22,8 @@ export class CreateRecipePreparationDto {
   @IsDateString({}, { message: 'produced_at trebuie să fie dată ISO' })
   produced_at: string;
 
-  @ApiProperty({ example: true, description: 'Este etichetat' })
+  @ApiProperty({ example: false, description: 'Este etichetat', required: false })
+  @IsOptional()
   @IsBoolean()
-  is_labeled: boolean;
+  is_labeled?: boolean;
 } 
