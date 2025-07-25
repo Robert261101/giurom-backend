@@ -32,10 +32,8 @@ import { RecipeProduct } from './recipes/entities/recipe-product.entity';
 
 // Entități Stoc
 import { Product } from './stock/entities/product.entity';
-import { Locator } from './stock/entities/locator.entity';
 import { Stock as StockEntity } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
-import { RecipeUsage } from './stock/entities/recipe-usage.entity';
 import { StockModule } from './stock/stock.module';
 
 // Entități Recipe Preparations
@@ -105,10 +103,8 @@ import { WasteRecordsModule } from './waste-records/waste-records.module';
         RecipeProduct,
         // Entități stoc
         Product,
-        Locator,
         StockEntity,
         StockTransaction,
-        RecipeUsage,
         // Entități recipe preparations
         RecipePreparation,
         RecipeLabel,

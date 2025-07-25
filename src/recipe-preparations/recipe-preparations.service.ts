@@ -45,14 +45,16 @@ export class RecipePreparationsService {
 
     const saved = await this.prepRepo.save(entity);
 
+    // Note: Label generation is handled separately to avoid blocking preparation creation
     if (dto.is_labeled) {
-      await this.labelsService.generateForPreparation(saved.id);
+      console.log(`Preparation ${saved.id} marked for labeling`);
+      // Labels will be created manually via API when needed
     }
 
     // Consumă produsele din stoc
     const recipeProducts = await this.recipeProductRepo.find({ where: { recipe_id: dto.recipe_id } });
     for (const rp of recipeProducts) {
-      const qty = Number(rp.quantity_grams);
+      const qty = Number(rp.quantity);
       if (qty > 0) {
         await this.stockService.consumeProduct(rp.product_id, qty, `recipe-preparation ${saved.id}`);
       }
@@ -62,11 +64,16 @@ export class RecipePreparationsService {
   }
 
   findAll(): Promise<RecipePreparation[]> {
-    return this.prepRepo.find({ relations: ['recipe', 'produced_by'] });
+    return this.prepRepo.find({ 
+      relations: ['recipe', 'produced_by', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
+    });
   }
 
   async findOne(id: number): Promise<RecipePreparation> {
-    const prep = await this.prepRepo.findOne({ where: { id }, relations: ['recipe', 'produced_by'] });
+    const prep = await this.prepRepo.findOne({ 
+      where: { id }, 
+      relations: ['recipe', 'produced_by', 'recipe.recipe_products', 'recipe.recipe_products.product'] 
+    });
     if (!prep) throw new NotFoundException('Prepararea nu a fost găsită');
     return prep;
   }

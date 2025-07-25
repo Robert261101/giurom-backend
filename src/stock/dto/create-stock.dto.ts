@@ -9,10 +9,7 @@ export class CreateStockDto {
   @IsPositive()
   product_id: number;
 
-  @ApiProperty({ description: 'ID locator', example: 1 })
-  @IsNumber()
-  @IsPositive()
-  locator_id: number;
+
 
   @ApiProperty({ description: 'Cantitate', example: 100 })
   @IsNumber()

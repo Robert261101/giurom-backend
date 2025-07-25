@@ -19,13 +19,13 @@ export class CreateRecipeProductDto {
   product_id: number;
 
   @ApiProperty({
-    description: 'Cantitatea în grame',
+    description: 'Cantitatea în unitatea produsului',
     example: 500,
   })
   @IsNotEmpty({ message: 'Cantitatea este obligatorie' })
   @IsNumber({}, { message: 'Cantitatea trebuie să fie un număr' })
   @Min(0.01, { message: 'Cantitatea trebuie să fie mai mare decât 0' })
-  quantity_grams: number;
+  quantity: number;
 
   @ApiProperty({
     description: 'Note suplimentare despre produs în rețetă',

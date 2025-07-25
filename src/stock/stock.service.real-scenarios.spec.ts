@@ -4,8 +4,8 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
 import { Product } from './entities/product.entity';
-import { Locator } from './entities/locator.entity';
-import { RecipeUsage } from './entities/recipe-usage.entity';
+
+
 
 /**
  * 🧪 TESTE CU SCENARII REALE DIN BUCĂTĂRIE
@@ -74,10 +74,7 @@ describe('StockService - Scenarii Reale din Bucătărie', () => {
           provide: getRepositoryToken(Product),
           useValue: { find: jest.fn(), findOne: jest.fn() },
         },
-        {
-          provide: getRepositoryToken(Locator),
-          useValue: { find: jest.fn(), findOne: jest.fn() },
-        },
+
         {
           provide: getRepositoryToken(Stock),
           useValue: {
@@ -91,10 +88,6 @@ describe('StockService - Scenarii Reale din Bucătărie', () => {
             create: jest.fn(),
             save: jest.fn(),
           },
-        },
-        {
-          provide: getRepositoryToken(RecipeUsage),
-          useValue: { find: jest.fn() },
         },
       ],
     }).compile();

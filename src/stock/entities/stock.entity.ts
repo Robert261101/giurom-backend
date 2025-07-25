@@ -10,7 +10,7 @@ import {
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Product } from './product.entity';
-import { Locator } from './locator.entity';
+
 import { StockTransaction } from './stock-transaction.entity';
 
 export enum StockStatus {
@@ -29,9 +29,7 @@ export class Stock {
   @Column()
   product_id: number;
 
-  @ApiProperty({ description: 'ID locator', example: 1 })
-  @Column()
-  locator_id: number;
+
 
   @ApiProperty({ description: 'Cantitate disponibilă', example: 100.5 })
   @Column({ type: 'decimal', precision: 10, scale: 2 })
@@ -68,9 +66,7 @@ export class Stock {
   @JoinColumn({ name: 'product_id' })
   product: Product;
 
-  @ManyToOne(() => Locator, (locator) => locator.stocks, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-  @JoinColumn({ name: 'locator_id' })
-  locator: Locator;
+
 
   @OneToMany(() => StockTransaction, (tx) => tx.stock)
   transactions: StockTransaction[];
