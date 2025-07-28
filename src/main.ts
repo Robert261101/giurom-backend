@@ -61,8 +61,9 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('Giurom API')
     .setDescription(
-      'API pentru modulele ' +
-      'Acest API permite gestionarea companiilor, documentelor acestora, '
+      'API complet pentru sistemul de management Giurom. ' +
+      'Acest API permite gestionarea companiilor, angajaților, pontajului, rețetelor, stocului și furnizorilor. ' +
+      'Toate endpoint-urile sunt documentate și pot fi testate direct din această interfață.'
     )
     .setVersion('1.0')
     .addTag('companies', 'Operațiuni pentru companii și documentele acestora')
@@ -76,6 +77,7 @@ async function bootstrap() {
     .addTag('stock', 'Modulul Stoc - produse, cantități, tranzacții')
     .addTag('recipe-labels', 'Modulul Etichete - PDF cu date identificare preparare')
     .addTag('waste-records', 'Modulul pierderi - înregistrarea pierderilor de produse/rețete')
+    .addTag('suppliers', 'Modulul Furnizori - gestionarea furnizorilor, produselor, comenzilor și documentelor cu structură cloud automată')
     .addBearerAuth()
     .addServer('http://localhost:3001', 'Development Server')
     .addServer('https://api.giurom.com', 'Production Server')
