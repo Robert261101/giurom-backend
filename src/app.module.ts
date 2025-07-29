@@ -44,6 +44,7 @@ import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
 import { WasteRecord } from './waste-records/entities/waste-record.entity';
 import { WasteRecordsModule } from './waste-records/waste-records.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { CalendarModule } from './calendar/calendar.module';
 
 // Entități Suppliers
 import { Supplier } from './suppliers/entities/supplier.entity';
@@ -53,6 +54,10 @@ import { SupplierProduct } from './suppliers/entities/supplier-product.entity';
 import { SupplierOrder } from './suppliers/entities/supplier-order.entity';
 import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
+
+// Entități Calendar
+import { CalendarEvent } from './calendar/entities/calendar-event.entity';
+import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
 
 @Module({
   imports: [
@@ -127,6 +132,9 @@ import { SupplierOrderDocument } from './suppliers/entities/supplier-order-docum
         SupplierOrder,
         SupplierOrderItem,
         SupplierOrderDocument,
+        // Entități calendar
+        CalendarEvent,
+        RecurrenceRule,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -158,6 +166,7 @@ import { SupplierOrderDocument } from './suppliers/entities/supplier-order-docum
     RecipeLabelsModule,
     WasteRecordsModule,
     SuppliersModule,
+    CalendarModule,
   ],
   controllers: [],
   providers: [],

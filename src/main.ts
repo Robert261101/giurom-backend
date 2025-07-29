@@ -78,6 +78,7 @@ async function bootstrap() {
     .addTag('recipe-labels', 'Modulul Etichete - PDF cu date identificare preparare')
     .addTag('waste-records', 'Modulul pierderi - înregistrarea pierderilor de produse/rețete')
     .addTag('suppliers', 'Modulul Furnizori - gestionarea furnizorilor, produselor, comenzilor și documentelor cu structură cloud automată')
+    .addTag('calendar', 'Modulul Calendar - gestionarea evenimentelor calendaristice și regulilor de recurență cu autorizare pe baza utilizatorului')
     .addBearerAuth()
     .addServer('http://localhost:3001', 'Development Server')
     .addServer('https://api.giurom.com', 'Production Server')
