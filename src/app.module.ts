@@ -63,6 +63,10 @@ import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
 // Entități Leave Requests
 import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
 
+// Entități Shift Change Requests
+import { ShiftChangeRequest } from './shift-change-requests/entities/shift-change-request.entity';
+import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
+
 @Module({
   imports: [
     // Configurarea variabilelor de mediu
@@ -141,6 +145,8 @@ import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
         RecurrenceRule,
         // Entități leave requests
         LeaveRequest,
+        // Entități shift change requests
+        ShiftChangeRequest,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -174,6 +180,7 @@ import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
     SuppliersModule,
     CalendarModule,
     LeaveRequestsModule,
+    ShiftChangeRequestsModule,
   ],
   controllers: [],
   providers: [],
