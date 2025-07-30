@@ -22,6 +22,7 @@ import {
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { CompanyService } from './company.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { CreateCompanyWithDocumentsDto } from './dto/create-company-with-documents.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { CreateCompanyDocumentDto } from './dto/create-company-document.dto';
 import { UpdateCompanyDocumentDto } from './dto/update-company-document.dto';
@@ -57,6 +58,28 @@ export class CompanyController {
   })
   async createCompany(@Body() createCompanyDto: CreateCompanyDto): Promise<Company> {
     return await this.companyService.createCompany(createCompanyDto);
+  }
+
+  @Post('with-documents')
+  @ApiOperation({
+    summary: 'Creează o nouă companie cu documente',
+    description: 'Adaugă o nouă companie în sistem cu documente încărcate din formular',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Compania a fost creată cu succes cu documente',
+    type: Company,
+  })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'O companie cu acest CUI există deja',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Date de intrare invalide',
+  })
+  async createCompanyWithDocuments(@Body() createCompanyDto: CreateCompanyWithDocumentsDto): Promise<Company> {
+    return await this.companyService.createCompanyWithDocuments(createCompanyDto);
   }
 
   @Get()
