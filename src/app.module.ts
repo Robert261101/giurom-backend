@@ -45,6 +45,7 @@ import { WasteRecord } from './waste-records/entities/waste-record.entity';
 import { WasteRecordsModule } from './waste-records/waste-records.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
 
 // Entități Suppliers
 import { Supplier } from './suppliers/entities/supplier.entity';
@@ -58,6 +59,9 @@ import { SupplierOrderDocument } from './suppliers/entities/supplier-order-docum
 // Entități Calendar
 import { CalendarEvent } from './calendar/entities/calendar-event.entity';
 import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
+
+// Entități Leave Requests
+import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
 
 @Module({
   imports: [
@@ -135,6 +139,8 @@ import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
         // Entități calendar
         CalendarEvent,
         RecurrenceRule,
+        // Entități leave requests
+        LeaveRequest,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -167,6 +173,7 @@ import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
     WasteRecordsModule,
     SuppliersModule,
     CalendarModule,
+    LeaveRequestsModule,
   ],
   controllers: [],
   providers: [],
