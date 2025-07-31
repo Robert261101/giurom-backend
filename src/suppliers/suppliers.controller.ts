@@ -18,8 +18,10 @@ import {
 } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
+import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
+import { UpdateSupplierProductDto } from './dto/update-supplier-product.dto';
 import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
 import { Supplier } from './entities/supplier.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
@@ -45,6 +47,21 @@ export class SuppliersController {
   })
   create(@Body() createSupplierDto: CreateSupplierDto): Promise<Supplier> {
     return this.suppliersService.create(createSupplierDto);
+  }
+
+  @Post('with-documents')
+  @ApiOperation({ summary: 'Creează un furnizor nou cu documente din formular' })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Furnizorul a fost creat cu succes cu documente',
+    type: Supplier,
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Date invalide sau furnizor duplicat',
+  })
+  createWithDocuments(@Body() createSupplierDto: CreateSupplierWithDocumentsDto): Promise<Supplier> {
+    return this.suppliersService.createWithDocuments(createSupplierDto);
   }
 
   @Get()
@@ -184,6 +201,21 @@ export class SuppliersController {
     return this.suppliersService.markOrderAsDelivered(orderId);
   }
 
+  @Patch('orders/:orderId/status')
+  @ApiOperation({ summary: 'Actualizează statusul unei comenzi' })
+  @ApiParam({ name: 'orderId', description: 'ID-ul comenzii' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Statusul comenzii a fost actualizat',
+    type: SupplierOrder,
+  })
+  updateOrderStatus(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() statusData: { status: string }
+  ): Promise<SupplierOrder> {
+    return this.suppliersService.updateOrderStatus(orderId, statusData.status);
+  }
+
   // Linkuri pentru comunicare
   @Get(':supplierId/orders/:orderId/email-link')
   @ApiOperation({ summary: 'Generează link pentru email cu comanda' })
@@ -245,5 +277,71 @@ export class SuppliersController {
     const pdfUrl = `${process.env.FRONTEND_URL}/suppliers/${supplierId}/orders/${orderId}/pdf`;
     const whatsappLink = this.suppliersService.generateWhatsAppLink(supplier, order, pdfUrl);
     return { whatsappLink };
+  }
+
+  // Update supplier product
+  @Patch('products/:productId')
+  @ApiOperation({ summary: 'Actualizează un produs de la furnizor' })
+  @ApiParam({ name: 'productId', description: 'ID-ul produsului furnizor' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Produsul a fost actualizat',
+    type: SupplierProduct,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Produsul nu a fost găsit',
+  })
+  updateSupplierProduct(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() updateSupplierProductDto: UpdateSupplierProductDto,
+  ): Promise<SupplierProduct> {
+    return this.suppliersService.updateSupplierProduct(productId, updateSupplierProductDto);
+  }
+
+  // Delete supplier product
+  @Delete('products/:productId')
+  @ApiOperation({ summary: 'Șterge un produs de la furnizor' })
+  @ApiParam({ name: 'productId', description: 'ID-ul produsului furnizor' })
+  @ApiResponse({
+    status: HttpStatus.NO_CONTENT,
+    description: 'Produsul a fost șters',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Produsul nu a fost găsit',
+  })
+  removeSupplierProduct(@Param('productId', ParseIntPipe) productId: number): Promise<void> {
+    return this.suppliersService.removeSupplierProduct(productId);
+  }
+
+  // Document management
+  @Post(':supplierId/documents')
+  @ApiOperation({ summary: 'Adaugă un document la furnizor' })
+  @ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Documentul a fost adăugat',
+  })
+  addDocument(
+    @Param('supplierId', ParseIntPipe) supplierId: number,
+    @Body() documentData: { fileName: string; folderId: number; notes?: string }
+  ) {
+    return this.suppliersService.addDocument(supplierId, documentData);
+  }
+
+  @Delete('documents/:documentId')
+  @ApiOperation({ summary: 'Șterge un document de la furnizor' })
+  @ApiParam({ name: 'documentId', description: 'ID-ul documentului' })
+  @ApiResponse({
+    status: HttpStatus.NO_CONTENT,
+    description: 'Documentul a fost șters',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Documentul nu a fost găsit',
+  })
+  removeDocument(@Param('documentId', ParseIntPipe) documentId: number): Promise<void> {
+    return this.suppliersService.removeDocument(documentId);
   }
 }

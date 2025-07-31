@@ -9,9 +9,12 @@ import { Repository } from 'typeorm';
 import { Company } from './entity/company.entity';
 import { CompanyDocument } from './entity/company-document.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { CreateCompanyWithDocumentsDto } from './dto/create-company-with-documents.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { CreateCompanyDocumentDto } from './dto/create-company-document.dto';
 import { UpdateCompanyDocumentDto } from './dto/update-company-document.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class CompanyService {
@@ -39,6 +42,36 @@ export class CompanyService {
 
     const company = this.companyRepository.create(createCompanyDto);
     return await this.companyRepository.save(company);
+  }
+
+  /**
+   * Creează o nouă companie cu documente
+   */
+  async createCompanyWithDocuments(dto: CreateCompanyWithDocumentsDto): Promise<Company> {
+    // Verifică dacă CUI-ul este deja înregistrat
+    const existingCompany = await this.companyRepository.findOne({
+      where: { cui: dto.cui },
+    });
+
+    if (existingCompany) {
+      throw new ConflictException(
+        `O companie cu CUI-ul ${dto.cui} există deja`,
+      );
+    }
+
+    // Extrage datele pentru companie (fără documents)
+    const { documents, ...companyData } = dto;
+    
+    // Creează compania
+    const company = this.companyRepository.create(companyData);
+    const savedCompany = await this.companyRepository.save(company);
+
+    // Salvează documentele dacă există
+    if (dto.documents && dto.documents.length > 0) {
+      await this.saveCompanyDocuments(savedCompany, dto.documents);
+    }
+
+    return savedCompany;
   }
 
   /**
@@ -232,5 +265,70 @@ export class CompanyService {
     });
 
     return { total, active, inactive, vat_payers };
+  }
+
+  /**
+   * Salvează documentele unei companii în folderul local
+   */
+  private async saveCompanyDocuments(company: Company, documents: any[]): Promise<void> {
+    // Creează folderul pentru companie în files/companies
+    const projectRoot = path.join(process.cwd(), '..');
+    const filesDir = path.join(projectRoot, 'files');
+    const companiesDir = path.join(filesDir, 'companies');
+    const companyDir = path.join(companiesDir, company.id.toString());
+
+    // Creează directoarele dacă nu există
+    if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true });
+    if (!fs.existsSync(companiesDir)) fs.mkdirSync(companiesDir, { recursive: true });
+    if (!fs.existsSync(companyDir)) fs.mkdirSync(companyDir, { recursive: true });
+
+    // Salvează fiecare document
+    for (const doc of documents) {
+      try {
+        // Generează un nume unic pentru fișier cu ID-ul companiei
+        const fileName = doc.fileName || doc.name;
+        const timestamp = Date.now();
+        const uniqueFileName = `${company.id}_${timestamp}_${fileName}`;
+        const filePath = path.join(companyDir, uniqueFileName);
+        
+        // Salvează fișierul real din conținutul base64
+        if (doc.content && doc.content.startsWith('data:')) {
+          // Extract base64 content (remove data:mime/type;base64, prefix)
+          const base64Data = doc.content.split(',')[1];
+          const buffer = Buffer.from(base64Data, 'base64');
+          fs.writeFileSync(filePath, buffer);
+          console.log(`✅ Document companie salvat fizic (${buffer.length} bytes): ${filePath}`);
+        } else {
+          // Fallback: create a text file with document info if no content
+          const fileContent = `Document: ${fileName}
+Tip: ${doc.document_type || 'Document general'}
+Note: ${doc.note || doc.notes || 'Fără note'}
+Data upload: ${new Date().toISOString()}
+Companie: ${company.company_name}
+CUI: ${company.cui}`;
+          fs.writeFileSync(filePath, fileContent, 'utf8');
+          console.log(`✅ Document info companie salvat fizic: ${filePath}`);
+        }
+        console.log(`✅ Document companie salvat fizic: ${filePath}`);
+
+        // Salvează informațiile în baza de date
+        const documentData = {
+          company_id: company.id,
+          document_name: fileName,
+          document_type: doc.document_type || 'Document general',
+          location_path: `/files/companies/${company.id}/${uniqueFileName}`,
+          upload_date: new Date(),
+          notes: doc.note || doc.notes || '',
+        };
+
+        const document = this.companyDocumentRepository.create(documentData);
+        await this.companyDocumentRepository.save(document);
+        
+        console.log(`✅ Document companie salvat în DB: ${fileName}`);
+      } catch (error) {
+        console.error('Error saving company document:', error);
+        // Continue cu următorul document chiar dacă unul eșuează
+      }
+    }
   }
 } 
