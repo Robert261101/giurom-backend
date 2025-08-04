@@ -6,6 +6,7 @@ import {
   Patch,
   Param,
   Query,
+  Delete,
   ParseIntPipe,
   HttpStatus,
   Headers,
@@ -69,11 +70,11 @@ export class CalendarController {
     description: 'Nu ai permisiunea să creezi evenimente pentru alți utilizatori',
   })
   createEvent(
-    @Body() createCalendarEventDto: CreateCalendarEventDto,
+    @Body() body: { event: CreateCalendarEventDto; recurrenceSettings?: any },
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<CalendarEvent> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.calendarService.createEvent(createCalendarEventDto, userId);
+    return this.calendarService.createEvent(body.event, userId, body.recurrenceSettings);
   }
 
   // GET /calendar-events – listare evenimente (filtrare opțională)
@@ -130,7 +131,6 @@ export class CalendarController {
   // ===== ENDPOINT-URI SUPLIMENTARE COMENTATE =====
   // Acestea pot fi decomentate dacă sunt necesare în viitor
 
-  /*
   @Get('recurrence-rules')
   @ApiOperation({ summary: 'Obține toate regulile de recurență' })
   findAllRecurrenceRules(): Promise<RecurrenceRule[]> {
@@ -176,5 +176,4 @@ export class CalendarController {
       new Date(endDate)
     );
   }
-  */
 }

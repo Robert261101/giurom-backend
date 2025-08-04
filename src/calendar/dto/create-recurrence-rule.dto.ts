@@ -45,14 +45,11 @@ export class CreateRecurrenceRuleDto {
   end_datetime?: string;
 
   @ApiProperty({ 
-    description: 'Zilele recurenței pentru frecvența săptămânală (ex: "Mon,Wed,Fri")', 
-    example: 'Mon,Wed,Fri',
+    description: 'Zilele și orele recurenței în format JSON (ex: {"mon":"09:00","wed":"14:30","fri":"11:15"})', 
+    example: '{"mon":"09:00","wed":"14:30","fri":"11:15"}',
     required: false 
   })
   @IsOptional()
-  @IsString({ message: 'Zilele recurenței trebuie să fie un string' })
-  @Matches(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(,(Mon|Tue|Wed|Thu|Fri|Sat|Sun))*$/, {
-    message: 'Zilele recurenței trebuie să fie în formatul "Mon,Wed,Fri" cu zile valide'
-  })
+  @IsString({ message: 'Zilele recurenței trebuie să fie un string JSON valid' })
   recurrence_days?: string;
 }

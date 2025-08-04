@@ -6,7 +6,9 @@ import {
   IsOptional,
   IsString,
   IsNotEmpty,
+  IsEnum,
 } from 'class-validator';
+import { DurationUnit } from '../entities/shift-change-request.entity';
 
 export class CreateShiftChangeRequestDto {
   @ApiProperty({ description: 'ID angajat care cere schimbul', example: 1 })
@@ -41,4 +43,12 @@ export class CreateShiftChangeRequestDto {
   @IsOptional()
   @IsString({ message: 'Comentariul trebuie să fie un string' })
   comment?: string;
+
+  @ApiProperty({ 
+    description: 'Unitatea de măsură pentru durată', 
+    enum: DurationUnit, 
+    example: DurationUnit.DAYS 
+  })
+  @IsEnum(DurationUnit, { message: 'duration_unit trebuie să fie days sau hours' })
+  duration_unit: DurationUnit;
 }
