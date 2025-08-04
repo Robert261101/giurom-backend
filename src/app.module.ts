@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { CompanyModule } from './company/company.module';
 import { LocationsModule } from './locations/locations.module';
 import { EmployeeModule } from './employee/employee.module';
@@ -66,6 +67,9 @@ import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
 // Entități Shift Change Requests
 import { ShiftChangeRequest } from './shift-change-requests/entities/shift-change-request.entity';
 import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
+import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from './auth/guards/permissions.guard';
 
 @Module({
   imports: [
@@ -181,8 +185,20 @@ import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-
     CalendarModule,
     LeaveRequestsModule,
     ShiftChangeRequestsModule,
+    AuthModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    // Guard global pentru JWT Authentication
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    // Guard global pentru Permissions
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
+    },
+  ],
 })
 export class AppModule {} 

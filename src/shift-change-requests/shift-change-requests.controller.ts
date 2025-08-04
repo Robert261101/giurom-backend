@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Permissions } from '../auth/decorators/permissions.decorator';
 import { ShiftChangeRequestsService } from './shift-change-requests.service';
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
@@ -29,6 +30,7 @@ export class ShiftChangeRequestsController {
 
   // POST /shift-change-request – creare cerere (implicit status pending)
   @Post()
+  @Permissions('shift-change-requests:create')
   @ApiOperation({ summary: 'Creează o cerere de schimb de tură cu status pending' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -57,6 +59,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-request/pending – listare cereri în așteptare
   @Get('pending')
+  @Permissions('shift-change-requests:read')
   @ApiOperation({ summary: 'Obține toate cererile de schimb de tură în așteptare' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -70,6 +73,7 @@ export class ShiftChangeRequestsController {
 
   // PATCH /shift-change-request/:id – modificare status, aprobare/respingere
   @Patch(':id')
+  @Permissions('shift-change-requests:approve')
   @ApiOperation({ summary: 'Modifică statusul unei cereri de schimb de tură (aprobare/respingere)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({

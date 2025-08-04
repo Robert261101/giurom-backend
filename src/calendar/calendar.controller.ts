@@ -18,6 +18,7 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Permissions } from '../auth/decorators/permissions.decorator';
 import { CalendarService } from './calendar.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
@@ -34,6 +35,7 @@ export class CalendarController {
 
   // POST /recurrence-rule – creare regulă recurență
   @Post('recurrence-rule')
+  @Permissions('calendar:recurrence-rules:create')
   @ApiOperation({ summary: 'Creează o regulă de recurență pentru evenimente' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -50,6 +52,7 @@ export class CalendarController {
 
   // POST /calendar-event – creare eveniment
   @Post('calendar-event')
+  @Permissions('calendar:events:create')
   @ApiOperation({ summary: 'Creează un eveniment în calendar' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -78,6 +81,7 @@ export class CalendarController {
 
   // GET /calendar-events – listare evenimente (filtrare opțională)
   @Get('calendar-events')
+  @Permissions('calendar:events:read')
   @ApiOperation({ summary: 'Obține evenimente din calendar cu filtrare opțională' })
   @ApiQuery({ name: 'start_date', required: false, description: 'Data de început pentru filtrare (ISO format)' })
   @ApiQuery({ name: 'end_date', required: false, description: 'Data de sfârșit pentru filtrare (ISO format)' })
@@ -99,6 +103,7 @@ export class CalendarController {
 
   // PATCH /calendar-event/:id – modificare eveniment
   @Patch('calendar-event/:id')
+  @Permissions('calendar:events:update')
   @ApiOperation({ summary: 'Modifică un eveniment din calendar' })
   @ApiParam({ name: 'id', description: 'ID-ul evenimentului' })
   @ApiResponse({

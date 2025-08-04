@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Permissions } from '../auth/decorators/permissions.decorator';
 import { LeaveRequestsService } from './leave-requests.service';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.dto';
@@ -29,6 +30,7 @@ export class LeaveRequestsController {
 
   // POST /leave-request – creare cerere (status implicit pending)
   @Post()
+  @Permissions('leave-requests:create')
   @ApiOperation({ summary: 'Creează o cerere de concediu cu status pending' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -57,6 +59,7 @@ export class LeaveRequestsController {
 
   // GET /leave-request/pending – listare cereri în așteptare
   @Get('pending')
+  @Permissions('leave-requests:read')
   @ApiOperation({ summary: 'Obține toate cererile de concediu în așteptare' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -70,6 +73,7 @@ export class LeaveRequestsController {
 
   // PATCH /leave-request/:id – modificare status și aprobare
   @Patch(':id')
+  @Permissions('leave-requests:approve')
   @ApiOperation({ summary: 'Modifică statusul unei cereri de concediu (aprobare/respingere)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de concediu' })
   @ApiResponse({
