@@ -163,6 +163,30 @@ export class CalendarController {
     return this.calendarService.removeEvent(id, userId);
   }
 
+  @Patch('event/:id/recurrence-end-date')
+  @ApiOperation({ summary: 'Actualizează data de sfârșit pentru recurența unui eveniment' })
+  @ApiParam({ name: 'id', description: 'ID-ul evenimentului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Data de sfârșit a recurenței a fost actualizată cu succes',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Evenimentul nu a fost găsit',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Nu ai permisiunea să modifici acest eveniment',
+  })
+  updateRecurrenceEndDate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { endDate: string },
+    @Headers('x-user-id') currentUserId?: string,
+  ): Promise<void> {
+    const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    return this.calendarService.updateRecurrenceEndDate(id, body.endDate, userId);
+  }
+
   @Get('recurrence-rule/:id/generate-events')
   @ApiOperation({ summary: 'Generează evenimente pe baza unei reguli de recurență' })
   generateRecurringEvents(

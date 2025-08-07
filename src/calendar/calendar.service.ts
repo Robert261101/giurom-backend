@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
@@ -11,6 +11,8 @@ import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
 
 @Injectable()
 export class CalendarService {
+  private readonly logger = new Logger(CalendarService.name);
+
   constructor(
     @InjectRepository(CalendarEvent)
     private readonly eventRepo: Repository<CalendarEvent>,
@@ -116,11 +118,23 @@ export class CalendarService {
     const seconds = String(baseDate.getSeconds()).padStart(2, '0');
     const localDateTime = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.000`;
 
+    // Procesează endDate dacă este specificată
+    let endDateTime: string | undefined = undefined;
+    if (settings.endDate) {
+      const endDate = new Date(settings.endDate);
+      // Setează ora la sfârșitul zilei pentru endDate
+      endDate.setHours(23, 59, 59, 999);
+      const endYear = endDate.getFullYear();
+      const endMonth = String(endDate.getMonth() + 1).padStart(2, '0');
+      const endDay = String(endDate.getDate()).padStart(2, '0');
+      endDateTime = `${endYear}-${endMonth}-${endDay}T23:59:59.999`;
+    }
+
     const recurrenceData: CreateRecurrenceRuleDto = {
       frequency: frequency,
       interval: 1,
       start_datetime: localDateTime,
-      end_datetime: undefined, // Poate fi setat mai târziu
+      end_datetime: endDateTime,
       recurrence_days: JSON.stringify(settings.times) // Stochează orele per zi ca JSON
     };
 
@@ -274,7 +288,18 @@ export class CalendarService {
       throw new ForbiddenException('Nu ai permisiunea să ștergi acest eveniment');
     }
 
+    // Dacă evenimentul are o regulă de recurență, șterge și regula
+    if (event.recurrence_id) {
+      try {
+        await this.recurrenceRepo.delete(event.recurrence_id);
+        this.logger.log(`Deleted recurrence rule ${event.recurrence_id} for event ${id}`);
+      } catch (error) {
+        this.logger.warn(`Could not delete recurrence rule ${event.recurrence_id}:`, error);
+      }
+    }
+
     await this.eventRepo.remove(event);
+    this.logger.log(`Event ${id} deleted successfully`);
   }
 
   // Obținere toate regulile de recurență
@@ -568,5 +593,53 @@ export class CalendarService {
       description: event.description,
       duration: event.duration
     }));
+  }
+
+  // Actualizare data de sfârșit pentru recurența unui eveniment
+  async updateRecurrenceEndDate(eventId: number, endDate: string, currentUserId?: number): Promise<void> {
+    // Găsește evenimentul
+    const event = await this.findOne(eventId, currentUserId);
+
+    // Verifică dacă evenimentul are o regulă de recurență
+    if (!event.recurrence_id) {
+      throw new BadRequestException('Evenimentul nu are o regulă de recurență');
+    }
+
+    // Autorizare: doar creatorul poate modifica evenimentul
+    if (currentUserId && event.created_by !== currentUserId) {
+      throw new ForbiddenException('Nu ai permisiunea să modifici acest eveniment');
+    }
+
+    // Găsește regula de recurență
+    const recurrenceRule = await this.recurrenceRepo.findOne({
+      where: { id: event.recurrence_id }
+    });
+
+    if (!recurrenceRule) {
+      throw new NotFoundException('Regula de recurență nu a fost găsită');
+    }
+
+    // Validează și convertește string-ul de dată în obiect Date
+    if (!endDate || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      throw new BadRequestException('Data de sfârșit trebuie să fie în format YYYY-MM-DD');
+    }
+    
+    const [year, month, day] = endDate.split('-').map(Number);
+    const newEndDate = new Date(year, month - 1, day, 23, 59, 59, 999);
+    
+    if (isNaN(newEndDate.getTime())) {
+      throw new BadRequestException('Data de sfârșit este invalidă');
+    }
+
+    // Actualizează end_datetime în regula de recurență
+    const updateResult = await this.recurrenceRepo.update(event.recurrence_id, {
+      end_datetime: newEndDate
+    });
+    
+    if (updateResult.affected === 0) {
+      throw new NotFoundException('Nu s-a putut actualiza regula de recurență');
+    }
+
+    this.logger.log(`Updated recurrence end date for event ${eventId} to ${endDate}`);
   }
 }

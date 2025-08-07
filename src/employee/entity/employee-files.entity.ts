@@ -33,7 +33,7 @@ export class EmployeeFiles {
 
   @ApiProperty({
     description: 'Tipul fișierului',
-    example: 'CV',
+    example: 'pdf',
     maxLength: 100,
   })
   @Column({
@@ -45,8 +45,8 @@ export class EmployeeFiles {
   file_type: string;
 
   @ApiProperty({
-    description: 'Link-ul către fișier sau calea de stocare',
-    example: '/storage/employees/1/cv.pdf',
+    description: 'Link-ul către fișier',
+    example: '/files/employees/1/document.pdf',
     maxLength: 255,
   })
   @Column({

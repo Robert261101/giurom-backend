@@ -529,7 +529,7 @@ export class SuppliersService {
   }
 
   // Add document to supplier
-  async addDocument(supplierId: number, documentData: { fileName: string; folderId: number; notes?: string }) {
+  async addDocument(supplierId: number, documentData: { fileName: string; folderId: number; notes?: string; content?: string }) {
     const supplier = await this.findOne(supplierId);
     
     // Verify folder belongs to supplier
@@ -541,11 +541,47 @@ export class SuppliersService {
       throw new NotFoundException('Folderul nu a fost găsit');
     }
 
+    // Generate unique filename with timestamp
+    const timestamp = Date.now();
+    const uniqueFileName = `${timestamp}_${documentData.fileName}`;
+    
+    // Construct physical file path
+    const projectRoot = path.join(process.cwd(), '..');
+    const physicalFolderPath = path.join(projectRoot, folder.folder_path);
+    const physicalFilePath = path.join(physicalFolderPath, uniqueFileName);
+    
+    console.log(`📁 Saving document to: ${physicalFilePath}`);
+    
+    // Ensure directory exists
+    if (!fs.existsSync(physicalFolderPath)) {
+      fs.mkdirSync(physicalFolderPath, { recursive: true });
+      console.log(`📂 Created directory: ${physicalFolderPath}`);
+    }
+    
+    // Save physical file if content is provided
+    if (documentData.content) {
+      try {
+        const base64Data = documentData.content.split(',')[1];
+        const buffer = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(physicalFilePath, buffer);
+        console.log(`✅ Document saved physically (${buffer.length} bytes): ${physicalFilePath}`);
+      } catch (error) {
+        console.error('❌ Error saving physical file:', error);
+        throw new BadRequestException('Eroare la salvarea fișierului fizic');
+      }
+    } else {
+      // Create placeholder file if no content
+      const fileContent = `Document: ${documentData.fileName}\nNote: ${documentData.notes || 'Fără note'}\nData upload: ${new Date().toISOString()}\nFurnizor ID: ${supplierId}`;
+      fs.writeFileSync(physicalFilePath, fileContent, 'utf8');
+      console.log(`✅ Placeholder document created: ${physicalFilePath}`);
+    }
+
+    // Save to database with unique filename in path
     const document = this.supplierDocumentRepo.create({
       folder_id: documentData.folderId,
       document_type: DocumentType.OTHER,
       file_name: documentData.fileName,
-      file_path: `${folder.folder_path}${documentData.fileName}`,
+      file_path: `${folder.folder_path}${uniqueFileName}`,
       notes: documentData.notes,
     });
 
@@ -561,5 +597,157 @@ export class SuppliersService {
     }
 
     await this.supplierDocumentRepo.remove(document);
+  }
+
+  // File serving methods
+  async getFileInfo(fileId: number) {
+    console.log(`🔍 Service: Getting supplier file info for ID: ${fileId}`);
+    
+    const file = await this.supplierDocumentRepo.findOne({
+      where: { id: fileId },
+      relations: ['folder'],
+    });
+
+    if (!file) {
+      console.log(`❌ File not found with ID: ${fileId}`);
+      throw new NotFoundException(`Fișierul cu ID ${fileId} nu a fost găsit`);
+    }
+
+    console.log(`✅ File found:`, {
+      id: file.id,
+      fileName: file.file_name,
+      filePath: file.file_path,
+      folderId: file.folder_id,
+    });
+
+    // Construiește calea absolută către fișier
+    const projectRoot = path.join(process.cwd(), '..');
+    const absoluteFilePath = path.join(projectRoot, file.file_path);
+
+    return {
+      id: file.id,
+      fileName: file.file_name,
+      filePath: file.file_path,
+      absoluteFilePath: absoluteFilePath,
+      folderId: file.folder_id,
+      folder: file.folder,
+      exists: fs.existsSync(absoluteFilePath),
+    };
+  }
+
+  async serveSupplierFile(fileId: number, forceDownload: boolean = false, res: any) {
+    console.log(`🔍 Service: Serving supplier file with ID: ${fileId}, forceDownload: ${forceDownload}`);
+    
+    try {
+      const file = await this.supplierDocumentRepo.findOne({
+        where: { id: fileId },
+        relations: ['folder'],
+      });
+
+      if (!file) {
+        console.log(`❌ File not found with ID: ${fileId}`);
+        throw new NotFoundException(`Fișierul cu ID ${fileId} nu a fost găsit`);
+      }
+
+      console.log(`📁 File found: ${file.file_name} at ${file.file_path}`);
+
+      // Construiește calea absolută către fișier
+      const projectRoot = path.join(process.cwd(), '..');
+      const absoluteFilePath = path.join(projectRoot, file.file_path);
+      
+      console.log(`🔍 Absolute file path: ${absoluteFilePath}`);
+
+      // Verifică dacă fișierul există pe disk
+      if (!fs.existsSync(absoluteFilePath)) {
+        console.log(`❌ File does not exist on disk: ${absoluteFilePath}`);
+        throw new NotFoundException(`Fișierul ${file.file_name} nu a fost găsit pe disk`);
+      }
+
+      // Obține informații despre fișier
+      const stats = fs.statSync(absoluteFilePath);
+      const fileSize = stats.size;
+      const ext = path.extname(file.file_name).toLowerCase();
+
+      console.log(`📊 File stats: size=${fileSize}, ext=${ext}`);
+
+      // Determină tipul de conținut
+      let contentType = 'application/octet-stream';
+      switch (ext) {
+        case '.pdf':
+          contentType = 'application/pdf';
+          break;
+        case '.jpg':
+        case '.jpeg':
+          contentType = 'image/jpeg';
+          break;
+        case '.png':
+          contentType = 'image/png';
+          break;
+        case '.gif':
+          contentType = 'image/gif';
+          break;
+        case '.txt':
+          contentType = 'text/plain';
+          break;
+        case '.doc':
+          contentType = 'application/msword';
+          break;
+        case '.docx':
+          contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          break;
+      }
+
+      console.log(`📄 Content type determined: ${contentType}`);
+
+      // Setează header-ele de răspuns
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', fileSize);
+
+      if (forceDownload || (ext !== '.pdf' && !ext.match(/\.(jpg|jpeg|png|gif)$/))) {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
+        console.log(`⬇️ Setting as download: ${file.file_name}`);
+      } else {
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.file_name)}"`);
+        console.log(`👁️ Setting as inline view: ${file.file_name}`);
+      }
+
+      // Citește și trimite fișierul
+      const fileStream = fs.createReadStream(absoluteFilePath);
+      
+      fileStream.on('error', (error) => {
+        console.error(`❌ Error reading file stream:`, error);
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            message: 'Eroare la citirea fișierului',
+            error: error.message 
+          });
+        }
+      });
+
+      fileStream.on('end', () => {
+        console.log(`✅ File stream ended successfully for: ${file.file_name}`);
+      });
+
+      console.log(`📤 Starting file stream for: ${file.file_name}`);
+      fileStream.pipe(res);
+      
+    } catch (error) {
+      console.error(`❌ Error in serveSupplierFile:`, error);
+      
+      if (!res.headersSent) {
+        if (error instanceof NotFoundException) {
+          res.status(404).json({ 
+            message: error.message,
+            fileId: fileId 
+          });
+        } else {
+          res.status(500).json({ 
+            message: 'Eroare internă la servirea fișierului',
+            error: error.message,
+            fileId: fileId 
+          });
+        }
+      }
+    }
   }
 }

@@ -48,8 +48,8 @@ export class CreateEmployeeFileDto {
   @IsString({ message: 'Link-ul fișierului trebuie să fie un string' })
   @IsNotEmpty({ message: 'Link-ul fișierului este obligatoriu' })
   @Length(5, 255, { message: 'Link-ul fișierului trebuie să aibă între 5 și 255 de caractere' })
-  @Matches(/^(\/storage\/|https?:\/\/|\\\\server\\)/, {
-    message: 'Link-ul trebuie să înceapă cu /storage/, http://, https:// sau \\\\server\\'
+  @Matches(/^(\/files\/|\/storage\/|https?:\/\/|\\\\server\\)/, {
+    message: 'Link-ul trebuie să înceapă cu /files/, /storage/, http://, https:// sau \\\\server\\'
   })
   file_link: string;
 } 

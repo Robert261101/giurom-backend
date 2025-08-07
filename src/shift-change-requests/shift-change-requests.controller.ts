@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  Query,
   ParseIntPipe,
   HttpStatus,
   Headers,
@@ -19,6 +20,7 @@ import {
 import { ShiftChangeRequestsService } from './shift-change-requests.service';
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
+import { FilterShiftChangeRequestsDto } from './dto/filter-shift-change-requests.dto';
 import { ShiftChangeRequest } from './entities/shift-change-request.entity';
 
 @ApiTags('shift-change-requests')
@@ -98,12 +100,14 @@ export class ShiftChangeRequestsController {
     return this.shiftChangeRequestsService.updateStatus(id, updateStatusDto, userId);
   }
 
-  // ===== ENDPOINT-URI SUPLIMENTARE COMENTATE =====
-  // Acestea pot fi decomentate dacă sunt necesare în viitor
-
-  /*
+  // GET /shift-change-request – listare cereri cu filtrare opțională
   @Get()
   @ApiOperation({ summary: 'Obține cereri de schimb de tură cu filtrare opțională' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista cererilor de schimb de tură filtrate',
+    type: [ShiftChangeRequest],
+  })
   findAll(
     @Query() filters: FilterShiftChangeRequestsDto,
     @Headers('x-user-id') currentUserId?: string,
@@ -111,6 +115,11 @@ export class ShiftChangeRequestsController {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
     return this.shiftChangeRequestsService.findAll(filters, userId);
   }
+
+  // ===== ENDPOINT-URI SUPLIMENTARE COMENTATE =====
+  // Acestea pot fi decomentate dacă sunt necesare în viitor
+
+  /*
 
   @Get(':id')
   @ApiOperation({ summary: 'Obține detaliile unei cereri de schimb de tură specifice' })

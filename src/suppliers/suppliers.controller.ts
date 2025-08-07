@@ -8,6 +8,8 @@ import {
   Delete,
   ParseIntPipe,
   HttpStatus,
+  Res,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -343,5 +345,41 @@ export class SuppliersController {
   })
   removeDocument(@Param('documentId', ParseIntPipe) documentId: number): Promise<void> {
     return this.suppliersService.removeDocument(documentId);
+  }
+
+  // File serving endpoints
+  @Get('file/:fileId/info')
+  @ApiOperation({
+    summary: 'Obține informații despre un fișier de furnizor',
+    description: 'Returnează informații despre fișier pentru debugging.',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului' })
+  async getFileInfo(@Param('fileId', ParseIntPipe) fileId: number) {
+    console.log(`🔍 Controller: Getting supplier file info for ID: ${fileId}`);
+    return this.suppliersService.getFileInfo(fileId);
+  }
+
+  @Get('file/:fileId')
+  @ApiOperation({
+    summary: 'Servește un fișier al furnizorului pentru vizualizare',
+    description: 'Returnează conținutul unui fișier pentru vizualizare în browser sau download.',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului' })
+  @ApiResponse({ status: 200, description: 'Fișierul a fost returnat cu succes' })
+  @ApiResponse({ status: 404, description: 'Fișierul nu a fost găsit' })
+  async serveSupplierFile(
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Res() res: any,
+    @Query('download') download?: string,
+  ) {
+    console.log(`🔍 Controller: Serving supplier file with ID: ${fileId}, download: ${download}`);
+    
+    // Setează header-ele CORS manual în controller
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type, Content-Disposition');
+    
+    return this.suppliersService.serveSupplierFile(fileId, download === 'true', res);
   }
 }
