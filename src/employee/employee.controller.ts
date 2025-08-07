@@ -9,6 +9,8 @@ import {
   Query,
   HttpStatus,
   UseGuards,
+  Res,
+  Options,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,7 +19,6 @@ import {
   ApiParam,
   ApiQuery,
   ApiBearerAuth,
-  ApiExtraModels,
 } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { EmployeeService } from './employee.service';
@@ -52,6 +53,28 @@ export class EmployeeController {
   })
   async create(@Body() createEmployeeDto: CreateEmployeeDto): Promise<Employee> {
     return await this.employeeService.create(createEmployeeDto);
+  }
+
+  @Post('with-documents')
+  @ApiOperation({
+    summary: 'Creează un angajat nou cu documente',
+    description: 'Adaugă un nou angajat în sistem cu toate informațiile necesare și documentele asociate.',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Angajatul a fost creat cu succes',
+    type: Employee,
+  })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'Un angajat cu acest email sau CNP există deja',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Date invalide (ex: data angajării în viitor, vârsta sub 16 ani)',
+  })
+  async createWithDocuments(@Body() createEmployeeWithDocumentsDto: any): Promise<Employee> {
+    return await this.employeeService.createWithDocuments(createEmployeeWithDocumentsDto);
   }
 
   @Get()
@@ -169,6 +192,51 @@ export class EmployeeController {
     return await this.employeeService.findByCNP(cnp);
   }
 
+  @Options('file/:fileId')
+  async handleFileOptions(@Res() res: any) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.status(200).end();
+  }
+
+  @Get('file/:fileId/info')
+  @ApiOperation({
+    summary: 'Obține informații despre un fișier',
+    description: 'Returnează informații despre fișier pentru debugging.',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului' })
+  async getFileInfo(@Param('fileId') fileId: string) {
+    console.log(`🔍 Controller: Getting file info for ID: ${fileId}`);
+    return this.employeeService.getFileInfo(+fileId);
+  }
+
+  @Get('file/:fileId')
+  @ApiOperation({
+    summary: 'Servește un fișier al angajatului pentru vizualizare',
+    description: 'Returnează conținutul unui fișier pentru vizualizare în browser sau download.',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului' })
+  @ApiQuery({ name: 'download', required: false, description: 'Dacă este true, forțează download-ul' })
+  @ApiResponse({ status: 200, description: 'Fișierul a fost returnat cu succes' })
+  @ApiResponse({ status: 404, description: 'Fișierul nu a fost găsit' })
+  async serveEmployeeFile(
+    @Param('fileId') fileId: string,
+    @Res() res: any,
+    @Query('download') download?: string,
+  ) {
+    console.log(`🔍 Controller: Serving file with ID: ${fileId}, download: ${download}`);
+    
+    // Setează header-ele CORS manual în controller
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type, Content-Disposition');
+    
+    return this.employeeService.serveEmployeeFile(+fileId, download === 'true', res);
+  }
+
   @Get(':id')
   @ApiOperation({
     summary: 'Găsește angajat după ID',
@@ -256,4 +324,50 @@ export class EmployeeController {
   async remove(@Param('id') id: string): Promise<{ message: string }> {
     return await this.employeeService.remove(+id);
   }
+
+  // Files endpoints for compatibility with frontend
+  @Get(':id/files')
+  @ApiOperation({
+    summary: 'Găsește toate fișierele unui angajat',
+    description: 'Returnează toate fișierele din dosarul unui angajat specific.',
+  })
+  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Fișierele angajatului au fost găsite',
+  })
+  async getEmployeeFiles(@Param('id') id: string) {
+    return await this.employeeService.getEmployeeFiles(+id);
+  }
+
+  @Post(':id/files')
+  @ApiOperation({
+    summary: 'Adaugă un fișier pentru angajat',
+    description: 'Adaugă un nou fișier în dosarul unui angajat.',
+  })
+  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  async addEmployeeFile(@Param('id') id: string, @Body() fileData: any) {
+    return await this.employeeService.addEmployeeFile(+id, fileData);
+  }
+
+  @Delete('files/:fileId')
+  @ApiOperation({
+    summary: 'Șterge un fișier al angajatului',
+    description: 'Șterge un fișier din dosarul angajatului.',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului' })
+  async deleteEmployeeFile(@Param('fileId') fileId: string) {
+    return await this.employeeService.deleteEmployeeFile(+fileId);
+  }
+
+  @Post(':id/documents-with-content')
+  @ApiOperation({
+    summary: 'Adaugă documente cu conținut base64 pentru angajat',
+    description: 'Adaugă documente cu conținut base64 în dosarul unui angajat existent.',
+  })
+  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  async addEmployeeDocumentsWithContent(@Param('id') id: string, @Body() documentsData: any) {
+    return await this.employeeService.addEmployeeDocumentsWithContent(+id, documentsData.documents);
+  }
+
 } 

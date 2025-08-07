@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  Query,
   ParseIntPipe,
   HttpStatus,
   Headers,
@@ -19,6 +20,7 @@ import {
 import { LeaveRequestsService } from './leave-requests.service';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.dto';
+import { FilterLeaveRequestsDto } from './dto/filter-leave-requests.dto';
 import { LeaveRequest } from './entities/leave-request.entity';
 
 @ApiTags('leave-requests')
@@ -98,12 +100,14 @@ export class LeaveRequestsController {
     return this.leaveRequestsService.updateStatus(id, updateStatusDto, userId);
   }
 
-  // ===== ENDPOINT-URI SUPLIMENTARE COMENTATE =====
-  // Acestea pot fi decomentate dacă sunt necesare în viitor
-
-  /*
+  // GET /leave-request – listare cereri cu filtrare opțională
   @Get()
   @ApiOperation({ summary: 'Obține cereri de concediu cu filtrare opțională' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista cererilor de concediu filtrate',
+    type: [LeaveRequest],
+  })
   findAll(
     @Query() filters: FilterLeaveRequestsDto,
     @Headers('x-user-id') currentUserId?: string,
@@ -111,6 +115,11 @@ export class LeaveRequestsController {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
     return this.leaveRequestsService.findAll(filters, userId);
   }
+
+  // ===== ENDPOINT-URI SUPLIMENTARE COMENTATE =====
+  // Acestea pot fi decomentate dacă sunt necesare în viitor
+
+  /*
 
   @Get(':id')
   @ApiOperation({ summary: 'Obține detaliile unei cereri de concediu specifice' })
