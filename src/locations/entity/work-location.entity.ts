@@ -7,10 +7,8 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
-import { ApiProperty } from '@nestjs/swagger';
-import { Company } from '../../company/entity/company.entity';
-import { WorkLocationTaskTemplate } from './work-location-task-template.entity';
-import { WorkLocationDepartments } from './work-location-departments.entity';
+} from "typeorm";
+import { ApiProperty } from "@nestjs/swagger";
 import { Company } from "../../company/entity/company.entity";
 import { WorkLocationTaskTemplate } from "./work-location-task-template.entity";
 import { WorkLocationDepartments } from "./work-location-departments.entity";
