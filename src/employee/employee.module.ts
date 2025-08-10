@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 
 // Main Employee entities
 import { Employee } from './entity/employee.entity';
@@ -30,6 +31,16 @@ import { GeneratedDocumentsController } from './generated-documents/generated-do
       EmployeeWorkLocationHistory,
       EmployeeFiles,
       GeneratedDocuments,
+    ]),
+    ClientsModule.register([
+      {
+        name: 'EMPLOYEES_SERVICE',
+        transport: Transport.TCP,
+        options: {
+          host: process.env.EMPLOYEES_MS_HOST || '127.0.0.1',
+          port: parseInt(process.env.EMPLOYEES_MS_PORT || '4001', 10),
+        },
+      },
     ]),
   ],
   controllers: [

@@ -9,6 +9,7 @@ import {
   Query,
   HttpStatus,
   UseGuards,
+  Inject,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,7 +21,8 @@ import {
   ApiExtraModels,
 } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { EmployeeService } from './employee.service';
+import { ClientProxy } from '@nestjs/microservices';
+import { lastValueFrom } from 'rxjs';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { Employee } from './entity/employee.entity';
@@ -30,7 +32,9 @@ import { Employee } from './entity/employee.entity';
 @UseGuards(ThrottlerGuard)
 @ApiBearerAuth()
 export class EmployeeController {
-  constructor(private readonly employeeService: EmployeeService) {}
+  constructor(
+    @Inject('EMPLOYEES_SERVICE') private readonly employeesClient: ClientProxy,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -51,7 +55,9 @@ export class EmployeeController {
     description: 'Date invalide (ex: data angajării în viitor, vârsta sub 16 ani)',
   })
   async create(@Body() createEmployeeDto: CreateEmployeeDto): Promise<Employee> {
-    return await this.employeeService.create(createEmployeeDto);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.create', createEmployeeDto),
+    );
   }
 
   @Get()
@@ -91,12 +97,17 @@ export class EmployeeController {
     const isActiveFilter = is_active !== undefined ? is_active === 'true' : undefined;
     const departmentFilter = department ? parseInt(department, 10) : undefined;
 
-    return await this.employeeService.findAll(
-      pageNum,
-      limitNum,
-      isActiveFilter,
-      departmentFilter,
-      contract_type,
+    return await lastValueFrom(
+      this.employeesClient.send(
+        'employees.findAll',
+        {
+          page: pageNum,
+          limit: limitNum,
+          is_active: isActiveFilter,
+          department: departmentFilter,
+          contract_type,
+        },
+      ),
     );
   }
 
@@ -128,7 +139,9 @@ export class EmployeeController {
     byGender: { [key: string]: number };
     hiredThisMonth: number;
   }> {
-    return await this.employeeService.getStatistics();
+    return await lastValueFrom(
+      this.employeesClient.send('employees.getStatistics', {}),
+    );
   }
 
   @Get('email/:email')
@@ -147,7 +160,9 @@ export class EmployeeController {
     description: 'Angajatul cu acest email nu a fost găsit',
   })
   async findByEmail(@Param('email') email: string): Promise<Employee> {
-    return await this.employeeService.findByEmail(email);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.findByEmail', email),
+    );
   }
 
   @Get('cnp/:cnp')
@@ -166,7 +181,9 @@ export class EmployeeController {
     description: 'Angajatul cu acest CNP nu a fost găsit',
   })
   async findByCNP(@Param('cnp') cnp: string): Promise<Employee> {
-    return await this.employeeService.findByCNP(cnp);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.findByCNP', cnp),
+    );
   }
 
   @Get(':id')
@@ -185,7 +202,9 @@ export class EmployeeController {
     description: 'Angajatul cu acest ID nu a fost găsit',
   })
   async findOne(@Param('id') id: string): Promise<Employee> {
-    return await this.employeeService.findOne(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.findOne', +id),
+    );
   }
 
   @Patch(':id')
@@ -211,7 +230,12 @@ export class EmployeeController {
     @Param('id') id: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
   ): Promise<Employee> {
-    return await this.employeeService.update(+id, updateEmployeeDto);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.update', {
+        id: +id,
+        dto: updateEmployeeDto,
+      }),
+    );
   }
 
   @Patch(':id/toggle-active')
@@ -230,7 +254,9 @@ export class EmployeeController {
     description: 'Angajatul cu acest ID nu a fost găsit',
   })
   async toggleActive(@Param('id') id: string): Promise<Employee> {
-    return await this.employeeService.toggleActive(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<Employee>('employees.toggleActive', +id),
+    );
   }
 
   @Delete(':id')
@@ -254,6 +280,8 @@ export class EmployeeController {
     description: 'Angajatul cu acest ID nu a fost găsit',
   })
   async remove(@Param('id') id: string): Promise<{ message: string }> {
-    return await this.employeeService.remove(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<{ message: string }>('employees.remove', +id),
+    );
   }
 } 
