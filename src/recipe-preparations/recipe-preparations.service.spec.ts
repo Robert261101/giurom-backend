@@ -77,7 +77,7 @@ describe('RecipePreparationsService', () => {
 
   it('should consume products from stock and generate label when creating labeled preparation', async () => {
     // Arrange
-    const mockRecipe = { id: 1, name: 'Supă de legume', expiration_days: 7 };
+    const mockRecipe = { id: 1, name: 'Supă de legume', expiration_hours: 7 };
     const mockEmployee = { id: 1, first_name: 'Ion', last_name: 'Popescu' };
     const mockProducts = [
       { product_id: 10, quantity_grams: 100 }, // cartofi
