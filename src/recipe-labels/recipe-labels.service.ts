@@ -34,8 +34,8 @@ export class RecipeLabelsService {
     const label_code = `LBL-${uuidv4()}`;
     console.log(`Generated label code: ${label_code}`);
 
-    // Determine expiration date based on recipe.expiration_days (in hours)
-    const expHours = prep.recipe?.expiration_days || 48; // Default 48 hours
+    // Determine expiration date based on recipe.expiration_hours
+    const expHours = prep.recipe?.expiration_hours || 48; // Default 48 hours
     const expirationDate = new Date(prep.produced_at);
     expirationDate.setHours(expirationDate.getHours() + expHours);
 

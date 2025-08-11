@@ -71,7 +71,7 @@ export class Recipe {
     example: 48,
   })
   @Column({ type: 'int' })
-  expiration_days: number;
+  expiration_hours: number;
 
   @ApiProperty({
     description: 'Cantitatea finală a rețetei în grame',

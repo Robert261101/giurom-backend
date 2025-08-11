@@ -252,7 +252,7 @@ export class RecipesService {
 
     const avgExpirationHours = await this.recipeRepository
       .createQueryBuilder('recipe')
-      .select('AVG(recipe.expiration_days)', 'avg')
+      .select('AVG(recipe.expiration_hours)', 'avg')
       .getRawOne();
 
     const mostUsedProducts = await this.recipeProductRepository

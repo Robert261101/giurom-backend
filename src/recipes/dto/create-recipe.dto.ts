@@ -45,11 +45,11 @@ export class CreateRecipeDto {
     description: 'Număr de ore până la expirare după preparare',
     example: 48,
   })
-  @IsNumber({}, { message: 'expiration_days trebuie să fie număr' })
-  @IsNotEmpty({ message: 'expiration_days este obligatoriu' })
-  @Min(1, { message: 'expiration_days trebuie să fie cel puțin 1 oră' })
-  @Max(8760, { message: 'expiration_days nu poate depăși 8760 ore (1 an)' })
-  expiration_days: number;
+  @IsNumber({}, { message: 'expiration_hours trebuie să fie număr' })
+  @IsNotEmpty({ message: 'expiration_hours este obligatoriu' })
+  @Min(1, { message: 'expiration_hours trebuie să fie cel puțin 1 oră' })
+  @Max(8760, { message: 'expiration_hours nu poate depăși 8760 ore (1 an)' })
+  expiration_hours: number;
 
   @ApiProperty({
     description: 'Cantitatea finală a rețetei în grame',

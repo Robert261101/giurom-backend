@@ -67,6 +67,10 @@ import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
 import { ShiftChangeRequest } from './shift-change-requests/entities/shift-change-request.entity';
 import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
 
+// Entități Notifications
+import { Notification } from './notifications/entities/notification.entity';
+import { NotificationsModule } from './notifications/notifications.module';
+
 @Module({
   imports: [
     // Configurarea variabilelor de mediu
@@ -147,6 +151,8 @@ import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-
         LeaveRequest,
         // Entități shift change requests
         ShiftChangeRequest,
+        // Entități notifications
+        Notification,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Doar în dezvoltare
       logging: process.env.NODE_ENV === 'development',
@@ -181,6 +187,7 @@ import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-
     CalendarModule,
     LeaveRequestsModule,
     ShiftChangeRequestsModule,
+    NotificationsModule,
   ],
   controllers: [],
   providers: [],
