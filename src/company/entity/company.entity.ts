@@ -302,7 +302,7 @@ export class Company {
     description: 'Locațiile de lucru ale companiei',
     type: () => [WorkLocation],
   })
-  @OneToMany(() => WorkLocation, (location) => location.company, {
+  @OneToMany(() => WorkLocation, (location) => location.company_id, {
     cascade: true,
     eager: false,
   })

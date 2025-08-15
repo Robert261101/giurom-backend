@@ -1,45 +1,28 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Employee } from '@/employee/entity/employee.entity';
-import { EmployeeWorkLocationHistory } from '@/employee/entity/employee-work-location-history.entity';
-import { EmployeeFiles } from '@/employee/entity/employee-files.entity';
-import { GeneratedDocuments } from '@/employee/entity/generated-documents.entity';
-import { EmployeeService } from '@/employee/employee.service';
+import { ConfigModule } from '@nestjs/config';
 import { EmployeeMicroController } from './employee.micro.controller';
+import { EmployeeService } from './employee.service';
+import { Employee } from './entities/employee.entity';
+import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
+import { EmployeeFiles } from './entities/employee-files.entity';
+import { GeneratedDocuments } from './entities/generated-documents.entity';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['employees/.env', '.env'] }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     TypeOrmModule.forRoot({
-      type: 'mariadb',
+      type: 'mysql',
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
+      port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
-      entities: [
-        Employee,
-        EmployeeWorkLocationHistory,
-        EmployeeFiles,
-        GeneratedDocuments,
-      ],
-      synchronize: process.env.NODE_ENV !== 'production',
-      logging: process.env.NODE_ENV === 'development',
-      charset: 'utf8mb4',
-      timezone: '+00:00',
-      extra: {
-        connectionLimit: 10,
-        acquireTimeout: 60000,
-        timeout: 60000,
-        reconnect: true,
-        charset: 'utf8mb4',
-        initStatements: [
-          "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_unicode_ci'",
-          'SET CHARACTER SET utf8mb4',
-          'SET character_set_connection=utf8mb4',
-        ],
-      },
+      entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments],
+      synchronize: true,
+      logging: false,
     }),
     TypeOrmModule.forFeature([
       Employee,

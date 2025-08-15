@@ -1,14 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Product } from '@/stock/entities/product.entity';
-import { Stock } from '@/stock/entities/stock.entity';
-import { StockTransaction } from '@/stock/entities/stock-transaction.entity';
-import { RecipeProduct } from '@/recipes/entities/recipe-product.entity';
-import { Recipe } from '@/recipes/entities/recipe.entity';
-import { RecipeCategory } from '@/recipes/entities/recipe-category.entity';
-import { StockService } from '@/stock/stock.service';
-import { StockMicroController } from './stock.micro.controller';
+import { Product } from './stock/entities/product.entity';
+import { Stock } from './stock/entities/stock.entity';
+import { StockTransaction } from './stock/entities/stock-transaction.entity';
+import { StockService } from './stock/stock.service';
+import { StockMicroController } from './stock/stock.micro.controller';
 
 @Module({
   imports: [
@@ -16,11 +13,11 @@ import { StockMicroController } from './stock.micro.controller';
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
+      port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
-      entities: [Product, Stock, StockTransaction, RecipeProduct, Recipe, RecipeCategory],
+      entities: [Product, Stock, StockTransaction],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
@@ -38,7 +35,7 @@ import { StockMicroController } from './stock.micro.controller';
         ],
       },
     }),
-    TypeOrmModule.forFeature([Product, Stock, StockTransaction, RecipeProduct, Recipe, RecipeCategory]),
+    TypeOrmModule.forFeature([Product, Stock, StockTransaction]),
   ],
   controllers: [StockMicroController],
   providers: [StockService],

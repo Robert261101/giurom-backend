@@ -3,9 +3,11 @@ import {
   IsNotEmpty,
   IsNumber,
   IsString,
+  IsOptional,
   Length,
   Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CreateEmployeeFileDto {
   @ApiProperty({
@@ -14,6 +16,7 @@ export class CreateEmployeeFileDto {
   })
   @IsNumber({}, { message: 'ID-ul angajatului trebuie să fie un număr' })
   @IsNotEmpty({ message: 'ID-ul angajatului este obligatoriu' })
+  @Transform(({ value }) => parseInt(value, 10))
   employee_id: number;
 
   @ApiProperty({
@@ -42,14 +45,23 @@ export class CreateEmployeeFileDto {
 
   @ApiProperty({
     description: 'Link-ul către fișier sau calea de stocare',
-    example: '/storage/employees/1/cv_ion_popescu.pdf',
+    example: '/files/employees/1/cv_ion_popescu.pdf',
     maxLength: 255,
   })
   @IsString({ message: 'Link-ul fișierului trebuie să fie un string' })
   @IsNotEmpty({ message: 'Link-ul fișierului este obligatoriu' })
   @Length(5, 255, { message: 'Link-ul fișierului trebuie să aibă între 5 și 255 de caractere' })
-  @Matches(/^(\/storage\/|https?:\/\/|\\\\server\\)/, {
-    message: 'Link-ul trebuie să înceapă cu /storage/, http://, https:// sau \\\\server\\'
+  @Matches(/^(\/storage\/|\/files\/|https?:\/\/|\\\\server\\)/, {
+    message: 'Link-ul trebuie să înceapă cu /storage/, /files/, http://, https:// sau \\\\server\\'
   })
   file_link: string;
+
+  @ApiProperty({
+    description: 'Conținutul fișierului în format base64 (opțional)',
+    example: 'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwo...',
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Conținutul fișierului trebuie să fie un string' })
+  file_content?: string;
 } 

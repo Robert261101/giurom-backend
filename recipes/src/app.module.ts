@@ -1,14 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Recipe } from '@/recipes/entities/recipe.entity';
-import { RecipeCategory } from '@/recipes/entities/recipe-category.entity';
-import { RecipeProduct } from '@/recipes/entities/recipe-product.entity';
-import { StockTransaction } from '@/stock/entities/stock-transaction.entity';
-import { Product } from '@/stock/entities/product.entity';
-import { Stock } from '@/stock/entities/stock.entity';
-import { RecipesService } from '@/recipes/recipes.service';
+import { Recipe } from './recipes/entities/recipe.entity';
+import { RecipeCategory } from './recipes/entities/recipe-category.entity';
+import { RecipeProduct } from './recipes/entities/recipe-product.entity';
+import { RecipePreparation } from './recipes/entities/recipe-preparation.entity';
+import { RecipeLabel } from './recipes/entities/recipe-label.entity';
+import { RecipesService } from './recipes/recipes.service';
 import { RecipesMicroController } from './recipes.micro.controller';
+import { RecipePreparationsService } from './recipes/recipes-preparations.service';
+import { RecipesLabelsService } from './recipes/recipes-labels.service';
 
 @Module({
   imports: [
@@ -16,12 +17,12 @@ import { RecipesMicroController } from './recipes.micro.controller';
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
+      port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
-      entities: [Recipe, RecipeCategory, RecipeProduct, Product, Stock, StockTransaction],
-      synchronize: process.env.NODE_ENV !== 'production',
+      entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel],
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',
@@ -38,10 +39,10 @@ import { RecipesMicroController } from './recipes.micro.controller';
         ],
       },
     }),
-    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, Product, Stock, StockTransaction]),
+    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel]),
   ],
   controllers: [RecipesMicroController],
-  providers: [RecipesService],
+  providers: [RecipesService, RecipePreparationsService, RecipesLabelsService],
 })
 export class AppModule {}
 

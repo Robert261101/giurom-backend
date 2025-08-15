@@ -29,6 +29,30 @@ export class CalendarMicroController {
   updateEvent(@Payload() payload: { id: number; dto: UpdateCalendarEventDto; currentUserId?: number }) {
     return this.service.updateEvent(payload.id, payload.dto, payload.currentUserId);
   }
+
+  @MessagePattern('calendar.events.delete')
+  deleteEvent(@Payload() payload: { id: number; currentUserId?: number }) {
+    return this.service.removeEvent(payload.id, payload.currentUserId);
+  }
+
+  @MessagePattern('calendar.events.findOne')
+  findOne(@Payload() payload: { id: number; currentUserId?: number }) {
+    return this.service.findOne(payload.id, payload.currentUserId);
+  }
+
+  @MessagePattern('calendar.recurrence.generate')
+  generateRecurrence(@Payload() payload: { recurrenceRuleId: number; startDate: string; endDate: string }) {
+    return this.service.generateRecurringEvents(
+      payload.recurrenceRuleId,
+      new Date(payload.startDate),
+      new Date(payload.endDate),
+    );
+  }
+
+  @MessagePattern('calendar.recurrence.endDate.update')
+  updateRecurrenceEndDate(@Payload() payload: { eventId: number; endDate: string; currentUserId?: number }) {
+    return this.service.updateRecurrenceEndDate(payload.eventId, payload.endDate, payload.currentUserId);
+  }
 }
 
 

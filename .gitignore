@@ -2,3 +2,11 @@ node_modules/.bin/acorn
 /node_modules
 /dist
 /labels
+/calendar-ms/node_modules
+/company/node_modules
+/employees/node_modules
+/gateway/node_modules
+/locations/node_modules
+/recipes/node_modules
+/stock/node_modules
+/suppliers-ms/node_modules

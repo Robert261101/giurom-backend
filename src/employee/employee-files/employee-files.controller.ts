@@ -9,6 +9,8 @@ import {
   Query,
   HttpStatus,
   UseGuards,
+  Res,
+  Inject,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -23,13 +25,15 @@ import { EmployeeFilesService } from './employee-files.service';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 import { UpdateEmployeeFileDto } from './dto/update-employee-file.dto';
 import { EmployeeFiles } from '../entity/employee-files.entity';
+import { ClientProxy } from '@nestjs/microservices';
+import { lastValueFrom } from 'rxjs';
 
 @ApiTags('employee-files')
 @Controller('employee-files')
 @UseGuards(ThrottlerGuard)
 @ApiBearerAuth()
 export class EmployeeFilesController {
-  constructor(private readonly filesService: EmployeeFilesService) {}
+  constructor(@Inject('EMPLOYEES_SERVICE') private readonly employeesClient: ClientProxy) {}
 
   @Post()
   @ApiOperation({
@@ -54,7 +58,9 @@ export class EmployeeFilesController {
     description: 'Există deja un fișier cu același nume sau tip pentru acest angajat',
   })
   async create(@Body() createFileDto: CreateEmployeeFileDto): Promise<EmployeeFiles> {
-    return await this.filesService.create(createFileDto);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeFiles>('employees.files.create', createFileDto),
+    );
   }
 
   @Get()
@@ -91,7 +97,14 @@ export class EmployeeFilesController {
     const limitNum = parseInt(limit, 10) || 10;
     const employeeIdFilter = employee_id ? parseInt(employee_id, 10) : undefined;
 
-    return await this.filesService.findAll(pageNum, limitNum, employeeIdFilter, file_type);
+    return await lastValueFrom(
+      this.employeesClient.send('employees.files.findAll', {
+        page: pageNum,
+        limit: limitNum,
+        employee_id: employeeIdFilter,
+        file_type,
+      }),
+    );
   }
 
   @Get('statistics')
@@ -120,7 +133,9 @@ export class EmployeeFilesController {
     recentUploads: number;
     averageFilesPerEmployee: number;
   }> {
-    return await this.filesService.getStatistics();
+    return await lastValueFrom(
+      this.employeesClient.send('employees.files.statistics', {}),
+    );
   }
 
   @Get('employee/:employee_id')
@@ -139,7 +154,9 @@ export class EmployeeFilesController {
     description: 'Angajatul nu a fost găsit',
   })
   async findByEmployee(@Param('employee_id') employee_id: string): Promise<EmployeeFiles[]> {
-    return await this.filesService.findByEmployee(+employee_id);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeFiles[]>('employees.files.findByEmployee', +employee_id),
+    );
   }
 
   @Get('type/:file_type')
@@ -158,26 +175,51 @@ export class EmployeeFilesController {
     type: [EmployeeFiles],
   })
   async findByType(@Param('file_type') file_type: string): Promise<EmployeeFiles[]> {
-    return await this.filesService.findByType(file_type);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeFiles[]>('employees.files.findByType', file_type),
+    );
   }
 
   @Get(':id')
   @ApiOperation({
-    summary: 'Găsește un fișier după ID',
-    description: 'Returnează detaliile unui fișier specific.',
+    summary: 'Servește conținutul unui fișier sau returnează metadatele',
+    description: 'Servește conținutul fișierului pentru vizualizare/descărcare sau returnează metadatele.',
   })
   @ApiParam({ name: 'id', description: 'ID-ul fișierului' })
+  @ApiQuery({ name: 'download', required: false, description: 'Forțează descărcarea (true/false)' })
+  @ApiQuery({ name: 'metadata', required: false, description: 'Returnează doar metadatele (true/false)' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Fișierul a fost găsit',
-    type: EmployeeFiles,
+    description: 'Fișierul sau metadatele au fost returnate cu succes',
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Fișierul nu a fost găsit',
   })
-  async findOne(@Param('id') id: string): Promise<EmployeeFiles> {
-    return await this.filesService.findOne(+id);
+  async findOne(
+    @Param('id') id: string,
+    @Query('download') download?: string,
+    @Query('metadata') metadata?: string,
+    @Res() res?: any,
+  ): Promise<any> {
+    if (metadata === 'true') {
+      return await lastValueFrom(
+        this.employeesClient.send<EmployeeFiles>('employees.files.findOne', +id),
+      );
+    }
+
+    const payload = await lastValueFrom(
+      this.employeesClient.send<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }>(
+        'employees.files.serveFile',
+        { file_id: +id, forceDownload: download === 'true' },
+      ),
+    );
+
+    res.setHeader('Content-Type', payload.mimeType);
+    res.setHeader('Content-Disposition', `${payload.disposition}; filename="${payload.fileName}"`);
+
+    const buffer = Buffer.from(payload.data, 'base64');
+    return res.send(buffer);
   }
 
   @Patch(':id')
@@ -203,7 +245,9 @@ export class EmployeeFilesController {
     @Param('id') id: string,
     @Body() updateFileDto: UpdateEmployeeFileDto,
   ): Promise<EmployeeFiles> {
-    return await this.filesService.update(+id, updateFileDto);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeFiles>('employees.files.update', { id: +id, dto: updateFileDto }),
+    );
   }
 
   @Delete(':id')
@@ -227,7 +271,9 @@ export class EmployeeFilesController {
     description: 'Fișierul nu a fost găsit',
   })
   async remove(@Param('id') id: string): Promise<{ message: string }> {
-    return await this.filesService.remove(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<{ message: string }>('employees.files.remove', +id),
+    );
   }
 
   @Delete('employee/:employee_id/all')
@@ -252,7 +298,9 @@ export class EmployeeFilesController {
     description: 'Angajatul nu a fost găsit',
   })
   async removeAllByEmployee(@Param('employee_id') employee_id: string): Promise<{ message: string; deletedCount: number }> {
-    return await this.filesService.removeAllByEmployee(+employee_id);
+    return await lastValueFrom(
+      this.employeesClient.send<{ message: string; deletedCount: number }>('employees.files.removeAllByEmployee', +employee_id),
+    );
   }
 
   @Get('validate/:file_id/access')
@@ -277,8 +325,10 @@ export class EmployeeFilesController {
     @Query('employee_id') employee_id?: string,
   ): Promise<{ hasAccess: boolean }> {
     const employeeIdFilter = employee_id ? parseInt(employee_id, 10) : undefined;
-    const hasAccess = await this.filesService.validateFileAccess(+file_id, employeeIdFilter);
-    
+    const hasAccess = await lastValueFrom(
+      this.employeesClient.send<boolean>('employees.files.validateAccess', { file_id: +file_id, employee_id: employeeIdFilter }),
+    );
+
     return { hasAccess };
   }
 } 

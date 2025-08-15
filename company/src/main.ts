@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -12,8 +12,7 @@ async function bootstrap() {
   });
 
   await app.listen();
-  // eslint-disable-next-line no-console
-  console.log(`🏢 Company microservice on ${process.env.COMPANY_MS_HOST || '0.0.0.0'}:${parseInt(process.env.COMPANY_MS_PORT || '4002', 10)}`);
+  console.log(`🏢 Company Microservice listening on ${process.env.COMPANY_MS_HOST || '0.0.0.0'}:${parseInt(process.env.COMPANY_MS_PORT || '4002', 10)}`);
 }
 
 bootstrap();

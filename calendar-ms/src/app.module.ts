@@ -3,10 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CalendarEvent } from '@/calendar/entities/calendar-event.entity';
 import { RecurrenceRule } from '@/calendar/entities/recurrence-rule.entity';
-import { Employee } from '@/employee/entity/employee.entity';
-import { EmployeeWorkLocationHistory } from '@/employee/entity/employee-work-location-history.entity';
-import { EmployeeFiles } from '@/employee/entity/employee-files.entity';
-import { GeneratedDocuments } from '@/employee/entity/generated-documents.entity';
+// Avoid importing Employee here to prevent schema drift on employees table
 import { CalendarService } from '@/calendar/calendar.service';
 import { CalendarMicroController } from './calendar.micro.controller';
 
@@ -16,19 +13,16 @@ import { CalendarMicroController } from './calendar.micro.controller';
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
+      port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [
         CalendarEvent,
         RecurrenceRule,
-        Employee,
-        EmployeeWorkLocationHistory,
-        EmployeeFiles,
-        GeneratedDocuments,
       ],
-      synchronize: process.env.NODE_ENV !== 'production',
+      // Keep disabled to avoid accidental schema changes
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',
@@ -45,14 +39,7 @@ import { CalendarMicroController } from './calendar.micro.controller';
         ],
       },
     }),
-    TypeOrmModule.forFeature([
-      CalendarEvent,
-      RecurrenceRule,
-      Employee,
-      EmployeeWorkLocationHistory,
-      EmployeeFiles,
-      GeneratedDocuments,
-    ]),
+    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule]),
   ],
   controllers: [CalendarMicroController],
   providers: [CalendarService],

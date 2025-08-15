@@ -5,6 +5,8 @@ import { EmployeeFiles } from '../entity/employee-files.entity';
 import { Employee } from '../entity/employee.entity';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 import { UpdateEmployeeFileDto } from './dto/update-employee-file.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class EmployeeFilesService {
@@ -17,6 +19,14 @@ export class EmployeeFilesService {
 
   // Creează un nou fișier pentru angajat
   async create(createFileDto: CreateEmployeeFileDto): Promise<EmployeeFiles> {
+    console.log('📥 Received createFileDto:', {
+      employee_id: createFileDto.employee_id,
+      file_name: createFileDto.file_name,
+      file_type: createFileDto.file_type,
+      has_content: !!createFileDto.file_content,
+      content_length: createFileDto.file_content?.length || 0
+    });
+    
     // Verifică dacă angajatul există
     const employee = await this.employeeRepository.findOne({
       where: { id: createFileDto.employee_id }
@@ -31,16 +41,56 @@ export class EmployeeFilesService {
       throw new BadRequestException('Nu se pot adăuga fișiere pentru un angajat inactiv');
     }
 
+    // Generate unique filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const fileExtension = createFileDto.file_name.split('.').pop() || 'txt';
+    const baseFileName = createFileDto.file_name.replace(/\.[^/.]+$/, "") || 'file';
+    const uniqueFileName = `${baseFileName}_${timestamp}.${fileExtension}`;
+
+    console.log(`📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`);
+
+    // Update the file_link to use the unique filename
+    const updatedFileLink = createFileDto.file_link.replace(createFileDto.file_name, uniqueFileName);
+
+    // Create the directory if it doesn't exist
+    const employeeId = createFileDto.employee_id?.toString() || 'unknown';
+    console.log(`📁 Creating directory for employee ID: ${employeeId}`);
+    const fileDir = path.join(process.cwd(), '..', 'files', 'employees', employeeId);
+    if (!fs.existsSync(fileDir)) {
+      fs.mkdirSync(fileDir, { recursive: true });
+    }
+
+    // If file content is provided (base64), save it to disk
+    if (createFileDto.file_content) {
+      try {
+        const filePath = path.join(fileDir, uniqueFileName);
+        
+        // Extract base64 content from data URL (remove data:type;base64, prefix)
+        let base64Data = createFileDto.file_content;
+        if (base64Data.includes(',')) {
+          base64Data = base64Data.split(',')[1];
+        }
+        
+        console.log(`💾 Saving file with ${base64Data.length} base64 characters`);
+        const buffer = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(filePath, buffer);
+        console.log(`✅ File saved to disk: ${filePath} (${buffer.length} bytes)`);
+      } catch (error) {
+        console.error('❌ Error saving file to disk:', error);
+        // Don't throw error - file is saved in DB even if disk save fails
+      }
+    }
+
     // Verifică dacă există deja un fișier cu același nume pentru același angajat
     const existingFile = await this.filesRepository.findOne({
       where: {
         employee_id: createFileDto.employee_id,
-        file_name: createFileDto.file_name
+        file_name: uniqueFileName
       }
     });
 
     if (existingFile) {
-      throw new ConflictException(`Un fișier cu numele "${createFileDto.file_name}" există deja pentru acest angajat`);
+      throw new ConflictException(`Un fișier cu numele "${uniqueFileName}" există deja pentru acest angajat`);
     }
 
     // Validări suplimentare pentru tipuri specifice de fișiere
@@ -57,8 +107,17 @@ export class EmployeeFilesService {
       }
     }
 
-    const file = this.filesRepository.create(createFileDto);
-    return await this.filesRepository.save(file);
+    // Create the file record with unique filename
+    const file = this.filesRepository.create({
+      ...createFileDto,
+      file_name: uniqueFileName,
+      file_link: updatedFileLink
+    });
+
+    const savedFile = await this.filesRepository.save(file);
+    console.log(`✅ File record saved to database with ID: ${savedFile.id}`);
+    
+    return savedFile;
   }
 
   // Găsește toate fișierele cu filtrare
@@ -274,5 +333,74 @@ export class EmployeeFilesService {
     // Ex: verificare role utilizator, permisiuni de acces la fișiere
 
     return true;
+  }
+
+  // Servește fișierul de pe disk
+  async serveFile(file_id: number, forceDownload: boolean = false, res: any): Promise<any> {
+    console.log(`🔍 Serving file with ID: ${file_id}, forceDownload: ${forceDownload}`);
+    
+    const file = await this.findOne(file_id);
+    console.log(`📄 File metadata:`, {
+      id: file.id,
+      name: file.file_name,
+      employee_id: file.employee_id,
+      file_link: file.file_link
+    });
+    
+    // Construiește calea către fișier
+    const filePath = path.join(process.cwd(), '..', 'files', 'employees', file.employee_id.toString(), file.file_name);
+    
+    console.log(`📁 Serving file from: ${filePath}`);
+    console.log(`📁 Current working directory: ${process.cwd()}`);
+    
+    // Verifică dacă fișierul există pe disk
+    if (!fs.existsSync(filePath)) {
+      console.error(`❌ File not found on disk: ${filePath}`);
+      // Să verific și alte căi posibile
+      const altPath1 = path.join(process.cwd(), 'files', 'employees', file.employee_id.toString(), file.file_name);
+      const altPath2 = path.join(process.cwd(), '..', '..', 'files', 'employees', file.employee_id.toString(), file.file_name);
+      console.log(`🔍 Checking alternative paths:`);
+      console.log(`   ${altPath1} - exists: ${fs.existsSync(altPath1)}`);
+      console.log(`   ${altPath2} - exists: ${fs.existsSync(altPath2)}`);
+      throw new NotFoundException('Fișierul nu a fost găsit pe disk');
+    }
+    
+    // Determină tipul MIME
+    const mimeType = this.getMimeType(file.file_name);
+    console.log(`📋 MIME type determined: ${mimeType}`);
+    
+    // Setează header-ele pentru răspuns
+    res.setHeader('Content-Type', mimeType);
+    
+    if (forceDownload) {
+      res.setHeader('Content-Disposition', `attachment; filename="${file.file_name}"`);
+    } else {
+      res.setHeader('Content-Disposition', `inline; filename="${file.file_name}"`);
+    }
+    
+    // Citește și trimite fișierul
+    const fileBuffer = fs.readFileSync(filePath);
+    console.log(`✅ File served successfully: ${file.file_name} (${fileBuffer.length} bytes)`);
+    
+    return res.send(fileBuffer);
+  }
+
+  // Determină tipul MIME bazat pe extensia fișierului
+  private getMimeType(fileName: string): string {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    const mimeTypes: { [key: string]: string } = {
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'txt': 'text/plain',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'xls': 'application/vnd.ms-excel',
+    };
+    
+    return mimeTypes[extension || ''] || 'application/octet-stream';
   }
 } 

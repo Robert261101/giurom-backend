@@ -1,12 +1,12 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { SuppliersService } from '@/suppliers/suppliers.service';
-import { CreateSupplierDto } from '@/suppliers/dto/create-supplier.dto';
-import { CreateSupplierWithDocumentsDto } from '@/suppliers/dto/create-supplier-with-documents.dto';
-import { UpdateSupplierDto } from '@/suppliers/dto/update-supplier.dto';
-import { CreateSupplierProductDto } from '@/suppliers/dto/create-supplier-product.dto';
-import { UpdateSupplierProductDto } from '@/suppliers/dto/update-supplier-product.dto';
-import { CreateSupplierOrderDto } from '@/suppliers/dto/create-supplier-order.dto';
+import { SuppliersService } from './suppliers/suppliers.service';
+import { CreateSupplierDto } from './suppliers/dto/create-supplier.dto';
+import { CreateSupplierWithDocumentsDto } from './suppliers/dto/create-supplier-with-documents.dto';
+import { UpdateSupplierDto } from './suppliers/dto/update-supplier.dto';
+import { CreateSupplierProductDto } from './suppliers/dto/create-supplier-product.dto';
+import { UpdateSupplierProductDto } from './suppliers/dto/update-supplier-product.dto';
+import { CreateSupplierOrderDto } from './suppliers/dto/create-supplier-order.dto';
 
 @Controller()
 export class SuppliersMicroController {
@@ -56,6 +56,29 @@ export class SuppliersMicroController {
 
   @MessagePattern('suppliers.orders.updateStatus')
   updateOrderStatus(@Payload() payload: { orderId: number; status: string }) { return this.service.updateOrderStatus(payload.orderId, payload.status); }
+
+  // Documents
+  @MessagePattern('suppliers.documents.add')
+  addDocument(@Payload() payload: { supplierId: number; documentData: { fileName: string; folderId: number; notes?: string } }) {
+    return this.service.addDocument(payload.supplierId, payload.documentData);
+  }
+
+  @MessagePattern('suppliers.documents.remove')
+  removeDocument(@Payload() documentId: number) { return this.service.removeDocument(documentId); }
+
+  @MessagePattern('suppliers.documents.findById')
+  findDocumentById(@Payload() id: number) { return this.service['supplierDocumentRepo'].findOne({ where: { id } }); }
+
+  // File serving
+  @MessagePattern('suppliers.files.serveDocument')
+  serveDocument(@Payload() payload: { file_id: number; forceDownload?: boolean }) { return this.service.serveDocument(payload.file_id, !!payload.forceDownload); }
+
+  // Links
+  @MessagePattern('suppliers.orders.emailLink')
+  emailLink(@Payload() payload: { supplierId: number; orderId: number }) { return { emailLink: this.service.generateEmailLink(payload.supplierId, payload.orderId) }; }
+
+  @MessagePattern('suppliers.orders.whatsappLink')
+  whatsappLink(@Payload() payload: { supplierId: number; orderId: number; pdfUrl?: string }) { return { whatsappLink: this.service.generateWhatsAppLink(payload.supplierId, payload.orderId, payload.pdfUrl) }; }
 }
 
 

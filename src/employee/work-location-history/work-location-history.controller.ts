@@ -9,6 +9,7 @@ import {
   Query,
   HttpStatus,
   UseGuards,
+  Inject,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -23,13 +24,15 @@ import { WorkLocationHistoryService } from './work-location-history.service';
 import { CreateWorkLocationHistoryDto } from './dto/create-work-location-history.dto';
 import { UpdateWorkLocationHistoryDto } from './dto/update-work-location-history.dto';
 import { EmployeeWorkLocationHistory } from '../entity/employee-work-location-history.entity';
+import { ClientProxy } from '@nestjs/microservices';
+import { lastValueFrom } from 'rxjs';
 
 @ApiTags('employee-work-location-history')
 @Controller('employee-work-location-history')
 @UseGuards(ThrottlerGuard)
 @ApiBearerAuth()
 export class WorkLocationHistoryController {
-  constructor(private readonly historyService: WorkLocationHistoryService) {}
+  constructor(@Inject('EMPLOYEES_SERVICE') private readonly employeesClient: ClientProxy) {}
 
   @Post()
   @ApiOperation({
@@ -50,7 +53,9 @@ export class WorkLocationHistoryController {
     description: 'Nu se poate adăuga istoric pentru un angajat inactiv',
   })
   async create(@Body() createHistoryDto: CreateWorkLocationHistoryDto): Promise<EmployeeWorkLocationHistory> {
-    return await this.historyService.create(createHistoryDto);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeWorkLocationHistory>('employees.workhistory.create', createHistoryDto),
+    );
   }
 
   @Get()
@@ -88,7 +93,14 @@ export class WorkLocationHistoryController {
     const employeeIdFilter = employee_id ? parseInt(employee_id, 10) : undefined;
     const locationIdFilter = work_location_id ? parseInt(work_location_id, 10) : undefined;
 
-    return await this.historyService.findAll(pageNum, limitNum, employeeIdFilter, locationIdFilter);
+    return await lastValueFrom(
+      this.employeesClient.send('employees.workhistory.findAll', {
+        page: pageNum,
+        limit: limitNum,
+        employee_id: employeeIdFilter,
+        work_location_id: locationIdFilter,
+      }),
+    );
   }
 
   @Get('statistics')
@@ -115,7 +127,9 @@ export class WorkLocationHistoryController {
     byWorkLocation: { [key: string]: number };
     recentChanges: number;
   }> {
-    return await this.historyService.getStatistics();
+    return await lastValueFrom(
+      this.employeesClient.send('employees.workhistory.statistics', {}),
+    );
   }
 
   @Get('employee/:employee_id')
@@ -134,7 +148,9 @@ export class WorkLocationHistoryController {
     description: 'Angajatul nu a fost găsit',
   })
   async findByEmployee(@Param('employee_id') employee_id: string): Promise<EmployeeWorkLocationHistory[]> {
-    return await this.historyService.findByEmployee(+employee_id);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeWorkLocationHistory[]>('employees.workhistory.findByEmployee', +employee_id),
+    );
   }
 
   @Get('work-location/:work_location_id')
@@ -149,7 +165,9 @@ export class WorkLocationHistoryController {
     type: [EmployeeWorkLocationHistory],
   })
   async findByWorkLocation(@Param('work_location_id') work_location_id: string): Promise<EmployeeWorkLocationHistory[]> {
-    return await this.historyService.findByWorkLocation(+work_location_id);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeWorkLocationHistory[]>('employees.workhistory.findByWorkLocation', +work_location_id),
+    );
   }
 
   @Get(':id')
@@ -168,7 +186,9 @@ export class WorkLocationHistoryController {
     description: 'Înregistrarea nu a fost găsită',
   })
   async findOne(@Param('id') id: string): Promise<EmployeeWorkLocationHistory> {
-    return await this.historyService.findOne(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeWorkLocationHistory>('employees.workhistory.findOne', +id),
+    );
   }
 
   @Patch(':id')
@@ -190,7 +210,9 @@ export class WorkLocationHistoryController {
     @Param('id') id: string,
     @Body() updateHistoryDto: UpdateWorkLocationHistoryDto,
   ): Promise<EmployeeWorkLocationHistory> {
-    return await this.historyService.update(+id, updateHistoryDto);
+    return await lastValueFrom(
+      this.employeesClient.send<EmployeeWorkLocationHistory>('employees.workhistory.update', { id: +id, dto: updateHistoryDto }),
+    );
   }
 
   @Delete(':id')
@@ -214,6 +236,8 @@ export class WorkLocationHistoryController {
     description: 'Înregistrarea nu a fost găsită',
   })
   async remove(@Param('id') id: string): Promise<{ message: string }> {
-    return await this.historyService.remove(+id);
+    return await lastValueFrom(
+      this.employeesClient.send<{ message: string }>('employees.workhistory.remove', +id),
+    );
   }
 } 

@@ -212,17 +212,7 @@ export class WorkLocation {
   @UpdateDateColumn({ type: "datetime" })
   updated_at: Date;
 
-  // Relații
-  @ApiProperty({
-    description: "Compania la care aparține locația",
-    type: () => Company,
-  })
-  @ManyToOne(() => Company, (company) => company.work_locations, {
-    onDelete: "CASCADE",
-    onUpdate: "CASCADE",
-  })
-  @JoinColumn({ name: "company_id" })
-  company: Company;
+  // Relația către Company a fost eliminată pentru izolare la nivel de microserviciu. Se folosește doar company_id.
 
   @ApiProperty({
     description: "Template-urile de sarcini asociate acestei locații",

@@ -27,9 +27,8 @@ import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule } from './entities/recurrence-rule.entity';
 
-@ApiTags('calendar')
-@Controller('calendar')
-@ApiBearerAuth()
+// Calendar HTTP controller dezactivat după migrare la microserviciu.
+// Păstrăm fișierul pentru referință, dar nu exportă un controller activ.
 export class CalendarController {
   constructor(private readonly calendarService: CalendarService) {}
 

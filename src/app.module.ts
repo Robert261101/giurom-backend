@@ -45,7 +45,7 @@ import { RecipeLabelsModule } from './recipe-labels/recipe-labels.module';
 import { WasteRecord } from './waste-records/entities/waste-record.entity';
 import { WasteRecordsModule } from './waste-records/waste-records.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
-import { CalendarModule } from './calendar/calendar.module';
+// import { CalendarModule } from './calendar/calendar.module';
 import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
 
 // Entități Suppliers
@@ -58,8 +58,8 @@ import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.enti
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
 
 // Entități Calendar
-import { CalendarEvent } from './calendar/entities/calendar-event.entity';
-import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
+// import { CalendarEvent } from './calendar/entities/calendar-event.entity';
+// import { RecurrenceRule } from './calendar/entities/recurrence-rule.entity';
 
 // Entități Leave Requests
 import { LeaveRequest } from './leave-requests/entities/leave-request.entity';
@@ -98,7 +98,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
       },
     ]),
 
-    // Conexiunea cu MariaDB cu suport UTF-8 pentru caractere românești
+    // Conexiunea cu MariaDB fără entitățile employees (mutate în microserviciu)
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
@@ -115,7 +115,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
         WorkLocationTaskTemplate,
         WorkLocationDepartments,
         WorkLocationDepartmentPositions,
-        // Entități angajați
+        // Entități angajați (doar Employee pentru relații cu alte module)
         Employee,
         EmployeeWorkLocationHistory,
         EmployeeFiles,
@@ -144,9 +144,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
         SupplierOrder,
         SupplierOrderItem,
         SupplierOrderDocument,
-        // Entități calendar
-        CalendarEvent,
-        RecurrenceRule,
+        // Entități calendar - mutate în microserviciu
         // Entități leave requests
         LeaveRequest,
         // Entități shift change requests
@@ -165,9 +163,9 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
         // Force UTF-8 support for Romanian characters
         initStatements: [
           "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_unicode_ci'",
-          "SET CHARACTER SET utf8mb4",
-          "SET character_set_connection=utf8mb4"
-        ]
+          'SET CHARACTER SET utf8mb4',
+          'SET character_set_connection=utf8mb4',
+        ],
       },
     }),
 
@@ -182,7 +180,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
     RecipeLabelsModule,
     WasteRecordsModule,
     SuppliersModule,
-    CalendarModule,
+    // CalendarModule,
     LeaveRequestsModule,
     ShiftChangeRequestsModule,
     AuthModule,

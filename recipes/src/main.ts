@@ -12,7 +12,6 @@ async function bootstrap() {
   });
 
   await app.listen();
-  // eslint-disable-next-line no-console
   console.log(`🍲 Recipes microservice on ${process.env.RECIPES_MS_HOST || '0.0.0.0'}:${parseInt(process.env.RECIPES_MS_PORT || '4005', 10)}`);
 }
 
