@@ -1,7 +1,7 @@
 {
-  "name": "giurom-backend",
+  "name": "requests-ms",
   "version": "1.0.0",
-  "description": "Giurom Backend - Punct de Lucru si Adaugare Firma",
+  "description": "Requests Microservice - Leave Requests and Shift Change Requests",
   "author": "Giurom Team",
   "private": true,
   "license": "MIT",
@@ -17,17 +17,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
-    "start:ms:employees": "ts-node -r tsconfig-paths/register employees/src/main.ts",
-    "start:ms:company": "ts-node -r tsconfig-paths/register company/src/main.ts",
-    "start:ms:locations": "ts-node -r tsconfig-paths/register locations/src/main.ts",
-    "start:ms:stock": "ts-node -r tsconfig-paths/register stock/src/main.ts",
-    "start:ms:recipes": "ts-node -r tsconfig-paths/register recipes/src/main.ts",
-    "start:ms:calendar": "ts-node -r tsconfig-paths/register calendar-ms/src/main.ts",
-    "start:ms:attendance": "ts-node -r tsconfig-paths/register attendance-ms/src/main.ts",
-    "start:ms:suppliers": "ts-node -r tsconfig-paths/register suppliers-ms/src/main.ts",
-    "start:ms:waste": "ts-node -r tsconfig-paths/register waste-records-ms/src/main.ts",
-    "start:ms:requests": "ts-node -r tsconfig-paths/register requests-ms/src/main.ts"
+    "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -48,7 +38,6 @@
     "mysql2": "^3.14.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
-    "pdfkit": "^0.17.1",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.0",
