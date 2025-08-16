@@ -32,7 +32,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  const port = parseInt(process.env.PORT || '3010', 10);
+  const port = parseInt(process.env.PORT || '3008', 10);
   await app.listen(port);
   console.log(`🗓️ Calendar Microservice is running on: http://localhost:${port}`);
   console.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);

@@ -21,9 +21,9 @@ app.get('/health', (req, res) => {
     routes: {
       '/employees': 'http://localhost:3012',
       '/attendance': 'http://localhost:3007',
-      '/calendar': 'http://localhost:3010', 
-      '/leave-requests': 'http://localhost:3010',
-      '/shift-change-requests': 'http://localhost:3010',
+      '/calendar': 'http://localhost:3008', 
+      '/leave-requests': 'http://localhost:3013',
+      '/shift-change-requests': 'http://localhost:3013',
       '/notifications': 'http://localhost:3011'
     }
   });
@@ -47,20 +47,20 @@ const microservices = {
   
   // Calendar microservice  
   '/calendar': {
-    target: 'http://localhost:3010',
+    target: 'http://localhost:3008',
     changeOrigin: true,
     logLevel: 'debug'
   },
   
   // Requests microservice (leave-requests and shift-change-requests)
   '/leave-requests': {
-    target: 'http://localhost:3010',
+    target: 'http://localhost:3013',
     changeOrigin: true,
     logLevel: 'debug'
   },
   
   '/shift-change-requests': {
-    target: 'http://localhost:3010', 
+    target: 'http://localhost:3013', 
     changeOrigin: true,
     logLevel: 'debug'
   },
