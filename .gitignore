@@ -17,3 +17,4 @@ node_modules/.bin/acorn
 /calendar-ms/dist
 /employees/dist
 /requests-ms/dist
+/notification-service/dist

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsNotEmpty, IsNumber, IsOptional, Length, Matches, Min, Max } from 'class-validator';
+import { IsString, IsEmail, IsNotEmpty, IsNumber, IsOptional, Length, Matches, Min, Max, IsInt } from 'class-validator';
 
 export class CreateWorkLocationDto {
   @ApiProperty({ description: 'ID-ul companiei la care aparține locația', example: 1 })
@@ -86,4 +86,9 @@ export class CreateWorkLocationDto {
   @Min(1, { message: 'Raza GPS trebuie să fie cel puțin 1 metru' })
   @Max(10000, { message: 'Raza GPS nu poate depăși 10000 metri' })
   gps_radius_m?: number;
+
+  @ApiProperty({ description: 'Punctajul locației pentru BI', example: 10, required: false, default: 0 })
+  @IsOptional()
+  @IsInt({ message: 'Punctajul trebuie să fie un număr întreg' })
+  points?: number = 0;
 } 

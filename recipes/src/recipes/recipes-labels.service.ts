@@ -65,12 +65,12 @@ export class RecipesLabelsService {
 
       if (expirationAt > now && expirationAt <= inTwoHours) {
         try {
-          await this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
+          this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
             labelId: label.id,
             labelCode: label.label_code,
             preparationId: label.recipe_preparation_id,
             expiresAt: expirationAt.toISOString(),
-          }).toPromise();
+          });
         } catch {
           // Ignore transient RMQ errors
         }

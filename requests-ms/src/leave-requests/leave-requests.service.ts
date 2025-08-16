@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { LeaveRequest, LeaveStatus, DurationUnit } from './entities/leave-request.entity';
 import { Employee } from '../employee/entities/employee.entity';
@@ -8,8 +10,9 @@ import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.d
 import { FilterLeaveRequestsDto } from './dto/filter-leave-requests.dto';
 
 @Injectable()
-export class LeaveRequestsService {
+export class LeaveRequestsService implements OnModuleInit {
   private readonly logger = new Logger(LeaveRequestsService.name);
+  private notificationsClient: ClientProxy;
 
   constructor(
     @InjectRepository(LeaveRequest)
@@ -17,6 +20,16 @@ export class LeaveRequestsService {
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
   ) {}
+  onModuleInit() {
+    this.notificationsClient = ClientProxyFactory.create({
+      transport: Transport.RMQ,
+      options: {
+        urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+        queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+        queueOptions: { durable: false },
+      },
+    });
+  }
 
   // Creare cerere de concediu
   async create(dto: CreateLeaveRequestDto, currentUserId?: number): Promise<LeaveRequest> {
@@ -79,6 +92,20 @@ export class LeaveRequestsService {
 
     this.logger.log(`Leave request ${savedRequest.id} created successfully for employee ${dto.employee_id}`);
     
+    // Emit event to notifications via RabbitMQ (non-blocking)
+    try {
+      await firstValueFrom(
+        this.notificationsClient.send({ cmd: 'labels.expiring-soon' }, {
+          labelId: savedRequest.id,
+          labelCode: 'leave-request',
+          preparationId: dto.employee_id,
+          expiresAt: endDate.toISOString(),
+        })
+      );
+    } catch (e) {
+      this.logger.warn(`Failed to emit notification event: ${e?.message || e}`);
+    }
+
     return this.findOne(savedRequest.id);
   }
 

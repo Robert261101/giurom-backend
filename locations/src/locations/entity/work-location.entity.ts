@@ -34,6 +34,9 @@ export class WorkLocation {
   @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   email: string | null;
 
+  @Column({ type: 'int', default: 0 })
+  points: number;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

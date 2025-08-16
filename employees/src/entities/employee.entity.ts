@@ -74,9 +74,11 @@ export class Employee {
     type: 'varchar',
     length: 15,
     charset: 'utf8mb4',
-    collation: 'utf8mb4_unicode_ci'
+    collation: 'utf8mb4_unicode_ci',
+    nullable: true,
+    select: false,
   })
-  personal_number: string;
+  personal_number: string | null;
 
   @ApiProperty({
     description: 'Data nașterii',

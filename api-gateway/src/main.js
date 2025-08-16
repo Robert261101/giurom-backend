@@ -69,7 +69,8 @@ const microservices = {
   '/notifications': {
     target: 'http://localhost:3011',
     changeOrigin: true,
-    logLevel: 'debug'
+    logLevel: 'debug',
+    ws: true
   }
 };
 
@@ -81,6 +82,7 @@ Object.keys(microservices).forEach(path => {
     target: config.target,
     changeOrigin: config.changeOrigin,
     logLevel: config.logLevel,
+    ws: config.ws,
     onProxyReq: (proxyReq, req, res) => {
       console.log(`[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`);
     },
