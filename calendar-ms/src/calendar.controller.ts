@@ -186,6 +186,20 @@ export class CalendarController {
     return this.calendarService.updateEvent(id, updateCalendarEventDto, userId);
   }
 
+  // PATCH /calendar/events/:id/recurrence-end-date – oprește recurența începând cu o dată
+  @Patch('events/:id/recurrence-end-date')
+  @ApiOperation({ summary: 'Oprește recurența pentru evenimentul de bază începând cu o dată' })
+  @ApiParam({ name: 'id', description: 'ID-ul evenimentului de bază' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Recurența a fost oprită' })
+  updateRecurrenceEndDate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('endDate') endDate: string,
+    @Headers('x-user-id') currentUserId?: string,
+  ): Promise<{ success: true }> {
+    const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    return this.calendarService.updateRecurrenceEndDate(id, endDate, userId);
+  }
+
   // DELETE /calendar/events/:id – ștergere eveniment
   @Delete('events/:id')
   @ApiOperation({ summary: 'Șterge un eveniment din calendar' })
@@ -235,4 +249,6 @@ export class CalendarController {
       new Date(endDate)
     );
   }
+
+  // exceptions endpoint removed to keep schema stable
 }

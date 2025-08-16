@@ -14,3 +14,5 @@ node_modules/.bin/acorn
 /gateway/dist
 /api-gateway/node_modules
 /notifications-ms/node_modules
+/calendar-ms/dist
+/employees/dist

@@ -47,20 +47,9 @@ export class CalendarService {
   // Creare eveniment calendar
   async createEvent(dto: CreateCalendarEventDto, currentUserId?: number): Promise<CalendarEvent> {
     // Verifică dacă angajatul creator există
-    let creator = await this.employeeRepo.findOne({ where: { id: dto.created_by } });
+    const creator = await this.employeeRepo.findOne({ where: { id: dto.created_by } });
     if (!creator) {
-      // Dev fallback: auto-crează un angajat simplu dacă nu există
-      const newEmployee = this.employeeRepo.create({
-        id: dto.created_by,
-        first_name: 'Demo',
-        last_name: 'User',
-        email: `demo${dto.created_by}@giurom.local`,
-        phone: '0000000000',
-        hire_date: new Date(),
-        contract_type: 'permanent',
-        is_active: true,
-      });
-      creator = await this.employeeRepo.save(newEmployee);
+      throw new NotFoundException('Angajatul creator nu a fost găsit');
     }
 
     // Autorizare: doar creatorul poate crea evenimente pentru sine
@@ -259,14 +248,18 @@ export class CalendarService {
     let currentDate = new Date(Math.max(rule.start_datetime.getTime(), startDate.getTime()));
     const ruleEndDate = rule.end_datetime || endDate;
 
+    const exceptionSet = new Set<string>();
     while (currentDate <= ruleEndDate && currentDate <= endDate) {
       // Verifică dacă ziua curentă se potrivește cu regula
       if (this.matchesRecurrenceRule(currentDate, rule)) {
-        events.push({
-          title: `Eveniment recurent (${rule.frequency})`,
-          start_datetime: new Date(currentDate),
-          // Alte proprietăți pot fi completate pe baza template-ului
-        });
+        const isoDate = currentDate.toISOString().split('T')[0];
+        if (!exceptionSet.has(isoDate)) {
+          events.push({
+            title: `Eveniment recurent (${rule.frequency})`,
+            start_datetime: new Date(currentDate),
+            // Alte proprietăți pot fi completate pe baza template-ului
+          });
+        }
       }
 
       // Avansează data pe baza frecvenței
@@ -275,6 +268,25 @@ export class CalendarService {
 
     return events;
   }
+
+  async updateRecurrenceEndDate(eventId: number, endDateIso: string, currentUserId?: number): Promise<{ success: true }> {
+    const event = await this.findOne(eventId, currentUserId);
+    if (event.recurrence_id) {
+      const rule = await this.recurrenceRepo.findOne({ where: { id: event.recurrence_id } });
+      if (!rule) throw new NotFoundException('Regula de recurență nu a fost găsită');
+      const endDate = new Date(endDateIso);
+      if (isNaN(endDate.getTime())) throw new BadRequestException('Data de sfârșit recurență invalidă');
+      if (rule.start_datetime && endDate <= rule.start_datetime) {
+        throw new BadRequestException('Data de sfârșit recurență trebuie să fie după data de început');
+      }
+      rule.end_datetime = endDate;
+      await this.recurrenceRepo.save(rule);
+      return { success: true };
+    }
+    throw new BadRequestException('Evenimentul nu are recurență asociată');
+  }
+
+  // updateRecurrenceExceptions removed to avoid schema mismatch
 
   private matchesRecurrenceRule(date: Date, rule: RecurrenceRule): boolean {
     if (rule.frequency === RecurrenceFrequency.WEEKLY && rule.recurrence_days) {
