@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { WorkLocation } from './entity/work-location.entity';
-import { WorkLocationTaskTemplate } from './entity/work-location-task-template.entity';
+import { WorkLocation } from '../locations/entity/work-location.entity';
+import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
 import { CreateWorkLocationDto } from './dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 import { CreateTaskTemplateAssignmentDto } from './dto/create-task-template-assignment.dto';

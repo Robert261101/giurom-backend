@@ -1,6 +1,6 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { CompanyService } from '@/company/company.service';
+import { CompanyService } from './company/company.service';
 import { CreateCompanyDto } from '@/company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from '@/company/dto/create-company-with-documents.dto';
 import { UpdateCompanyDto } from '@/company/dto/update-company.dto';

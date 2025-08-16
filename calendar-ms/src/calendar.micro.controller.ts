@@ -1,10 +1,10 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { CalendarService } from '@/calendar/calendar.service';
-import { CreateCalendarEventDto } from '@/calendar/dto/create-calendar-event.dto';
-import { UpdateCalendarEventDto } from '@/calendar/dto/update-calendar-event.dto';
-import { CreateRecurrenceRuleDto } from '@/calendar/dto/create-recurrence-rule.dto';
-import { FilterCalendarEventsDto } from '@/calendar/dto/filter-calendar-events.dto';
+import { CalendarService } from './calendar.service';
+import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
+import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
+import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
+import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
 
 @Controller()
 export class CalendarMicroController {
@@ -49,10 +49,7 @@ export class CalendarMicroController {
     );
   }
 
-  @MessagePattern('calendar.recurrence.endDate.update')
-  updateRecurrenceEndDate(@Payload() payload: { eventId: number; endDate: string; currentUserId?: number }) {
-    return this.service.updateRecurrenceEndDate(payload.eventId, payload.endDate, payload.currentUserId);
-  }
+
 }
 
 

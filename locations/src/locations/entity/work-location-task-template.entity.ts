@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
-import { WorkLocation } from './work-location.entity';
+import { WorkLocation } from '../entity/work-location.entity';
 
 @Entity('worklocation_tasktemplate')
 export class WorkLocationTaskTemplate {

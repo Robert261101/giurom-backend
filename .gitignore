@@ -10,3 +10,7 @@ node_modules/.bin/acorn
 /recipes/node_modules
 /stock/node_modules
 /suppliers-ms/node_modules
+/requests-ms/node_modules
+/gateway/dist
+/api-gateway/node_modules
+/notifications-ms/node_modules

@@ -27,7 +27,9 @@
     "start:ms:attendance": "ts-node -r tsconfig-paths/register attendance-ms/src/main.ts",
     "start:ms:suppliers": "ts-node -r tsconfig-paths/register suppliers-ms/src/main.ts",
     "start:ms:waste": "ts-node -r tsconfig-paths/register waste-records-ms/src/main.ts",
-    "start:ms:requests": "ts-node -r tsconfig-paths/register requests-ms/src/main.ts"
+    "start:ms:requests": "ts-node -r tsconfig-paths/register requests-ms/src/main.ts",
+    "start:ms:notifications": "ts-node -r tsconfig-paths/register notifications-ms/src/main.ts",
+    "start:gateway": "node api-gateway/src/main.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

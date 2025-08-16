@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { WorkLocation } from '@/locations/entity/work-location.entity';
-import { WorkLocationTaskTemplate } from '@/locations/entity/work-location-task-template.entity';
-import { WorkLocationDepartments } from '@/locations/entity/work-location-departments.entity';
-import { WorkLocationDepartmentPositions } from '@/locations/entity/work-location-department-positions.entity';
-import { LocationsService } from '@/locations/locations.service';
+import { WorkLocation } from './locations/entity/work-location.entity';
+import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
+import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
+import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
+import { LocationsService } from './locations/locations.service';
 import { LocationsMicroController } from './locations.micro.controller';
 
 @Module({
@@ -16,7 +16,7 @@ import { LocationsMicroController } from './locations.micro.controller';
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'eric',
+      password: process.env.DB_PASSWORD || 'root',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [
         WorkLocation,

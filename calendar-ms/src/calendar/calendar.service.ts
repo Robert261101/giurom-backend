@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule, RecurrenceFrequency } from './entities/recurrence-rule.entity';
+import { Employee } from '@/employee/entity/employee.entity';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
@@ -15,7 +16,9 @@ export class CalendarService {
     private readonly eventRepo: Repository<CalendarEvent>,
     @InjectRepository(RecurrenceRule)
     private readonly recurrenceRepo: Repository<RecurrenceRule>,
-    // No employeeRepo here to avoid coupling; creator existence should be validated upstream if needed
+    // Keep EmployeeRepository injected to satisfy DI metadata used by existing controllers/listeners
+    @InjectRepository(Employee)
+    private readonly employeeRepo: Repository<Employee>,
   ) {}
 
   async createRecurrenceRule(dto: CreateRecurrenceRuleDto): Promise<RecurrenceRule> {

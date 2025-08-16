@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { WorkLocationTaskTemplate } from './work-location-task-template.entity';
-import { WorkLocationDepartments } from './work-location-departments.entity';
+import { WorkLocationTaskTemplate } from '../entity/work-location-task-template.entity';
+import { WorkLocationDepartments } from '../entity/work-location-departments.entity';
 
 @Entity('work_location')
 export class WorkLocation {

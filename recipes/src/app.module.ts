@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Recipe } from './recipes/entities/recipe.entity';
@@ -14,12 +16,24 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['recipes/.env', '.env'] }),
+    ScheduleModule.forRoot(),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'eric',
+      password: process.env.DB_PASSWORD || 'root',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel],
       synchronize: false,

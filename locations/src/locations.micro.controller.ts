@@ -1,10 +1,10 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { LocationsService } from '@/locations/locations.service';
-import { CreateWorkLocationDto } from '@/locations/dto/create-work-location.dto';
-import { UpdateWorkLocationDto } from '@/locations/dto/update-work-location.dto';
-import { CreateTaskTemplateAssignmentDto } from '@/locations/dto/create-task-template-assignment.dto';
-import { UpdateTaskTemplateAssignmentDto } from '@/locations/dto/update-task-template-assignment.dto';
+import { LocationsService } from './locations/locations.service';
+import { CreateWorkLocationDto } from './locations/dto/create-work-location.dto';
+import { UpdateWorkLocationDto } from './locations/dto/update-work-location.dto';
+import { CreateTaskTemplateAssignmentDto } from './locations/dto/create-task-template-assignment.dto';
+import { UpdateTaskTemplateAssignmentDto } from './locations/dto/update-task-template-assignment.dto';
 
 @Controller()
 export class LocationsMicroController {

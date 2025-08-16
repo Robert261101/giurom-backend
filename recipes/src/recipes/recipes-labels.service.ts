@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ClientProxy } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecipeLabel } from './entities/recipe-label.entity';
@@ -9,6 +11,7 @@ export class RecipesLabelsService {
   constructor(
     @InjectRepository(RecipeLabel) private readonly labelRepo: Repository<RecipeLabel>,
     @InjectRepository(RecipePreparation) private readonly prepRepo: Repository<RecipePreparation>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly rmq: ClientProxy,
   ) {}
 
   async findAll(): Promise<RecipeLabel[]> {
@@ -38,6 +41,41 @@ export class RecipesLabelsService {
     const label = await this.labelRepo.findOne({ where: { id } });
     if (!label) throw new NotFoundException('Label not found');
     await this.labelRepo.remove(label);
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async emitExpiringLabelsNotifications(): Promise<void> {
+    const now = new Date();
+    const inTwoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+    // Join to preparation -> recipe to compute expiration
+    const labels = await this.labelRepo
+      .createQueryBuilder('label')
+      .leftJoinAndSelect('label.preparation', 'prep')
+      .leftJoinAndSelect('prep.recipe', 'recipe')
+      .where('prep.produced_at IS NOT NULL')
+      .getMany();
+
+    for (const label of labels) {
+      const producedAt = label.preparation?.produced_at as unknown as Date;
+      const expHours = (label.preparation?.recipe as any)?.expiration_days || 48;
+      if (!producedAt) continue;
+      const expirationAt = new Date(producedAt);
+      expirationAt.setHours(expirationAt.getHours() + expHours);
+
+      if (expirationAt > now && expirationAt <= inTwoHours) {
+        try {
+          await this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
+            labelId: label.id,
+            labelCode: label.label_code,
+            preparationId: label.recipe_preparation_id,
+            expiresAt: expirationAt.toISOString(),
+          }).toPromise();
+        } catch {
+          // Ignore transient RMQ errors
+        }
+      }
+    }
   }
 }
 

@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { RecurrenceRule } from './recurrence-rule.entity';
+import { Employee } from '@/employee/entity/employee.entity';
 
 @Entity('calendar_events')
 export class CalendarEvent {
@@ -105,7 +106,9 @@ export class CalendarEvent {
   @JoinColumn({ name: 'recurrence_id' })
   recurrence_rule?: RecurrenceRule;
 
-  // Intenționat fără relație pentru a evita dependența pe schema employees din acest MS
+  @ManyToOne(() => Employee, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'created_by' })
+  creator: Employee;
 }
 
 
