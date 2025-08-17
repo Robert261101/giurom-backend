@@ -21,7 +21,7 @@ app.get('/health', (req, res) => {
     routes: {
       '/employees': 'http://localhost:3012',
       '/attendance': 'http://localhost:3007',
-      '/calendar': 'http://localhost:3008', 
+      '/calendar': 'http://localhost:3010', 
       '/leave-requests': 'http://localhost:3013',
       '/shift-change-requests': 'http://localhost:3013',
       '/notifications': 'http://localhost:3011'
@@ -47,7 +47,7 @@ const microservices = {
   
   // Calendar microservice  
   '/calendar': {
-    target: 'http://localhost:3008',
+    target: 'http://localhost:3010',
     changeOrigin: true,
     logLevel: 'debug'
   },
