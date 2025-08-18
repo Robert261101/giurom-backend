@@ -18,7 +18,7 @@ import { CompanyHttpController } from './company.http.controller';
       password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Company, CompanyDocument],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',

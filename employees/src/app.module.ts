@@ -22,7 +22,7 @@ import { GeneratedDocuments } from './entities/generated-documents.entity';
       password: process.env.DB_PASSWORD || 'root',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments],
-      synchronize: true,
+      synchronize: false,
       logging: false,
     }),
     TypeOrmModule.forFeature([

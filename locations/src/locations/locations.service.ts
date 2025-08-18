@@ -52,7 +52,7 @@ export class LocationsService {
   async findWorkLocationById(id: number): Promise<WorkLocation> {
     const workLocation = await this.workLocationRepository.findOne({
       where: { id },
-      relations: ['task_templates'],
+      relations: ['task_templates', 'company'],
     });
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
@@ -62,7 +62,7 @@ export class LocationsService {
   async findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]> {
     return await this.workLocationRepository.find({
       where: { company_id: companyId },
-      relations: ['task_templates'],
+      relations: ['task_templates', 'company'],
       order: { id: 'DESC' },
     });
   }

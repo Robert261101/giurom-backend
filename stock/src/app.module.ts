@@ -19,7 +19,7 @@ import { StockHttpController } from './stock/stock.http.controller';
       password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Product, Stock, StockTransaction],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',

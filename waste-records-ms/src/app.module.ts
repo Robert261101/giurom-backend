@@ -22,7 +22,7 @@ import { WasteRecordsMicroController } from './waste-records.micro.controller';
       password: process.env.DB_PASSWORD || 'root',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [WasteRecord, Product, Stock, StockTransaction, Recipe, RecipeCategory, RecipeProduct],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',

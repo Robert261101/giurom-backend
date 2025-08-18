@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WorkLocation } from './locations/entity/work-location.entity';
+import { CompanyRef } from './locations/entity/company-ref.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
 import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
@@ -21,11 +22,12 @@ import { LocationsHttpController } from './locations.http.controller';
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [
         WorkLocation,
+        CompanyRef,
         WorkLocationTaskTemplate,
         WorkLocationDepartments,
         WorkLocationDepartmentPositions,
       ],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
       timezone: '+00:00',
@@ -44,6 +46,7 @@ import { LocationsHttpController } from './locations.http.controller';
     }),
     TypeOrmModule.forFeature([
       WorkLocation,
+      CompanyRef,
       WorkLocationTaskTemplate,
       WorkLocationDepartments,
       WorkLocationDepartmentPositions,

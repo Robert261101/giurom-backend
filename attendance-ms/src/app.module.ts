@@ -28,7 +28,7 @@ import { AttendanceMicroController } from './attendance.micro.controller';
         PresenceInflexion,
         Employee,
       ],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
     }),
