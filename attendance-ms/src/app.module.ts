@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Shift } from './entities/shift.entity';
 import { Presence } from './entities/presence.entity';
@@ -11,25 +12,22 @@ import { AttendanceMicroController } from './attendance.micro.controller';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ 
-      isGlobal: true, 
-      envFilePath: ['attendance-ms/.env', '.env'] 
-    }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mysql',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
-      username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
-      database: process.env.DB_DATABASE || 'giurom_db',
+      host: process.env.DB_HOST as string,
+      port: parseInt(process.env.DB_PORT as string, 10),
+      username: process.env.DB_USERNAME as string,
+      password: process.env.DB_PASSWORD as string,
+      database: process.env.DB_DATABASE as string,
       entities: [
         Shift,
         Presence,
         PresenceInflexion,
         Employee,
       ],
-      synchronize: false,
-      logging: process.env.NODE_ENV === 'development',
+      synchronize: process.env.DB_SYNCHRONIZE === 'true',
+      logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
     TypeOrmModule.forFeature([

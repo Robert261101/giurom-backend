@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
 import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
@@ -7,22 +8,17 @@ import { EmployeeModule } from './employee/employee.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      // Ensure we load the microservice-specific .env even when started from repo root
-      envFilePath: ['requests-ms/.env', '.env'],
-    }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mysql',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
-      username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_DATABASE || 'giurom_db',
+      host: process.env.DB_HOST as string,
+      port: parseInt(process.env.DB_PORT as string, 10),
+      username: process.env.DB_USERNAME as string,
+      password: process.env.DB_PASSWORD as string,
+      database: process.env.DB_DATABASE as string,
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      // IMPORTANT: never auto-sync schema here to avoid altering shared tables like `employees`
-      synchronize: false,
-      logging: process.env.NODE_ENV === 'development',
+      synchronize: process.env.DB_SYNCHRONIZE === 'true',
+      logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
     EmployeeModule,

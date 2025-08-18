@@ -74,7 +74,7 @@ const microservices = {
 
   // Notifications microservice
   '/notifications': {
-    target: 'http://localhost:3011',
+    target: 'http://localhost:3020',
     changeOrigin: true,
     logLevel: 'debug',
     ws: true
