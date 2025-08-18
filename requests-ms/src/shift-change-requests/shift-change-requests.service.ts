@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DeepPartial } from 'typeorm';
 import { ShiftChangeRequest, ShiftChangeStatus } from './entities/shift-change-request.entity';
 import { Employee } from '../employee/entities/employee.entity';
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
@@ -96,14 +96,17 @@ export class ShiftChangeRequestsService {
     }
 
     // Creează cererea
-    const shiftChangeRequest = this.shiftChangeRepo.create({
+    const partial: DeepPartial<ShiftChangeRequest> = {
       ...dto,
-      start_datetime: startDate,
-      end_datetime: endDate,
+      duration_unit: (dto as any).duration_unit || 'days',
+      start_datetime: startDate as any,
+      end_datetime: endDate as any,
       status: ShiftChangeStatus.PENDING,
-    });
+    };
 
-    const savedRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
+    const shiftChangeRequest: ShiftChangeRequest = this.shiftChangeRepo.create(partial);
+
+    const savedRequest: ShiftChangeRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
 
     this.logger.log(`Shift change request ${savedRequest.id} created successfully`);
     

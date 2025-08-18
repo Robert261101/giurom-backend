@@ -24,7 +24,14 @@ app.get('/health', (req, res) => {
       '/calendar': 'http://localhost:3010', 
       '/leave-requests': 'http://localhost:3013',
       '/shift-change-requests': 'http://localhost:3013',
-      '/notifications': 'http://localhost:3011'
+      '/notifications': 'http://localhost:3011',
+      '/companies': 'http://localhost:3003',
+      '/locations': 'http://localhost:3004',
+      '/recipes': 'http://localhost:3005',
+      '/recipe-preparations': 'http://localhost:3005',
+      '/recipe-labels': 'http://localhost:3005',
+      '/stock': 'http://localhost:3006',
+      '/suppliers': 'http://localhost:3007'
     }
   });
 });
@@ -71,6 +78,55 @@ const microservices = {
     changeOrigin: true,
     logLevel: 'debug',
     ws: true
+  },
+
+  // Company HTTP
+  '/companies': {
+    target: 'http://localhost:3003',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Locations HTTP
+  '/locations': {
+    target: 'http://localhost:3004',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Recipes HTTP
+  '/recipes': {
+    target: 'http://localhost:3005',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Recipe Preparations HTTP
+  '/recipe-preparations': {
+    target: 'http://localhost:3005',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Recipe Labels HTTP
+  '/recipe-labels': {
+    target: 'http://localhost:3005',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Stock HTTP
+  '/stock': {
+    target: 'http://localhost:3006',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Suppliers HTTP
+  '/suppliers': {
+    target: 'http://localhost:3007',
+    changeOrigin: true,
+    logLevel: 'debug'
   }
 };
 

@@ -20,7 +20,8 @@ import { EmployeeModule } from './employee/employee.module';
       password: process.env.DB_PASSWORD || '',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: process.env.NODE_ENV !== 'production',
+      // IMPORTANT: never auto-sync schema here to avoid altering shared tables like `employees`
+      synchronize: false,
       logging: process.env.NODE_ENV === 'development',
       charset: 'utf8mb4',
     }),

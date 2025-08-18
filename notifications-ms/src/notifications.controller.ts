@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query } from '@nestjs/common';
 import { Ctx, MessagePattern, Payload, RmqContext } from '@nestjs/microservices';
 import { NotificationsService } from './notifications.service';
 
@@ -10,6 +10,31 @@ export class NotificationsController {
   @Get('unread-count')
   getUnreadCountHttp() {
     return this.service.getUnreadCount();
+  }
+
+  // List notifications
+  @Get()
+  findAll(@Query('userId') _userId?: string) {
+    // userId is currently ignored in this minimal implementation
+    return this.service.findAll();
+  }
+
+  // Mark one as read
+  @Patch(':id/read')
+  markAsRead(@Param('id') id: string) {
+    return this.service.markAsRead(Number(id));
+  }
+
+  // Mark all as read
+  @Patch('mark-all-read')
+  markAllAsRead() {
+    return this.service.markAllAsRead();
+  }
+
+  // Trigger expiring labels check (demo/seed)
+  @Post('check-expiring-labels')
+  checkExpiringLabels() {
+    return this.service.seedExpiringLabel();
   }
 
   @Get('health')

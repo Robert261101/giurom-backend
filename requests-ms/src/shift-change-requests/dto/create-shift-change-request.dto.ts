@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsNotEmpty,
+  IsEnum,
 } from 'class-validator';
 
 export class CreateShiftChangeRequestDto {
@@ -41,4 +42,9 @@ export class CreateShiftChangeRequestDto {
   @IsOptional()
   @IsString({ message: 'Comentariul trebuie să fie un string' })
   comment?: string;
+
+  @ApiProperty({ description: 'Unitatea de durată', enum: ['days','hours'], required: false })
+  @IsOptional()
+  @IsEnum(['days','hours'], { message: 'Unitatea de durată trebuie să fie days sau hours' } as any)
+  duration_unit?: 'days' | 'hours';
 }

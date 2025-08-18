@@ -10,6 +10,7 @@ import { SupplierOrderDocument } from './suppliers/entities/supplier-order-docum
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
 import { SuppliersMicroController } from './suppliers.micro.controller';
+import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { SuppliersMicroController } from './suppliers.micro.controller';
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [
         Supplier,
@@ -57,7 +58,7 @@ import { SuppliersMicroController } from './suppliers.micro.controller';
       SupplierDocument,
     ]),
   ],
-  controllers: [SuppliersMicroController],
+  controllers: [SuppliersMicroController, SuppliersHttpController],
   providers: [SuppliersService],
 })
 export class AppModule {}

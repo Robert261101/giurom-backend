@@ -271,6 +271,27 @@ export class SuppliersService {
     const order = await this.orderRepo.findOne({ where: { id: orderId }, relations: ['items'] });
     if (!order) throw new NotFoundException('Comanda nu a fost găsită');
     if (order.status === OrderStatus.DELIVERED) throw new BadRequestException('Comanda este deja livrată');
+
+    // Create stock entries for each item
+    for (const item of order.items || []) {
+      try {
+        await fetch(`${process.env.STOCK_HTTP_URL || 'http://localhost:3006'}/stock/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_id: item.product_id,
+            supplier_order_item_id: item.id,
+            quantity: item.quantity,
+            price: item.price_per_unit,
+            entry_date: new Date().toISOString(),
+            status: 'valid',
+          }),
+        });
+      } catch (e) {
+        // continue; stock entry failure should not block status update entirely
+      }
+    }
+
     order.status = OrderStatus.DELIVERED;
     await this.orderRepo.save(order);
     return order;

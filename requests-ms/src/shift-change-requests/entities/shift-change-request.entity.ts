@@ -44,6 +44,10 @@ export class ShiftChangeRequest {
   @Column({ type: 'datetime' })
   end_datetime: Date;
 
+  @ApiProperty({ description: 'Unitatea de durată', enum: ['days','hours'], example: 'hours' })
+  @Column({ type: 'enum', enum: ['days','hours'], default: 'days' })
+  duration_unit: 'days' | 'hours';
+
   @ApiProperty({ 
     description: 'Comentariul/motivul cererii de schimb', 
     example: 'Am o urgență medicală și nu pot lucra în această tură',

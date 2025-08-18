@@ -5,6 +5,7 @@ import { Company } from './company/entity/company.entity';
 import { CompanyDocument } from './company/entity/company-document.entity';
 import { CompanyService } from './company/company.service';
 import { CompanyMicroController } from './company.micro.controller';
+import { CompanyHttpController } from './company.http.controller';
 
 @Module({
   imports: [
@@ -12,9 +13,9 @@ import { CompanyMicroController } from './company.micro.controller';
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
+      port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Company, CompanyDocument],
       synchronize: process.env.NODE_ENV !== 'production',
@@ -36,7 +37,7 @@ import { CompanyMicroController } from './company.micro.controller';
     }),
     TypeOrmModule.forFeature([Company, CompanyDocument]),
   ],
-  controllers: [CompanyMicroController],
+  controllers: [CompanyMicroController, CompanyHttpController],
   providers: [CompanyService],
 })
 export class AppModule {}

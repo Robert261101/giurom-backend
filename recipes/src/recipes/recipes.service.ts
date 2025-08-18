@@ -27,9 +27,17 @@ export class RecipesService {
   }
 
   async findAllRecipeCategories(page = 1, limit = 10, search?: string) {
+    const safePage = Number.isFinite(page as any) && (page as number) > 0 ? (page as number) : 1;
+    const safeLimit = Number.isFinite(limit as any) && (limit as number) > 0 ? (limit as number) : 10;
     const where = search ? { name: Like(`%${search}%`) } : {};
-    const [data, total] = await this.categoryRepository.findAndCount({ where, relations: ['recipes'], skip: (page - 1) * limit, take: limit, order: { name: 'ASC' } });
-    return { data, total, page, limit };
+    const [data, total] = await this.categoryRepository.findAndCount({
+      where,
+      relations: ['recipes'],
+      skip: (safePage - 1) * safeLimit,
+      take: safeLimit,
+      order: { name: 'ASC' },
+    });
+    return { data, total, page: safePage, limit: safeLimit };
   }
 
   async findRecipeCategoryById(id: number): Promise<RecipeCategory> {
@@ -65,16 +73,35 @@ export class RecipesService {
   async findAllRecipes(page = 1, limit = 10, search?: string, category_id?: number) {
     const qb = this.recipeRepository.createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.category', 'category')
-      .leftJoinAndSelect('recipe.recipe_products', 'rp');
-    if (search) qb.andWhere('recipe.name LIKE :s OR recipe.description LIKE :s', { s: `%${search}%` });
-    if (category_id) qb.andWhere('recipe.category_id = :cid', { cid: category_id });
+      .leftJoinAndSelect('recipe.recipe_products', 'rp')
+      .leftJoinAndSelect('rp.product', 'product');
+
+    if (search) {
+      qb.andWhere('recipe.name LIKE :s OR recipe.description LIKE :s', { s: `%${search}%` });
+    }
+
+    if (Number.isFinite(category_id as any) && (category_id as number) > 0) {
+      qb.andWhere('recipe.category_id = :cid', { cid: category_id });
+    }
+
+    const safePage = Number.isFinite(page as any) && (page as number) > 0 ? (page as number) : 1;
+    const safeLimit = Number.isFinite(limit as any) && (limit as number) > 0 ? (limit as number) : 10;
+
     const total = await qb.getCount();
-    const data = await qb.orderBy('recipe.created_at', 'DESC').skip((page - 1) * limit).take(limit).getMany();
-    return { data, total, page, limit };
+    const data = await qb
+      .orderBy('recipe.created_at', 'DESC')
+      .skip((safePage - 1) * safeLimit)
+      .take(safeLimit)
+      .getMany();
+
+    return { data, total, page: safePage, limit: safeLimit };
   }
 
   async findRecipeById(id: number): Promise<Recipe> {
-    const recipe = await this.recipeRepository.findOne({ where: { id }, relations: ['category', 'recipe_products'] });
+    const recipe = await this.recipeRepository.findOne({
+      where: { id },
+      relations: ['category', 'recipe_products', 'recipe_products.product'],
+    });
     if (!recipe) throw new NotFoundException('Rețeta nu a fost găsită');
     return recipe;
   }
@@ -105,7 +132,11 @@ export class RecipesService {
   }
 
   async findRecipeProducts(recipe_id: number): Promise<RecipeProduct[]> {
-    return await this.recipeProductRepository.find({ where: { recipe_id }, order: { created_at: 'ASC' } });
+    return await this.recipeProductRepository.find({
+      where: { recipe_id },
+      relations: ['product'],
+      order: { created_at: 'ASC' },
+    });
   }
 
   async updateRecipeProduct(id: number, dto: UpdateRecipeProductDto): Promise<RecipeProduct> {

@@ -18,3 +18,12 @@ node_modules/.bin/acorn
 /employees/dist
 /requests-ms/dist
 /notification-service/dist
+calendar-ms/.env
+notifications-ms/.env
+requests-ms/.env
+calendar-ms/.env
+employees/.env
+locations/.env
+recipes/.env
+stock/.env
+suppliers-ms/.env

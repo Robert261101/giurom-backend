@@ -117,7 +117,13 @@ export class RecipesMicroController {
   createPrep(@Payload() dto: CreateRecipePreparationDto) { return this.prepService.create(dto); }
 
   @MessagePattern('recipe-preparations.update')
-  updatePrep(@Payload() payload: { id: number; dto: UpdateRecipePreparationDto }) { return this.prepService.update(payload.id, payload.dto); }
+  updatePrep(@Payload() payload: { id: number; dto: UpdateRecipePreparationDto }) {
+    const dto: any = { ...payload.dto };
+    if (dto.produced_at && typeof dto.produced_at === 'string') {
+      dto.produced_at = new Date(dto.produced_at) as any;
+    }
+    return this.prepService.update(payload.id, dto);
+  }
 
   @MessagePattern('recipe-preparations.delete')
   deletePrep(@Payload() id: number) { return this.prepService.remove(id); }

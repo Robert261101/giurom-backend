@@ -6,6 +6,7 @@ import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { StockService } from './stock/stock.service';
 import { StockMicroController } from './stock/stock.micro.controller';
+import { StockHttpController } from './stock/stock.http.controller';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { StockMicroController } from './stock/stock.micro.controller';
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3307', 10),
       username: process.env.DB_USERNAME || 'root',
-      password: process.env.DB_PASSWORD || 'root',
+      password: process.env.DB_PASSWORD || 'eric',
       database: process.env.DB_DATABASE || 'giurom_db',
       entities: [Product, Stock, StockTransaction],
       synchronize: process.env.NODE_ENV !== 'production',
@@ -37,7 +38,7 @@ import { StockMicroController } from './stock/stock.micro.controller';
     }),
     TypeOrmModule.forFeature([Product, Stock, StockTransaction]),
   ],
-  controllers: [StockMicroController],
+  controllers: [StockMicroController, StockHttpController],
   providers: [StockService],
 })
 export class AppModule {}

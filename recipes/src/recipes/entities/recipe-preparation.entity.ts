@@ -10,8 +10,8 @@ export class RecipePreparation {
   @Column()
   recipe_id: number;
 
-  @Column({ nullable: true })
-  employee_id?: number;
+  @Column({ name: 'produced_by', nullable: true })
+  produced_by?: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
