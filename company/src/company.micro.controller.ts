@@ -1,11 +1,11 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { CompanyService } from './company/company.service';
-import { CreateCompanyDto } from '@/company/dto/create-company.dto';
-import { CreateCompanyWithDocumentsDto } from '@/company/dto/create-company-with-documents.dto';
-import { UpdateCompanyDto } from '@/company/dto/update-company.dto';
-import { CreateCompanyDocumentDto } from '@/company/dto/create-company-document.dto';
-import { UpdateCompanyDocumentDto } from '@/company/dto/update-company-document.dto';
+import { CreateCompanyDto } from './company/dto/create-company.dto';
+import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
+import { UpdateCompanyDto } from './company/dto/update-company.dto';
+import { CreateCompanyDocumentDto } from './company/dto/create-company-document.dto';
+import { UpdateCompanyDocumentDto } from './company/dto/update-company-document.dto';
 
 @Controller()
 export class CompanyMicroController {

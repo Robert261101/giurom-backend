@@ -1,27 +1,24 @@
-import { Controller } from '@nestjs/common';
-import { MessagePattern, Payload } from '@nestjs/microservices';
-import { WasteRecordsService } from '@/waste-records/waste-records.service';
-import { CreateWasteRecordDto } from '@/waste-records/dto/create-waste-record.dto';
-import { UpdateWasteRecordDto } from '@/waste-records/dto/update-waste-record.dto';
+import { Controller, Get, Post, Param, Patch, Body } from '@nestjs/common';
+import { WasteRecordsService, CreateWasteRecordDto, UpdateWasteRecordDto } from './waste-records/waste-records.service';
 
-@Controller()
+@Controller('waste-records')
 export class WasteRecordsMicroController {
   constructor(private readonly service: WasteRecordsService) {}
 
-  @MessagePattern('waste.create')
-  create(@Payload() dto: CreateWasteRecordDto) { return this.service.create(dto); }
+  @Post()
+  create(@Body() dto: CreateWasteRecordDto) { return this.service.create(dto); }
 
-  @MessagePattern('waste.findAll')
+  @Get()
   findAll() { return this.service.findAll(); }
 
-  @MessagePattern('waste.findOne')
-  findOne(@Payload() id: number) { return this.service.findOne(id); }
+  @Get(':id')
+  findOne(@Param('id') id: string) { return this.service.findOne(Number(id)); }
 
-  @MessagePattern('waste.update')
-  update(@Payload() payload: { id: number; dto: UpdateWasteRecordDto }) { return this.service.update(payload.id, payload.dto); }
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateWasteRecordDto) { return this.service.update(Number(id), dto); }
 
-  @MessagePattern('waste.remove')
-  remove(@Payload() id: number) { return this.service.remove(id); }
+  @Patch(':id/delete')
+  remove(@Param('id') id: string) { return this.service.remove(Number(id)); }
 }
 
 

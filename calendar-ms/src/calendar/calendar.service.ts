@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule, RecurrenceFrequency } from './entities/recurrence-rule.entity';
-import { Employee } from '@/employee/entity/employee.entity';
+import { Employee } from '../employee/entity/employee.entity';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';

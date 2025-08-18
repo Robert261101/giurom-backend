@@ -1,11 +1,11 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { StockService } from '@/stock/stock.service';
-import { CreateProductDto } from '@/stock/dto/create-product.dto';
-import { UpdateProductDto } from '@/stock/dto/update-product.dto';
-import { CreateStockDto } from '@/stock/dto/create-stock.dto';
-import { UpdateStockDto } from '@/stock/dto/update-stock.dto';
-import { CreateStockTransactionDto } from '@/stock/dto/create-stock-transaction.dto';
+import { StockService } from './stock/stock.service';
+import { CreateProductDto } from './stock/dto/create-product.dto';
+import { UpdateProductDto } from './stock/dto/update-product.dto';
+import { CreateStockDto } from './stock/dto/create-stock.dto';
+import { UpdateStockDto } from './stock/dto/update-stock.dto';
+import { CreateStockTransactionDto } from './stock/dto/create-stock-transaction.dto';
 
 @Controller()
 export class StockMicroController {

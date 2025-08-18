@@ -1,12 +1,12 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { AttendanceService } from '@/attendance/attendance.service';
-import { CreateShiftDto } from '@/attendance/dto/create-shift.dto';
-import { UpdateShiftDto } from '@/attendance/dto/update-shift.dto';
-import { CreatePresenceDto } from '@/attendance/dto/create-presence.dto';
-import { UpdatePresenceDto } from '@/attendance/dto/update-presence.dto';
-import { CreatePresenceInflexionDto } from '@/attendance/dto/create-presence-inflexion.dto';
-import { UpdatePresenceInflexionDto } from '@/attendance/dto/update-presence-inflexion.dto';
+import { AttendanceService } from './attendance.service';
+import { CreateShiftDto } from './dto/create-shift.dto';
+import { UpdateShiftDto } from './dto/update-shift.dto';
+import { CreatePresenceDto } from './dto/create-presence.dto';
+import { UpdatePresenceDto } from './dto/update-presence.dto';
+import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto';
+import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
 
 @Controller()
 export class AttendanceMicroController {

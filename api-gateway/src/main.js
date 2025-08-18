@@ -31,7 +31,9 @@ app.get('/health', (req, res) => {
       '/recipe-preparations': 'http://localhost:3005',
       '/recipe-labels': 'http://localhost:3005',
       '/stock': 'http://localhost:3006',
-      '/suppliers': 'http://localhost:3007'
+      '/suppliers': 'http://localhost:3007',
+      '/waste-records': 'http://localhost:3012',
+      '/waste': 'http://localhost:3014'
     }
   });
 });
@@ -125,6 +127,20 @@ const microservices = {
   // Suppliers HTTP
   '/suppliers': {
     target: 'http://localhost:3007',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Waste Records HTTP
+  '/waste-records': {
+    target: 'http://localhost:3014',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Waste HTTP (alias)
+  '/waste': {
+    target: 'http://localhost:3014',
     changeOrigin: true,
     logLevel: 'debug'
   }

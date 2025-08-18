@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { RecurrenceRule } from './recurrence-rule.entity';
-import { Employee } from '@/employee/entity/employee.entity';
+import { Employee } from '../../employee/entity/employee.entity';
 
 @Entity('calendar_events')
 export class CalendarEvent {

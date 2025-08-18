@@ -1,5 +1,4 @@
 import { NestFactory } from '@nestjs/core';
-import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
@@ -29,17 +28,6 @@ async function bootstrap() {
   await app.listen(httpPort);
   console.log(`👷 Employees HTTP service listening on http://localhost:${httpPort}`);
 
-  // Create TCP microservice
-  const microservice = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
-    transport: Transport.TCP,
-    options: {
-      host: process.env.EMPLOYEES_MS_HOST || '0.0.0.0',
-      port: parseInt(process.env.EMPLOYEES_MS_PORT || '4001', 10),
-    },
-  });
-
-  await microservice.listen();
-  console.log(`👷 Employees TCP microservice listening on ${process.env.EMPLOYEES_MS_HOST || '0.0.0.0'}:${parseInt(process.env.EMPLOYEES_MS_PORT || '4001', 10)}`);
 }
 
 bootstrap();
