@@ -1,29 +1,26 @@
-node_modules/.bin/acorn
+# Common node_modules folders
 /node_modules
-/dist
-/labels
+/api-gateway/node_modules
 /calendar-ms/node_modules
 /company/node_modules
 /employees/node_modules
 /gateway/node_modules
 /locations/node_modules
+/notifications-ms/node_modules
 /recipes/node_modules
+/requests-ms/node_modules
 /stock/node_modules
 /suppliers-ms/node_modules
-/requests-ms/node_modules
-/gateway/dist
-/api-gateway/node_modules
-/notifications-ms/node_modules
+
+# Dist folders (build output)
+/dist
+/api-gateway/dist
 /calendar-ms/dist
 /employees/dist
-/requests-ms/dist
+/gateway/dist
 /notification-service/dist
-calendar-ms/.env
-notifications-ms/.env
-requests-ms/.env
-calendar-ms/.env
-employees/.env
-locations/.env
-recipes/.env
-stock/.env
-suppliers-ms/.env
+/requests-ms/dist
+
+# Specific folders to ignore
+/labels
+/notification-service/dist
