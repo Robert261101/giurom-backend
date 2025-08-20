@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe } from '@nestjs/common';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
+import { Response } from 'express';
 
 @Controller('suppliers')
 export class SuppliersHttpController {
@@ -44,6 +45,38 @@ export class SuppliersHttpController {
 	// Documents
 	@Post(':supplierId/documents') addDocument(@Param('supplierId') supplierId: string, @Body() body: any) { return this.service.addDocument(Number(supplierId), body); }
 	@Delete('documents/:documentId') removeDocument(@Param('documentId') documentId: string) { return this.service.removeDocument(Number(documentId)); }
+
+	// Serve supplier document (download or inline)
+	@Get('file/:fileId')
+	async getSupplierFile(
+		@Param('fileId', ParseIntPipe) fileId: number,
+		@Query('download') download: string,
+		@Res() res: Response,
+	) {
+		const forceDownload = download === 'true';
+		const served = await this.service.serveDocument(fileId, forceDownload);
+		const buffer = Buffer.from(served.data, 'base64');
+		res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+		res.setHeader(
+			'Content-Disposition',
+			`${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
+		);
+		res.setHeader('Content-Length', buffer.length.toString());
+		return res.send(buffer);
+	}
+
+	@Get('file/:fileId/view')
+	async viewSupplierFile(
+		@Param('fileId', ParseIntPipe) fileId: number,
+		@Res() res: Response,
+	) {
+		const served = await this.service.serveDocument(fileId, false);
+		const buffer = Buffer.from(served.data, 'base64');
+		res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+		res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
+		res.setHeader('Content-Length', buffer.length.toString());
+		return res.send(buffer);
+	}
 }
 
 
