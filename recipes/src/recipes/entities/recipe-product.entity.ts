@@ -1,0 +1,38 @@
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Recipe } from './recipe.entity';
+import { ProductRef } from '../../external/product-ref.entity';
+
+@Entity('recipe_products')
+export class RecipeProduct {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  recipe_id: number;
+
+  @Column()
+  product_id: number;
+
+  @Column({ type: 'decimal', precision: 6, scale: 2 })
+  quantity: number;
+
+  @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  notes: string;
+
+  @CreateDateColumn({ type: 'datetime' })
+  created_at: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at: Date;
+
+  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_products, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+  @JoinColumn({ name: 'recipe_id' })
+  recipe: Recipe;
+
+  // Reference to product from stock service schema (if present in same DB)
+  @ManyToOne(() => ProductRef, { onDelete: 'RESTRICT', onUpdate: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'product_id' })
+  product?: ProductRef | null;
+}
+
+
