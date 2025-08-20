@@ -10,6 +10,11 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { Employee } from '../../employee/entities/employee.entity';
 
+export enum DurationUnit {
+  DAYS = 'days',
+  HOURS = 'hours',
+}
+
 export enum ShiftChangeStatus {
   PENDING = 'pending',
   APPROVED = 'approved',
@@ -62,6 +67,14 @@ export class ShiftChangeRequest {
   comment?: string;
 
   @ApiProperty({ 
+    description: 'Unitatea de măsură pentru durată', 
+    enum: DurationUnit, 
+    example: DurationUnit.DAYS 
+  })
+  @Column({ type: 'enum', enum: DurationUnit, default: DurationUnit.DAYS })
+  duration_unit: DurationUnit;
+
+  @ApiProperty({ 
     description: 'Statusul cererii', 
     enum: ShiftChangeStatus, 
     example: ShiftChangeStatus.PENDING 
@@ -105,6 +118,11 @@ export class ShiftChangeRequest {
   reviewed_by?: Employee;
 
   // Computed properties
+  get duration_in_days(): number {
+    const diffTime = Math.abs(this.end_datetime.getTime() - this.start_datetime.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
   get duration_in_hours(): number {
     const diffTime = Math.abs(this.end_datetime.getTime() - this.start_datetime.getTime());
     return Math.ceil(diffTime / (1000 * 60 * 60));
