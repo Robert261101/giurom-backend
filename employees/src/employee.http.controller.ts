@@ -9,6 +9,8 @@ import {
   Query,
   HttpStatus,
   UseGuards,
+  Res,
+  ParseIntPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,6 +24,8 @@ import { EmployeeService } from './employee.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { Employee } from './entities/employee.entity';
+import { Response } from 'express';
+import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 
 @ApiTags('employees')
 @Controller('employees')
@@ -96,6 +100,27 @@ export class EmployeeHttpController {
     hiredThisMonth: number;
   }> {
     return this.employeeService.getStatistics();
+  }
+
+  // List employee files by employee ID
+  @Get(':employeeId/files')
+  async getEmployeeFiles(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+  ) {
+    return this.employeeService.findFilesByEmployee(employeeId);
+  }
+
+  // Optional: list via query (used by some legacy callers)
+  @Get('files')
+  async getFilesByQuery(@Query('employee_id') employee_id?: string) {
+    if (!employee_id) {
+      return [];
+    }
+    const idNum = parseInt(employee_id as any, 10);
+    if (!Number.isFinite(idNum)) {
+      return [];
+    }
+    return this.employeeService.findFilesByEmployee(idNum);
   }
 
   @Get('email/:email')
@@ -188,5 +213,76 @@ export class EmployeeHttpController {
   })
   async remove(@Param('id') id: string): Promise<{ message: string }> {
     return this.employeeService.remove(+id);
+  }
+
+  // Serve employee file (download or inline based on query)
+  @Get('file/:fileId')
+  async getEmployeeFile(
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Query('download') download: string,
+    @Res() res: Response,
+  ) {
+    const forceDownload = download === 'true';
+    const served = await this.employeeService.serveFile(fileId, forceDownload);
+    const buffer = Buffer.from(served.data, 'base64');
+    res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
+    );
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.send(buffer);
+  }
+
+  // Force inline view
+  @Get('file/:fileId/view')
+  async viewEmployeeFile(
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Res() res: Response,
+  ) {
+    const served = await this.employeeService.serveFile(fileId, false);
+    const buffer = Buffer.from(served.data, 'base64');
+    res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.send(buffer);
+  }
+
+  // Create employee file (metadata or with base64 content)
+  @Post(':employeeId/files')
+  async addEmployeeFile(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Body() body: Omit<CreateEmployeeFileDto, 'employee_id'> & { employee_id?: number },
+  ) {
+    const dto: CreateEmployeeFileDto = {
+      employee_id: employeeId,
+      file_name: body.file_name,
+      file_type: body.file_type,
+      file_link: body.file_link,
+      file_content: body.file_content,
+    } as CreateEmployeeFileDto;
+    return this.employeeService.createFile(dto);
+  }
+
+  // Backwards-compatible route used by frontend add form
+  @Post(':employeeId/documents-with-content')
+  async addEmployeeDocumentWithContent(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string }> },
+  ) {
+    if (!body?.documents || body.documents.length === 0) {
+      return { message: 'No documents provided' };
+    }
+    const first = body.documents[0];
+    const fileName = first.fileName || first.name || 'document.bin';
+    // Build default link into repo files folder
+    const file_link = `/files/employees/${employeeId}/${fileName}`;
+    return this.employeeService.createFile({
+      employee_id: employeeId,
+      file_name: fileName,
+      file_type: first.document_type || first.type || 'Altele',
+      file_link,
+      file_content: first.content,
+    } as CreateEmployeeFileDto);
   }
 }
