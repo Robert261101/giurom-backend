@@ -1,18 +1,24 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DeepPartial, Repository } from 'typeorm';
 import { WorkLocation } from '../locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
 import { CreateWorkLocationDto } from './dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 import { CreateTaskTemplateAssignmentDto } from './dto/create-task-template-assignment.dto';
 import { UpdateTaskTemplateAssignmentDto } from './dto/update-task-template-assignment.dto';
+import { WorkLocationRevenue } from './entity/work-location-revenue.entity';
+import { WorkLocationRevenuePoints } from './entity/work-location-revenue-points.entity';
+import { WorkLocationManagerConfig } from './entity/work-location-manager-config.entity';
 
 @Injectable()
 export class LocationsService {
   constructor(
     @InjectRepository(WorkLocation) private readonly workLocationRepository: Repository<WorkLocation>,
     @InjectRepository(WorkLocationTaskTemplate) private readonly taskTemplateRepository: Repository<WorkLocationTaskTemplate>,
+    @InjectRepository(WorkLocationRevenue) private readonly revenueRepository: Repository<WorkLocationRevenue>,
+    @InjectRepository(WorkLocationRevenuePoints) private readonly revenuePointsRepository: Repository<WorkLocationRevenuePoints>,
+    @InjectRepository(WorkLocationManagerConfig) private readonly managerConfigRepository: Repository<WorkLocationManagerConfig>,
   ) {}
 
   async createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation> {
@@ -200,5 +206,64 @@ export class LocationsService {
       total_assignments,
       active_assignments,
     };
+  }
+
+  // --- Revenue points management ---
+  async setRevenueIntervals(workLocationId: number, intervals: Array<{ min: number; max?: number | null; points: number }>) {
+    const wl = await this.findWorkLocationById(workLocationId);
+    await this.revenuePointsRepository.delete({ work_location_id: workLocationId } as any);
+    const rows: DeepPartial<WorkLocationRevenuePoints>[] = intervals.map(i => ({
+      work_location_id: workLocationId,
+      min_revenue: i.min as any,
+      max_revenue: (i.max ?? null) as any,
+      points: i.points as any,
+    }));
+    return this.revenuePointsRepository.save(rows);
+  }
+
+  async setManagerPercent(workLocationId: number, managerPercent: number, _fallbackRevenuePerPoint?: number) {
+    let cfg = await this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
+    if (!cfg) {
+      cfg = this.managerConfigRepository.create({
+        work_location_id: workLocationId,
+        manager_percent: managerPercent as any,
+      } as Partial<WorkLocationManagerConfig> as WorkLocationManagerConfig);
+    } else {
+      cfg.manager_percent = managerPercent as any;
+    }
+    return this.managerConfigRepository.save(cfg);
+  }
+
+  async recordRevenue(workLocationId: number, revenueDate: string, revenueAmount: number) {
+    await this.findWorkLocationById(workLocationId);
+    let row = await this.revenueRepository.findOne({ where: { work_location_id: workLocationId, revenue_date: revenueDate } as any });
+    if (!row) {
+      row = this.revenueRepository.create({
+        work_location_id: workLocationId,
+        revenue_date: revenueDate,
+        revenue_amount: revenueAmount as any,
+      } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
+    } else {
+      row.revenue_amount = revenueAmount as any;
+    }
+    return this.revenueRepository.save(row);
+  }
+
+  async getManagerPointsForDate(workLocationId: number, revenueDate: string) {
+    const cfg = await this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
+    const rev = await this.revenueRepository.findOne({ where: { work_location_id: workLocationId, revenue_date: revenueDate } as any });
+    if (!rev || !cfg) return { managerPoints: 0 };
+    // determine points per unit for the interval containing revenue amount
+    const intervals = await this.revenuePointsRepository.find({ where: { work_location_id: workLocationId } as any, order: { min_revenue: 'ASC' } as any });
+    let pointsPerUnit: number | null = null;
+    for (const intv of intervals) {
+      const minOk = Number(rev.revenue_amount) >= Number(intv.min_revenue);
+      const maxOk = intv.max_revenue == null ? true : Number(rev.revenue_amount) <= Number(intv.max_revenue);
+      if (minOk && maxOk) { pointsPerUnit = Number(intv.points); break; }
+    }
+    if (!pointsPerUnit || pointsPerUnit <= 0) return { managerPoints: 0 };
+    const totalPoints = Number(rev.revenue_amount) / pointsPerUnit;
+    const managerPoints = totalPoints * (Number(cfg.manager_percent) / 100);
+    return { managerPoints };
   }
 } 

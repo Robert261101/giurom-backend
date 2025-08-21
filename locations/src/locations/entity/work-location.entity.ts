@@ -14,7 +14,7 @@ export class WorkLocation {
   @Column({ type: 'varchar', length: 255, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   location_name: string;
 
-  @Column({ type: 'varchar', length: 500, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  @Column({ type: 'text', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   address: string;
 
   @Column({ type: 'varchar', length: 100, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
@@ -26,7 +26,7 @@ export class WorkLocation {
   @Column({ type: 'varchar', length: 20, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   postal_code: string | null;
 
-  @Column({ type: 'varchar', length: 100, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  @Column({ type: 'varchar', length: 100, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci', default: 'Romania' })
   country: string;
 
   @Column({ type: 'varchar', length: 20, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
@@ -35,18 +35,29 @@ export class WorkLocation {
   @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   email: string | null;
 
-  @Column({ type: 'int', default: 0 })
-  points: number;
+  // points column removed per new revenue points model
 
   @ManyToOne(() => CompanyRef, { onDelete: 'RESTRICT', onUpdate: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'company_id' })
   company?: CompanyRef;
 
-  @CreateDateColumn({ type: 'datetime' })
-  created_at: Date;
+  @Column({ type: 'date', name: 'created_at', nullable: true })
+  created_at: Date | null;
 
-  @UpdateDateColumn({ type: 'datetime' })
-  updated_at: Date;
+  @Column({ type: 'int', nullable: true })
+  employee_id: number | null;
+
+  @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  notes: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
+  gps_lat: number | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
+  gps_lng: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  gps_radius_m: number | null;
 
   @OneToMany(() => WorkLocationTaskTemplate, (taskTemplate) => taskTemplate.work_location, { cascade: true, eager: false })
   task_templates: WorkLocationTaskTemplate[];

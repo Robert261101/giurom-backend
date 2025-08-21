@@ -76,6 +76,27 @@ export class LocationsHttpController {
 
 	@Delete('assignments/:id')
 	removeAssignment(@Param('id') id: string) { return this.service.removeTaskTemplateAssignment(parseInt(id, 10)); }
+
+	// Revenue points endpoints
+	@Post(':id/revenue-intervals')
+	setIntervals(@Param('id') id: string, @Body() body: { intervals: Array<{ min: number; max?: number | null; points: number }> }) {
+		return this.service.setRevenueIntervals(parseInt(id, 10), body.intervals || []);
+	}
+
+	@Patch(':id/manager-percent')
+	setManagerPercent(@Param('id') id: string, @Body() body: { manager_percent: number; fallback_revenue_per_point?: number }) {
+		return this.service.setManagerPercent(parseInt(id, 10), body.manager_percent, body.fallback_revenue_per_point);
+	}
+
+	@Post(':id/revenue')
+	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; revenue_amount: number }) {
+		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.revenue_amount);
+	}
+
+	@Get(':id/manager-points')
+	managerPoints(@Param('id') id: string, @Query('date') date: string) {
+		return this.service.getManagerPointsForDate(parseInt(id, 10), date);
+	}
 }
 
 
