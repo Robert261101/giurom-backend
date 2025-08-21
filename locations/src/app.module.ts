@@ -7,6 +7,9 @@ import { CompanyRef } from './locations/entity/company-ref.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from './locations/entity/work-location-departments.entity';
 import { WorkLocationDepartmentPositions } from './locations/entity/work-location-department-positions.entity';
+import { WorkLocationRevenue } from './locations/entity/work-location-revenue.entity';
+import { WorkLocationRevenuePoints } from './locations/entity/work-location-revenue-points.entity';
+import { WorkLocationManagerConfig } from './locations/entity/work-location-manager-config.entity';
 import { LocationsService } from './locations/locations.service';
 import { LocationsMicroController } from './locations.micro.controller';
 import { LocationsHttpController } from './locations.http.controller';
@@ -27,23 +30,14 @@ import { LocationsHttpController } from './locations.http.controller';
         WorkLocationTaskTemplate,
         WorkLocationDepartments,
         WorkLocationDepartmentPositions,
+        WorkLocationRevenue,
+        WorkLocationRevenuePoints,
+        WorkLocationManagerConfig,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
       timezone: '+00:00',
-      extra: {
-        connectionLimit: 10,
-        acquireTimeout: 60000,
-        timeout: 60000,
-        reconnect: true,
-        charset: 'utf8mb4',
-        initStatements: [
-          "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_unicode_ci'",
-          'SET CHARACTER SET utf8mb4',
-          'SET character_set_connection=utf8mb4',
-        ],
-      },
     }),
     TypeOrmModule.forFeature([
       WorkLocation,
@@ -51,6 +45,9 @@ import { LocationsHttpController } from './locations.http.controller';
       WorkLocationTaskTemplate,
       WorkLocationDepartments,
       WorkLocationDepartmentPositions,
+      WorkLocationRevenue,
+      WorkLocationRevenuePoints,
+      WorkLocationManagerConfig,
     ]),
   ],
   controllers: [LocationsMicroController, LocationsHttpController],
