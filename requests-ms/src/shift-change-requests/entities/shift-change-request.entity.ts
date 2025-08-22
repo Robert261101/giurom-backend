@@ -67,14 +67,6 @@ export class ShiftChangeRequest {
   comment?: string;
 
   @ApiProperty({ 
-    description: 'Unitatea de măsură pentru durată', 
-    enum: DurationUnit, 
-    example: DurationUnit.DAYS 
-  })
-  @Column({ type: 'enum', enum: DurationUnit, default: DurationUnit.DAYS })
-  duration_unit: DurationUnit;
-
-  @ApiProperty({ 
     description: 'Statusul cererii', 
     enum: ShiftChangeStatus, 
     example: ShiftChangeStatus.PENDING 
