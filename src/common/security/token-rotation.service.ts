@@ -89,11 +89,13 @@ export class TokenRotationService {
    * Generează un nou set de token-uri cu rotire
    */
   async generateTokensWithRotation(user: any, oldRefreshToken?: string): Promise<{ access_token: string; refresh_token: string }> {
-    // Generează access token
+    // Generează access token cu informații despre partener
     const accessPayload = { 
       sub: user.userId, 
       email: user.email,
-      roles: user.roles?.map(role => role.name) || [],
+      partner_id: user.partner_id || null,
+      partner_name: user.partner_name || null,
+      roles: user.roles?.map(role => role.name) || ['partner'],
       permissions: user.roles?.flatMap(role => 
         role.permissions?.map(permission => permission.name) || []
       ) || []
@@ -101,11 +103,13 @@ export class TokenRotationService {
     
     const accessToken = await this.jwtService.signAsync(accessPayload);
     
-    // Generează refresh token nou
+    // Generează refresh token nou cu informații despre partener
     const refreshToken = await this.jwtService.signAsync(
       { 
         sub: user.userId, 
         email: user.email,
+        partner_id: user.partner_id || null,
+        partner_name: user.partner_name || null,
         type: 'refresh',
         version: 1
       },

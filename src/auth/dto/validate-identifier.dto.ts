@@ -4,15 +4,12 @@ import { IsString, IsNotEmpty, Matches } from 'class-validator';
 export class ValidateIdentifierDto {
   @ApiProperty({
     description: 'Email-ul sau numărul de telefon al utilizatorului',
-    example: 'test@example.com sau 0787448331',
+    example: 'user@example.com sau +40123456789'
   })
   @IsString()
-  @IsNotEmpty({ message: 'Email-ul sau numărul de telefon este obligatoriu' })
-  @Matches(
-    /^([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|07[0-9]{8})$/,
-    { 
-      message: 'Trebuie să fie un email valid sau un număr de telefon românesc (07XXXXXXXX)' 
-    }
-  )
+  @IsNotEmpty()
+  @Matches(/^(.+@.+\..+|\+?[0-9]{10,15})$/, {
+    message: 'Trebuie să fie un email valid sau un număr de telefon valid'
+  })
   identifier: string;
 } 

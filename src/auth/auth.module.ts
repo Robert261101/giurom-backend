@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
 import { JwtModule } from '@nestjs/jwt';
@@ -7,14 +8,17 @@ import { AuthController } from './auth.controller';
 import { GuardsModule } from '../guards/guards.module';
 import { TokenModule } from '../common/token.module';
 import { SecurityModule } from '../common/security/security.module';
+import { TwoFactorAuthModule } from '../otp-auth/otp-auth.module';
 
 
 @Module({
   imports: [
+    HttpModule,
     UsersModule,
     TokenModule,
     SecurityModule,
     GuardsModule,
+    TwoFactorAuthModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

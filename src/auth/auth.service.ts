@@ -7,6 +7,7 @@ import { BruteForceProtectionService } from '../common/security/brute-force.serv
 import { TokenRotationService } from '../common/security/token-rotation.service';
 import { SecurityAlertsService, SecurityEventType } from '../common/security/security-alerts.service';
 import { AnomalyDetectionService } from '../common/security/anomaly-detection.service';
+import { TwoFactorAuthService } from '../otp-auth/otp-auth.service';
 import * as bcrypt from 'bcryptjs';
 
 
@@ -24,7 +25,8 @@ export class AuthService {
     private bruteForceService: BruteForceProtectionService,
     private tokenRotationService: TokenRotationService,
     private securityAlertsService: SecurityAlertsService,
-    private anomalyDetectionService: AnomalyDetectionService
+    private anomalyDetectionService: AnomalyDetectionService,
+    private twoFactorAuthService: TwoFactorAuthService
   ) {}
 
   async signIn(
@@ -32,7 +34,7 @@ export class AuthService {
     pass: string,
     ipAddress: string,
     userAgent: string,
-  ): Promise<{ access_token: string; refresh_token: string }> {
+  ): Promise<{ access_token?: string; refresh_token?: string; requires_2fa?: boolean; message?: string }> {
     // Detectează dacă este email sau telefon
     const isEmail = this.isValidEmail(identifier);
     const isPhone = this.isValidPhone(identifier);
@@ -127,8 +129,44 @@ export class AuthService {
     // Resetează încercările eșuate la login reușit
     await this.bruteForceService.resetAttempts(identifier);
 
-    // Generează token-urile cu rotire
-    return await this.tokenRotationService.generateTokensWithRotation(user);
+    // Verifică dacă utilizatorul are 2FA activat
+    if (user.is_2fa_active) {
+      this.logger.log(`Utilizatorul ${user.email} are 2FA activat. Se trimite OTP automat.`);
+      
+      try {
+        // Trimite OTP-ul automat folosind serviciul injectat
+        await this.twoFactorAuthService.sendOtp(identifier);
+        
+        this.logger.log(`OTP trimis cu succes pentru ${identifier}`);
+        
+        return {
+          requires_2fa: true,
+          message: 'Autentificare cu parolă reușită. OTP trimis pe telefon pentru verificare finală.'
+        };
+      } catch (error) {
+        this.logger.error(`Eroare la trimiterea OTP pentru ${identifier}: ${error.message}`);
+        throw new UnauthorizedException('Autentificarea cu parolă a reușit, dar nu s-a putut trimite OTP-ul. Încearcă din nou.');
+      }
+    }
+
+    // Dacă nu are 2FA activat, generează token-urile normal
+    const tokens = await this.tokenRotationService.generateTokensWithRotation(user);
+    
+    // Log utilizatorul și permisiunile sale
+    const roles = user.roles?.map(role => role.name) || ['partner'];
+    const permissions = user.roles?.flatMap(role => 
+      role.permissions?.map(permission => permission.name) || []
+    ) || [];
+    
+    this.logger.log(`=== LOGIN REUȘIT (FĂRĂ 2FA) ===`);
+    this.logger.log(`Utilizator: ${user.email} (ID: ${user.userId})`);
+    this.logger.log(`Roluri: ${roles.join(', ')}`);
+    this.logger.log(`Permisiuni: ${permissions.length > 0 ? permissions.join(', ') : 'Nicio permisiune'}`);
+    this.logger.log(`Partner ID: ${user.partner_id || 'N/A'}`);
+    this.logger.log(`2FA Status: ${user.is_2fa_active ? 'ACTIVAT' : 'DEZACTIVAT'}`);
+    this.logger.log(`====================`);
+    
+    return tokens;
   }
 
   async logout(token: string): Promise<{ message: string }> {
@@ -170,7 +208,9 @@ export class AuthService {
       const accessToken = await this.jwtService.signAsync({
         sub: user.userId,
         email: user.email,
-        roles: user.roles?.map(role => role.name) || [],
+        partner_id: user.partner_id || null,
+        partner_name: user.partner_name || null,
+        roles: user.roles?.map(role => role.name) || ['partner'],
         permissions: user.roles?.flatMap(role => 
           role.permissions?.map(permission => permission.name) || []
         ) || []

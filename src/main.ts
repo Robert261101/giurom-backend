@@ -25,7 +25,12 @@ async function bootstrap() {
   app.use(helmet());
   // CORS
   app.enableCors({
-    origin: ['http://localhost:4200','https://frontend.tau.com'],
+    origin: [
+      'http://localhost:4200',
+      'https://frontend.tau.com',
+      'http://localhost:3001',  // Frontend BNK
+      'http://localhost:3000'   // Frontend BNK (alternativ)
+    ],
     methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
     credentials: true,
   });
@@ -41,6 +46,6 @@ async function bootstrap() {
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
-  console.log(`Veziv Auth2 rulează pe portul ${port}`);
+  console.log(`Auth2 Microservice rulează pe portul ${port}`);
 }
 bootstrap();

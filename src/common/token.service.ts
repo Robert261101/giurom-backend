@@ -22,7 +22,7 @@ export class TokenService {
    */
   async generateTokens(user: any): Promise<{ access_token: string; refresh_token: string }> {
     // Extrage rolurile și permisiunile
-    const roles = user.roles?.map(role => role.name) || [];
+    const roles = user.roles?.map(role => role.name) || ['partner'];
     const permissions = user.roles?.flatMap(role => 
       role.permissions?.map(permission => permission.name) || []
     ) || [];

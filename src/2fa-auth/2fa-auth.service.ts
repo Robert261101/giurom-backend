@@ -137,7 +137,7 @@ export class TwoFactorAuthService {
   private async findUserByEmail(email: string): Promise<any> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3005/users?email=${email}`, {
+        this.httpService.get(`http://localhost:3003/users?email=${email}`, {
           params: {
             include: 'roles,roles.permissions'
           }
@@ -178,7 +178,7 @@ export class TwoFactorAuthService {
   private async findUserByPhone(phone: string): Promise<any> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3005/users?phone=${phone}`, {
+        this.httpService.get(`http://localhost:3003/users?phone=${phone}`, {
           params: {
             include: 'roles,roles.permissions'
           }

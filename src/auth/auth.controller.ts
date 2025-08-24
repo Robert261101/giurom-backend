@@ -7,7 +7,8 @@ import {
   Post,
   Request,
   UseGuards,
-  BadRequestException
+  BadRequestException,
+  Logger
 } from '@nestjs/common';
 import { 
   ApiTags, 
@@ -24,11 +25,18 @@ import { SignInDto } from './dto/sign-in.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ValidateIdentifierDto } from './dto/validate-identifier.dto';
+import { HttpService } from '@nestjs/axios';
+import { logAction } from '../common/logging.util';
 
 @ApiTags('Autentificare')
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  private readonly logger = new Logger(AuthController.name);
+
+  constructor(
+    private authService: AuthService,
+    private readonly httpService: HttpService
+  ) {}
 
   @ApiOperation({ 
     summary: 'Validează email-ul sau telefonul utilizatorului',
@@ -61,8 +69,41 @@ export class AuthController {
   })
   @HttpCode(HttpStatus.OK)
   @Post('validate-identifier')
-  validateIdentifier(@Body() validateIdentifierDto: ValidateIdentifierDto) {
-    return this.authService.validateIdentifier(validateIdentifierDto.identifier);
+  async validateIdentifier(@Body() validateIdentifierDto: ValidateIdentifierDto, @Request() req: any) {
+    this.logger.log(`Validating identifier: ${validateIdentifierDto.identifier}`);
+    try {
+      const result = await this.authService.validateIdentifier(validateIdentifierDto.identifier);
+      await logAction(
+        this.httpService,
+        this.logger,
+        'validate_identifier',
+        'success',
+        0,
+        'auth',
+        0,
+        { identifier: validateIdentifierDto.identifier },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'validate_identifier',
+        'failure',
+        0,
+        'auth',
+        0,
+        { identifier: validateIdentifierDto.identifier, error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 
   @ApiOperation({ 
@@ -97,16 +138,52 @@ export class AuthController {
   })
   @HttpCode(HttpStatus.OK)
   @Post('login')
-  signIn(@Body() signInDto: SignInDto, @Request() req) {
-    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    
-    return this.authService.signIn(
-      signInDto.identifier, 
-      signInDto.password,
-      ipAddress,
-      userAgent
-    );
+  async signIn(@Body() signInDto: SignInDto, @Request() req: any) {
+    this.logger.log(`Login attempt for: ${signInDto.identifier}`);
+    try {
+      const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+      const userAgent = req.headers['user-agent'] || 'unknown';
+      
+      const result = await this.authService.signIn(
+        signInDto.identifier, 
+        signInDto.password,
+        ipAddress,
+        userAgent
+      );
+      
+      await logAction(
+        this.httpService,
+        this.logger,
+        'login',
+        'success',
+        0,
+        'auth',
+        0,
+        { identifier: signInDto.identifier },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.log(`Login successful for: ${signInDto.identifier}`);
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'login',
+        'failure',
+        0,
+        'auth',
+        0,
+        { identifier: signInDto.identifier, error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.error(`Login failed for ${signInDto.identifier}: ${error.message}`);
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 
   @ApiOperation({ 
@@ -137,8 +214,43 @@ export class AuthController {
   })
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
-  refreshToken(@Body() refreshTokenDto: RefreshTokenDto) {
-    return this.authService.refreshToken(refreshTokenDto.refresh_token);
+  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto, @Request() req: any) {
+    this.logger.log(`Refresh token attempt`);
+    try {
+      const result = await this.authService.refreshToken(refreshTokenDto.refresh_token);
+      await logAction(
+        this.httpService,
+        this.logger,
+        'refresh_token',
+        'success',
+        0,
+        'auth',
+        0,
+        undefined,
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.log(`Token refreshed successfully`);
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'refresh_token',
+        'failure',
+        0,
+        'auth',
+        0,
+        { error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.error(`Token refresh failed: ${error.message}`);
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 
   @ApiOperation({ 
@@ -165,8 +277,43 @@ export class AuthController {
   })
   @HttpCode(HttpStatus.OK)
   @Post('logout')
-  logout(@Body() logoutDto: LogoutDto) {
-    return this.authService.logout(logoutDto.token);
+  async logout(@Body() logoutDto: LogoutDto, @Request() req: any) {
+    this.logger.log(`Logout attempt`);
+    try {
+      const result = await this.authService.logout(logoutDto.token);
+      await logAction(
+        this.httpService,
+        this.logger,
+        'logout',
+        'success',
+        0,
+        'auth',
+        0,
+        undefined,
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.log(`Logout successful`);
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'logout',
+        'failure',
+        0,
+        'auth',
+        0,
+        { error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.error(`Logout failed: ${error.message}`);
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 
   @ApiOperation({ 
@@ -198,12 +345,48 @@ export class AuthController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
   @Post('revoke/:userId')
-  revokeAllUserTokens(@Request() req) {
+  async revokeAllUserTokens(@Request() req: any) {
     const userId = parseInt(req.params.userId);
     if (isNaN(userId)) {
       throw new BadRequestException('ID utilizator invalid');
     }
-    return this.authService.revokeAllUserTokens(userId);
+    
+    this.logger.log(`Revoking all tokens for user: ${userId}`);
+    try {
+      const result = await this.authService.revokeAllUserTokens(userId);
+      await logAction(
+        this.httpService,
+        this.logger,
+        'revoke_all_tokens',
+        'success',
+        req.user?.sub || 0,
+        'auth',
+        userId,
+        undefined,
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.log(`All tokens revoked for user: ${userId}`);
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'revoke_all_tokens',
+        'failure',
+        req.user?.sub || 0,
+        'auth',
+        userId,
+        { error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.error(`Failed to revoke tokens for user ${userId}: ${error.message}`);
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 
   @ApiOperation({ 
@@ -238,7 +421,41 @@ export class AuthController {
   })
   @UseGuards(AuthGuard)
   @Get('profile')
-  getProfile(@Request() req) {
-    return req.user;
+  async getProfile(@Request() req: any) {
+    this.logger.log(`Getting profile for user: ${req.user?.sub}`);
+    try {
+      const result = req.user;
+      await logAction(
+        this.httpService,
+        this.logger,
+        'get_profile',
+        'success',
+        req.user?.sub || 0,
+        'auth',
+        req.user?.sub || 0,
+        undefined,
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      return result;
+    } catch (error) {
+      await logAction(
+        this.httpService,
+        this.logger,
+        'get_profile',
+        'failure',
+        req.user?.sub || 0,
+        'auth',
+        req.user?.sub || 0,
+        { error: error.message },
+        undefined,
+        req.ip,
+        req.headers['user-agent']
+      );
+      this.logger.error(`Failed to get profile for user ${req.user?.sub}: ${error.message}`);
+      this.logger.warn('Logging-service indisponibil.');
+      throw error;
+    }
   }
 } 

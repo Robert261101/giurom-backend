@@ -30,7 +30,10 @@ export class TwoFactorAuthService {
   ) {
     this.apiKey = this.configService.get<string>('MOBILE_SMS_API_KEY') || '';
     if (!this.apiKey) {
-      this.logger.warn('MOBILE_SMS_API_KEY nu este configurat!');
+      this.logger.error('MOBILE_SMS_API_KEY nu este configurat! SMS-urile nu vor fi trimise.');
+      this.logger.error('Setează variabila de mediu MOBILE_SMS_API_KEY cu cheia ta de la SMSAdvert.');
+    } else {
+      this.logger.log('MOBILE_SMS_API_KEY configurat cu succes.');
     }
   }
 
@@ -152,17 +155,26 @@ export class TwoFactorAuthService {
 
   private async findUserByEmail(email: string): Promise<any> {
     try {
+      this.logger.log(`Căutând utilizatorul cu email: ${email}`);
+      
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3005/users?email=${email}`, {
+        this.httpService.get(`http://localhost:3003/users?email=${email}`, {
           params: {
             include: 'roles,roles.permissions'
           }
         })
       );
 
-      if (response?.data?.data?.data?.length) {
-        const userData = response.data.data.data[0];
+      // Verifică dacă răspunsul are structura corectă
+      if (response?.data?.data && Array.isArray(response.data.data) && response.data.data.length > 0) {
+        const userData = response.data.data[0];
         
+        // Verifică dacă utilizatorul are număr de telefon
+        if (!userData.user.phone) {
+          this.logger.error(`Utilizatorul ${email} nu are număr de telefon asociat`);
+          return null;
+        }
+
         // Extrage rolurile din tabelul user_roles dacă există
         const userRoles = userData.user.roles || [];
         
@@ -175,14 +187,18 @@ export class TwoFactorAuthService {
           allRoles.push({ name: baseRole, permissions: [] });
         }
 
-        return {
+        const result = {
           userId: userData.user.id,
           email: userData.user.email,
           phone: userData.user.phone,
           roles: allRoles
         };
+
+        this.logger.log(`Utilizator găsit și procesat pentru ${email}`);
+        return result;
       }
 
+      this.logger.error(`Utilizatorul cu email ${email} nu a fost găsit în răspuns`);
       return null;
     } catch (error) {
       this.logger.error(`Eroare la căutarea utilizatorului: ${error.message}`);
@@ -192,11 +208,28 @@ export class TwoFactorAuthService {
 
   private async sendSms(phone: string, otp: string): Promise<boolean> {
     try {
+      this.logger.log(`Încerc să trimit SMS către ${phone} cu OTP: ${otp}`);
+      
+      if (!this.apiKey) {
+        this.logger.error('MOBILE_SMS_API_KEY nu este configurat! Nu se poate trimite SMS.');
+        return false;
+      }
+      
+      this.logger.log(`API Key configurat: DA`);
+      this.logger.log(`API URL: ${this.apiUrl}`);
+      
+      // Convertește numărul în format international pentru SMSAdvert (+40 pentru România)
+      const internationalPhone = phone.startsWith('0') ? '+40' + phone.substring(1) : phone;
+      
       const data = {
-        phone,
+        phone: internationalPhone,
         shortTextMessage: `Codul dvs de verificare este: ${otp}. Expiră în 5 minute.`,
         sendAsShort: true
       };
+
+      this.logger.log(`📞 Număr original: ${phone}, Număr international: ${internationalPhone}`);
+
+      this.logger.log(`Datele pentru SMS:`, JSON.stringify(data, null, 2));
 
       const config = {
         method: 'post',
@@ -208,19 +241,38 @@ export class TwoFactorAuthService {
         data: data
       };
 
+      this.logger.log(`Configurația pentru request:`, JSON.stringify(config, null, 2));
+
       const response = await axios(config);
 
+      this.logger.log(`Status Code SMSAdvert: ${response.status}`);
+      this.logger.log(`Răspuns complet de la SMSAdvert:`, JSON.stringify(response.data, null, 2));
+
       if (response.data.successMessage) {
-        this.logger.log(`SMS trimis cu succes către ${phone}. Message ID: ${response.data.msgId}`);
-        // Log OTP pentru debugging
-        this.logger.log(`OTP trimis prin SMS: ${otp} (pentru debugging)`);
+        this.logger.log(`✅ SMS TRIMIS CU SUCCES către ${phone}`);
+        this.logger.log(`📱 Message ID: ${response.data.msgId}`);
+        this.logger.log(`💰 Cost: ${response.data.cost || 'N/A'}`);
+        this.logger.log(`📊 Credite rămase: ${response.data.credits || 'N/A'}`);
+        this.logger.log(`🔢 OTP trimis: ${otp} (pentru debugging)`);
         return true;
       } else {
-        this.logger.error(`Eroare la trimiterea SMS: ${JSON.stringify(response.data.errors)}`);
+        this.logger.error(`❌ EROARE la trimiterea SMS:`);
+        this.logger.error(`📋 Răspuns complet:`, JSON.stringify(response.data, null, 2));
+        if (response.data.errors) {
+          this.logger.error(`🚨 Erori specifice:`, JSON.stringify(response.data.errors, null, 2));
+        }
         return false;
       }
     } catch (error) {
-      this.logger.error(`Eroare la trimiterea SMS: ${error.message}`);
+      this.logger.error(`❌ EROARE la trimiterea SMS: ${error.message}`);
+      
+      // Dacă este o eroare de la SMSAdvert, afișează detaliile
+      if (error.response) {
+        this.logger.error(`🚨 Status Code: ${error.response.status}`);
+        this.logger.error(`📋 Răspuns de eroare de la SMSAdvert:`, JSON.stringify(error.response.data, null, 2));
+      }
+      
+      this.logger.error(`Stack trace:`, error.stack);
       return false;
     }
   }
@@ -242,7 +294,7 @@ export class TwoFactorAuthService {
   private async findUserByPhone(phone: string): Promise<any> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3005/users?phone=${phone}`, {
+        this.httpService.get(`http://localhost:3003/users?phone=${phone}`, {
           params: {
             include: 'roles,roles.permissions'
           }
