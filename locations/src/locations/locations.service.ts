@@ -221,6 +221,14 @@ export class LocationsService {
     return this.revenuePointsRepository.save(rows);
   }
 
+  async getRevenueIntervals(workLocationId: number) {
+    await this.findWorkLocationById(workLocationId);
+    return this.revenuePointsRepository.find({
+      where: { work_location_id: workLocationId } as any,
+      order: { min_revenue: 'ASC' } as any,
+    });
+  }
+
   async setManagerPercent(workLocationId: number, managerPercent: number, _fallbackRevenuePerPoint?: number) {
     let cfg = await this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
     if (!cfg) {
@@ -234,36 +242,68 @@ export class LocationsService {
     return this.managerConfigRepository.save(cfg);
   }
 
-  async recordRevenue(workLocationId: number, revenueDate: string, revenueAmount: number) {
+  async getManagerConfig(workLocationId: number) {
     await this.findWorkLocationById(workLocationId);
-    let row = await this.revenueRepository.findOne({ where: { work_location_id: workLocationId, revenue_date: revenueDate } as any });
-    if (!row) {
-      row = this.revenueRepository.create({
-        work_location_id: workLocationId,
-        revenue_date: revenueDate,
-        revenue_amount: revenueAmount as any,
-      } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
-    } else {
-      row.revenue_amount = revenueAmount as any;
-    }
+    return this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
+  }
+
+  async recordRevenue(workLocationId: number, revenueDate: string, revenueAmount: number) {
+    // Always insert a new revenue row (allow multiple entries per day)
+    await this.findWorkLocationById(workLocationId);
+    const row = this.revenueRepository.create({
+      work_location_id: workLocationId,
+      revenue_date: revenueDate,
+      revenue_amount: revenueAmount as any,
+    } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
     return this.revenueRepository.save(row);
+  }
+
+  async listRevenue(
+    workLocationId: number,
+    opts?: { startDate?: string; endDate?: string; page?: number; limit?: number },
+  ) {
+    await this.findWorkLocationById(workLocationId);
+    const page = Math.max(1, Number(opts?.page || 1));
+    const limit = Math.max(1, Math.min(200, Number(opts?.limit || 50)));
+    const qb = this.revenueRepository
+      .createQueryBuilder('rev')
+      .where('rev.location_id = :workLocationId', { workLocationId })
+      .orderBy('rev.revenue_date', 'DESC');
+
+    if (opts?.startDate) qb.andWhere('rev.revenue_date >= :startDate', { startDate: opts.startDate });
+    if (opts?.endDate) qb.andWhere('rev.revenue_date <= :endDate', { endDate: opts.endDate });
+
+    const offset = (page - 1) * limit;
+    const [items, total] = await qb.skip(offset).take(limit).getManyAndCount();
+    return { revenues: items, total, totalPages: Math.ceil(total / limit) };
   }
 
   async getManagerPointsForDate(workLocationId: number, revenueDate: string) {
     const cfg = await this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
-    const rev = await this.revenueRepository.findOne({ where: { work_location_id: workLocationId, revenue_date: revenueDate } as any });
-    if (!rev || !cfg) return { managerPoints: 0 };
-    // determine points per unit for the interval containing revenue amount
+    if (!cfg) return { totalPoints: 0, managerPoints: 0, managerPercent: 0, breakdown: [] } as any;
+    const revs = await this.revenueRepository.find({ where: { work_location_id: workLocationId, revenue_date: revenueDate } as any });
+    if (!revs || revs.length === 0) return { totalPoints: 0, managerPoints: 0, managerPercent: Number(cfg.manager_percent), breakdown: [] } as any;
     const intervals = await this.revenuePointsRepository.find({ where: { work_location_id: workLocationId } as any, order: { min_revenue: 'ASC' } as any });
-    let pointsPerUnit: number | null = null;
-    for (const intv of intervals) {
-      const minOk = Number(rev.revenue_amount) >= Number(intv.min_revenue);
-      const maxOk = intv.max_revenue == null ? true : Number(rev.revenue_amount) <= Number(intv.max_revenue);
-      if (minOk && maxOk) { pointsPerUnit = Number(intv.points); break; }
+    let totalPoints = 0;
+    let totalManagerPoints = 0;
+    const breakdown: Array<{ amount: number; pointsPerUnit: number; interval: { min: number; max: number | null }; points: number; managerShare: number }> = [];
+    for (const rev of revs) {
+      let pointsPerUnit: number | null = null;
+      let matched: { min: number; max: number | null } | null = null;
+      for (const intv of intervals) {
+        const minOk = Number(rev.revenue_amount) >= Number(intv.min_revenue);
+        const maxOk = intv.max_revenue == null ? true : Number(rev.revenue_amount) <= Number(intv.max_revenue);
+        if (minOk && maxOk) { pointsPerUnit = Number(intv.points); matched = { min: Number(intv.min_revenue), max: intv.max_revenue == null ? null : Number(intv.max_revenue) }; break; }
+      }
+      if (!pointsPerUnit || pointsPerUnit <= 0) continue;
+      // Interpret pointsPerUnit as "amount per 1 point"
+      const amount = Number(rev.revenue_amount);
+      const pts = amount / pointsPerUnit;
+      totalPoints += pts;
+      const managerPts = pts * (Number(cfg.manager_percent) / 100);
+      totalManagerPoints += managerPts;
+      breakdown.push({ amount, pointsPerUnit, interval: matched as any, points: pts, managerShare: managerPts });
     }
-    if (!pointsPerUnit || pointsPerUnit <= 0) return { managerPoints: 0 };
-    const totalPoints = Number(rev.revenue_amount) / pointsPerUnit;
-    const managerPoints = totalPoints * (Number(cfg.manager_percent) / 100);
-    return { managerPoints };
+    return { totalPoints, managerPoints: totalManagerPoints, managerPercent: Number(cfg.manager_percent), breakdown } as any;
   }
 } 

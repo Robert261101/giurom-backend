@@ -83,14 +83,35 @@ export class LocationsHttpController {
 		return this.service.setRevenueIntervals(parseInt(id, 10), body.intervals || []);
 	}
 
+	@Get(':id/revenue-intervals')
+	getIntervals(@Param('id') id: string) {
+		return this.service.getRevenueIntervals(parseInt(id, 10));
+	}
+
 	@Patch(':id/manager-percent')
 	setManagerPercent(@Param('id') id: string, @Body() body: { manager_percent: number; fallback_revenue_per_point?: number }) {
 		return this.service.setManagerPercent(parseInt(id, 10), body.manager_percent, body.fallback_revenue_per_point);
 	}
 
+	@Get(':id/manager-config')
+	getManagerConfig(@Param('id') id: string) {
+		return this.service.getManagerConfig(parseInt(id, 10));
+	}
+
 	@Post(':id/revenue')
 	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; revenue_amount: number }) {
 		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.revenue_amount);
+	}
+
+	@Get(':id/revenue')
+	listRevenue(
+		@Param('id') id: string,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+		@Query('page') page = '1',
+		@Query('limit') limit = '50',
+	) {
+		return this.service.listRevenue(parseInt(id, 10), { startDate, endDate, page: parseInt(page, 10), limit: parseInt(limit, 10) });
 	}
 
 	@Get(':id/manager-points')
