@@ -3,7 +3,11 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/s
 import { ExecutionService } from './execution.service';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { UpdateExecutionDto } from './dto/update-execution.dto';
+import { CreateEmployeeDailyPointsDto } from './dto/create-employee-daily-points.dto';
+import { CreateEmployeeDailyTaskPointsDto } from './dto/create-employee-daily-task-points.dto';
 import { TaskExecution } from './entity/task-execution.entity';
+import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
+import { EmployeeDailyTaskPoints } from './entity/employee-daily-task-points.entity';
 
 @ApiTags('Executions')
 @Controller('executions')
@@ -159,5 +163,108 @@ export class ExecutionController {
   @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
   remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.executionService.remove(id);
+  }
+
+  // ===== ENDPOINT-URI PENTRU PUNCTAJ ZILNIC =====
+
+  @Post('daily-points')
+  @ApiOperation({ summary: 'Creează punctaj zilnic pentru un angajat' })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Punctaj zilnic creat cu succes',
+    type: EmployeeDailyPoints 
+  })
+  @ApiResponse({ status: 400, description: 'Date invalide sau punctaj existent' })
+  createDailyPoints(@Body() createDto: CreateEmployeeDailyPointsDto): Promise<EmployeeDailyPoints> {
+    return this.executionService.createEmployeeDailyPoints(createDto);
+  }
+
+  @Get('daily-points/:employeeId/:workDate')
+  @ApiOperation({ summary: 'Obține punctajul zilnic pentru un angajat' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiParam({ name: 'workDate', description: 'Data de lucru (YYYY-MM-DD)' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Punctaj zilnic găsit',
+    type: EmployeeDailyPoints 
+  })
+  @ApiResponse({ status: 404, description: 'Punctajul nu a fost găsit' })
+  getDailyPoints(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Param('workDate') workDate: string
+  ): Promise<EmployeeDailyPoints> {
+    return this.executionService.getEmployeeDailyPoints(employeeId, workDate);
+  }
+
+  @Post('daily-task-points')
+  @ApiOperation({ summary: 'Adaugă punctaj pentru un task în punctajul zilnic' })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Punctaj pentru task adăugat cu succes',
+    type: EmployeeDailyTaskPoints 
+  })
+  @ApiResponse({ status: 400, description: 'Date invalide sau punctaj existent' })
+  addTaskPoints(@Body() createDto: CreateEmployeeDailyTaskPointsDto): Promise<EmployeeDailyTaskPoints> {
+    return this.executionService.addTaskPointsToDailyPoints(createDto);
+  }
+
+  @Get('employee-points/:employeeId')
+  @ApiOperation({ summary: 'Obține punctajul unui angajat pentru o perioadă' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Punctajul pentru perioada specificată',
+    type: [EmployeeDailyPoints] 
+  })
+  getEmployeePointsForRange(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string
+  ): Promise<EmployeeDailyPoints[]> {
+    return this.executionService.getEmployeePointsForDateRange(employeeId, startDate, endDate);
+  }
+
+  @Get('employee-total-points/:employeeId')
+  @ApiOperation({ summary: 'Calculează punctajul total al unui angajat pentru o perioadă' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Punctajul total pentru perioada specificată',
+    schema: { type: 'number' }
+  })
+  getEmployeeTotalPoints(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string
+  ): Promise<number> {
+    return this.executionService.calculateTotalPointsForEmployee(employeeId, startDate, endDate);
+  }
+
+  @Post('process-overdue-tasks')
+  @ApiOperation({ summary: 'Procesează task-urile întârziate și nefinalizate pentru o dată specifică' })
+  @ApiBody({
+    description: 'Data pentru care se procesează task-urile întârziate',
+    examples: {
+      example1: {
+        summary: 'Procesare pentru astăzi',
+        value: {
+          date: '2024-01-15'
+        }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Task-urile întârziate au fost procesate cu succes',
+    schema: { 
+      type: 'object',
+      properties: {
+        processedTasks: { type: 'number' },
+        totalPointsDeducted: { type: 'number' }
+      }
+    }
+  })
+  processOverdueTasks(@Body() body: { date: string }): Promise<{ processedTasks: number; totalPointsDeducted: number }> {
+    return this.executionService.processOverdueTasks(body.date);
   }
 } 

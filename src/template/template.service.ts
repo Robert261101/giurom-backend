@@ -26,12 +26,17 @@ export class TemplateService {
 
     // Creează elementele pentru template
     if (createTemplateDto.elements && createTemplateDto.elements.length > 0) {
-      const elements = createTemplateDto.elements.map(elementDto => 
-        this.elementRepository.create({
+      const elements = createTemplateDto.elements.map(elementDto => {
+        console.log(`🔧 DEBUG Template Element:`, {
+          type: elementDto.element_type,
+          finish_at: elementDto.finish_at
+        });
+        
+        return this.elementRepository.create({
           ...elementDto,
           template_id: savedTemplate.id,
-        })
-      );
+        });
+      });
       
       await this.elementRepository.save(elements);
     }

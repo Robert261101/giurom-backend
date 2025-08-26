@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBoolean, IsNumber, Min, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBoolean, IsNumber, Min, MaxLength, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { ElementType } from '../entity/task-element.entity';
@@ -77,6 +77,15 @@ export class UpdateElementDto {
   @IsOptional()
   @IsString()
   scoring_options?: string;
+
+  @ApiProperty({
+    description: 'Data și ora de finalizare pentru element',
+    example: '2024-01-15T17:00:00Z',
+    required: false
+  })
+  @IsOptional()
+  @IsDateString()
+  finish_at?: string;
 }
 
 export class UpdateTemplateDto {

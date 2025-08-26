@@ -9,6 +9,8 @@ import { TaskTemplate } from './template/entity/task-template.entity';
 import { TaskElement } from './template/entity/task-element.entity';
 import { TaskExecution } from './execution/entity/task-execution.entity';
 import { TaskExecutionAnswer } from './execution/entity/task-execution-answer.entity';
+import { EmployeeDailyPoints } from './execution/entity/employee-daily-points.entity';
+import { EmployeeDailyTaskPoints } from './execution/entity/employee-daily-task-points.entity';
 import { TaskAssignment } from './assignment/entity/task-assignment.entity';
 import { TaskAssignmentElement } from './assignment/entity/task-assignment-element.entity';
 import { TemplateExistsValidator } from './assignment/validators/template-exists.validator';
@@ -32,10 +34,13 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         TaskElement,
         TaskExecution,
         TaskExecutionAnswer,
+        EmployeeDailyPoints,
+        EmployeeDailyTaskPoints,
         TaskAssignment,
         TaskAssignmentElement
       ],
       synchronize: false,
+      // dropSchema: true, 
     }),
     TypeOrmModule.forFeature([
       TaskTemplate,

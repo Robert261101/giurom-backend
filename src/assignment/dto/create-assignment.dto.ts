@@ -33,6 +33,8 @@ export class CreateElementDto {
   @Min(0)
   @Max(10)
   score?: number;
+
+
 }
 
 

@@ -1,98 +1,392 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Veziv Tasks Microservice
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## 📋 Descriere Generală
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Microserviciul **Veziv Tasks** este o componentă esențială a sistemului Giurom, dedicată gestionării complete a task-urilor și sarcinilor în cadrul organizației. Acesta oferă o arhitectură modulară și scalabilă pentru crearea, atribuirea și executarea task-urilor personalizabile.
 
-## Description
+## 🏗️ Arhitectura Sistemului
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+### Structura Modulare
 
-## Project setup
+Microserviciul este organizat în **3 module principale**, fiecare cu responsabilități specifice:
 
-```bash
-$ npm install
+```
+src/
+├── template/          # Gestionarea șabloanelor de task-uri
+├── assignment/        # Atribuirea task-urilor către angajați
+├── execution/         # Executarea și completarea task-urilor
+└── common/           # Componente comune (interceptori, validatori)
 ```
 
-## Compile and run the project
+### Tehnologii Utilizate
 
-```bash
-# development
-$ npm run start
+- **Framework**: NestJS 10.0.0
+- **Database**: MariaDB/MySQL cu TypeORM
+- **Documentație API**: Swagger/OpenAPI
+- **Validare**: class-validator
+- **HTTP Client**: @nestjs/axios
+- **WebSockets**: Socket.io (pentru comunicare în timp real)
 
-# watch mode
-$ npm run start:dev
+## 🎯 Module și Funcționalități
 
-# production mode
-$ npm run start:prod
+### 1. Template Module (`/template`)
+
+**Scop**: Gestionarea șabloanelor reutilizabile pentru task-uri
+
+#### Entități:
+- **TaskTemplate**: Șabloane de task-uri cu tipuri (EMPLOYEE/MANAGER)
+- **TaskElement**: Elemente dinamice din șabloane
+
+#### Tipuri de Elemente Suportate:
+```typescript
+enum ElementType {
+  INPUT, TEXTAREA, CHECKBOX, RADIO, SELECT, DATE,
+  LABEL, NUMBER, TASK_NAME, RESPONSIBLE, PERSON,
+  GROUP, WORK_LOCATION, ESTIMATED_DURATION,
+  VISIBLE_FROM, RECURRENCE, SCORING_BOOLEAN,
+  ALLOW_POSTPONE, PHOTO, FINISH_AT
+}
 ```
 
-## Run tests
+**Elemente Speciale:**
+- **`SCORING_BOOLEAN`**: Checkbox-uri cu punctaj configurat prin `scoring_options`
+- **`FINISH_AT`**: Deadline pentru finalizarea task-ului (datetime)
+- **`PHOTO`**: Necesită capturi de imagine
+- **`ALLOW_POSTPONE`**: Permite amânarea task-ului
 
-```bash
-# unit tests
-$ npm run test
+#### Endpoints:
+- `POST /api/templates` - Creează template nou
+- `GET /api/templates` - Lista toate template-urile
+- `GET /api/templates/:id` - Template specific
+- `PATCH /api/templates/:id` - Actualizează template
+- `DELETE /api/templates/:id` - Șterge template
 
-# e2e tests
-$ npm run test:e2e
+### 2. Assignment Module (`/assignment`)
 
-# test coverage
-$ npm run test:cov
+**Scop**: Atribuirea task-urilor către angajați sau grupuri
+
+#### Entități:
+- **TaskAssignment**: Atribuirea unui task specific
+- **TaskAssignmentElement**: Elemente personalizate pentru atribuire
+
+#### Statusuri de Atribuire:
+```typescript
+enum AssignmentStatus {
+  ASSIGNED,      // Atribuit
+  IN_PROGRESS,   // În progres
+  COMPLETED,     // Completat
+  OVERDUE        // Întârziat
+}
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+#### Priorități:
+```typescript
+enum Priority {
+  LOW, MEDIUM, HIGH
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+#### Endpoints:
+- `POST /api/assignments` - Creează atribuire nouă
+- `GET /api/assignments` - Lista atribuirilor
+- `GET /api/assignments/:id` - Atribuire specifică
+- `PATCH /api/assignments/:id` - Actualizează atribuirea
+- `DELETE /api/assignments/:id` - Șterge atribuirea
 
-## Resources
+### 3. Execution Module (`/execution`)
 
-Check out a few resources that may come in handy when working with NestJS:
+**Scop**: Executarea și completarea task-urilor atribuite
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+#### Entități:
+- **TaskExecution**: Execuția unui task
+- **TaskExecutionAnswer**: Răspunsurile la elementele task-ului
 
-## Support
+#### Funcționalități:
+- Completarea task-urilor cu răspunsuri
+- **Sistem de punctaj automat și inteligent**:
+  - **Task finalizat în timp + toate checkbox-urile cu puncte bifate** → adaugă punctele normale
+  - **Task finalizat în timp + checkbox-uri cu puncte nebifate** → scade punctele din toate opțiunile posibile
+  - **Task finalizat după `finish_at`** → scade punctele din toate opțiunile posibile
+  - **Task nefinalizat la sfârșitul zilei** → scade automat punctele prin endpoint-ul `process-overdue-tasks`
+- **Elemente cu Deadline (`finish_at`)**:
+  - Permite setarea unei date și ore specifice pentru finalizarea task-ului
+  - Comparație automată între timpul de finalizare și deadline
+  - Penalizare automată pentru întârzieri
+- **Integrare cu punctajul zilnic**:
+  - Actualizare automată în `Employee_Daily_Points`
+  - Înregistrare în `Employee_Daily_Task_Points`
+  - Calculare automată a punctajului total zilnic
+- Verificare manager (opțional)
+- Comentarii și feedback
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+#### Endpoints:
+- `POST /api/executions` - Creează execuție nouă
+- `GET /api/executions` - Lista execuțiilor
+- `GET /api/executions/:id` - Execuție specifică
+- `PATCH /api/executions/:id` - Actualizează execuția
+- `POST /api/executions/:id/complete` - Completează execuția
+- `POST /api/executions/:id/verify` - Verifică execuția (manager)
 
-## Stay in touch
+#### Endpoints Punctaj Zilnic:
+- `POST /api/executions/daily-points` - Creează punctaj zilnic
+- `GET /api/executions/daily-points/:employeeId/:workDate` - Punctaj zilnic specific
+- `POST /api/executions/daily-task-points` - Adaugă punctaj pentru task
+- `GET /api/executions/employee-points/:employeeId` - Punctaj pentru perioadă
+- `GET /api/executions/employee-total-points/:employeeId` - Punctaj total pentru perioadă
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## 🔧 Configurare și Instalare
 
-## License
+### Cerințe Preliminare
+- Node.js 18+
+- MariaDB/MySQL
+- npm sau yarn
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+### Variabile de Mediu
+Creează un fișier `.env` în directorul rădăcină:
+
+```env
+# Database
+DB_HOST=localhost
+DB_PORT=3306
+DB_USERNAME=root
+DB_PASSWORD=root
+DB_DATABASE=giurom_db
+
+# Server
+PORT=3008
+
+# Alte configurări
+NODE_ENV=development
+```
+
+### Instalare și Rulare
+
+```bash
+# Instalare dependențe
+npm install
+
+# Dezvoltare
+npm run start:dev
+
+# Producție
+npm run build
+npm run start:prod
+
+# Testare
+npm run test
+npm run test:e2e
+```
+
+## 📊 Structura Bazei de Date
+
+### Tabele Principale:
+
+1. **Task_Templates** - Șabloane de task-uri
+2. **Task_Elements** - Elemente din șabloane (inclusiv `finish_at` pentru deadline)
+3. **Task_Assignment** - Atribuiri de task-uri
+4. **Task_Assignment_Element** - Elemente personalizate pentru atribuiri (inclusiv `value` pentru deadline)
+5. **Task_Execution** - Execuții de task-uri
+6. **Task_Execution_Answer** - Răspunsuri la execuții
+7. **Employee_Daily_Points** - Punctaj zilnic al angajaților
+8. **Employee_Daily_Task_Points** - Punctaj specific al task-urilor în cadrul zilei
+
+### Câmpuri Speciale:
+- **`Task_Elements.finish_at`**: Deadline pentru elemente de tip `FINISH_AT`
+- **`Task_Assignment_Element.value`**: Valoare personalizată pentru deadline (pentru elemente `FINISH_AT`)
+- **`Task_Execution.completed_at`**: Timpul real de finalizare pentru comparație cu deadline
+
+### Relații:
+- Template → Elements (One-to-Many)
+- Template → Assignments (One-to-Many)
+- Assignment → Assignment Elements (One-to-Many)
+- Assignment → Executions (One-to-Many)
+- Execution → Execution Answers (One-to-Many)
+- Employee Daily Points → Daily Task Points (One-to-Many)
+- Execution → Daily Task Points (One-to-Many)
+
+## 🔍 Validatori și Interceptori
+
+### Validatori Personalizați:
+- **TemplateExistsValidator**: Verifică existența template-ului
+- **ElementsExistInTemplateValidator**: Validează elementele în template
+- **AllElementsCompletedValidator**: Verifică completarea tuturor elementelor
+
+### Response Interceptor:
+Standardizează răspunsurile API în formatul:
+```json
+{
+  "statusCode": 200,
+  "data": {...},
+  "message": "Succes"
+}
+```
+
+## 📚 Documentație API
+
+### Swagger UI
+Accesează documentația interactivă la: `http://localhost:3008/docs`
+
+### Endpoints Principali:
+
+#### Templates
+```
+POST   /api/templates     - Creează template
+GET    /api/templates     - Lista template-uri
+GET    /api/templates/:id - Template specific
+PATCH  /api/templates/:id - Actualizează template
+DELETE /api/templates/:id - Șterge template
+```
+
+#### Assignments
+```
+POST   /api/assignments     - Creează atribuire
+GET    /api/assignments     - Lista atribuiri
+GET    /api/assignments/:id - Atribuire specifică
+PATCH  /api/assignments/:id - Actualizează atribuirea
+DELETE /api/assignments/:id - Șterge atribuirea
+```
+
+#### Executions
+```
+POST   /api/executions     - Creează execuție
+GET    /api/executions     - Lista execuții
+GET    /api/executions/:id - Execuție specifică
+PATCH  /api/executions/:id - Actualizează execuția
+POST   /api/executions/:id/complete - Completează execuția
+POST   /api/executions/:id/verify   - Verifică execuția
+```
+
+#### Punctaj Zilnic
+```
+POST   /api/executions/daily-points           - Creează punctaj zilnic
+GET    /api/executions/daily-points/:empId/:date - Punctaj zilnic specific
+POST   /api/executions/daily-task-points      - Adaugă punctaj pentru task
+GET    /api/executions/employee-points/:empId - Punctaj pentru perioadă
+GET    /api/executions/employee-total-points/:empId - Punctaj total
+POST   /api/executions/process-overdue-tasks  - Procesează task-uri întârziate
+```
+
+## 🔄 Flux de Lucru
+
+### 1. Crearea unui Task cu Deadline
+1. **Creează Template** - Definește structura task-ului
+2. **Adaugă Elemente** - Specifică câmpurile necesare (inclusiv `FINISH_AT` pentru deadline)
+3. **Atribuie Task** - Asignează către angajat/grup cu deadline personalizat
+4. **Execută Task** - Angajatul completează task-ul înainte de deadline
+5. **Verifică** - Managerul verifică (opțional)
+6. **Calculare Punctaj** - Sistemul calculează automat punctajul bazat pe:
+   - Timpul de finalizare vs deadline
+   - Completarea elementelor cu puncte
+   - Actualizează punctajul zilnic
+
+### 2. Logica de Punctaj în Timp Real
+- **La finalizarea task-ului**: Calculare automată și actualizare punctaj zilnic
+- **La sfârșitul zilei**: Procesare task-uri nefinalizate prin `process-overdue-tasks`
+- **Raportare**: Acces la punctaj pentru perioade specifice
+
+### 2. Tipuri de Task-uri
+- **Task-uri Simple**: Input, checkbox, select
+- **Task-uri Complexe**: Cu scoring, verificare manager
+- **Task-uri Recurring**: Cu programare automată
+- **Task-uri cu Foto**: Necesită capturi de imagine
+- **Task-uri cu Punctaj**: Contribuie la punctajul zilnic al angajatului
+- **Task-uri cu Deadline**: Cu data și ora de finalizare specificată (`finish_at`)
+- **Task-uri cu Penalizare**: Scădere automată de puncte pentru necompletare sau întârziere
+
+## 🚀 Caracteristici Avansate
+
+### Sistem de Scoring și Punctaj
+- Scoring automat bazat pe răspunsuri
+- Configurare flexibilă per element
+- Calculare scor total
+- **Punctaj zilnic al angajaților**
+- **Punctaj specific per task**
+- **Calculare automată a punctajului total zilnic**
+- **Raportare punctaj pentru perioade specifice**
+
+### Logica de Punctaj Inteligentă
+1. **Task finalizat în timp + toate checkbox-urile cu puncte bifate**:
+   - ✅ Adaugă punctele normale din răspunsuri
+   - ✅ Contribuie pozitiv la punctajul zilnic
+
+2. **Task finalizat în timp + checkbox-uri cu puncte nebifate**:
+   - ❌ Scade punctele din toate opțiunile posibile
+   - ⚠️ Penalizare pentru necompletarea elementelor obligatorii
+
+3. **Task finalizat după deadline (`finish_at`)**:
+   - ❌ Scade punctele din toate opțiunile posibile
+   - ⏰ Penalizare pentru întârziere
+
+4. **Task nefinalizat la sfârșitul zilei**:
+   - ❌ Scade automat punctele prin `process-overdue-tasks`
+   - 📅 Penalizare pentru nefinalizare
+
+### Debug și Monitorizare
+- Logs detaliate pentru debugging punctaj
+- Afișare deadline vs timp finalizare
+- Numărătoare elemente cu puncte vs completate
+- Alertă pentru elemente necompletate
+
+### Verificare Manager
+- Opțiune de verificare obligatorie
+- Comentarii și feedback
+- Istoric verificări
+
+### Flexibilitate Elemente
+- 20+ tipuri de elemente
+- Validare personalizabilă
+- Ordine sortabilă
+- Opțiuni de scoring
+
+### CORS și Securitate
+- CORS configurat pentru dezvoltare
+- Validare strictă a datelor
+- Interceptori pentru standardizare
+
+## 🧪 Testare
+
+```bash
+# Teste unitare
+npm run test
+
+# Teste cu coverage
+npm run test:cov
+
+# Teste end-to-end
+npm run test:e2e
+
+# Teste în mod watch
+npm run test:watch
+```
+
+## 📝 Logs și Debugging
+
+### Logs de Pornire
+```
+Veziv Tasks Service rulează pe portul 3008
+```
+
+### Debug Mode
+```bash
+npm run start:debug
+```
+
+## 🔗 Integrare cu Alte Microservicii
+
+Microserviciul este pregătit pentru integrare cu:
+- **Veziv Company** - Pentru informații despre companii
+- **Frontend Giurom** - Pentru interfața utilizator
+- **Sisteme externe** - Prin API-uri REST
+
+## 📞 Suport și Contribuții
+
+Pentru întrebări sau probleme:
+1. Verifică documentația Swagger
+2. Consulte logurile aplicației
+3. Testează endpoint-urile individual
+
+---
+
+**Versiune**: 0.0.1  
+**Ultima actualizare**: 2024  
+**Autor**: Echipa Veziv

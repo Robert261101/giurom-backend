@@ -20,7 +20,8 @@ export enum ElementType {
   RECURRENCE = 'recurrence',
   SCORING_BOOLEAN = 'scoring_boolean',
   ALLOW_POSTPONE = 'allow_postpone',
-  PHOTO = 'photo'
+  PHOTO = 'photo',
+  FINISH_AT = 'finish_at'
 }
 
 @Entity('Task_Elements')
@@ -58,6 +59,9 @@ export class TaskElement {
 
   @Column({ type: 'json', nullable: true })
   scoring_options: string;
+
+  @Column({ type: 'datetime', nullable: true })
+  finish_at: Date;
 
   @CreateDateColumn()
   created_at: Date;

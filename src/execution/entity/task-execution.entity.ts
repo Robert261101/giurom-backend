@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { TaskAssignment } from '../../assignment/entity/task-assignment.entity';
 import { TaskExecutionAnswer } from './task-execution-answer.entity';
+import { EmployeeDailyTaskPoints } from './employee-daily-task-points.entity';
 
 @Entity('Task_Execution')
 export class TaskExecution {
@@ -43,4 +44,7 @@ export class TaskExecution {
 
   @OneToMany(() => TaskExecutionAnswer, answer => answer.task_execution)
   answers: TaskExecutionAnswer[];
+
+  @OneToMany(() => EmployeeDailyTaskPoints, taskPoints => taskPoints.task_execution)
+  daily_task_points: EmployeeDailyTaskPoints[];
 } 
