@@ -42,9 +42,9 @@ export class CreateShiftDto {
     example: 1,
   })
   @IsNumber({}, { message: 'ID-ul poziției trebuie să fie un număr' })
-  @IsNotEmpty({ message: 'ID-ul poziției este obligatoriu' })
+  @IsOptional()
   @IsPositive({ message: 'ID-ul poziției trebuie să fie pozitiv' })
-  position_id: number;
+  position_id?: number;
 
   @ApiProperty({
     description: 'Data și ora de început a schimbului',

@@ -20,7 +20,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     routes: {
       '/employees': 'http://localhost:3012',
-      '/attendance': 'http://localhost:3007',
+      '/attendance': 'http://localhost:3016',
       '/calendar': 'http://localhost:3010', 
       '/leave-requests': 'http://localhost:3013',
       '/shift-change-requests': 'http://localhost:3013',
@@ -34,6 +34,7 @@ app.get('/health', (req, res) => {
       '/suppliers': 'http://localhost:3007',
       '/waste-records': 'http://localhost:3012',
       '/waste': 'http://localhost:3014'
+      , '/tasks': 'http://localhost:3008'
     }
   });
 });
@@ -49,7 +50,7 @@ const microservices = {
 
   // Attendance microservice
   '/attendance': {
-    target: 'http://localhost:3007',
+    target: 'http://localhost:3016',
     changeOrigin: true,
     logLevel: 'debug'
   },
@@ -141,6 +142,13 @@ const microservices = {
   // Waste HTTP (alias)
   '/waste': {
     target: 'http://localhost:3014',
+    changeOrigin: true,
+    logLevel: 'debug'
+  }
+  ,
+  // Veziv Tasks Service
+  '/tasks': {
+    target: 'http://localhost:3008',
     changeOrigin: true,
     logLevel: 'debug'
   }

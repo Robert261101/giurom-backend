@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DeepPartial, Repository } from 'typeorm';
 import { WorkLocation } from '../locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
+import { WorkLocationDepartments } from '../locations/entity/work-location-departments.entity';
+import { WorkLocationDepartmentPositions } from '../locations/entity/work-location-department-positions.entity';
 import { CreateWorkLocationDto } from './dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 import { CreateTaskTemplateAssignmentDto } from './dto/create-task-template-assignment.dto';
@@ -16,6 +18,8 @@ export class LocationsService {
   constructor(
     @InjectRepository(WorkLocation) private readonly workLocationRepository: Repository<WorkLocation>,
     @InjectRepository(WorkLocationTaskTemplate) private readonly taskTemplateRepository: Repository<WorkLocationTaskTemplate>,
+    @InjectRepository(WorkLocationDepartments) private readonly departmentsRepository: Repository<WorkLocationDepartments>,
+    @InjectRepository(WorkLocationDepartmentPositions) private readonly positionsRepository: Repository<WorkLocationDepartmentPositions>,
     @InjectRepository(WorkLocationRevenue) private readonly revenueRepository: Repository<WorkLocationRevenue>,
     @InjectRepository(WorkLocationRevenuePoints) private readonly revenuePointsRepository: Repository<WorkLocationRevenuePoints>,
     @InjectRepository(WorkLocationManagerConfig) private readonly managerConfigRepository: Repository<WorkLocationManagerConfig>,
@@ -153,6 +157,36 @@ export class LocationsService {
       relations: ['work_location'],
       order: { assigned_at: 'DESC' },
     });
+  }
+
+  // --- Departments ---
+  async findDepartmentsByLocation(locationId: number): Promise<WorkLocationDepartments[]> {
+    // Return departments directly; do not enforce location existence to avoid 404s when data is partially seeded
+    return this.departmentsRepository.find({ where: { work_location_id: locationId } as any, order: { name: 'ASC' } as any });
+  }
+
+  async createDepartment(dto: { work_location_id: number; name: string; code: string; description?: string | null }) {
+    const row = this.departmentsRepository.create({
+      work_location_id: dto.work_location_id,
+      name: dto.name,
+      code: dto.code,
+      description: dto.description ?? null,
+    } as Partial<WorkLocationDepartments> as WorkLocationDepartments);
+    return this.departmentsRepository.save(row);
+  }
+
+  async findPositionsByDepartment(departmentId: number): Promise<WorkLocationDepartmentPositions[]> {
+    return this.positionsRepository.find({ where: { department_id: departmentId } as any, order: { name: 'ASC' } as any });
+  }
+
+  async createDepartmentPosition(dto: { department_id: number; name: string; code: string; description?: string | null }) {
+    const row = this.positionsRepository.create({
+      department_id: dto.department_id,
+      name: dto.name,
+      code: dto.code,
+      description: dto.description ?? null,
+    } as Partial<WorkLocationDepartmentPositions> as WorkLocationDepartmentPositions);
+    return this.positionsRepository.save(row);
   }
 
   async updateTaskTemplateAssignment(

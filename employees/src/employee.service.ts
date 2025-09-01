@@ -56,12 +56,13 @@ export class EmployeeService {
       throw new ConflictException('Un angajat cu acest CNP există deja');
     }
 
-    // Validează data angajării (nu poate fi în viitor)
+    // Validează data angajării (nu poate fi în viitor). Compară doar componenta de dată (fără ore/timezone)
     const hireDate = new Date(createEmployeeDto.hire_date);
+    hireDate.setHours(0, 0, 0, 0);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    if (hireDate > today) {
+    if (hireDate.getTime() > today.getTime()) {
       throw new BadRequestException('Data angajării nu poate fi în viitor');
     }
 
@@ -93,6 +94,7 @@ export class EmployeeService {
     is_active?: boolean,
     department?: number,
     contract_type?: string,
+    work_location_id?: number,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const queryBuilder = this.employeeRepository.createQueryBuilder('employee');
 
@@ -107,6 +109,10 @@ export class EmployeeService {
 
     if (contract_type) {
       queryBuilder.andWhere('employee.contract_type = :contract_type', { contract_type });
+    }
+
+    if (work_location_id) {
+      queryBuilder.andWhere('employee.work_location_default_id = :work_location_id', { work_location_id });
     }
 
     // Calculează offset-ul pentru paginare
@@ -223,10 +229,11 @@ export class EmployeeService {
     // Validări pentru date (dacă se actualizează)
     if (updateEmployeeDto.hire_date) {
       const hireDate = new Date(updateEmployeeDto.hire_date);
+      hireDate.setHours(0, 0, 0, 0);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      if (hireDate > today) {
+      if (hireDate.getTime() > today.getTime()) {
         throw new BadRequestException('Data angajării nu poate fi în viitor');
       }
     }

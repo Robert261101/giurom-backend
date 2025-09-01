@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
 import { Shift } from './entities/shift.entity';
@@ -12,7 +12,7 @@ import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto'
 import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
 
 @Injectable()
-export class AttendanceService {
+export class AttendanceService implements OnModuleInit {
   constructor(
     @InjectRepository(Shift)
     private readonly shiftRepository: Repository<Shift>,
@@ -21,6 +21,15 @@ export class AttendanceService {
     @InjectRepository(PresenceInflexion)
     private readonly presenceInflexionRepository: Repository<PresenceInflexion>,
   ) {}
+
+  async onModuleInit() {
+    // Ensure position_id is optional at DB level (nullable)
+    try {
+      await this.shiftRepository.query("ALTER TABLE `shifts` MODIFY `position_id` INT NULL DEFAULT NULL");
+    } catch (_e) {
+      // ignore if already applied or lacks permission
+    }
+  }
 
   // SHIFT METHODS
   async createShift(createShiftDto: CreateShiftDto): Promise<Shift> {
@@ -51,6 +60,7 @@ export class AttendanceService {
 
     const shift = this.shiftRepository.create({
       ...rest,
+      position_id: (rest as any).position_id ?? null,
       employee_id,
       start_datetime: startDate,
       end_datetime: endDate,

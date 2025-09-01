@@ -56,6 +56,7 @@ export class EmployeeHttpController {
   @ApiQuery({ name: 'limit', required: false, description: 'Numărul de angajați per pagină (implicit: 10)' })
   @ApiQuery({ name: 'is_active', required: false, description: 'Filtrează după status activ' })
   @ApiQuery({ name: 'department', required: false, description: 'Filtrează după departament' })
+  @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtrează după locația implicită a angajatului' })
   @ApiQuery({ name: 'contract_type', required: false, description: 'Filtrează după tipul contractului' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -67,6 +68,7 @@ export class EmployeeHttpController {
     @Query('is_active') is_active?: string,
     @Query('department') department?: string,
     @Query('contract_type') contract_type?: string,
+    @Query('work_location_id') work_location_id?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
@@ -79,6 +81,7 @@ export class EmployeeHttpController {
       isActiveFilter,
       departmentFilter,
       contract_type,
+      work_location_id ? parseInt(work_location_id, 10) : undefined,
     );
   }
 

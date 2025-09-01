@@ -24,3 +24,4 @@
 # Specific folders to ignore
 /labels
 /notification-service/dist
+/attendance-ms/node_modules

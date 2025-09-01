@@ -75,13 +75,18 @@ export class AttendanceController {
     description: 'Lista schimburilor a fost returnată cu succes',
   })
   async findAllShifts(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
-    @Query('employee_id', new ParseIntPipe({ optional: true })) employee_id?: number,
-    @Query('work_location_id', new ParseIntPipe({ optional: true })) work_location_id?: number,
-    @Query('department_id', new ParseIntPipe({ optional: true })) department_id?: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('employee_id') employee_id?: string,
+    @Query('work_location_id') work_location_id?: string,
+    @Query('department_id') department_id?: string,
   ) {
-    return await this.attendanceService.findAllShifts(page, limit, employee_id, work_location_id, department_id);
+    const p = Number(page || 1);
+    const l = Number(limit || 10);
+    const emp = employee_id !== undefined ? Number(employee_id) : undefined;
+    const loc = work_location_id !== undefined ? Number(work_location_id) : undefined;
+    const dep = department_id !== undefined ? Number(department_id) : undefined;
+    return await this.attendanceService.findAllShifts(p, l, emp, loc, dep);
   }
 
   @Get('shifts/:id')

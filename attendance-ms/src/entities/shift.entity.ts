@@ -46,8 +46,8 @@ export class Shift {
     description: 'ID-ul poziției în departament',
     example: 1,
   })
-  @Column()
-  position_id: number;
+  @Column({ nullable: true })
+  position_id: number | null;
 
   @ApiProperty({
     description: 'Data și ora de început a schimbului',

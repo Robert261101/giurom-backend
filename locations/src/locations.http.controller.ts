@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
 import { LocationsService } from './locations/locations.service';
 import { CreateWorkLocationDto } from './locations/dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './locations/dto/update-work-location.dto';
@@ -64,6 +65,28 @@ export class LocationsHttpController {
 
 	@Get(':locationId/assignments')
 	findAssignmentsByLocation(@Param('locationId') locationId: string) { return this.service.findTaskTemplateAssignmentsByLocation(parseInt(locationId, 10)); }
+
+	// Departments
+	@Get(':locationId/departments')
+	findDepartmentsByLocation(@Param('locationId') locationId: string) { return this.service.findDepartmentsByLocation(parseInt(locationId, 10)); }
+
+	@Post(':locationId/departments')
+	createDepartment(@Param('locationId') locationId: string, @Body() body: Omit<CreateWorkLocationDepartmentsDto, 'work_location_id'> & { work_location_id?: number }) {
+		return this.service.createDepartment({
+			work_location_id: body.work_location_id ?? parseInt(locationId, 10),
+			name: body.name,
+			code: body.code,
+			description: body.description,
+		});
+	}
+
+	@Get('departments/:departmentId/positions')
+	findPositions(@Param('departmentId') departmentId: string) { return this.service.findPositionsByDepartment(parseInt(departmentId, 10)); }
+
+	@Post('departments/:departmentId/positions')
+	createPosition(@Param('departmentId') departmentId: string, @Body() body: { name: string; code: string; description?: string }) {
+		return this.service.createDepartmentPosition({ department_id: parseInt(departmentId, 10), name: body.name, code: body.code, description: body.description });
+	}
 
 	@Patch('assignments/:id')
 	updateAssignment(@Param('id') id: string, @Body() dto: UpdateTaskTemplateAssignmentDto) { return this.service.updateTaskTemplateAssignment(parseInt(id, 10), dto); }
