@@ -35,7 +35,6 @@ export class TokenRotationService {
       const newRefreshToken = await this.jwtService.signAsync(
         { 
           sub: payload.sub, 
-          email: payload.email, 
           type: 'refresh',
           version: (payload.version || 0) + 1 // Incrementează versiunea
         },
@@ -51,7 +50,7 @@ export class TokenRotationService {
       // Curăță token-urile vechi (păstrează doar ultimele 1000)
       this.cleanupOldTokens();
 
-      this.logger.log(`Refresh token rotit pentru utilizatorul ${payload.email}`);
+      this.logger.log(`Refresh token rotit pentru utilizatorul ID ${payload.sub}`);
       
       return newRefreshToken;
     } catch (error) {
@@ -89,27 +88,29 @@ export class TokenRotationService {
    * Generează un nou set de token-uri cu rotire
    */
   async generateTokensWithRotation(user: any, oldRefreshToken?: string): Promise<{ access_token: string; refresh_token: string }> {
-    // Generează access token cu informații despre partener
+    // Generează access token cu informații despre utilizator
     const accessPayload = { 
-      sub: user.userId, 
-      email: user.email,
-      partner_id: user.partner_id || null,
-      partner_name: user.partner_name || null,
-      roles: user.roles?.map(role => role.name) || ['partner'],
-      permissions: user.roles?.flatMap(role => 
-        role.permissions?.map(permission => permission.name) || []
-      ) || []
+      sub: user.id, 
+      email: user.email || '',
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
+      phone: user.phone || '',
+      profile_image: user.profile_image,
+      birth_date: user.birth_date || '',
+      department_id: user.department_id || null,
+      work_location_id: user.work_location_id || null,
+      roles: user.roles || [],
+      permissions: user.permissions || []
     };
     
     const accessToken = await this.jwtService.signAsync(accessPayload);
     
-    // Generează refresh token nou cu informații despre partener
+    // Generează refresh token nou cu informații despre utilizator
     const refreshToken = await this.jwtService.signAsync(
       { 
-        sub: user.userId, 
-        email: user.email,
-        partner_id: user.partner_id || null,
-        partner_name: user.partner_name || null,
+        sub: user.id, 
+        email: user.email || '',
+        phone: user.phone || '',
         type: 'refresh',
         version: 1
       },

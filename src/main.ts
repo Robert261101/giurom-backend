@@ -44,7 +44,7 @@ async function bootstrap() {
   }));
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  const port = process.env.PORT ?? 3000;
+  const port = process.env.PORT ?? 3001;
   await app.listen(port);
   console.log(`Auth2 Microservice rulează pe portul ${port}`);
 }

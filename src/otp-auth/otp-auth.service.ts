@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, UnauthorizedException, BadReques
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { TokenService } from '../common/token.service';
+import { UsersService } from '../users/users.service';
 import { firstValueFrom } from 'rxjs';
 import * as crypto from 'crypto';
 import axios from 'axios';
@@ -27,6 +28,7 @@ export class TwoFactorAuthService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly tokenService: TokenService,
+    private readonly usersService: UsersService,
   ) {
     this.apiKey = this.configService.get<string>('MOBILE_SMS_API_KEY') || '';
     if (!this.apiKey) {
@@ -77,6 +79,9 @@ export class TwoFactorAuthService {
 
       // Salvează OTP-ul (expiră în 5 minute)
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      this.logger.log(`🔍 DEBUG: Salvare OTP cu cheia: ${userIdentifier}`);
+      this.logger.log(`🔍 DEBUG: OTP Storage keys înainte: ${Array.from(this.otpStorage.keys()).join(', ')}`);
+      
       this.otpStorage.set(userIdentifier, {
         email: user.email,
         phone: user.phone,
@@ -84,6 +89,8 @@ export class TwoFactorAuthService {
         expiresAt,
         userId: user.userId
       });
+      
+      this.logger.log(`🔍 DEBUG: OTP Storage keys după: ${Array.from(this.otpStorage.keys()).join(', ')}`);
 
       this.logger.log(`OTP trimis cu succes către ${user.phone} pentru ${user.email}`);
       // Log OTP pentru debugging în dezvoltare
@@ -157,49 +164,35 @@ export class TwoFactorAuthService {
     try {
       this.logger.log(`Căutând utilizatorul cu email: ${email}`);
       
-      const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?email=${email}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          }
-        })
-      );
-
-      // Verifică dacă răspunsul are structura corectă
-      if (response?.data?.data && Array.isArray(response.data.data) && response.data.data.length > 0) {
-        const userData = response.data.data[0];
-        
-        // Verifică dacă utilizatorul are număr de telefon
-        if (!userData.user.phone) {
-          this.logger.error(`Utilizatorul ${email} nu are număr de telefon asociat`);
-          return null;
-        }
-
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        
-        // Include și rolul de bază din obiectul user
-        const baseRole = userData.user.role;
-        const allRoles = [...userRoles];
-        
-        // Adaugă rolul de bază dacă nu există deja în lista de roluri
-        if (baseRole && !allRoles.find(role => role.name === baseRole)) {
-          allRoles.push({ name: baseRole, permissions: [] });
-        }
-
-        const result = {
-          userId: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.phone,
-          roles: allRoles
-        };
-
-        this.logger.log(`Utilizator găsit și procesat pentru ${email}`);
-        return result;
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByEmail(email);
+      if (!employee) {
+        this.logger.error(`Angajatul cu email ${email} nu a fost găsit`);
+        return null;
       }
 
-      this.logger.error(`Utilizatorul cu email ${email} nu a fost găsit în răspuns`);
-      return null;
+      // Găsește user-ul din tabelul users pe baza id_employee
+      const user = await this.usersService.findByEmployeeId(employee.id);
+      if (!user) {
+        this.logger.error(`Utilizatorul cu id_employee ${employee.id} nu a fost găsit`);
+        return null;
+      }
+
+      // Verifică dacă utilizatorul are număr de telefon
+      if (!employee.phone) {
+        this.logger.error(`Utilizatorul ${email} nu are număr de telefon asociat`);
+        return null;
+      }
+
+      const result = {
+        userId: user.id_employee,
+        email: employee.email,
+        phone: employee.phone,
+        roles: [] // Pentru moment, nu avem roluri implementate
+      };
+
+      this.logger.log(`Utilizator găsit și procesat pentru ${email}`);
+      return result;
     } catch (error) {
       this.logger.error(`Eroare la căutarea utilizatorului: ${error.message}`);
       return null;
@@ -287,44 +280,38 @@ export class TwoFactorAuthService {
   }
 
   private isValidPhone(phone: string): boolean {
-    const phoneRegex = /^07[0-9]{8}$/;
+    // Acceptă formatul 07XXXXXXXX sau +407XXXXXXXX
+    const phoneRegex = /^(\+40)?7[0-9]{8}$/;
     return phoneRegex.test(phone);
   }
 
   private async findUserByPhone(phone: string): Promise<any> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?phone=${phone}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          }
-        })
-      );
-
-      if (response?.data?.data?.data?.length) {
-        const userData = response.data.data.data[0];
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        
-        // Include și rolul de bază din obiectul user
-        const baseRole = userData.user.role;
-        const allRoles = [...userRoles];
-        
-        // Adaugă rolul de bază dacă nu există deja în lista de roluri
-        if (baseRole && !allRoles.find(role => role.name === baseRole)) {
-          allRoles.push({ name: baseRole, permissions: [] });
-        }
-
-        return {
-          userId: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.phone,
-          roles: allRoles
-        };
+      this.logger.log(`Căutând utilizatorul cu telefon: ${phone}`);
+      
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByPhone(phone);
+      if (!employee) {
+        this.logger.error(`Angajatul cu telefon ${phone} nu a fost găsit`);
+        return null;
       }
 
-      return null;
+      // Găsește user-ul din tabelul users pe baza id_employee
+      const user = await this.usersService.findByEmployeeId(employee.id);
+      if (!user) {
+        this.logger.error(`Utilizatorul cu id_employee ${employee.id} nu a fost găsit`);
+        return null;
+      }
+
+      const result = {
+        userId: user.id_employee,
+        email: employee.email,
+        phone: employee.phone,
+        roles: [] // Pentru moment, nu avem roluri implementate
+      };
+
+      this.logger.log(`Utilizator găsit și procesat pentru ${phone}`);
+      return result;
     } catch (error) {
       this.logger.error(`Eroare la căutarea utilizatorului după telefon: ${error.message}`);
       return null;

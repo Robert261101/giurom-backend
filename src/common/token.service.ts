@@ -30,7 +30,6 @@ export class TokenService {
     // Generează access token (15 minute)
     const accessPayload = { 
       sub: user.userId, 
-      email: user.email,
       roles: roles,
       permissions: permissions
     };
@@ -39,7 +38,6 @@ export class TokenService {
     // Generează refresh token (7 zile) - fără roluri și permisiuni
     const refreshPayload = { 
       sub: user.userId, 
-      email: user.email,
       type: 'refresh'
     };
     const refreshToken = await this.jwtService.signAsync(refreshPayload, {
@@ -53,7 +51,7 @@ export class TokenService {
 
     const accessExpiresIn = this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
     const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
-    this.logger.log(`Tokens generate pentru utilizatorul ${user.email} - Access: ${accessExpiresIn}, Refresh: ${refreshExpiresIn}`);
+    this.logger.log(`Tokens generate pentru utilizatorul ID ${user.userId} - Access: ${accessExpiresIn}, Refresh: ${refreshExpiresIn}`);
     
     return {
       access_token: accessToken,
@@ -82,7 +80,7 @@ export class TokenService {
       }
 
       // Obține utilizatorul
-      const user = await this.usersService.findOne(payload.email);
+      const user = await this.usersService.findByEmployeeIdWithPassword(payload.sub);
       if (!user) {
         throw new Error('Utilizatorul nu a fost găsit');
       }
@@ -97,7 +95,7 @@ export class TokenService {
 
       const accessExpiresIn = this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
       const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
-      this.logger.log(`Tokens reînnoite pentru utilizatorul ${user.email} - Access: ${accessExpiresIn}, Refresh: ${refreshExpiresIn}`);
+      this.logger.log(`Tokens reînnoite pentru utilizatorul ID ${user.id_employee} - Access: ${accessExpiresIn}, Refresh: ${refreshExpiresIn}`);
 
       return newTokens;
     } catch (error) {

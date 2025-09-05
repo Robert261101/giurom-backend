@@ -9,9 +9,9 @@ export class Step1LoginDto {
   @IsString()
   @IsNotEmpty({ message: 'Email-ul sau numărul de telefon este obligatoriu' })
   @Matches(
-    /^([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|07[0-9]{8})$/,
+    /^([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|(\+40)?7[0-9]{8})$/,
     { 
-      message: 'Trebuie să fie un email valid sau un număr de telefon românesc (07XXXXXXXX)' 
+      message: 'Trebuie să fie un email valid sau un număr de telefon românesc (07XXXXXXXX sau +407XXXXXXXX)' 
     }
   )
   identifier: string;

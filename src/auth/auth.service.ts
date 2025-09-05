@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException, Logger, BadRequestException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
 import { JwtService } from '@nestjs/jwt';
 import { AuthGuard } from '../guards/auth.guard';
 import { TokenService } from '../common/token.service';
@@ -7,7 +8,7 @@ import { BruteForceProtectionService } from '../common/security/brute-force.serv
 import { TokenRotationService } from '../common/security/token-rotation.service';
 import { SecurityAlertsService, SecurityEventType } from '../common/security/security-alerts.service';
 import { AnomalyDetectionService } from '../common/security/anomaly-detection.service';
-import { TwoFactorAuthService } from '../otp-auth/otp-auth.service';
+import { TwoFactorAuthService } from '../2fa-auth/2fa-auth.service';
 import * as bcrypt from 'bcryptjs';
 
 
@@ -34,7 +35,7 @@ export class AuthService {
     pass: string,
     ipAddress: string,
     userAgent: string,
-  ): Promise<{ access_token?: string; refresh_token?: string; requires_2fa?: boolean; message?: string }> {
+  ): Promise<{ access_token?: string; refresh_token?: string; requires_2fa?: boolean; userId?: number; message?: string }> {
     // Detectează dacă este email sau telefon
     const isEmail = this.isValidEmail(identifier);
     const isPhone = this.isValidPhone(identifier);
@@ -43,28 +44,38 @@ export class AuthService {
       throw new BadRequestException('Format invalid. Trebuie să fie un email valid sau un număr de telefon românesc.');
     }
 
-    // Verifică protecția împotriva brute force
-    try {
-      await this.bruteForceService.checkBruteForce(identifier);
-    } catch (error) {
-      await this.securityAlertsService.logSecurityEvent({
-        type: SecurityEventType.ACCOUNT_LOCKED,
-        email: identifier,
-        ipAddress,
-        userAgent,
-        details: `Cont blocat temporar: ${error.message}`,
-        severity: 'HIGH',
-        timestamp: new Date()
-      });
-      throw error;
-    }
+    // Verifică protecția împotriva brute force - TEMPORAR DEZACTIVAT
+    // try {
+    //   await this.bruteForceService.checkBruteForce(identifier);
+    // } catch (error) {
+    //   await this.securityAlertsService.logSecurityEvent({
+    //     type: SecurityEventType.ACCOUNT_LOCKED,
+    //     email: identifier,
+    //     ipAddress,
+    //     userAgent,
+    //     details: `Cont blocat temporar: ${error.message}`,
+    //     severity: 'HIGH',
+    //     timestamp: new Date()
+    //   });
+    //   throw error;
+    // }
 
-    let user;
+    let user: User | undefined;
     
     if (isEmail) {
-      user = await this.usersService.findOne(identifier);
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByEmail(identifier);
+      if (employee) {
+        // Găsește user-ul din tabelul users pe baza id_employee
+        user = await this.usersService.findByEmployeeIdWithPassword(employee.id) || undefined;
+      }
     } else {
-      user = await this.usersService.findOneByPhone(identifier);
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByPhone(identifier);
+      if (employee) {
+        // Găsește user-ul din tabelul users pe baza id_employee
+        user = await this.usersService.findByEmployeeIdWithPassword(employee.id) || undefined;
+      }
     }
 
     if (!user) {
@@ -75,22 +86,25 @@ export class AuthService {
         email: identifier,
         ipAddress,
         userAgent,
-        details: 'Utilizator inexistent',
+        details: 'Angajat inexistent',
         severity: 'MEDIUM',
         timestamp: new Date()
       });
-      throw new UnauthorizedException('Utilizatorul nu a fost găsit');
+      throw new UnauthorizedException('Angajatul nu a fost găsit');
     }
 
     // Verifică parola folosind bcrypt
-    const isPasswordValid = await bcrypt.compare(pass, user.password);
+    this.logger.log(`🔐 DEBUG: Parola trimisă: "${pass}"`);
+    this.logger.log(`🔐 DEBUG: Parola din DB: "${user.password}"`);
+    const isPasswordValid = await bcrypt.compare(pass, user.password || '');
+    this.logger.log(`🔐 DEBUG: Parola validă: ${isPasswordValid}`);
     if (!isPasswordValid) {
       // Înregistrează încercarea eșuată
       await this.bruteForceService.recordFailedAttempt(identifier);
       await this.securityAlertsService.logSecurityEvent({
         type: SecurityEventType.BRUTE_FORCE_ATTEMPT,
-        userId: user.userId.toString(),
-        email: user.email,
+        userId: user.id.toString(),
+        email: identifier,
         ipAddress,
         userAgent,
         details: 'Parolă incorectă',
@@ -102,7 +116,7 @@ export class AuthService {
 
     // Detectează anomalii în comportament
     const anomalyScore = await this.anomalyDetectionService.detectAnomalies(
-      user.userId.toString(),
+      user.id.toString(),
       'LOGIN',
       {
         ipAddress,
@@ -116,8 +130,8 @@ export class AuthService {
     if (anomalyScore.score > 70) {
       await this.securityAlertsService.logSecurityEvent({
         type: SecurityEventType.SUSPICIOUS_LOGIN,
-        userId: user.userId.toString(),
-        email: user.email,
+        userId: user.id.toString(),
+        email: identifier,
         ipAddress,
         userAgent,
         details: `Login suspect - scor anomalie: ${anomalyScore.score}/100. Factori: ${anomalyScore.factors.join(', ')}`,
@@ -130,18 +144,19 @@ export class AuthService {
     await this.bruteForceService.resetAttempts(identifier);
 
     // Verifică dacă utilizatorul are 2FA activat
-    if (user.is_2fa_active) {
-      this.logger.log(`Utilizatorul ${user.email} are 2FA activat. Se trimite OTP automat.`);
+    if (user.is_2fa) {
+      this.logger.log(`Utilizatorul ${identifier} are 2FA activat. Se trimite OTP automat.`);
       
       try {
         // Trimite OTP-ul automat folosind serviciul injectat
-        await this.twoFactorAuthService.sendOtp(identifier);
+        const result = await this.twoFactorAuthService.step1Login(identifier, pass);
         
         this.logger.log(`OTP trimis cu succes pentru ${identifier}`);
         
         return {
           requires_2fa: true,
-          message: 'Autentificare cu parolă reușită. OTP trimis pe telefon pentru verificare finală.'
+          userId: result.userId,
+          message: result.message
         };
       } catch (error) {
         this.logger.error(`Eroare la trimiterea OTP pentru ${identifier}: ${error.message}`);
@@ -150,20 +165,35 @@ export class AuthService {
     }
 
     // Dacă nu are 2FA activat, generează token-urile normal
-    const tokens = await this.tokenRotationService.generateTokensWithRotation(user);
+    // Preia datele complete din microserviciul employees
+    let employeeData: { id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null = null;
+    if (isEmail) {
+      employeeData = await this.usersService.findEmployeeByEmail(identifier);
+    } else {
+      employeeData = await this.usersService.findEmployeeByPhone(identifier);
+    }
+
+    const userDataForToken = {
+      id: user.id_employee,
+      email: employeeData?.email || '',
+      first_name: employeeData?.first_name || '',
+      last_name: employeeData?.last_name || '',
+      phone: employeeData?.phone || '',
+      profile_image: user.profile_image,
+      birth_date: employeeData?.birth_date || '',
+      department_id: null, // Va fi preluat din employeeData dacă este necesar
+      work_location_id: null, // Va fi preluat din employeeData dacă este necesar
+      roles: [], // Va fi preluat din employeeData dacă este necesar
+      permissions: [], // Va fi preluat din employeeData dacă este necesar
+      is_2fa_active: user.is_2fa
+    };
+
+    const tokens = await this.tokenRotationService.generateTokensWithRotation(userDataForToken);
     
     // Log utilizatorul și permisiunile sale
-    const roles = user.roles?.map(role => role.name) || ['partner'];
-    const permissions = user.roles?.flatMap(role => 
-      role.permissions?.map(permission => permission.name) || []
-    ) || [];
-    
     this.logger.log(`=== LOGIN REUȘIT (FĂRĂ 2FA) ===`);
-    this.logger.log(`Utilizator: ${user.email} (ID: ${user.userId})`);
-    this.logger.log(`Roluri: ${roles.join(', ')}`);
-    this.logger.log(`Permisiuni: ${permissions.length > 0 ? permissions.join(', ') : 'Nicio permisiune'}`);
-    this.logger.log(`Partner ID: ${user.partner_id || 'N/A'}`);
-    this.logger.log(`2FA Status: ${user.is_2fa_active ? 'ACTIVAT' : 'DEZACTIVAT'}`);
+    this.logger.log(`Utilizator ID: ${user.id_employee}`);
+    this.logger.log(`2FA Status: ${user.is_2fa ? 'ACTIVAT' : 'DEZACTIVAT'}`);
     this.logger.log(`====================`);
     
     return tokens;
@@ -180,7 +210,7 @@ export class AuthService {
       // Revocă toate token-urile pentru utilizatorul respectiv
       await this.tokenService.revokeAllUserTokens(payload.sub);
       
-      this.logger.log(`Logout complet pentru utilizatorul ${payload.email} - toate token-urile revocate`);
+      this.logger.log(`Logout complet pentru utilizatorul ID ${payload.sub} - toate token-urile revocate`);
       
       return { 
         message: 'Logout realizat cu succes - toate sesiunile au fost închise' 
@@ -200,21 +230,32 @@ export class AuthService {
         secret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key'
       });
       
-      const user = await this.usersService.findOne(payload.email);
+      // Găsește user-ul local după id_employee din payload
+      const user = await this.usersService.findByEmployeeIdWithPassword(payload.sub);
       if (!user) {
         throw new Error('Utilizatorul nu a fost găsit');
       }
       
-      const accessToken = await this.jwtService.signAsync({
-        sub: user.userId,
-        email: user.email,
-        partner_id: user.partner_id || null,
-        partner_name: user.partner_name || null,
-        roles: user.roles?.map(role => role.name) || ['partner'],
-        permissions: user.roles?.flatMap(role => 
-          role.permissions?.map(permission => permission.name) || []
-        ) || []
-      });
+      // Preia datele complete din microserviciul employees
+      this.logger.log(`🔍 Refresh token payload:`, payload);
+      const employeeData = await this.usersService.findEmployeeByEmail(payload.email) || 
+                          (payload.phone ? await this.usersService.findEmployeeByPhone(payload.phone) : null);
+
+      const jwtPayload = {
+        sub: user.id_employee,
+        email: employeeData?.email || '',
+        first_name: employeeData?.first_name || '',
+        last_name: employeeData?.last_name || '',
+        phone: employeeData?.phone || '',
+        profile_image: user.profile_image,
+        birth_date: employeeData?.birth_date || '',
+        department_id: null, // Va fi preluat din employeeData dacă este necesar
+        work_location_id: null, // Va fi preluat din employeeData dacă este necesar
+        roles: [], // Va fi preluat din employeeData dacă este necesar
+        permissions: [] // Va fi preluat din employeeData dacă este necesar
+      };
+      
+      const accessToken = await this.jwtService.signAsync(jwtPayload);
       
       return {
         access_token: accessToken,
@@ -247,12 +288,22 @@ export class AuthService {
       throw new BadRequestException('Format invalid. Trebuie să fie un email valid sau un număr de telefon românesc.');
     }
 
-    let user;
+    let user: User | undefined;
     
     if (isEmail) {
-      user = await this.usersService.findOne(identifier);
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByEmail(identifier);
+      if (employee) {
+        // Găsește user-ul din tabelul users pe baza id_employee
+        user = await this.usersService.findByEmployeeIdWithPassword(employee.id) || undefined;
+      }
     } else {
-      user = await this.usersService.findOneByPhone(identifier);
+      // Găsește angajatul prin microserviciul employees
+      const employee = await this.usersService.findEmployeeByPhone(identifier);
+      if (employee) {
+        // Găsește user-ul din tabelul users pe baza id_employee
+        user = await this.usersService.findByEmployeeIdWithPassword(employee.id) || undefined;
+      }
     }
 
     return {
@@ -267,7 +318,8 @@ export class AuthService {
   }
 
   private isValidPhone(phone: string): boolean {
-    const phoneRegex = /^07[0-9]{8}$/;
+    // Acceptă formatul 07XXXXXXXX sau +407XXXXXXXX
+    const phoneRegex = /^(\+40)?7[0-9]{8}$/;
     return phoneRegex.test(phone);
   }
 } 

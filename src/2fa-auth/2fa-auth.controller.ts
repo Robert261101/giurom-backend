@@ -94,8 +94,16 @@ export class TwoFactorAuthController {
   })
   @HttpCode(HttpStatus.OK)
   @Post('step2')
-  step2Verify(@Body() step2VerifyDto: Step2VerifyDto) {
-    return this.twoFactorAuthService.step2Verify(step2VerifyDto.userId, step2VerifyDto.otp);
+  async step2Verify(@Body() step2VerifyDto: Step2VerifyDto) {
+    try {
+      console.log(`🔍 DEBUG Controller: Primit request pentru userId: ${step2VerifyDto.userId}, otp: ${step2VerifyDto.otp}`);
+      const result = await this.twoFactorAuthService.step2Verify(step2VerifyDto.userId, step2VerifyDto.otp);
+      console.log(`🔍 DEBUG Controller: Rezultat generat: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error) {
+      console.error(`🔍 DEBUG Controller: Eroare în step2Verify: ${error.message}`);
+      throw error;
+    }
   }
 
   @ApiOperation({ 

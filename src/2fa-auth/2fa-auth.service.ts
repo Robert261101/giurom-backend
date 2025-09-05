@@ -2,6 +2,8 @@ import { Injectable, Logger, NotFoundException, UnauthorizedException, BadReques
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { TokenService } from '../common/token.service';
+import { TokenRotationService } from '../common/security/token-rotation.service';
+import { UsersService } from '../users/users.service';
 import { firstValueFrom } from 'rxjs';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -29,6 +31,8 @@ export class TwoFactorAuthService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly tokenService: TokenService,
+    private readonly tokenRotationService: TokenRotationService,
+    private readonly usersService: UsersService,
   ) {
     this.apiKey = this.configService.get<string>('MOBILE_SMS_API_KEY') || '';
     if (!this.apiKey) {
@@ -79,6 +83,9 @@ export class TwoFactorAuthService {
 
       // Salvează OTP-ul cu datele utilizatorului (expiră în 5 minute)
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      this.logger.log(`🔍 DEBUG: Salvare OTP cu cheia: ${user.userId.toString()}`);
+      this.logger.log(`🔍 DEBUG: OTP Storage keys înainte: ${Array.from(this.otpStorage.keys()).join(', ')}`);
+      
       this.otpStorage.set(user.userId.toString(), {
         email: user.email,
         phone: user.phone,
@@ -87,6 +94,8 @@ export class TwoFactorAuthService {
         userId: user.userId,
         userData: user // Stochează datele pentru pasul 2
       });
+      
+      this.logger.log(`🔍 DEBUG: OTP Storage keys după: ${Array.from(this.otpStorage.keys()).join(', ')}`);
 
       this.logger.log(`Autentificare pas 1 reușită pentru ${user.email}, OTP trimis pe ${user.phone}`);
       this.logger.log(`OTP generat: ${otp} (pentru debugging)`);
@@ -103,72 +112,125 @@ export class TwoFactorAuthService {
 
   async step2Verify(userId: number, otp: string): Promise<{ access_token: string; refresh_token: string }> {
     try {
-      // Verifică OTP-ul folosind userId ca cheie
-      const otpRecord = this.otpStorage.get(userId.toString());
+      this.logger.log(`🔍 DEBUG: Verificare OTP pentru userId: ${userId}, otp: ${otp}`);
+      this.logger.log(`🔍 DEBUG: OTP Storage keys: ${Array.from(this.otpStorage.keys()).join(', ')}`);
+      
+      // Caută OTP-ul în toate înregistrările pentru a găsi cea cu userId-ul corect
+      let otpRecord: OtpRecord | null = null;
+      for (const [key, record] of this.otpStorage.entries()) {
+        if (record.userId === userId) {
+          otpRecord = record;
+          this.logger.log(`🔍 DEBUG: OTP Record găsit cu cheia: ${key}`);
+          break;
+        }
+      }
+      
+      this.logger.log(`🔍 DEBUG: OTP Record găsit: ${otpRecord ? 'DA' : 'NU'}`);
+      
       if (!otpRecord) {
         throw new UnauthorizedException('OTP invalid sau expirat. Completați din nou pasul 1.');
       }
 
+      this.logger.log(`🔍 DEBUG: Comparare OTP - Stocat: "${otpRecord.otp}", Trimis: "${otp}"`);
+      this.logger.log(`🔍 DEBUG: OTP-uri identice: ${otpRecord.otp === otp}`);
+      
       if (otpRecord.otp !== otp) {
+        this.logger.error(`🔍 DEBUG: OTP INCORECT - Stocat: "${otpRecord.otp}", Trimis: "${otp}"`);
         throw new UnauthorizedException('OTP incorect');
       }
 
       if (otpRecord.expiresAt <= new Date()) {
-        this.otpStorage.delete(userId.toString());
+        // Șterge înregistrarea expirată
+        for (const [key, record] of this.otpStorage.entries()) {
+          if (record.userId === userId) {
+            this.otpStorage.delete(key);
+            break;
+          }
+        }
         throw new UnauthorizedException('OTP expirat. Completați din nou pasul 1.');
       }
 
       // OTP valid - generează token-urile folosind TokenService
       const user = otpRecord.userData;
-      const tokens = await this.tokenService.generateTokens(user);
+      this.logger.log(`🔍 DEBUG: userData din otpRecord: ${JSON.stringify(user)}`);
+      this.logger.log(`🔍 DEBUG: userData este null/undefined: ${user === null || user === undefined}`);
+      
+      if (!user) {
+        this.logger.error(`🔍 DEBUG: userData este null sau undefined!`);
+        throw new UnauthorizedException('Date utilizator lipsă. Completați din nou pasul 1.');
+      }
+      
+      this.logger.log(`🔍 DEBUG: Încep generarea token-urilor pentru user: ${JSON.stringify(user)}`);
+      
+      try {
+        // Preia datele complete ale utilizatorului din microserviciul employees
+        const employeeData = await this.usersService.findEmployeeByEmail(user.email);
+        this.logger.log(`🔍 DEBUG: Employee data: ${JSON.stringify(employeeData)}`);
+        
+        // Pregătește datele complete pentru token
+        const userDataForToken = {
+          id: user.userId,
+          email: employeeData?.email || user.email,
+          first_name: employeeData?.first_name || '',
+          last_name: employeeData?.last_name || '',
+          phone: employeeData?.phone || user.phone,
+          profile_image: user.profile_image,
+          birth_date: employeeData?.birth_date || '',
+          department_id: null,
+          work_location_id: null,
+          roles: user.roles || [],
+          permissions: user.permissions || [],
+          is_2fa_active: true
+        };
+        
+        this.logger.log(`🔍 DEBUG: User data for token: ${JSON.stringify(userDataForToken)}`);
+        
+        const tokens = await this.tokenRotationService.generateTokensWithRotation(userDataForToken);
+        this.logger.log(`🔍 DEBUG: Token-uri generate cu succes: ${JSON.stringify(tokens)}`);
 
-      // Șterge OTP-ul după verificare
-      this.otpStorage.delete(userId.toString());
+        // Șterge OTP-ul după verificare
+        for (const [key, record] of this.otpStorage.entries()) {
+          if (record.userId === userId) {
+            this.otpStorage.delete(key);
+            break;
+          }
+        }
 
-      this.logger.log(`Autentificare 2FA completă pentru ${user.email}`);
-
-      return tokens;
+        this.logger.log(`Autentificare 2FA completă pentru ${user.email}`);
+        return tokens;
+      } catch (tokenError) {
+        this.logger.error(`🔍 DEBUG: Eroare la generarea token-urilor: ${tokenError.message}`);
+        throw tokenError;
+      }
     } catch (error) {
-      this.logger.error(`Eroare la pasul 2: ${error.message}`);
+      this.logger.error(`🔍 DEBUG: Eroare în step2Verify: ${error.message}`);
+      this.logger.error(`🔍 DEBUG: Stack trace: ${error.stack}`);
       throw error;
     }
   }
 
   private async findUserByEmail(email: string): Promise<any> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?email=${email}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          }
-        })
-      );
-
-      if (response?.data?.data?.data?.length) {
-        const userData = response.data.data.data[0];
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        
-        // Include și rolul de bază din obiectul user
-        const baseRole = userData.user.role;
-        const allRoles = [...userRoles];
-        
-        // Adaugă rolul de bază dacă nu există deja în lista de roluri
-        if (baseRole && !allRoles.find(role => role.name === baseRole)) {
-          allRoles.push({ name: baseRole, permissions: [] });
-        }
-
-        return {
-          userId: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.phone,
-          password: userData.user.password,
-          roles: allRoles
-        };
+      // Găsește employee-ul prin email
+      const employeeData = await this.usersService.findEmployeeByEmail(email);
+      if (!employeeData) {
+        return null;
       }
 
-      return null;
+      // Găsește user-ul local prin id_employee
+      const user = await this.usersService.findByEmployeeIdWithPassword(employeeData.id);
+      if (!user) {
+        return null;
+      }
+
+      return {
+        userId: user.id,
+        email: employeeData.email,
+        phone: employeeData.phone,
+        password: user.password,
+        profile_image: user.profile_image, // Include poza de profil
+        roles: [] // TODO: Implementează rolurile dacă sunt necesare
+      };
     } catch (error) {
       this.logger.error(`Eroare la căutarea utilizatorului: ${error.message}`);
       return null;
@@ -177,39 +239,26 @@ export class TwoFactorAuthService {
 
   private async findUserByPhone(phone: string): Promise<any> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?phone=${phone}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          }
-        })
-      );
-
-      if (response?.data?.data?.data?.length) {
-        const userData = response.data.data.data[0];
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        
-        // Include și rolul de bază din obiectul user
-        const baseRole = userData.user.role;
-        const allRoles = [...userRoles];
-        
-        // Adaugă rolul de bază dacă nu există deja în lista de roluri
-        if (baseRole && !allRoles.find(role => role.name === baseRole)) {
-          allRoles.push({ name: baseRole, permissions: [] });
-        }
-
-        return {
-          userId: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.phone,
-          password: userData.user.password,
-          roles: allRoles
-        };
+      // Găsește employee-ul prin telefon
+      const employeeData = await this.usersService.findEmployeeByPhone(phone);
+      if (!employeeData) {
+        return null;
       }
 
-      return null;
+      // Găsește user-ul local prin id_employee
+      const user = await this.usersService.findByEmployeeIdWithPassword(employeeData.id);
+      if (!user) {
+        return null;
+      }
+
+      return {
+        userId: user.id,
+        email: employeeData.email,
+        phone: employeeData.phone,
+        password: user.password,
+        profile_image: user.profile_image, // Include poza de profil
+        roles: [] // TODO: Implementează rolurile dacă sunt necesare
+      };
     } catch (error) {
       this.logger.error(`Eroare la căutarea utilizatorului după telefon: ${error.message}`);
       return null;
@@ -260,7 +309,7 @@ export class TwoFactorAuthService {
   }
 
   private isValidPhone(phone: string): boolean {
-    const phoneRegex = /^07[0-9]{8}$/;
+    const phoneRegex = /^(\+40)?7[0-9]{8}$/;
     return phoneRegex.test(phone);
   }
 } 

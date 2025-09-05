@@ -1,318 +1,366 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
+import { User } from './entities/user.entity';
+import { Role } from './entities/role.entity';
+import { Permission } from './entities/permission.entity';
+import { UserRole } from './entities/user-role.entity';
+import { RolePermission } from './entities/role-permission.entity';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import * as bcrypt from 'bcrypt';
 import { firstValueFrom } from 'rxjs';
-
-// This should be a real class/interface representing a user entity
-export type User = any;
 
 @Injectable()
 export class UsersService {
-  private readonly logger = new Logger(UsersService.name);
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(Role)
+    private readonly roleRepository: Repository<Role>,
+    @InjectRepository(Permission)
+    private readonly permissionRepository: Repository<Permission>,
+    @InjectRepository(UserRole)
+    private readonly userRoleRepository: Repository<UserRole>,
+    @InjectRepository(RolePermission)
+    private readonly rolePermissionRepository: Repository<RolePermission>,
+    private readonly httpService: HttpService,
+  ) {}
 
-  constructor(private readonly httpService: HttpService) {}
+  /**
+   * Creează un utilizator nou
+   */
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    // Verifică dacă există deja un utilizator cu acest id_employee
+    const existingUser = await this.userRepository.findOne({
+      where: { id_employee: createUserDto.id_employee }
+    });
 
-  async findOne(email: string): Promise<User | undefined> {
+    if (existingUser) {
+      throw new ConflictException(`Utilizatorul cu id_employee ${createUserDto.id_employee} există deja`);
+    }
+
+    // Hash-uiește parola
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(createUserDto.password, saltRounds);
+
+    // Creează utilizatorul
+    const user = this.userRepository.create({
+      id_employee: createUserDto.id_employee,
+      password: hashedPassword,
+      profile_image: createUserDto.profile_image || null,
+      is_active: createUserDto.is_active ?? true,
+      is_2fa: createUserDto.is_2fa ?? false,
+    });
+
+    return await this.userRepository.save(user);
+  }
+
+  /**
+   * Găsește un utilizator după id_employee
+   */
+  async findByEmployeeId(id_employee: number): Promise<User | null> {
+    return await this.userRepository.findOne({
+      where: { id_employee }
+    });
+  }
+
+  /**
+   * Găsește un utilizator după id_employee cu parola inclusă
+   */
+  async findByEmployeeIdWithPassword(id_employee: number): Promise<User | null> {
+    return await this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password')
+      .where('user.id_employee = :id_employee', { id_employee })
+      .getOne();
+  }
+
+
+  /**
+   * Găsește un utilizator după ID
+   */
+  async findOne(id: number): Promise<User | null> {
+    return await this.userRepository.findOne({
+      where: { id }
+    });
+  }
+
+  /**
+   * Găsește toți utilizatorii activi
+   */
+  async findAll(): Promise<User[]> {
+    return await this.userRepository.find({
+      where: { is_active: true }
+    });
+  }
+
+  /**
+   * Actualizează parola unui utilizator
+   */
+  async updatePassword(id_employee: number, newPassword: string): Promise<User> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    await this.userRepository.update(
+      { id_employee },
+      { password: hashedPassword }
+    );
+
+    const updatedUser = await this.findByEmployeeId(id_employee);
+    if (!updatedUser) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+    return updatedUser;
+  }
+
+  /**
+   * Actualizează imaginea de profil a unui utilizator
+   */
+  async updateProfileImage(id_employee: number, profileImageUrl: string): Promise<User> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    await this.userRepository.update(
+      { id_employee },
+      { profile_image: profileImageUrl }
+    );
+
+    const updatedUser = await this.findByEmployeeId(id_employee);
+    if (!updatedUser) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+    return updatedUser;
+  }
+
+  /**
+   * Actualizează statusul activ al unui utilizator
+   */
+  async updateActiveStatus(id_employee: number, is_active: boolean): Promise<User> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    await this.userRepository.update(
+      { id_employee },
+      { is_active }
+    );
+
+    const updatedUser = await this.findByEmployeeId(id_employee);
+    if (!updatedUser) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+    return updatedUser;
+  }
+
+  /**
+   * Actualizează statusul 2FA al unui utilizator
+   */
+  async update2FAStatus(id_employee: number, is_2fa: boolean): Promise<User> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    await this.userRepository.update(
+      { id_employee },
+      { is_2fa }
+    );
+
+    const updatedUser = await this.findByEmployeeId(id_employee);
+    if (!updatedUser) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+    return updatedUser;
+  }
+
+  /**
+   * Verifică parola unui utilizator
+   */
+  async validatePassword(id_employee: number, password: string): Promise<boolean> {
+    const user = await this.findByEmployeeIdWithPassword(id_employee);
+    if (!user) {
+      return false;
+    }
+
+    return await bcrypt.compare(password, user.password);
+  }
+
+  /**
+   * Actualizează profilul complet al unui utilizator
+   */
+  async updateProfile(id_employee: number, updateData: UpdateUserDto): Promise<User> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    // Pregătește datele pentru actualizare
+    const updateFields: any = {};
+    
+    if (updateData.password) {
+      const saltRounds = 10;
+      updateFields.password = await bcrypt.hash(updateData.password, saltRounds);
+    }
+    
+    if (updateData.profile_image !== undefined) updateFields.profile_image = updateData.profile_image;
+    if (updateData.is_active !== undefined) updateFields.is_active = updateData.is_active;
+    if (updateData.is_2fa !== undefined) updateFields.is_2fa = updateData.is_2fa;
+
+    await this.userRepository.update({ id_employee }, updateFields);
+
+    const updatedUser = await this.findByEmployeeId(id_employee);
+    if (!updatedUser) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+    return updatedUser;
+  }
+
+  /**
+   * Șterge un utilizator
+   */
+  async remove(id_employee: number): Promise<void> {
+    const user = await this.findByEmployeeId(id_employee);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+    }
+
+    await this.userRepository.delete({ id_employee });
+  }
+
+  /**
+   * Găsește un angajat după email din microserviciul employees
+   */
+  async findEmployeeByEmail(email: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null> {
     try {
-      // Caută utilizatorul după email cu roluri și permisiuni
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?email=${email}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          },
-          headers: {
-            'x-internal-service': 'auth-service'
-          }
-        })
+        this.httpService.get(`http://localhost:3012/employees/email/${encodeURIComponent(email)}`)
       );
-      
-      // Verifică structura reală a răspunsului
-      if (response?.data?.data?.length) {
-        const userData = response.data.data[0];
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        const allRoles = [...userRoles];
-
-        // Caută toți partenerii asociați utilizatorului din tabela de legătură
-        let partnerNames: string[] = [];
-        
-        try {
-          // Caută partenerii din tabela user_partners
-          const userPartnersResponse = await firstValueFrom(
-            this.httpService.get(`http://localhost:3003/users/${userData.user.id}/partners`, {
-              headers: {
-                'x-internal-service': 'auth-service'
-              }
-            })
-          );
-          
-          if (userPartnersResponse?.data && userPartnersResponse.data.length > 0) {
-            // Obține numele partenerilor din serviciul de parteneri
-            const partnerIds = userPartnersResponse.data.map((userPartner: any) => userPartner.partner_id);
-            this.logger.log(`Partner IDs găsite: ${JSON.stringify(partnerIds)}`);
-            
-            // Caută numele partenerilor
-            for (const partnerId of partnerIds) {
-              try {
-                const partnerResponse = await firstValueFrom(
-                  this.httpService.get(`http://localhost:3002/api/partners/${partnerId}`, {
-                    headers: {
-                      'x-internal-service': 'auth-service'
-                    }
-                  })
-                );
-                
-                if (partnerResponse?.data?.data) {
-                  partnerNames.push(partnerResponse.data.data.name);
-                }
-              } catch (partnerError) {
-                this.logger.warn(`Nu s-a putut găsi partenerul cu ID ${partnerId}: ${partnerError.message}`);
-              }
-            }
-            
-            this.logger.log(`Parteneri găsiți din tabela de legătură: ${JSON.stringify(partnerNames)}`);
-          }
-        } catch (userPartnersError) {
-          this.logger.warn(`Nu s-au putut găsi partenerii din tabela de legătură: ${userPartnersError.message}`);
-          
-          // Fallback: caută partenerul din câmpul partner_id (pentru compatibilitate)
-          if (userData.user.partner_id) {
-            try {
-              this.logger.log(`Fallback: Încercare de a găsi partenerul cu ID: ${userData.user.partner_id}`);
-              const partnerResponse = await firstValueFrom(
-                this.httpService.get(`http://localhost:3002/api/partners/${userData.user.partner_id}`, {
-                  headers: {
-                    'x-internal-service': 'auth-service'
-                  }
-                })
-              );
-              
-              if (partnerResponse?.data?.data) {
-                partnerNames = [partnerResponse.data.data.name];
-                this.logger.log(`Partner name din fallback: ${JSON.stringify(partnerNames)}`);
-              }
-            } catch (partnerError) {
-              this.logger.error(`Nu s-a putut găsi partenerul pentru utilizatorul ${userData.user.id}: ${partnerError.message}`);
-            }
-          }
-        }
-        
-        return {
-          userId: userData.user.id,
-          email: userData.user.email,
-          password: userData.user.password,
-          partner_id: userData.user.partner_id,
-          partner_name: partnerNames,
-          roles: allRoles,
-          is_2fa_active: userData.user.is_2fa_active || false
-        };
-      }
-      
-      return undefined;
+      return response.data;
     } catch (error) {
-      this.logger.error(`Eroare la căutarea utilizatorului: ${error.message}`);
-      return undefined;
+      console.error('Eroare la găsirea angajatului după email:', error);
+      return null;
     }
   }
 
-  async findOneByPhone(phone: string): Promise<User | undefined> {
+  /**
+   * Găsește un angajat după telefon din microserviciul employees
+   */
+  async findEmployeeByPhone(phone: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null> {
     try {
-      // Caută utilizatorul după telefon cu roluri și permisiuni
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users?phone=${phone}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          },
-          headers: {
-            'x-internal-service': 'auth-service'
-          }
-        })
+        this.httpService.get(`http://localhost:3012/employees/phone/${encodeURIComponent(phone)}`)
       );
-      
-      // Verifică structura reală a răspunsului
-      if (response?.data?.data?.length) {
-        const userData = response.data.data[0];
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.user.roles || [];
-        const allRoles = [...userRoles];
-
-        // Caută toți partenerii asociați utilizatorului din tabela de legătură
-        let partnerNames: string[] = [];
-        
-        try {
-          // Caută partenerii din tabela user_partners
-          const userPartnersResponse = await firstValueFrom(
-            this.httpService.get(`http://localhost:3003/users/${userData.user.id}/partners`, {
-              headers: {
-                'x-internal-service': 'auth-service'
-              }
-            })
-          );
-          
-          if (userPartnersResponse?.data?.data && userPartnersResponse.data.data.length > 0) {
-            // Obține numele partenerilor din serviciul de parteneri
-            const partnerIds = userPartnersResponse.data.data.map((userPartner: any) => userPartner.partner_id);
-            
-            // Caută numele partenerilor
-            for (const partnerId of partnerIds) {
-              try {
-                const partnerResponse = await firstValueFrom(
-                  this.httpService.get(`http://localhost:3002/api/partners/${partnerId}`, {
-                    headers: {
-                      'x-internal-service': 'auth-service'
-                    }
-                  })
-                );
-                
-                if (partnerResponse?.data?.data) {
-                  partnerNames.push(partnerResponse.data.data.name);
-                }
-              } catch (partnerError) {
-                this.logger.warn(`Nu s-a putut găsi partenerul cu ID ${partnerId}: ${partnerError.message}`);
-              }
-            }
-          }
-        } catch (userPartnersError) {
-          this.logger.warn(`Nu s-au putut găsi partenerii din tabela de legătură: ${userPartnersError.message}`);
-          
-          // Fallback: caută partenerul din câmpul partner_id (pentru compatibilitate)
-          if (userData.user.partner_id) {
-            try {
-              const partnerResponse = await firstValueFrom(
-                this.httpService.get(`http://localhost:3002/api/partners/${userData.user.partner_id}`, {
-                  headers: {
-                    'x-internal-service': 'auth-service'
-                  }
-                })
-              );
-              
-              if (partnerResponse?.data?.data) {
-                partnerNames = [partnerResponse.data.data.name];
-              }
-            } catch (partnerError) {
-              this.logger.warn(`Nu s-a putut găsi partenerul pentru utilizatorul ${userData.user.id}: ${partnerError.message}`);
-            }
-          }
-        }
-        
-        return {
-          userId: userData.user.id,
-          email: userData.user.email,
-          phone: userData.user.phone,
-          password: userData.user.password,
-          partner_id: userData.user.partner_id,
-          partner_name: partnerNames,
-          roles: allRoles,
-          is_2fa_active: userData.user.is_2fa_active || false
-        };
-      }
-      
-      return undefined;
+      return response.data;
     } catch (error) {
-      this.logger.error(`Eroare la căutarea utilizatorului după telefon: ${error.message}`);
-      return undefined;
+      console.error('Eroare la găsirea angajatului după telefon:', error);
+      return null;
     }
   }
 
-  async findById(userId: number): Promise<User | undefined> {
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3003/users/${userId}`, {
-          params: {
-            include: 'roles,roles.permissions'
-          }
-        })
-      );
-      
-      if (response?.data) {
-        const userData = response.data;
-        
-        // Extrage rolurile din tabelul user_roles dacă există
-        const userRoles = userData.roles || [];
-        
-        // Include și rolul de bază din obiectul user
-        const baseRole = userData.role;
-        const allRoles = [...userRoles];
-        
-        // Adaugă rolul de bază dacă nu există deja în lista de roluri
-        if (baseRole && !allRoles.find(role => role.name === baseRole)) {
-          allRoles.push({ name: baseRole, permissions: [] });
-        }
+  // ===== PERMISSIONS METHODS =====
+  async createPermission(createPermissionDto: { name: string; group?: string; description?: string }): Promise<Permission> {
+    const permission = this.permissionRepository.create(createPermissionDto);
+    return await this.permissionRepository.save(permission);
+  }
 
-        // Caută toți partenerii asociați utilizatorului din tabela de legătură
-        let partnerNames: string[] = [];
-        
-        try {
-          // Caută partenerii din tabela user_partners
-          const userPartnersResponse = await firstValueFrom(
-            this.httpService.get(`http://localhost:3003/users/${userData.id}/partners`, {
-              headers: {
-                'x-internal-service': 'auth-service'
-              }
-            })
-          );
-          
-          if (userPartnersResponse?.data?.data && userPartnersResponse.data.data.length > 0) {
-            // Obține numele partenerilor din serviciul de parteneri
-            const partnerIds = userPartnersResponse.data.data.map((userPartner: any) => userPartner.partner_id);
-            
-            // Caută numele partenerilor
-            for (const partnerId of partnerIds) {
-              try {
-                const partnerResponse = await firstValueFrom(
-                  this.httpService.get(`http://localhost:3002/api/partners/${partnerId}`, {
-                    headers: {
-                      'x-internal-service': 'auth-service'
-                    }
-                  })
-                );
-                
-                if (partnerResponse?.data?.data) {
-                  partnerNames.push(partnerResponse.data.data.name);
-                }
-              } catch (partnerError) {
-                this.logger.warn(`Nu s-a putut găsi partenerul cu ID ${partnerId}: ${partnerError.message}`);
-              }
-            }
-          }
-        } catch (userPartnersError) {
-          this.logger.warn(`Nu s-au putut găsi partenerii din tabela de legătură: ${userPartnersError.message}`);
-          
-          // Fallback: caută partenerul din câmpul partner_id (pentru compatibilitate)
-          if (userData.partner_id) {
-            try {
-              const partnerResponse = await firstValueFrom(
-                this.httpService.get(`http://localhost:3002/api/partners/${userData.partner_id}`, {
-                  headers: {
-                    'x-internal-service': 'auth-service'
-                  }
-                })
-              );
-              
-              if (partnerResponse?.data?.data) {
-                partnerNames = [partnerResponse.data.data.name];
-              }
-            } catch (partnerError) {
-              this.logger.warn(`Nu s-a putut găsi partenerul pentru utilizatorul ${userData.id}: ${partnerError.message}`);
-            }
-          }
-        }
-        
-        return {
-          userId: userData.id,
-          email: userData.email,
-          partner_id: userData.partner_id,
-          partner_name: partnerNames,
-          roles: allRoles,
-          is_2fa_active: userData.is_2fa_active || false
-        };
-      }
-      
-      return undefined;
-    } catch (error) {
-      this.logger.error(`Eroare la căutarea utilizatorului după ID: ${error.message}`);
-      return undefined;
+  async getAllPermissions(): Promise<Permission[]> {
+    return await this.permissionRepository.find();
+  }
+
+  // ===== ROLES CRUD METHODS =====
+  async createRole(createRoleDto: { name: string; description?: string }): Promise<Role> {
+    const role = this.roleRepository.create(createRoleDto);
+    return await this.roleRepository.save(role);
+  }
+
+  async getAllRoles(): Promise<Role[]> {
+    return await this.roleRepository.find();
+  }
+
+  async getRoleById(id: number): Promise<Role> {
+    const role = await this.roleRepository.findOne({ where: { id } });
+    if (!role) {
+      throw new NotFoundException(`Rolul cu ID ${id} nu a fost găsit`);
     }
+    return role;
+  }
+
+  async updateRole(id: number, updateRoleDto: { name?: string; description?: string }): Promise<Role> {
+    const role = await this.getRoleById(id);
+    Object.assign(role, updateRoleDto);
+    return await this.roleRepository.save(role);
+  }
+
+  async deleteRole(id: number): Promise<void> {
+    const role = await this.getRoleById(id);
+    await this.roleRepository.remove(role);
+  }
+
+  // ===== ROLE_PERMISSIONS CRUD METHODS =====
+  async createRolePermission(createRolePermissionDto: { roleId: number; permissionId: number }): Promise<RolePermission> {
+    const rolePermission = this.rolePermissionRepository.create(createRolePermissionDto);
+    return await this.rolePermissionRepository.save(rolePermission);
+  }
+
+  async getAllRolePermissions(): Promise<RolePermission[]> {
+    return await this.rolePermissionRepository.find();
+  }
+
+  async getRolePermissionById(id: number): Promise<RolePermission> {
+    const rolePermission = await this.rolePermissionRepository.findOne({ where: { id } });
+    if (!rolePermission) {
+      throw new NotFoundException(`Asocierea rol-permisiune cu ID ${id} nu a fost găsită`);
+    }
+    return rolePermission;
+  }
+
+  async updateRolePermission(id: number, updateRolePermissionDto: { roleId?: number; permissionId?: number }): Promise<RolePermission> {
+    const rolePermission = await this.getRolePermissionById(id);
+    Object.assign(rolePermission, updateRolePermissionDto);
+    return await this.rolePermissionRepository.save(rolePermission);
+  }
+
+  async deleteRolePermission(id: number): Promise<void> {
+    const rolePermission = await this.getRolePermissionById(id);
+    await this.rolePermissionRepository.remove(rolePermission);
+  }
+
+  // ===== USER_ROLES CRUD METHODS =====
+  async createUserRole(createUserRoleDto: { userId: number; roleId: number }): Promise<UserRole> {
+    const userRole = this.userRoleRepository.create(createUserRoleDto);
+    return await this.userRoleRepository.save(userRole);
+  }
+
+  async getAllUserRoles(): Promise<UserRole[]> {
+    return await this.userRoleRepository.find();
+  }
+
+  async getUserRoleById(id: number): Promise<UserRole> {
+    const userRole = await this.userRoleRepository.findOne({ where: { id } });
+    if (!userRole) {
+      throw new NotFoundException(`Asocierea utilizator-rol cu ID ${id} nu a fost găsită`);
+    }
+    return userRole;
+  }
+
+  async updateUserRole(id: number, updateUserRoleDto: { userId?: number; roleId?: number }): Promise<UserRole> {
+    const userRole = await this.getUserRoleById(id);
+    Object.assign(userRole, updateUserRoleDto);
+    return await this.userRoleRepository.save(userRole);
+  }
+
+  async deleteUserRole(id: number): Promise<void> {
+    const userRole = await this.getUserRoleById(id);
+    await this.userRoleRepository.remove(userRole);
   }
 } 

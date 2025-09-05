@@ -8,7 +8,7 @@ import { AuthController } from './auth.controller';
 import { GuardsModule } from '../guards/guards.module';
 import { TokenModule } from '../common/token.module';
 import { SecurityModule } from '../common/security/security.module';
-import { TwoFactorAuthModule } from '../otp-auth/otp-auth.module';
+import { TwoFactorAuthModule } from '../2fa-auth/2fa-auth.module';
 
 
 @Module({
