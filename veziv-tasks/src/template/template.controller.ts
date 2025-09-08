@@ -70,4 +70,45 @@ export class TemplateController {
   remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.templateService.remove(id);
   }
+
+  // === TEMPLATES LOCATIONS ENDPOINTS ===
+  @Post(':templateId/locations/:locationId')
+  @ApiOperation({ summary: 'Atribuie un template la o locație' })
+  @ApiParam({ name: 'templateId', description: 'ID-ul template-ului' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({ status: 201, description: 'Template-ul a fost atribuit cu succes la locație' })
+  assignTemplateToLocation(
+    @Param('templateId', ParseIntPipe) templateId: number,
+    @Param('locationId', ParseIntPipe) locationId: number,
+  ) {
+    return this.templateService.assignTemplateToLocation(templateId, locationId);
+  }
+
+  @Get(':templateId/locations')
+  @ApiOperation({ summary: 'Listă locațiile unui template' })
+  @ApiParam({ name: 'templateId', description: 'ID-ul template-ului' })
+  @ApiResponse({ status: 200, description: 'Lista locațiilor template-ului' })
+  findTemplateLocations(@Param('templateId', ParseIntPipe) templateId: number) {
+    return this.templateService.findTemplateLocations(templateId);
+  }
+
+  @Get('locations/:locationId/templates')
+  @ApiOperation({ summary: 'Listă template-urile unei locații' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({ status: 200, description: 'Lista template-urilor locației' })
+  findLocationTemplates(@Param('locationId', ParseIntPipe) locationId: number) {
+    return this.templateService.findLocationTemplates(locationId);
+  }
+
+  @Delete(':templateId/locations/:locationId')
+  @ApiOperation({ summary: 'Îndepărtează un template dintr-o locație' })
+  @ApiParam({ name: 'templateId', description: 'ID-ul template-ului' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({ status: 200, description: 'Template-ul a fost îndepărtat cu succes din locație' })
+  removeTemplateFromLocation(
+    @Param('templateId', ParseIntPipe) templateId: number,
+    @Param('locationId', ParseIntPipe) locationId: number,
+  ) {
+    return this.templateService.removeTemplateFromLocation(templateId, locationId);
+  }
 }
