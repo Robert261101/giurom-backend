@@ -1,7 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { WorkLocationTaskTemplate } from '../entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from '../entity/work-location-departments.entity';
-import { CompanyRef } from './company-ref.entity';
 
 @Entity('work_location')
 export class WorkLocation {
@@ -37,9 +36,7 @@ export class WorkLocation {
 
   // points column removed per new revenue points model
 
-  @ManyToOne(() => CompanyRef, { onDelete: 'RESTRICT', onUpdate: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'company_id' })
-  company?: CompanyRef;
+  // company_id references the Company service - no local relationship needed
 
   @Column({ type: 'date', name: 'created_at', nullable: true })
   created_at: Date | null;
