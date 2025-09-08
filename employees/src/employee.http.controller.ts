@@ -24,6 +24,8 @@ import { EmployeeService } from './employee.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { Employee } from './entities/employee.entity';
+import { EmployeesLocations } from './entities/employees-locations.entity';
+import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.dto';
 import { Response } from 'express';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 
@@ -287,5 +289,79 @@ export class EmployeeHttpController {
       file_link,
       file_content: first.content,
     } as CreateEmployeeFileDto);
+  }
+
+  // ==================== EMPLOYEES LOCATIONS ENDPOINTS ====================
+
+  @Post('locations/assign')
+  @ApiOperation({
+    summary: 'Asignă un angajat la o locație',
+    description: 'Creează o asociere între un angajat și o locație de lucru.',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Angajatul a fost asignat cu succes la locație',
+    type: EmployeesLocations,
+  })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Angajatul este deja asignat la această locație' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
+  async assignEmployeeToLocation(
+    @Body() assignDto: AssignEmployeeToLocationDto,
+  ): Promise<EmployeesLocations> {
+    return this.employeeService.assignEmployeeToLocation(assignDto);
+  }
+
+  @Get(':employeeId/locations')
+  @ApiOperation({
+    summary: 'Obține locațiile unui angajat',
+    description: 'Returnează toate locațiile la care este asignat un angajat.',
+  })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista locațiilor angajatului',
+    type: [EmployeesLocations],
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
+  async getEmployeeLocations(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+  ): Promise<EmployeesLocations[]> {
+    return this.employeeService.findEmployeeLocations(employeeId);
+  }
+
+  @Get('locations/:locationId/employees')
+  @ApiOperation({
+    summary: 'Obține angajații unei locații',
+    description: 'Returnează toți angajații asignați la o locație de lucru.',
+  })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista angajaților de la locație',
+    type: [EmployeesLocations],
+  })
+  async getLocationEmployees(
+    @Param('locationId', ParseIntPipe) locationId: number,
+  ): Promise<EmployeesLocations[]> {
+    return this.employeeService.findLocationEmployees(locationId);
+  }
+
+  @Delete(':employeeId/locations/:locationId')
+  @ApiOperation({
+    summary: 'Elimină angajatul de la locație',
+    description: 'Șterge asocierea dintre un angajat și o locație de lucru.',
+  })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Angajatul a fost eliminat cu succes de la locație',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Asocierea nu a fost găsită' })
+  async removeEmployeeFromLocation(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Param('locationId', ParseIntPipe) locationId: number,
+  ): Promise<{ message: string }> {
+    return this.employeeService.removeEmployeeFromLocation(employeeId, locationId);
   }
 }

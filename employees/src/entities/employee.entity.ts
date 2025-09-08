@@ -230,4 +230,11 @@ export class Employee {
   })
   @OneToMany(() => GeneratedDocuments, document => document.employee)
   generatedDocuments: GeneratedDocuments[];
+
+  @ApiProperty({
+    description: 'Asocierile angajat-locație',
+    type: () => ['EmployeesLocations'],
+  })
+  @OneToMany('EmployeesLocations', 'employee')
+  employeeLocations: any[];
 }

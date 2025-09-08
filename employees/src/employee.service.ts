@@ -5,6 +5,7 @@ import { Employee } from './entities/employee.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
+import { EmployeesLocations } from './entities/employees-locations.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
@@ -13,6 +14,7 @@ import { CreateGeneratedDocumentDto } from './dto/create-generated-document.dto'
 import { UpdateGeneratedDocumentDto } from './dto/update-generated-document.dto';
 import { CreateWorkLocationHistoryDto } from './dto/create-work-location-history.dto';
 import { UpdateWorkLocationHistoryDto } from './dto/update-work-location-history.dto';
+import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,6 +29,8 @@ export class EmployeeService {
     private documentsRepository: Repository<GeneratedDocuments>,
     @InjectRepository(EmployeeWorkLocationHistory)
     private workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>,
+    @InjectRepository(EmployeesLocations)
+    private employeesLocationsRepository: Repository<EmployeesLocations>,
   ) {}
 
   private getEmployeesFilesRootDir(): string {
@@ -948,5 +952,69 @@ export class EmployeeService {
       return false;
     }
     return true;
+  }
+
+  // ==================== EMPLOYEES LOCATIONS METHODS ====================
+
+  async assignEmployeeToLocation(assignDto: AssignEmployeeToLocationDto): Promise<EmployeesLocations> {
+    // Verifică dacă angajatul există
+    const employee = await this.employeeRepository.findOne({ where: { id: assignDto.employee_id } });
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${assignDto.employee_id} nu a fost găsit`);
+    }
+
+    // Verifică dacă asocierea există deja
+    const existingAssignment = await this.employeesLocationsRepository.findOne({
+      where: {
+        employee_id: assignDto.employee_id,
+        id_location: assignDto.id_location,
+      },
+    });
+
+    if (existingAssignment) {
+      throw new ConflictException(`Angajatul este deja asignat la această locație`);
+    }
+
+    const employeeLocation = this.employeesLocationsRepository.create(assignDto);
+    return await this.employeesLocationsRepository.save(employeeLocation);
+  }
+
+  async findEmployeeLocations(employee_id: number): Promise<EmployeesLocations[]> {
+    const employee = await this.employeeRepository.findOne({ where: { id: employee_id } });
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${employee_id} nu a fost găsit`);
+    }
+
+    return await this.employeesLocationsRepository.find({
+      where: { employee_id },
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async findLocationEmployees(id_location: number): Promise<EmployeesLocations[]> {
+    return await this.employeesLocationsRepository.find({
+      where: { id_location },
+      relations: ['employee'],
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async removeEmployeeFromLocation(employee_id: number, id_location: number): Promise<{ message: string }> {
+    const assignment = await this.employeesLocationsRepository.findOne({
+      where: {
+        employee_id,
+        id_location,
+      },
+      relations: ['employee'],
+    });
+
+    if (!assignment) {
+      throw new NotFoundException('Asocierea angajat-locație nu a fost găsită');
+    }
+
+    await this.employeesLocationsRepository.remove(assignment);
+    return {
+      message: `Angajatul ${assignment.employee?.first_name} ${assignment.employee?.last_name} a fost eliminat de la locația ${id_location}`,
+    };
   }
 }
