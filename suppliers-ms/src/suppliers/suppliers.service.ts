@@ -8,6 +8,7 @@ import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './entities/supplier-order-document.entity';
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
+import { SupplierLocations } from './entities/supplier-locations.entity';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
@@ -26,6 +27,7 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderItem) private readonly orderItemRepo: Repository<SupplierOrderItem>,
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
+    @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
   ) {}
 
   async create(dto: CreateSupplierDto): Promise<Supplier> {
@@ -368,6 +370,55 @@ export class SuppliersService {
   generateWhatsAppLink(supplierId: number, orderId: number, pdfUrl?: string): string {
     const text = `Comandă #${orderId} pentru furnizor ${supplierId}${pdfUrl ? ` PDF: ${pdfUrl}` : ''}`;
     return `https://wa.me/?text=${encodeURIComponent(text)}`;
+  }
+
+  // === SUPPLIER LOCATIONS METHODS ===
+  async assignSupplierToLocation(supplierId: number, locationId: number): Promise<SupplierLocations> {
+    // Verify supplier exists
+    await this.findOne(supplierId);
+    
+    // Check if assignment already exists
+    const existingAssignment = await this.supplierLocationsRepo.findOne({
+      where: { supplier_id: supplierId, id_location: locationId }
+    });
+    
+    if (existingAssignment) {
+      throw new BadRequestException('Furnizorul este deja atribuit la această locație');
+    }
+    
+    const assignment = this.supplierLocationsRepo.create({
+      supplier_id: supplierId,
+      id_location: locationId,
+    });
+    
+    return await this.supplierLocationsRepo.save(assignment);
+  }
+
+  async findSupplierLocations(supplierId: number): Promise<SupplierLocations[]> {
+    await this.findOne(supplierId);
+    return await this.supplierLocationsRepo.find({
+      where: { supplier_id: supplierId },
+      relations: ['supplier', 'workLocation'],
+    });
+  }
+
+  async findLocationSuppliers(locationId: number): Promise<SupplierLocations[]> {
+    return await this.supplierLocationsRepo.find({
+      where: { id_location: locationId },
+      relations: ['supplier', 'workLocation'],
+    });
+  }
+
+  async removeSupplierFromLocation(supplierId: number, locationId: number): Promise<void> {
+    const assignment = await this.supplierLocationsRepo.findOne({
+      where: { supplier_id: supplierId, id_location: locationId }
+    });
+    
+    if (!assignment) {
+      throw new NotFoundException('Asocierea nu a fost găsită');
+    }
+    
+    await this.supplierLocationsRepo.remove(assignment);
   }
 }
 

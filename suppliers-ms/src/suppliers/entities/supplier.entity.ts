@@ -65,6 +65,9 @@ export class Supplier {
 
   @OneToMany(() => SupplierOrder, (order) => order.supplier)
   orders: SupplierOrder[];
+
+  @OneToMany('SupplierLocations', 'supplier')
+  locations: any[];
 }
 
 
