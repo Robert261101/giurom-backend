@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtModule } from '@nestjs/jwt';
 import { ExecutionService } from './execution.service';
 import { ExecutionController } from './execution.controller';
 import { TaskExecution } from './entity/task-execution.entity';
@@ -20,7 +21,11 @@ import { ElementsExistInTemplateValidator } from './validators/elements-exist-in
       EmployeeDailyTaskPoints,
       TaskAssignment,
       TaskElement
-    ])
+    ]),
+    JwtModule.register({
+      secret: 'your-secret-key',
+      signOptions: { expiresIn: '59m'},
+    })
   ],
   controllers: [ExecutionController],
   providers: [

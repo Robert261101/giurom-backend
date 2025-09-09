@@ -107,18 +107,46 @@ export class ExecutionService {
     return executionWithRelations;
   }
 
-  async findAll(includeAssignment: boolean = true): Promise<TaskExecution[]> {
-    const relations = ['answers'];
+  async findAll(user: any, includeAssignment: boolean = true): Promise<TaskExecution[]> {
+    const query = this.executionRepository
+      .createQueryBuilder('execution')
+      .leftJoinAndSelect('execution.answers', 'answers')
+      .orderBy('execution.created_at', 'DESC');
+
     if (includeAssignment) {
-      relations.push('task_assignment', 'task_assignment.template', 'task_assignment.elements', 'task_assignment.elements.task_element');
+      query
+        .leftJoinAndSelect('execution.task_assignment', 'task_assignment')
+        .leftJoinAndSelect('task_assignment.template', 'template')
+        .leftJoinAndSelect('task_assignment.elements', 'elements')
+        .leftJoinAndSelect('elements.task_element', 'task_element');
     }
 
-    return this.executionRepository.find({
-      relations,
-      order: {
-        created_at: 'DESC'
-      }
-    });
+    // execution.read_all - vede toate
+    if (user?.permissions?.includes('execution.read_all')) {
+      return await query.getMany();
+    }
+
+    // execution.read_company - vede după compania din work_location
+    if (user?.permissions?.includes('execution.read_company')) {
+      // TODO: Implementare când avem legătura cu compania
+      return await query.getMany();
+    }
+
+    // execution.read_location - vede după work_location
+    if (user?.permissions?.includes('execution.read_location')) {
+      // TODO: Implementare când avem legătura cu work_location
+      return await query.getMany();
+    }
+
+    // execution.read_own - vede doar execuțiile lui (employee_id = user.sub)
+    if (user?.permissions?.includes('execution.read_own')) {
+      return await query
+        .where('execution.employee_id = :userId', { userId: user.sub })
+        .getMany();
+    }
+
+    // Dacă nu are nicio permisiune, returnează array gol
+    return [];
   }
 
   async findOne(id: number): Promise<TaskExecution> {

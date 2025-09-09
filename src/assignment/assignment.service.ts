@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskAssignment } from './entity/task-assignment.entity';
 import { TaskAssignmentElement } from './entity/task-assignment-element.entity';
+import { TaskTemplate } from '../template/entity/task-template.entity';
+import { TaskElement } from '../template/entity/task-element.entity';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 
@@ -13,9 +15,35 @@ export class AssignmentService {
     private assignmentRepository: Repository<TaskAssignment>,
     @InjectRepository(TaskAssignmentElement)
     private elementRepository: Repository<TaskAssignmentElement>,
+    @InjectRepository(TaskTemplate)
+    private templateRepository: Repository<TaskTemplate>,
+    @InjectRepository(TaskElement)
+    private taskElementRepository: Repository<TaskElement>,
   ) {}
 
   async create(createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
+    console.log('🔍 [AssignmentService] CreateAssignmentDto primit:', createAssignmentDto);
+    console.log('🔍 [AssignmentService] scheduled_datetime primit:', createAssignmentDto.scheduled_datetime);
+    
+    // Determină statusul în funcție de scheduled_datetime
+    let status = createAssignmentDto.status;
+    if (createAssignmentDto.scheduled_datetime) {
+      const scheduledDate = new Date(createAssignmentDto.scheduled_datetime);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      scheduledDate.setHours(0, 0, 0, 0);
+      
+      console.log('🔍 [AssignmentService] scheduledDate:', scheduledDate);
+      console.log('🔍 [AssignmentService] today:', today);
+      console.log('🔍 [AssignmentService] scheduledDate > today:', scheduledDate > today);
+      
+      // Dacă data programată este în viitor, setează statusul ca SCHEDULED
+      if (scheduledDate > today) {
+        status = 'scheduled' as any;
+        console.log('🔍 [AssignmentService] Status schimbat la SCHEDULED');
+      }
+    }
+
     // Creează assignment-ul
     const assignment = this.assignmentRepository.create({
       template_id: createAssignmentDto.template_id,
@@ -23,26 +51,76 @@ export class AssignmentService {
       assigned_to_id: createAssignmentDto.assigned_to_id,
       created_by_employee_id: createAssignmentDto.created_by_employee_id,
       total_score: createAssignmentDto.total_score,
-      status: createAssignmentDto.status,
+      status: status,
       priority: createAssignmentDto.priority,
       assigned_at: new Date(createAssignmentDto.assigned_at),
       due_date: new Date(createAssignmentDto.due_date),
+      scheduled_datetime: createAssignmentDto.scheduled_datetime ? new Date(createAssignmentDto.scheduled_datetime) : null,
       notes: createAssignmentDto.notes,
       requires_manager_check: createAssignmentDto.requires_manager_check,
     });
     
-    const savedAssignment = await this.assignmentRepository.save(assignment);
+    console.log('🔍 [AssignmentService] Assignment creat pentru salvare:', assignment);
+    console.log('🔍 [AssignmentService] scheduled_datetime în assignment:', assignment.scheduled_datetime);
+    console.log('🔍 [AssignmentService] scheduled_datetime type:', typeof assignment.scheduled_datetime);
+    
+    const savedAssignment: TaskAssignment = await this.assignmentRepository.save(assignment);
+    
+    console.log('🔍 [AssignmentService] Assignment salvat:', savedAssignment);
+    console.log('🔍 [AssignmentService] scheduled_datetime în savedAssignment:', savedAssignment.scheduled_datetime);
+    console.log('🔍 [AssignmentService] scheduled_datetime type în savedAssignment:', typeof savedAssignment.scheduled_datetime);
+    
+    // Verifică din nou din baza de date
+    const dbAssignment = await this.assignmentRepository.findOne({
+      where: { id: savedAssignment.id }
+    });
+    console.log('🔍 [AssignmentService] Assignment din DB:', dbAssignment);
+    console.log('🔍 [AssignmentService] scheduled_datetime din DB:', dbAssignment?.scheduled_datetime);
+    console.log('🔍 [AssignmentService] scheduled_datetime type din DB:', typeof dbAssignment?.scheduled_datetime);
+    
+    // Verifică direct cu query raw
+    const rawResult = await this.assignmentRepository.query(
+      'SELECT id, scheduled_datetime FROM Task_Assignment WHERE id = ?',
+      [savedAssignment.id]
+    );
+    console.log('🔍 [AssignmentService] Raw query result:', rawResult);
 
-    // Creează elementele dacă există
-    if (createAssignmentDto.elements && createAssignmentDto.elements.length > 0) {
-      const elements = createAssignmentDto.elements.map(elementDto => 
-        this.elementRepository.create({
-          ...elementDto,
-          task_assignment_id: savedAssignment.id,
-        })
+    // Încarcă template-ul pentru a obține toate elementele
+    const template = await this.templateRepository.findOne({
+      where: { id: createAssignmentDto.template_id },
+      relations: ['elements']
+    });
+
+    if (!template) {
+      throw new NotFoundException(`Template cu ID-ul ${createAssignmentDto.template_id} nu a fost găsit`);
+    }
+
+    // Creează elementele din template (exclude SCHEDULED_DATETIME - acestea sunt doar pentru programare)
+    const elementsToCreate: TaskAssignmentElement[] = [];
+    
+    for (const templateElement of template.elements) {
+      // Exclude elementele de tip SCHEDULED_DATETIME din assignment
+      if (templateElement.element_type === 'scheduled_datetime') {
+        continue;
+      }
+      
+      // Verifică dacă există o valoare personalizată în request
+      const customElement = createAssignmentDto.elements?.find(
+        el => el.task_element_id === templateElement.id
       );
       
-      await this.elementRepository.save(elements);
+      const elementData = {
+        task_assignment_id: savedAssignment.id,
+        task_element_id: templateElement.id,
+        value: customElement?.value || (templateElement.element_type === 'scoring_boolean' || templateElement.element_type === 'photo' ? '[]' : ''),
+        score: customElement?.score || 0,
+      };
+      
+      elementsToCreate.push(this.elementRepository.create(elementData));
+    }
+    
+    if (elementsToCreate.length > 0) {
+      await this.elementRepository.save(elementsToCreate);
     }
 
     // Returnează assignment-ul cu toate elementele
@@ -92,6 +170,29 @@ export class AssignmentService {
     if (updateAssignmentDto.priority !== undefined) updateData.priority = updateAssignmentDto.priority;
     if (updateAssignmentDto.assigned_at !== undefined) updateData.assigned_at = new Date(updateAssignmentDto.assigned_at);
     if (updateAssignmentDto.due_date !== undefined) updateData.due_date = new Date(updateAssignmentDto.due_date);
+    if (updateAssignmentDto.scheduled_datetime !== undefined) {
+      const scheduledDateTime = updateAssignmentDto.scheduled_datetime ? new Date(updateAssignmentDto.scheduled_datetime) : null;
+      updateData.scheduled_datetime = scheduledDateTime;
+      
+      // Actualizează statusul în funcție de scheduled_datetime
+      if (scheduledDateTime) {
+        const scheduledDate = new Date(scheduledDateTime);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        scheduledDate.setHours(0, 0, 0, 0);
+        
+        // Dacă data programată este în viitor, setează statusul ca SCHEDULED
+        if (scheduledDate > today) {
+          updateData.status = 'scheduled' as any;
+        } else {
+          // Dacă data programată este astăzi sau în trecut, setează statusul ca ASSIGNED
+          updateData.status = 'assigned' as any;
+        }
+      } else {
+        // Dacă nu mai există scheduled_datetime, setează statusul ca ASSIGNED
+        updateData.status = 'assigned' as any;
+      }
+    }
     if (updateAssignmentDto.completed_at !== undefined) updateData.completed_at = new Date(updateAssignmentDto.completed_at);
     if (updateAssignmentDto.notes !== undefined) updateData.notes = updateAssignmentDto.notes;
     if (updateAssignmentDto.requires_manager_check !== undefined) updateData.requires_manager_check = updateAssignmentDto.requires_manager_check;
@@ -125,5 +226,75 @@ export class AssignmentService {
   async remove(id: number): Promise<void> {
     const assignment = await this.findOne(id);
     await this.assignmentRepository.remove(assignment);
+  }
+
+  // ===== METODA CU PERMISIUNI PENTRU GET ASSIGNMENTS =====
+
+  async findAllWithPermissions(user: any): Promise<TaskAssignment[]> {
+    console.log('🔍 [assignment.service] findAllWithPermissions - User:', user ? 'EXISTĂ' : 'LIPSEȘTE')
+    if (user) {
+      console.log('🔍 [assignment.service] User permissions:', user.permissions)
+    }
+    
+    const query = this.assignmentRepository
+      .createQueryBuilder('assignment')
+      .leftJoinAndSelect('assignment.template', 'template')
+      .leftJoinAndSelect('assignment.elements', 'elements')
+      .leftJoinAndSelect('elements.task_element', 'task_element')
+      .addSelect([
+        'assignment.id',
+        'assignment.template_id',
+        'assignment.assigned_to_type',
+        'assignment.assigned_to_id',
+        'assignment.created_by_employee_id',
+        'assignment.total_score',
+        'assignment.status',
+        'assignment.priority',
+        'assignment.assigned_at',
+        'assignment.due_date',
+        'assignment.completed_at',
+        'assignment.scheduled_datetime',
+        'assignment.notes',
+        'assignment.requires_manager_check',
+        'assignment.created_at',
+        'assignment.updated_at'
+      ])
+      .orderBy('assignment.created_at', 'DESC');
+
+    // assignment.read_all - vede toate
+    if (user?.permissions?.includes('assignment.read_all')) {
+      console.log('✅ [assignment.service] User are assignment.read_all - returnez toate assignment-urile')
+      const result = await query.getMany();
+      console.log('🔍 [assignment.service] Rezultat query:', result.length, 'assignments')
+      if (result.length > 0) {
+        console.log('🔍 [assignment.service] Primul assignment:', result[0])
+        console.log('🔍 [assignment.service] scheduled_datetime din primul assignment:', result[0].scheduled_datetime)
+      }
+      return result;
+    }
+
+    // assignment.read_company - vede după compania din work_location
+    if (user?.permissions?.includes('assignment.read_company')) {
+      // TODO: Implementare când avem legătura cu compania
+      return await query.getMany();
+    }
+
+    // assignment.read_location - vede după work_location
+    if (user?.permissions?.includes('assignment.read_location')) {
+      // TODO: Implementare când avem legătura cu work_location
+      return await query.getMany();
+    }
+
+    // assignment.read_own - vede doar taskurile lui (assigned_to_id = user.sub)
+    if (user?.permissions?.includes('assignment.read_own')) {
+      return await query
+        .where('assignment.assigned_to_id = :userId', { userId: user.sub })
+        .andWhere('assignment.assigned_to_type = :type', { type: 'person' })
+        .getMany();
+    }
+
+    // Dacă nu are nicio permisiune, returnează array gol
+    console.log('❌ [assignment.service] User nu are nicio permisiune pentru assignments - returnez array gol')
+    return [];
   }
 } 

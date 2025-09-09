@@ -21,7 +21,8 @@ export enum ElementType {
   SCORING_BOOLEAN = 'scoring_boolean',
   ALLOW_POSTPONE = 'allow_postpone',
   PHOTO = 'photo',
-  FINISH_AT = 'finish_at'
+  FINISH_AT = 'finish_at',
+  SCHEDULED_DATETIME = 'scheduled_datetime'
 }
 
 @Entity('Task_Elements')

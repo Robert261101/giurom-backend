@@ -116,6 +116,15 @@ export class CreateAssignmentDto {
   due_date: string;
 
   @ApiProperty({
+    description: 'Data și ora programată pentru execuție',
+    example: '2024-01-18T14:00:00Z',
+    required: false
+  })
+  @IsOptional()
+  @IsDateString()
+  scheduled_datetime?: string;
+
+  @ApiProperty({
     description: 'Note generale',
     example: 'Assignment pentru curățenia săptămânală',
     required: false

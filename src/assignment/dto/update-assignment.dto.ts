@@ -128,6 +128,15 @@ export class UpdateAssignmentDto {
   due_date?: string;
 
   @ApiProperty({
+    description: 'Data și ora programată pentru execuție',
+    example: '2024-01-18T14:00:00Z',
+    required: false
+  })
+  @IsOptional()
+  @IsDateString()
+  scheduled_datetime?: string;
+
+  @ApiProperty({
     description: 'Data completării',
     example: '2024-01-18T15:30:00Z',
     required: false

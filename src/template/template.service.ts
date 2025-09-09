@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskTemplate } from './entity/task-template.entity';
 import { TaskElement } from './entity/task-element.entity';
+import { TemplateLocation } from './entity/template-location.entity';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 
@@ -13,6 +14,8 @@ export class TemplateService {
     private templateRepository: Repository<TaskTemplate>,
     @InjectRepository(TaskElement)
     private elementRepository: Repository<TaskElement>,
+    @InjectRepository(TemplateLocation)
+    private templateLocationRepository: Repository<TemplateLocation>,
   ) {}
 
   async create(createTemplateDto: CreateTemplateDto): Promise<TaskTemplate> {
@@ -114,5 +117,97 @@ export class TemplateService {
   async remove(id: number): Promise<void> {
     const template = await this.findOne(id);
     await this.templateRepository.remove(template);
+  }
+
+  // ===== METODE PENTRU GESTIONAREA LOCAȚIILOR =====
+
+  /**
+   * Adaugă o locație la un template
+   */
+  async addLocationToTemplate(templateId: number, locationId: number): Promise<TemplateLocation> {
+    // Verifică dacă template-ul există
+    await this.findOne(templateId);
+
+    // Verifică dacă relația există deja
+    const existingRelation = await this.templateLocationRepository.findOne({
+      where: {
+        task_templates_id: templateId,
+        id_location: locationId
+      }
+    });
+
+    if (existingRelation) {
+      throw new Error(`Template-ul ${templateId} este deja asociat cu locația ${locationId}`);
+    }
+
+    // Creează noua relație
+    const templateLocation = this.templateLocationRepository.create({
+      task_templates_id: templateId,
+      id_location: locationId
+    });
+
+    return await this.templateLocationRepository.save(templateLocation);
+  }
+
+  /**
+   * Șterge o locație de la un template
+   */
+  async removeLocationFromTemplate(templateId: number, locationId: number): Promise<void> {
+    const result = await this.templateLocationRepository.delete({
+      task_templates_id: templateId,
+      id_location: locationId
+    });
+
+    if (result.affected === 0) {
+      throw new NotFoundException(`Relația între template-ul ${templateId} și locația ${locationId} nu a fost găsită`);
+    }
+  }
+
+  /**
+   * Obține toate locațiile unui template
+   */
+  async getTemplateLocations(templateId: number): Promise<TemplateLocation[]> {
+    await this.findOne(templateId); // Verifică dacă template-ul există
+
+    return await this.templateLocationRepository.find({
+      where: { task_templates_id: templateId },
+      order: { created_at: 'ASC' }
+    });
+  }
+
+  /**
+   * Obține toate template-urile dintr-o locație
+   */
+  async getTemplatesForLocation(locationId: number): Promise<TaskTemplate[]> {
+    const templateLocations = await this.templateLocationRepository.find({
+      where: { id_location: locationId },
+      relations: ['template', 'template.elements'],
+      order: { created_at: 'ASC' }
+    });
+
+    return templateLocations.map(tl => tl.template);
+  }
+
+  /**
+   * Verifică dacă un template este disponibil într-o locație
+   */
+  async isTemplateAvailableInLocation(templateId: number, locationId: number): Promise<boolean> {
+    const relation = await this.templateLocationRepository.findOne({
+      where: {
+        task_templates_id: templateId,
+        id_location: locationId
+      }
+    });
+
+    return !!relation;
+  }
+
+  /**
+   * Șterge toate locațiile unui template
+   */
+  async removeAllTemplateLocations(templateId: number): Promise<void> {
+    await this.templateLocationRepository.delete({
+      task_templates_id: templateId
+    });
   }
 }

@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
 import { TaskElement, ElementType } from './task-element.entity';
+import { TemplateLocation } from './template-location.entity';
 
 export enum TemplateType {
   EMPLOYEE = 'employee',
@@ -29,4 +30,7 @@ export class TaskTemplate {
 
   @OneToMany(() => TaskElement, element => element.template)
   elements: TaskElement[];
+
+  @OneToMany(() => TemplateLocation, location => location.template)
+  locations: TemplateLocation[];
 } 

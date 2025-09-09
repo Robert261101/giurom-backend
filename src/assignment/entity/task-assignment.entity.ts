@@ -11,7 +11,8 @@ export enum AssignmentStatus {
   ASSIGNED = 'assigned',
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',
-  OVERDUE = 'overdue'
+  OVERDUE = 'overdue',
+  SCHEDULED = 'scheduled'
 }
 
 export enum Priority {
@@ -68,6 +69,9 @@ export class TaskAssignment {
 
   @Column({ type: 'datetime', nullable: true })
   completed_at: Date;
+
+  @Column({ type: 'datetime', nullable: true })
+  scheduled_datetime: Date | null;
 
   @Column({ type: 'text', nullable: true })
   notes: string;
