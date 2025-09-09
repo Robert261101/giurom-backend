@@ -132,11 +132,11 @@ export class CreateCompanyDto {
     enum: ['SRL', 'SA', 'PFA', 'II', 'IF', 'ONG', 'COOPERATIVA'],
   })
   @IsString({ message: 'Forma juridică trebuie să fie un string' })
-  @IsNotEmpty({ message: 'Forma juridică este obligatorie' })
+  @IsOptional()
   @IsIn(['SRL', 'SA', 'PFA', 'II', 'IF', 'ONG', 'COOPERATIVA'], {
     message: 'Forma juridică trebuie să fie una din: SRL, SA, PFA, II, IF, ONG, COOPERATIVA',
   })
-  legal_form: string;
+  legal_form?: string;
 
   @ApiProperty({
     description: 'Codul de activitate principal (CAEN)',
@@ -144,9 +144,9 @@ export class CreateCompanyDto {
     maxLength: 10,
   })
   @IsString({ message: 'Codul de activitate trebuie să fie un string' })
-  @IsNotEmpty({ message: 'Codul de activitate este obligatoriu' })
+  @IsOptional()
   @Matches(/^\d{4}$/, { message: 'Codul de activitate trebuie să conțină 4 cifre' })
-  activity_code: string;
+  activity_code?: string;
 
   @ApiProperty({
     description: 'Indică dacă compania este plătitoare de TVA',
