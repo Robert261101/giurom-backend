@@ -2,12 +2,8 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  OneToMany,
-  CreateDateColumn,
-  UpdateDateColumn,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
-import { CalendarEvent } from './calendar-event.entity';
 
 export enum RecurrenceFrequency {
   DAILY = 'daily',
@@ -16,7 +12,7 @@ export enum RecurrenceFrequency {
   CUSTOM = 'custom',
 }
 
-@Entity('recurrence_rules')
+@Entity('recurrence_rule')
 export class RecurrenceRule {
   @ApiProperty({ description: 'ID unic', example: 1 })
   @PrimaryGeneratedColumn()
@@ -65,13 +61,5 @@ export class RecurrenceRule {
   })
   recurrence_days?: string;
 
-  @CreateDateColumn({ type: 'datetime' })
-  created_at: Date;
 
-  @UpdateDateColumn({ type: 'datetime' })
-  updated_at: Date;
-
-  // Relations
-  @OneToMany(() => CalendarEvent, (event) => event.recurrence_rule)
-  events: CalendarEvent[];
 }

@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, Like } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule, RecurrenceFrequency } from './entities/recurrence-rule.entity';
-import { Employee } from './entities/employee.entity';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
@@ -16,8 +15,6 @@ export class CalendarService {
     private readonly eventRepo: Repository<CalendarEvent>,
     @InjectRepository(RecurrenceRule)
     private readonly recurrenceRepo: Repository<RecurrenceRule>,
-    @InjectRepository(Employee)
-    private readonly employeeRepo: Repository<Employee>,
   ) {}
 
   // Creare regulă de recurență
@@ -46,17 +43,6 @@ export class CalendarService {
 
   // Creare eveniment calendar
   async createEvent(dto: CreateCalendarEventDto, currentUserId?: number): Promise<CalendarEvent> {
-    // Verifică dacă angajatul creator există
-    const creator = await this.employeeRepo.findOne({ where: { id: dto.created_by } });
-    if (!creator) {
-      throw new NotFoundException('Angajatul creator nu a fost găsit');
-    }
-
-    // Autorizare: doar creatorul poate crea evenimente pentru sine
-    if (currentUserId && currentUserId !== dto.created_by) {
-      throw new ForbiddenException('Nu poți crea evenimente pentru alți utilizatori');
-    }
-
     // Validări pentru date
     const startDate = new Date(dto.start_datetime);
     const endDate = new Date(dto.end_datetime);
@@ -91,9 +77,7 @@ export class CalendarService {
 
   // Listare evenimente cu filtrare
   async findEvents(filters: FilterCalendarEventsDto, currentUserId?: number): Promise<CalendarEvent[]> {
-    const queryBuilder = this.eventRepo.createQueryBuilder('event')
-      .leftJoinAndSelect('event.recurrence_rule', 'recurrence')
-      .leftJoinAndSelect('event.creator', 'creator');
+    const queryBuilder = this.eventRepo.createQueryBuilder('event');
 
     // Filtrare pe baza datelor
     if (filters.start_date && filters.end_date) {
@@ -143,7 +127,6 @@ export class CalendarService {
   async findOne(id: number, currentUserId?: number): Promise<CalendarEvent> {
     const event = await this.eventRepo.findOne({
       where: { id },
-      relations: ['recurrence_rule', 'creator'],
     });
 
     if (!event) {
@@ -216,7 +199,6 @@ export class CalendarService {
   // Obținere toate regulile de recurență
   async findAllRecurrenceRules(): Promise<RecurrenceRule[]> {
     return this.recurrenceRepo.find({
-      relations: ['events'],
       order: { id: 'DESC' },
     });
   }
@@ -225,7 +207,6 @@ export class CalendarService {
   async findRecurrenceRule(id: number): Promise<RecurrenceRule> {
     const rule = await this.recurrenceRepo.findOne({
       where: { id },
-      relations: ['events'],
     });
 
     if (!rule) {
