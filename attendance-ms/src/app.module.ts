@@ -5,7 +5,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Shift } from './entities/shift.entity';
 import { Presence } from './entities/presence.entity';
 import { PresenceInflexion } from './entities/presence-inflexion.entity';
-import { Employee } from './entities/employee.entity';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceMicroController } from './attendance.micro.controller';
@@ -24,7 +23,6 @@ import { AttendanceMicroController } from './attendance.micro.controller';
         Shift,
         Presence,
         PresenceInflexion,
-        Employee,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -34,7 +32,6 @@ import { AttendanceMicroController } from './attendance.micro.controller';
       Shift,
       Presence,
       PresenceInflexion,
-      Employee,
     ]),
   ],
   controllers: [AttendanceController, AttendanceMicroController],
