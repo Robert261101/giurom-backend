@@ -1,0 +1,11 @@
+{
+  "name": "waste-records-ms",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "start:dev": "ts-node -r tsconfig-paths/register src/main.ts"
+  }
+}
+
+
