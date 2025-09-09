@@ -4,7 +4,8 @@ import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule } from './entities/recurrence-rule.entity';
-import { Employee } from './entities/employee.entity';
+import { ShiftChangeRequests } from './entities/shift-change-requests.entity';
+import { LeaveRequest } from './entities/leave-request.entity';
 import { CalendarService } from './calendar.service';
 import { CalendarController } from './calendar.controller';
 import { CalendarMicroController } from './calendar.micro.controller';
@@ -22,13 +23,14 @@ import { CalendarMicroController } from './calendar.micro.controller';
       entities: [
         CalendarEvent,
         RecurrenceRule,
-        Employee,
+        ShiftChangeRequests,
+        LeaveRequest,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
-    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, Employee]),
+    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, ShiftChangeRequests, LeaveRequest]),
   ],
   controllers: [CalendarController, CalendarMicroController],
   providers: [CalendarService],

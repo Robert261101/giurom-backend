@@ -2,16 +2,12 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  ManyToOne,
-  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
-import { RecurrenceRule } from './recurrence-rule.entity';
-import { Employee } from './employee.entity';
 
-@Entity('calendar_events')
+@Entity('calendar_event')
 export class CalendarEvent {
   @ApiProperty({ description: 'ID unic', example: 1 })
   @PrimaryGeneratedColumn()
@@ -85,28 +81,16 @@ export class CalendarEvent {
   @Column({ nullable: true })
   recurrence_id?: number;
 
-  @ApiProperty({ 
-    description: 'ID angajat care a creat evenimentul', 
-    example: 1 
-  })
-  @Column()
-  created_by: number;
-
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 
   @UpdateDateColumn({ type: 'datetime' })
   updated_at: Date;
 
-  // Relations
-  @ManyToOne(() => RecurrenceRule, (rule) => rule.events, { 
-    onDelete: 'SET NULL',
-    nullable: true 
+  @ApiProperty({ 
+    description: 'ID angajat care a creat evenimentul', 
+    example: 1 
   })
-  @JoinColumn({ name: 'recurrence_id' })
-  recurrence_rule?: RecurrenceRule;
-
-  @ManyToOne(() => Employee, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'created_by' })
-  creator: Employee;
+  @Column()
+  created_by: number;
 }
