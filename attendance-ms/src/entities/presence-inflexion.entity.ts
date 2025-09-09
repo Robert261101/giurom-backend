@@ -4,8 +4,6 @@ import {
   Column,
   ManyToOne,
   JoinColumn,
-  CreateDateColumn,
-  UpdateDateColumn,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Presence } from './presence.entity';
@@ -100,12 +98,6 @@ export class PresenceInflexion {
     collation: 'utf8mb4_unicode_ci'
   })
   notes: string;
-
-  @CreateDateColumn({ type: 'datetime' })
-  created_at: Date;
-
-  @UpdateDateColumn({ type: 'datetime' })
-  updated_at: Date;
 
   // Relații
   @ApiProperty({
