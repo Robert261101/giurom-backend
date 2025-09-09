@@ -9,6 +9,7 @@ import { SupplierOrder } from './suppliers/entities/supplier-order.entity';
 import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
+import { SupplierLocations, WorkLocation } from './suppliers/entities/supplier-locations.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
 import { SuppliersMicroController } from './suppliers.micro.controller';
 import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
@@ -31,6 +32,8 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
         SupplierOrderItem,
         SupplierOrderDocument,
         SupplierDocument,
+        SupplierLocations,
+        WorkLocation,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -57,6 +60,8 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
       SupplierOrderItem,
       SupplierOrderDocument,
       SupplierDocument,
+      SupplierLocations,
+      WorkLocation,
     ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],

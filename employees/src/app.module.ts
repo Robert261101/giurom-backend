@@ -9,6 +9,7 @@ import { Employee } from './entities/employee.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
+import { EmployeesLocations, WorkLocation } from './entities/employees-locations.entity';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { GeneratedDocuments } from './entities/generated-documents.entity';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments],
+      entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments, EmployeesLocations, WorkLocation],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
     }),
@@ -29,6 +30,8 @@ import { GeneratedDocuments } from './entities/generated-documents.entity';
       EmployeeWorkLocationHistory,
       EmployeeFiles,
       GeneratedDocuments,
+      EmployeesLocations,
+      WorkLocation,
     ]),
   ],
   controllers: [EmployeeMicroController, EmployeeHttpController],

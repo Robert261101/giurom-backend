@@ -13,6 +13,7 @@ import { EmployeeDailyPoints } from './execution/entity/employee-daily-points.en
 import { EmployeeDailyTaskPoints } from './execution/entity/employee-daily-task-points.entity';
 import { TaskAssignment } from './assignment/entity/task-assignment.entity';
 import { TaskAssignmentElement } from './assignment/entity/task-assignment-element.entity';
+import { TemplatesLocations, WorkLocation } from './template/entity/templates-locations.entity';
 import { TemplateExistsValidator } from './assignment/validators/template-exists.validator';
 import { ElementsExistInTemplateValidator } from './assignment/validators/elements-exist-in-template.validator';
 import { AllElementsCompletedValidator } from './assignment/validators/all-elements-completed.validator';
@@ -37,7 +38,9 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         EmployeeDailyPoints,
         EmployeeDailyTaskPoints,
         TaskAssignment,
-        TaskAssignmentElement
+        TaskAssignmentElement,
+        TemplatesLocations,
+        WorkLocation,
       ],
       synchronize: false,
       // dropSchema: true, 

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskTemplate } from './entity/task-template.entity';
 import { TaskElement } from './entity/task-element.entity';
+import { TemplatesLocations } from './entity/templates-locations.entity';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 
@@ -13,6 +14,8 @@ export class TemplateService {
     private templateRepository: Repository<TaskTemplate>,
     @InjectRepository(TaskElement)
     private elementRepository: Repository<TaskElement>,
+    @InjectRepository(TemplatesLocations)
+    private templatesLocationsRepository: Repository<TemplatesLocations>,
   ) {}
 
   async create(createTemplateDto: CreateTemplateDto): Promise<TaskTemplate> {
@@ -114,5 +117,54 @@ export class TemplateService {
   async remove(id: number): Promise<void> {
     const template = await this.findOne(id);
     await this.templateRepository.remove(template);
+  }
+
+  // === TEMPLATES LOCATIONS METHODS ===
+  async assignTemplateToLocation(templateId: number, locationId: number): Promise<TemplatesLocations> {
+    // Verify template exists
+    await this.findOne(templateId);
+    
+    // Check if assignment already exists
+    const existingAssignment = await this.templatesLocationsRepository.findOne({
+      where: { task_templates_id: templateId, id_location: locationId }
+    });
+    
+    if (existingAssignment) {
+      throw new NotFoundException('Template-ul este deja atribuit la această locație');
+    }
+    
+    const assignment = this.templatesLocationsRepository.create({
+      task_templates_id: templateId,
+      id_location: locationId,
+    });
+    
+    return await this.templatesLocationsRepository.save(assignment);
+  }
+
+  async findTemplateLocations(templateId: number): Promise<TemplatesLocations[]> {
+    await this.findOne(templateId);
+    return await this.templatesLocationsRepository.find({
+      where: { task_templates_id: templateId },
+      relations: ['taskTemplate', 'workLocation'],
+    });
+  }
+
+  async findLocationTemplates(locationId: number): Promise<TemplatesLocations[]> {
+    return await this.templatesLocationsRepository.find({
+      where: { id_location: locationId },
+      relations: ['taskTemplate', 'workLocation'],
+    });
+  }
+
+  async removeTemplateFromLocation(templateId: number, locationId: number): Promise<void> {
+    const assignment = await this.templatesLocationsRepository.findOne({
+      where: { task_templates_id: templateId, id_location: locationId }
+    });
+    
+    if (!assignment) {
+      throw new NotFoundException('Asocierea nu a fost găsită');
+    }
+    
+    await this.templatesLocationsRepository.remove(assignment);
   }
 }

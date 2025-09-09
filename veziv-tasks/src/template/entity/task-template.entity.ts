@@ -29,4 +29,7 @@ export class TaskTemplate {
 
   @OneToMany(() => TaskElement, element => element.template)
   elements: TaskElement[];
+
+  @OneToMany('TemplatesLocations', 'taskTemplate')
+  locations: any[];
 } 
