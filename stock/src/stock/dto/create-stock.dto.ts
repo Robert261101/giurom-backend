@@ -9,6 +9,11 @@ export class CreateStockDto {
   @IsPositive()
   product_id: number;
 
+  @ApiProperty({ required: false, description: 'Location ID reference (no FK)' })
+  @IsNumber()
+  @IsOptional()
+  location_id?: number;
+
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()

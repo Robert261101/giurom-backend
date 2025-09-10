@@ -7,6 +7,7 @@ import {
   OneToMany,
 } from 'typeorm';
 import { Stock } from './stock.entity';
+import { WasteRecord } from './waste-record.entity';
 
 @Entity('products')
 export class Product {
@@ -36,6 +37,9 @@ export class Product {
 
   @OneToMany(() => Stock, (stock) => stock.product)
   stocks: Stock[];
+
+  @OneToMany(() => WasteRecord, (wasteRecord) => wasteRecord.product)
+  wasteRecords: WasteRecord[];
 }
 
 

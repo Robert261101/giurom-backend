@@ -5,6 +5,8 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateStockDto } from './dto/create-stock.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
+import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
+import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
 
 @Controller('stock')
 export class StockHttpController {
@@ -33,6 +35,22 @@ export class StockHttpController {
 	consume(@Body() dto: { product_id: number; quantity: number; target?: string }) {
 		return this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target);
 	}
+
+	// === WASTE RECORDS ===
+	@Post('waste-records')
+	createWasteRecord(@Body() dto: CreateWasteRecordDto) { return this.service.createWasteRecord(dto); }
+
+	@Get('waste-records')
+	getWasteRecords() { return this.service.findAllWasteRecords(); }
+
+	@Get('waste-records/:id')
+	getWasteRecord(@Param('id') id: string) { return this.service.findWasteRecord(Number(id)); }
+
+	@Patch('waste-records/:id')
+	updateWasteRecord(@Param('id') id: string, @Body() dto: UpdateWasteRecordDto) { return this.service.updateWasteRecord(Number(id), dto); }
+
+	@Delete('waste-records/:id')
+	deleteWasteRecord(@Param('id') id: string) { return this.service.deleteWasteRecord(Number(id)); }
 }
 
 

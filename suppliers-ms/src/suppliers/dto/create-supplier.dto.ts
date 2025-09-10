@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsEmail, IsBoolean, IsOptional, Length, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsEmail, IsBoolean, IsOptional, IsNumber, Length, Matches } from 'class-validator';
 
 export class CreateSupplierDto {
   @ApiProperty()
@@ -71,6 +71,11 @@ export class CreateSupplierDto {
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
+
+  @ApiProperty({ required: false, description: 'ID-ul locației pentru atribuire automată' })
+  @IsNumber()
+  @IsOptional()
+  location_id?: number;
 }
 
 

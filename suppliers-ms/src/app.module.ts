@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Supplier } from './suppliers/entities/supplier.entity';
@@ -11,12 +12,17 @@ import { SupplierOrderDocument } from './suppliers/entities/supplier-order-docum
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
 import { SupplierLocations, WorkLocation } from './suppliers/entities/supplier-locations.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
+import { StockHttpService } from './suppliers/stock-http.service';
 import { SuppliersMicroController } from './suppliers.micro.controller';
 import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    HttpModule.register({
+      timeout: 10000,
+      maxRedirects: 5,
+    }),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST as string,
@@ -65,7 +71,7 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
     ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],
-  providers: [SuppliersService],
+  providers: [SuppliersService, StockHttpService],
 })
 export class AppModule {}
 
