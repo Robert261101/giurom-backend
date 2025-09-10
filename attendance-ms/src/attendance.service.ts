@@ -83,7 +83,7 @@ export class AttendanceService implements OnModuleInit {
 
     const [data, total] = await this.shiftRepository.findAndCount({
       where,
-      relations: ['employee', 'presences'],
+      relations: ['presences'],
       skip: (page - 1) * limit,
       take: limit,
       order: { start_datetime: 'DESC' },
@@ -95,7 +95,7 @@ export class AttendanceService implements OnModuleInit {
   async findShiftById(id: number): Promise<Shift> {
     const shift = await this.shiftRepository.findOne({
       where: { id },
-      relations: ['employee', 'presences'],
+      relations: ['presences'],
     });
 
     if (!shift) {
@@ -214,7 +214,7 @@ export class AttendanceService implements OnModuleInit {
 
     const [data, total] = await this.presenceRepository.findAndCount({
       where,
-      relations: ['shift', 'shift.employee', 'inflexions'],
+      relations: ['shift', 'inflexions'],
       skip: (page - 1) * limit,
       take: limit,
       order: { date: 'DESC' },
@@ -226,7 +226,7 @@ export class AttendanceService implements OnModuleInit {
   async findPresenceById(id: number): Promise<Presence> {
     const presence = await this.presenceRepository.findOne({
       where: { id },
-      relations: ['shift', 'shift.employee', 'inflexions'],
+      relations: ['shift', 'inflexions'],
     });
 
     if (!presence) {
@@ -299,7 +299,7 @@ export class AttendanceService implements OnModuleInit {
 
     const [data, total] = await this.presenceInflexionRepository.findAndCount({
       where,
-      relations: ['presence', 'presence.shift', 'presence.shift.employee'],
+      relations: ['presence', 'presence.shift'],
       skip: (page - 1) * limit,
       take: limit,
       order: { timestamp: 'DESC' },
@@ -311,7 +311,7 @@ export class AttendanceService implements OnModuleInit {
   async findPresenceInflexionById(id: number): Promise<PresenceInflexion> {
     const inflexion = await this.presenceInflexionRepository.findOne({
       where: { id },
-      relations: ['presence', 'presence.shift', 'presence.shift.employee'],
+      relations: ['presence', 'presence.shift'],
     });
 
     if (!inflexion) {
