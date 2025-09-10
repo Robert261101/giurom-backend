@@ -14,6 +14,7 @@ import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-docum
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
 import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
+import { StockHttpService, CreateStockItemDto } from './stock-http.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -28,6 +29,7 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
+    private readonly stockHttpService: StockHttpService,
   ) {}
 
   async create(dto: CreateSupplierDto): Promise<Supplier> {
@@ -40,9 +42,24 @@ export class SuppliersService {
     if (existingSupplier) {
       throw new BadRequestException('Furnizor duplicat (registration_number sau vat_number)');
     }
-    const supplier = this.supplierRepo.create(dto);
+    
+    // Separate location_id from supplier data
+    const { location_id, ...supplierData } = dto;
+    
+    const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     await this.createSupplierFolders(savedSupplier);
+    
+    // Automatically assign supplier to location if location_id is provided
+    if (location_id) {
+      try {
+        await this.assignSupplierToLocation(savedSupplier.id, location_id);
+      } catch (error: any) {
+        // Log the error but don't fail the supplier creation
+        console.warn(`Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
+      }
+    }
+    
     return savedSupplier;
   }
 
@@ -56,12 +73,28 @@ export class SuppliersService {
     if (existingSupplier) {
       throw new BadRequestException('Furnizor duplicat (registration_number sau vat_number)');
     }
+    
+    // Separate special fields from supplier data
     const supplierData = { ...dto } as any;
+    const { location_id } = dto;
     delete supplierData.folderName;
     delete supplierData.documents;
+    delete supplierData.location_id;
+    
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     await this.createSupplierFoldersWithCustomName(savedSupplier, dto.folderName, dto.documents);
+    
+    // Automatically assign supplier to location if location_id is provided
+    if (location_id) {
+      try {
+        await this.assignSupplierToLocation(savedSupplier.id, location_id);
+      } catch (error: any) {
+        // Log the error but don't fail the supplier creation
+        console.warn(`Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
+      }
+    }
+    
     return savedSupplier;
   }
 
@@ -274,23 +307,21 @@ export class SuppliersService {
     if (!order) throw new NotFoundException('Comanda nu a fost găsită');
     if (order.status === OrderStatus.DELIVERED) throw new BadRequestException('Comanda este deja livrată');
 
-    // Create stock entries for each item
-    for (const item of order.items || []) {
-      try {
-        await fetch(`${process.env.STOCK_HTTP_URL || 'http://localhost:3006'}/stock/items`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            product_id: item.product_id,
-            supplier_order_item_id: item.id,
-            quantity: item.quantity,
-            price: item.price_per_unit,
-            entry_date: new Date().toISOString(),
-            status: 'valid',
-          }),
-        });
-      } catch (e) {
-        // continue; stock entry failure should not block status update entirely
+    // Create stock items for each order item using the HTTP service
+    const stockItems: CreateStockItemDto[] = order.items?.map(item => ({
+      product_id: item.product_id,
+      supplier_order_item_id: item.id,
+      quantity: item.quantity,
+      price: item.price_per_unit,
+      entry_date: new Date().toISOString(),
+      status: 'valid',
+    })) || [];
+
+    if (stockItems.length > 0) {
+      const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
+      
+      if (createdStockItems.length !== stockItems.length) {
+        console.warn(`Only ${createdStockItems.length} out of ${stockItems.length} stock items were created successfully`);
       }
     }
 

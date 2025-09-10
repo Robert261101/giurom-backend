@@ -10,7 +10,6 @@ import {
 } from 'typeorm';
 import { Product } from './product.entity';
 import { StockTransaction } from './stock-transaction.entity';
-import { WorkLocation } from './work-location.entity';
 
 export enum StockStatus {
   VALID = 'valid',
@@ -63,9 +62,8 @@ export class Stock {
   @OneToMany(() => StockTransaction, (tx) => tx.stock)
   transactions: StockTransaction[];
 
-  @ManyToOne(() => WorkLocation, (workLocation) => workLocation.stocks, { nullable: true })
-  @JoinColumn({ name: 'location_id' })
-  workLocation?: WorkLocation;
+  // location_id is a reference field only - no FK relationship
+  // Location data retrieved via HTTP calls to locations microservice when needed
 }
 
 
