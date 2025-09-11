@@ -55,8 +55,15 @@ export class StockService {
     return await this.stockRepo.save(stock);
   }
 
-  async findAllStocks(): Promise<Stock[]> {
-    return await this.stockRepo.find({ relations: ['product'] });
+  async findAllStocks(location_id?: number): Promise<Stock[]> {
+    const whereCondition: any = {};
+    if (location_id) {
+      whereCondition.location_id = location_id;
+    }
+    return await this.stockRepo.find({ 
+      where: whereCondition,
+      relations: ['product'] 
+    });
   }
 
   async findStock(id: number): Promise<Stock> {

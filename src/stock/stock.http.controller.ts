@@ -19,7 +19,9 @@ export class StockHttpController {
 
 	// Stock items
 	@Post('items') createStock(@Body() dto: CreateStockDto) { return this.service.createStock(dto); }
-	@Get('items') getStocks() { return this.service.findAllStocks(); }
+	@Get('items') getStocks(@Query('location_id') location_id?: string) { 
+		return this.service.findAllStocks(location_id ? Number(location_id) : undefined); 
+	}
 	@Get('items/:id') getStock(@Param('id') id: string) { return this.service.findStock(Number(id)); }
 	@Patch('items/:id') updateStock(@Param('id') id: string, @Body() dto: UpdateStockDto) { return this.service.updateStock(Number(id), dto); }
 	@Delete('items/:id') deleteStock(@Param('id') id: string) { return this.service.deleteStock(Number(id)); }

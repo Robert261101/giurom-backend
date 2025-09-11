@@ -30,7 +30,7 @@ export class StockMicroController {
   createStock(@Payload() dto: CreateStockDto) { return this.stockService.createStock(dto); }
 
   @MessagePattern('stock.items.findAll')
-  findAllStocks() { return this.stockService.findAllStocks(); }
+  findAllStocks(@Payload() location_id?: number) { return this.stockService.findAllStocks(location_id); }
 
   @MessagePattern('stock.items.findOne')
   findStock(@Payload() id: number) { return this.stockService.findStock(id); }

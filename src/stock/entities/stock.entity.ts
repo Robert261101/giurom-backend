@@ -28,6 +28,9 @@ export class Stock {
   @Column({ nullable: true })
   supplier_order_item_id?: number;
 
+  @Column({ nullable: true })
+  location_id?: number;
+
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 

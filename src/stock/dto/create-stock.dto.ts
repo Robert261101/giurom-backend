@@ -14,6 +14,11 @@ export class CreateStockDto {
   @IsOptional()
   supplier_order_item_id?: number;
 
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  location_id?: number;
+
   @ApiProperty()
   @IsNumber()
   @Min(0)
