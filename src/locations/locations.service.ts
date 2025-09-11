@@ -175,6 +175,26 @@ export class LocationsService {
     return this.departmentsRepository.save(row);
   }
 
+  async updateDepartment(departmentId: number, dto: { name?: string; code?: string; description?: string | null }) {
+    const department = await this.departmentsRepository.findOne({ where: { id: departmentId } as any });
+    if (!department) {
+      throw new Error('Departamentul nu a fost găsit');
+    }
+    
+    Object.assign(department, dto);
+    return this.departmentsRepository.save(department);
+  }
+
+  async deleteDepartment(departmentId: number) {
+    const department = await this.departmentsRepository.findOne({ where: { id: departmentId } as any });
+    if (!department) {
+      throw new Error('Departamentul nu a fost găsit');
+    }
+    
+    await this.departmentsRepository.remove(department);
+    return { message: 'Departamentul a fost șters cu succes' };
+  }
+
   async findPositionsByDepartment(departmentId: number): Promise<WorkLocationDepartmentPositions[]> {
     return this.positionsRepository.find({ where: { department_id: departmentId } as any, order: { name: 'ASC' } as any });
   }

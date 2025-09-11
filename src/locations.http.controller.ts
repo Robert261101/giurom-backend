@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
 import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
+import { UpdateWorkLocationDepartmentsDto } from './locations/dto/update-work-location-departments.dto';
 import { LocationsService } from './locations/locations.service';
 import { CreateWorkLocationDto } from './locations/dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './locations/dto/update-work-location.dto';
@@ -78,6 +79,16 @@ export class LocationsHttpController {
 			code: body.code,
 			description: body.description,
 		});
+	}
+
+	@Patch('departments/:departmentId')
+	updateDepartment(@Param('departmentId') departmentId: string, @Body() body: UpdateWorkLocationDepartmentsDto) {
+		return this.service.updateDepartment(parseInt(departmentId, 10), body);
+	}
+
+	@Delete('departments/:departmentId')
+	deleteDepartment(@Param('departmentId') departmentId: string) {
+		return this.service.deleteDepartment(parseInt(departmentId, 10));
 	}
 
 	@Get('departments/:departmentId/positions')
