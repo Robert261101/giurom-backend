@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { TaskAssignment } from './entity/task-assignment.entity';
 import { TaskAssignmentElement } from './entity/task-assignment-element.entity';
 import { TaskTemplate } from '../template/entity/task-template.entity';
@@ -19,6 +21,7 @@ export class AssignmentService {
     private templateRepository: Repository<TaskTemplate>,
     @InjectRepository(TaskElement)
     private taskElementRepository: Repository<TaskElement>,
+    private httpService: HttpService,
   ) {}
 
   async create(createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
@@ -261,36 +264,104 @@ export class AssignmentService {
       ])
       .orderBy('assignment.created_at', 'DESC');
 
-    // assignment.read_all - vede toate
+    // assignment.read_own - vede doar taskurile lui (assigned_to_id = user.sub) - CEA MAI RESTRICTIVĂ
+    if (user?.permissions?.includes('assignment.read_own')) {
+      console.log('✅ [assignment.service] User are assignment.read_own - filtrez după assigned_to_id')
+      const result = await query
+        .where('assignment.assigned_to_id = :userId', { userId: user.sub })
+        .andWhere('assignment.assigned_to_type = :type', { type: 'person' })
+        .getMany();
+      console.log('🔍 [assignment.service] Rezultat query own:', result.length, 'assignments')
+      return result;
+    }
+
+    // assignment.read_location - vede după work_location
+    if (user?.permissions?.includes('assignment.read_location')) {
+      console.log('✅ [assignment.service] User are assignment.read_location - filtrez după locație')
+      try {
+        // Preia informațiile despre angajat din microserviciul employees
+        const employeeResponse = await firstValueFrom(
+          this.httpService.get(`http://localhost:3012/employees/${user.sub}`)
+        );
+        const employee = employeeResponse.data;
+        
+        if (employee?.work_location_default_id) {
+          // Filtrează assignments-urile care au template-uri disponibile în locația utilizatorului
+          const result = await query
+            .leftJoin('template.templateLocations', 'templateLocation')
+            .where('templateLocation.idLocation = :locationId', { locationId: employee.work_location_default_id })
+            .getMany();
+          
+          console.log('🔍 [assignment.service] Rezultat query location:', result.length, 'assignments')
+          return result;
+        }
+        
+        // Dacă nu are work_location_default_id, returnează array gol
+        console.log('❌ [assignment.service] User nu are work_location_default_id:', user.sub)
+        return [];
+      } catch (error) {
+        console.error('❌ [assignment.service] Eroare la obținerea informațiilor despre locație:', error.message)
+        return [];
+      }
+    }
+
+    // assignment.read_company - vede după compania din work_location
+    if (user?.permissions?.includes('assignment.read_company')) {
+      console.log('✅ [assignment.service] User are assignment.read_company - filtrez după companie')
+      try {
+        // Preia informațiile despre angajat din microserviciul employees
+        const employeeResponse = await firstValueFrom(
+          this.httpService.get(`http://localhost:3012/employees/${user.sub}`)
+        );
+        const employee = employeeResponse.data;
+        
+        if (employee?.work_location_default_id) {
+          // Preia informațiile despre locație din microserviciul locations
+          const locationResponse = await firstValueFrom(
+            this.httpService.get(`http://localhost:3004/locations/${employee.work_location_default_id}`)
+          );
+          const location = locationResponse.data;
+          
+          if (location?.company_id) {
+            // Preia toate locațiile din compania respectivă
+            const companyLocationsResponse = await firstValueFrom(
+              this.httpService.get(`http://localhost:3004/locations?company_id=${location.company_id}`)
+            );
+            const companyLocations = companyLocationsResponse.data.locations || [];
+            const locationIds = companyLocations.map((loc: any) => loc.id);
+            
+            if (locationIds.length > 0) {
+              // Filtrează assignments-urile care au template-uri disponibile în locațiile companiei
+              const result = await query
+                .leftJoin('template.templateLocations', 'templateLocation')
+                .where('templateLocation.idLocation IN (:...locationIds)', { locationIds })
+                .getMany();
+              
+              console.log('🔍 [assignment.service] Rezultat query company:', result.length, 'assignments')
+              return result;
+            }
+          }
+        }
+        
+        // Dacă nu poate obține informațiile, returnează array gol
+        console.log('❌ [assignment.service] Nu pot obține informațiile despre companie pentru user:', user.sub)
+        return [];
+      } catch (error) {
+        console.error('❌ [assignment.service] Eroare la obținerea informațiilor despre companie:', error.message)
+        return [];
+      }
+    }
+
+    // assignment.read_all - vede toate - CEA MAI PERMISIVĂ
     if (user?.permissions?.includes('assignment.read_all')) {
       console.log('✅ [assignment.service] User are assignment.read_all - returnez toate assignment-urile')
       const result = await query.getMany();
-      console.log('🔍 [assignment.service] Rezultat query:', result.length, 'assignments')
+      console.log('🔍 [assignment.service] Rezultat query all:', result.length, 'assignments')
       if (result.length > 0) {
         console.log('🔍 [assignment.service] Primul assignment:', result[0])
         console.log('🔍 [assignment.service] scheduled_datetime din primul assignment:', result[0].scheduled_datetime)
       }
       return result;
-    }
-
-    // assignment.read_company - vede după compania din work_location
-    if (user?.permissions?.includes('assignment.read_company')) {
-      // TODO: Implementare când avem legătura cu compania
-      return await query.getMany();
-    }
-
-    // assignment.read_location - vede după work_location
-    if (user?.permissions?.includes('assignment.read_location')) {
-      // TODO: Implementare când avem legătura cu work_location
-      return await query.getMany();
-    }
-
-    // assignment.read_own - vede doar taskurile lui (assigned_to_id = user.sub)
-    if (user?.permissions?.includes('assignment.read_own')) {
-      return await query
-        .where('assignment.assigned_to_id = :userId', { userId: user.sub })
-        .andWhere('assignment.assigned_to_type = :type', { type: 'person' })
-        .getMany();
     }
 
     // Dacă nu are nicio permisiune, returnează array gol

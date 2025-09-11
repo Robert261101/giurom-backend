@@ -50,9 +50,9 @@ export class ScheduledTasksService {
 
   /**
    * Activează sarcinile programate pentru ziua curentă
-   * Rulează automat la fiecare 10 secunde (pentru testare)
+   * Rulează automat la fiecare 00:00 noaptea
    */
-  @Cron('*/10 * * * * *')
+  @Cron('0 0 * * *')
   async activateScheduledTasksForToday(): Promise<void> {
     const today = new Date();
     const startOfDay = new Date(today);
@@ -96,9 +96,9 @@ export class ScheduledTasksService {
 
   /**
    * Verifică și activează task-urile cu "Vizibil de la" pentru ziua curentă
-   * Rulează automat la fiecare 10 secunde (pentru testare)
+   * Rulează automat la fiecare 00:00 noaptea
    */
-  @Cron('*/10 * * * * *')
+  @Cron('0 0 * * *')
   async checkVisibleFromTasks(): Promise<void> {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // Mâine

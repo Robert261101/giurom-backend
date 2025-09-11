@@ -1,56 +1,24 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { ApiProperty } from '@nestjs/swagger';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { TaskTemplate } from './task-template.entity';
 
-@Entity('Templates_Locations')
+@Entity('templates_locations')
 export class TemplateLocation {
-  @ApiProperty({
-    description: 'ID-ul unic al relației',
-    example: 1,
-  })
   @PrimaryGeneratedColumn()
   id: number;
 
-  @ApiProperty({
-    description: 'ID-ul template-ului de task',
-    example: 1,
-  })
   @Column({ name: 'task_templates_id' })
-  task_templates_id: number;
+  taskTemplateId: number;
 
-  @ApiProperty({
-    description: 'ID-ul locației de lucru',
-    example: 1,
-  })
   @Column({ name: 'id_location' })
-  id_location: number;
+  idLocation: number;
 
-  @ApiProperty({
-    description: 'Data creării relației',
-    example: '2023-12-01T10:00:00Z',
-  })
-  @CreateDateColumn({ type: 'datetime' })
-  created_at: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 
-  @ApiProperty({
-    description: 'Data ultimei actualizări',
-    example: '2023-12-15T14:30:00Z',
-  })
-  @UpdateDateColumn({ type: 'datetime' })
-  updated_at: Date;
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 
-  // Relații
-  @ApiProperty({
-    description: 'Template-ul de task asociat',
-    type: () => TaskTemplate,
-  })
-  @ManyToOne(() => TaskTemplate, (template) => template.locations, {
-    onDelete: 'CASCADE',
-    onUpdate: 'CASCADE',
-  })
+  @ManyToOne(() => TaskTemplate)
   @JoinColumn({ name: 'task_templates_id' })
   template: TaskTemplate;
 }
-
-
-

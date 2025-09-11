@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBoolean, IsNumber, Min, MaxLength, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBoolean, IsNumber, Min, MaxLength, IsDateString, IsPositive } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { ElementType } from '../entity/task-element.entity';
@@ -96,6 +96,14 @@ export class CreateTemplateDto {
   })
   @IsEnum(TemplateType)
   template_type: TemplateType;
+
+  @ApiProperty({
+    description: 'ID-ul locației pentru care se creează template-ul',
+    example: 1
+  })
+  @IsNumber()
+  @IsPositive()
+  locationId: number;
 
   @ApiProperty({
     description: 'Lista de elemente ale template-ului',

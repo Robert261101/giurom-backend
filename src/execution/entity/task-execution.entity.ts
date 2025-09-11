@@ -36,6 +36,9 @@ export class TaskExecution {
   @Column({ type: 'int', default: 0 })
   total_score: number;
 
+  @Column({ type: 'boolean', default: false })
+  is_reactivation_compensation: boolean;
+
   @CreateDateColumn()
   created_at: Date;
 

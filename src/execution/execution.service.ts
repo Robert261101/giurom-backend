@@ -395,11 +395,6 @@ export class ExecutionService {
       // Calculează punctajul pentru task-ul finalizat
       const { points: totalPoints, isOverdue } = this.calculateTaskPoints(execution, assignment);
 
-      // Dacă nu are puncte, nu face nimic
-      if (totalPoints === 0) {
-        return;
-      }
-
       // Obține data de lucru (ziua din completed_at)
       const workDate = new Date(execution.completed_at);
       workDate.setHours(0, 0, 0, 0); // Setează la începutul zilei
@@ -450,10 +445,12 @@ export class ExecutionService {
         await this.employeeDailyPointsRepository.save(dailyPoints);
 
         const action = isOverdue ? 'scăzut' : 'adăugat';
-        console.log(`Punctaj ${action} pentru execuția ${execution.id}: ${totalPoints} puncte pentru angajatul ${execution.employee_id} în data ${workDate.toISOString().split('T')[0]}${isOverdue ? ' (DUPĂ DEADLINE)' : ''}`);
+        console.log(`✅ Punctaj ${action} pentru execuția ${execution.id}: ${totalPoints} puncte pentru angajatul ${execution.employee_id} în data ${workDate.toISOString().split('T')[0]}${isOverdue ? ' (DUPĂ DEADLINE)' : ''}`);
+      } else {
+        console.log(`ℹ️ Punctajul pentru execuția ${execution.id} există deja - nu se salvează din nou`);
       }
     } catch (error) {
-      console.error('Eroare la procesarea finalizării task-ului cu puncte:', error);
+      console.error('❌ Eroare la procesarea finalizării task-ului cu puncte:', error);
       // Nu aruncăm eroarea pentru a nu afecta finalizarea task-ului
     }
   }
@@ -551,14 +548,26 @@ export class ExecutionService {
     const deadlineElement = assignment.elements?.find(el => el.task_element.element_type === 'finish_at');
     if (deadlineElement && execution.completed_at) {
       // Folosește value din assignment element pentru deadline
-      const deadline = new Date(deadlineElement.value);
-      const completionTime = new Date(execution.completed_at);
-      isOverdue = completionTime > deadline;
+      console.log(`🔍 DEBUG Task ${execution.id} - deadlineElement.value:`, deadlineElement.value);
       
-      console.log(`🔍 DEBUG Task ${execution.id}:`);
-      console.log(`   📅 Deadline: ${deadline.toISOString()}`);
-      console.log(`   ✅ Finalizat: ${completionTime.toISOString()}`);
-      console.log(`   ⏰ Este întârziat: ${isOverdue}`);
+      if (deadlineElement.value && deadlineElement.value.trim() !== '') {
+        const deadline = new Date(deadlineElement.value);
+        const completionTime = new Date(execution.completed_at);
+        
+        // Verifică dacă datele sunt valide
+        if (!isNaN(deadline.getTime()) && !isNaN(completionTime.getTime())) {
+          isOverdue = completionTime > deadline;
+          console.log(`   📅 Deadline: ${deadline.toISOString()}`);
+          console.log(`   ✅ Finalizat: ${completionTime.toISOString()}`);
+          console.log(`   ⏰ Este întârziat: ${isOverdue}`);
+        } else {
+          console.log(`   ❌ Date invalide - deadline: ${deadlineElement.value}, completed_at: ${execution.completed_at}`);
+          isOverdue = false; // Default la false dacă datele sunt invalide
+        }
+      } else {
+        console.log(`   ℹ️ Nu există deadline setat`);
+        isOverdue = false; // Nu este întârziat dacă nu există deadline
+      }
     }
 
     // Găsește toate elementele cu puncte din assignment
@@ -572,37 +581,37 @@ export class ExecutionService {
 
     console.log(`🔍 DEBUG Scoring Elements: ${scoringElements.length} total, ${completedScoringElements.length} completate`);
 
-    // Dacă nu toate elementele cu puncte au fost completate, scade punctele
-    if (scoringElements.length > 0 && completedScoringElements.length < scoringElements.length) {
-      console.log(`⚠️  Nu toate elementele cu puncte au fost completate!`);
+    // Calculează punctajul pentru fiecare element cu puncte
+    for (const element of scoringElements) {
+      const answer = execution.answers?.find(a => a.task_element_id === element.task_element_id);
+      const scoringOptions = element.task_element.scoring_options ? JSON.parse(element.task_element.scoring_options) : [];
       
-      // Calculează punctele totale posibile din toate elementele cu puncte
-      for (const element of scoringElements) {
-        const scoringOptions = element.task_element.scoring_options ? JSON.parse(element.task_element.scoring_options) : [];
-        const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
-        totalPoints -= totalPossiblePoints; // Scade toate punctele posibile
-      }
-    } else {
-      // Calculează punctajul normal din answers
-      for (const answer of execution.answers) {
-        const assignmentElement = assignment.elements?.find(el => el.task_element_id === answer.task_element_id);
-        if (!assignmentElement) continue;
-
-        const taskElement = assignmentElement.task_element;
-        if (taskElement.element_type === 'scoring_boolean') {
-          if (isOverdue) {
-            // Dacă este finalizat după deadline, scade punctele din toate opțiunile
-            const scoringOptions = taskElement.scoring_options ? JSON.parse(taskElement.scoring_options) : [];
-            const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
-            totalPoints -= totalPossiblePoints;
-          } else {
-            // Punctaj normal - doar ce a fost bifat
-            totalPoints += answer.score_awarded || 0;
-          }
+      if (answer && answer.score_awarded > 0) {
+        // Elementul a fost completat - adaugă punctele câștigate
+        if (isOverdue) {
+          // Dacă este finalizat după deadline, scade punctele din toate opțiunile
+          const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
+          totalPoints -= totalPossiblePoints;
         } else {
-          // Pentru alte tipuri de elemente, punctaj normal
+          // Punctaj normal - doar ce a fost bifat
           totalPoints += answer.score_awarded || 0;
         }
+      } else {
+        // Elementul NU a fost completat - scade punctele din toate opțiunile
+        const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
+        totalPoints -= totalPossiblePoints;
+      }
+    }
+
+    // Calculează punctajul pentru elementele non-scoring
+    for (const answer of execution.answers) {
+      const assignmentElement = assignment.elements?.find(el => el.task_element_id === answer.task_element_id);
+      if (!assignmentElement) continue;
+
+      const taskElement = assignmentElement.task_element;
+      if (taskElement.element_type !== 'scoring_boolean') {
+        // Pentru alte tipuri de elemente, punctaj normal
+        totalPoints += answer.score_awarded || 0;
       }
     }
 

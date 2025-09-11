@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
+import { HttpModule } from '@nestjs/axios';
 import { AssignmentService } from './assignment.service';
 import { AssignmentController } from './assignment.controller';
 import { ScheduledTasksService } from './scheduled-tasks.service';
@@ -17,9 +18,10 @@ import { TaskElement } from '../template/entity/task-element.entity';
       TaskTemplate,
       TaskElement
     ]),
+    HttpModule,
     JwtModule.register({
       secret: 'your-secret-key',
-      signOptions: { expiresIn: '59m'},
+      signOptions: { expiresIn: '24h'},
     })
   ],
   controllers: [AssignmentController],
