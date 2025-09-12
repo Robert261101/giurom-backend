@@ -4,15 +4,12 @@ import { Repository, MoreThan } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
-import { WasteRecord } from './entities/waste-record.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateStockDto } from './dto/create-stock.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { UpdateStockTransactionDto } from './dto/update-stock-transaction.dto';
-import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
-import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
 
 @Injectable()
 export class StockService {
@@ -20,7 +17,6 @@ export class StockService {
     @InjectRepository(Product) private readonly productRepo: Repository<Product>,
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
-    @InjectRepository(WasteRecord) private readonly wasteRecordRepo: Repository<WasteRecord>,
   ) {}
 
   async createProduct(dto: CreateProductDto): Promise<Product> {
@@ -129,42 +125,6 @@ export class StockService {
 
   async findAllTransactions(): Promise<StockTransaction[]> {
     return await this.txRepo.find({ relations: ['stock'] });
-  }
-
-  // === WASTE RECORDS ===
-  async createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord> {
-    // Verify product exists
-    const product = await this.findProduct(dto.product_id);
-    
-    const wasteRecord = this.wasteRecordRepo.create({ ...dto, product });
-    return await this.wasteRecordRepo.save(wasteRecord);
-  }
-
-  async findAllWasteRecords(): Promise<WasteRecord[]> {
-    return await this.wasteRecordRepo.find({ relations: ['product'], order: { created_at: 'DESC' } });
-  }
-
-  async findWasteRecord(id: number): Promise<WasteRecord> {
-    const wasteRecord = await this.wasteRecordRepo.findOne({ where: { id }, relations: ['product'] });
-    if (!wasteRecord) throw new NotFoundException('Waste record not found');
-    return wasteRecord;
-  }
-
-  async updateWasteRecord(id: number, dto: UpdateWasteRecordDto): Promise<WasteRecord> {
-    const wasteRecord = await this.findWasteRecord(id);
-    
-    // If product_id is being updated, verify new product exists
-    if (dto.product_id && dto.product_id !== wasteRecord.product_id) {
-      await this.findProduct(dto.product_id);
-    }
-    
-    Object.assign(wasteRecord, dto);
-    return await this.wasteRecordRepo.save(wasteRecord);
-  }
-
-  async deleteWasteRecord(id: number): Promise<void> {
-    const wasteRecord = await this.findWasteRecord(id);
-    await this.wasteRecordRepo.remove(wasteRecord);
   }
 }
 
