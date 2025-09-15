@@ -58,12 +58,19 @@ export class ExecutionService {
           throw new BadRequestException(`Elementul cu ID-ul ${answerDto.task_element_id} nu există`);
       }
 
-        // Folosește score_awarded din DTO sau calculează automat pentru scoring_boolean
+        // Folosește score_awarded din DTO sau calculează automat pentru elementele cu puncte
         let score_awarded = answerDto.score_awarded || 0;
+        
         if (element.element_type === 'scoring_boolean') {
+          console.log(`🔍 DEBUG BACKEND scoring_boolean element:`, element.id, element.label)
+          console.log(`🔍 DEBUG BACKEND scoring_boolean value:`, answerDto.value)
+          console.log(`🔍 DEBUG BACKEND scoring_boolean scoring_options:`, element.scoring_options)
+          
           try {
             // Încearcă să parsezi valoarea ca JSON (pentru opțiuni multiple)
             const selectedOptions = JSON.parse(answerDto.value || '[]');
+            console.log(`🔍 DEBUG BACKEND scoring_boolean parsed options:`, selectedOptions)
+            
             if (Array.isArray(selectedOptions)) {
               // Calculează punctajul total din opțiunile selectate
               const scoringOptions = element.scoring_options ? JSON.parse(element.scoring_options) : [
@@ -71,19 +78,39 @@ export class ExecutionService {
                 { name: 'Opțiunea 2', points: 2 },
                 { name: 'Opțiunea 3', points: 3 }
               ];
+              console.log(`🔍 DEBUG BACKEND scoring_boolean scoring options:`, scoringOptions)
               
               score_awarded = selectedOptions.reduce((total: number, optionName: string) => {
                 const option = scoringOptions.find((opt: any) => opt.name === optionName);
-                return total + (option ? option.points : 0);
+                const points = option ? option.points : 0;
+                console.log(`🔍 DEBUG BACKEND scoring_boolean option "${optionName}": ${points} puncte`)
+                return total + points;
               }, 0);
+              console.log(`🔍 DEBUG BACKEND scoring_boolean total score_awarded:`, score_awarded)
             } else {
-              // Fallback pentru sistemul vechi true/false
-              score_awarded = answerDto.value === 'true' ? 10 : 0;
+              // Fallback pentru sistemul vechi true/false - nu acordăm puncte automat
+              console.log(`🔍 DEBUG BACKEND scoring_boolean fallback - not array, score_awarded: 0`)
+              score_awarded = 0;
             }
           } catch (error) {
-            // Fallback pentru sistemul vechi true/false
-            score_awarded = answerDto.value === 'true' ? 10 : 0;
-      }
+            // Fallback pentru sistemul vechi true/false - nu acordăm puncte automat
+            console.log(`🔍 DEBUG BACKEND scoring_boolean error parsing:`, error.message, `score_awarded: 0`)
+            score_awarded = 0;
+          }
+        } else if (element.element_type === 'scoring_simple') {
+          console.log(`🔍 DEBUG BACKEND scoring_simple element:`, element.id, element.label)
+          console.log(`🔍 DEBUG BACKEND scoring_simple value:`, answerDto.value)
+          console.log(`🔍 DEBUG BACKEND scoring_simple simple_score_points:`, element.simple_score_points)
+          
+          // Pentru scoring_simple, folosește punctele fixe din element
+          // Dacă răspunsul este 'true' sau 'completed', acordă punctele
+          if (answerDto.value === 'true' || answerDto.value === 'completed') {
+            score_awarded = element.simple_score_points || 0;
+            console.log(`🔍 DEBUG BACKEND scoring_simple score_awarded:`, score_awarded)
+          } else {
+            score_awarded = 0;
+            console.log(`🔍 DEBUG BACKEND scoring_simple score_awarded: 0 (value not true/completed)`)
+          }
         }
 
         const answer = this.answerRepository.create({
@@ -200,8 +227,9 @@ export class ExecutionService {
             throw new BadRequestException(`Elementul cu ID-ul ${answerDto.task_element_id} nu există`);
     }
 
-          // Folosește score_awarded din DTO sau calculează automat pentru scoring_boolean
+          // Folosește score_awarded din DTO sau calculează automat pentru elementele cu puncte
           let score_awarded = answerDto.score_awarded || 0;
+          
           if (element.element_type === 'scoring_boolean') {
             try {
               // Încearcă să parsezi valoarea ca JSON (pentru opțiuni multiple)
@@ -221,10 +249,18 @@ export class ExecutionService {
               } else {
                 // Fallback pentru sistemul vechi true/false
                 score_awarded = answerDto.value === 'true' ? 10 : 0;
-  }
+              }
             } catch (error) {
               // Fallback pentru sistemul vechi true/false
               score_awarded = answerDto.value === 'true' ? 10 : 0;
+            }
+          } else if (element.element_type === 'scoring_simple') {
+            // Pentru scoring_simple, folosește punctele fixe din element
+            // Dacă răspunsul este 'true' sau 'completed', acordă punctele
+            if (answerDto.value === 'true' || answerDto.value === 'completed') {
+              score_awarded = element.simple_score_points || 0;
+            } else {
+              score_awarded = 0;
             }
           }
           
@@ -252,7 +288,60 @@ export class ExecutionService {
 
   async remove(id: number): Promise<void> {
     const execution = await this.findOne(id);
+    
+    // Gestionare puncte zilnice înainte de ștergerea execuției
+    await this.handleTaskRemoval(execution);
+    
     await this.executionRepository.remove(execution);
+  }
+
+  // ===== METODĂ PENTRU GESTIONAREA ȘTERGERII TASK-URILOR CU PUNCTE =====
+
+  private async handleTaskRemoval(execution: TaskExecution): Promise<void> {
+    try {
+      // Găsește toate punctele zilnice asociate cu această execuție
+      const taskPoints = await this.employeeDailyTaskPointsRepository.find({
+        where: { task_execution_id: execution.id },
+        relations: ['employee_daily_points']
+      });
+
+      if (taskPoints.length > 0) {
+        console.log(`🔍 DEBUG: Găsite ${taskPoints.length} puncte zilnice pentru execuția ${execution.id}`);
+
+        // Grupează punctele pe daily_points pentru a actualiza totalurile
+        const dailyPointsMap = new Map<number, { dailyPoints: EmployeeDailyPoints; pointsToRemove: number }>();
+
+        for (const taskPoint of taskPoints) {
+          const dailyPoints = taskPoint.employee_daily_points;
+          const dailyPointsId = dailyPoints.id;
+
+          if (!dailyPointsMap.has(dailyPointsId)) {
+            dailyPointsMap.set(dailyPointsId, {
+              dailyPoints: dailyPoints,
+              pointsToRemove: 0
+            });
+          }
+
+          const entry = dailyPointsMap.get(dailyPointsId)!;
+          entry.pointsToRemove += taskPoint.points_awarded;
+        }
+
+        // Actualizează totalurile pentru fiecare daily_points
+        for (const [dailyPointsId, { dailyPoints, pointsToRemove }] of dailyPointsMap) {
+          dailyPoints.total_points = Math.max(0, dailyPoints.total_points - pointsToRemove);
+          await this.employeeDailyPointsRepository.save(dailyPoints);
+          
+          console.log(`✅ DEBUG: Scăzut ${pointsToRemove} puncte din daily_points ${dailyPointsId}, total acum: ${dailyPoints.total_points}`);
+        }
+
+        // Șterge toate punctele zilnice pentru această execuție
+        await this.employeeDailyTaskPointsRepository.delete({ task_execution_id: execution.id });
+        console.log(`✅ DEBUG: Șterse ${taskPoints.length} înregistrări de puncte zilnice pentru execuția ${execution.id}`);
+      }
+    } catch (error) {
+      console.error(`❌ Eroare la gestionarea ștergerii punctelor pentru execuția ${execution.id}:`, error);
+      // Nu aruncăm eroarea pentru a nu bloca ștergerea execuției
+    }
   }
 
   // ===== METODE PENTRU PUNCTAJ ZILNIC =====
@@ -570,8 +659,11 @@ export class ExecutionService {
       }
     }
 
-    // Găsește toate elementele cu puncte din assignment
-    const scoringElements = assignment.elements?.filter(el => el.task_element.element_type === 'scoring_boolean') || [];
+    // Găsește toate elementele cu puncte din assignment (scoring_boolean și scoring_simple)
+    const scoringElements = assignment.elements?.filter(el => 
+      el.task_element.element_type === 'scoring_boolean' || 
+      el.task_element.element_type === 'scoring_simple'
+    ) || [];
     
     // Verifică dacă toate elementele cu puncte au fost completate
     const completedScoringElements = scoringElements.filter(element => {
@@ -582,24 +674,47 @@ export class ExecutionService {
     console.log(`🔍 DEBUG Scoring Elements: ${scoringElements.length} total, ${completedScoringElements.length} completate`);
 
     // Calculează punctajul pentru fiecare element cu puncte
+    console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoringElements count:`, scoringElements.length)
     for (const element of scoringElements) {
+      console.log(`🔍 DEBUG BACKEND calculateTaskPoints - processing element:`, element.task_element.element_type, element.task_element.id)
       const answer = execution.answers?.find(a => a.task_element_id === element.task_element_id);
-      const scoringOptions = element.task_element.scoring_options ? JSON.parse(element.task_element.scoring_options) : [];
+      console.log(`🔍 DEBUG BACKEND calculateTaskPoints - found answer:`, answer ? `score_awarded: ${answer.score_awarded}` : 'NO ANSWER')
       
-      if (answer && answer.score_awarded > 0) {
-        // Elementul a fost completat - adaugă punctele câștigate
-        if (isOverdue) {
-          // Dacă este finalizat după deadline, scade punctele din toate opțiunile
-          const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
-          totalPoints -= totalPossiblePoints;
-        } else {
-          // Punctaj normal - doar ce a fost bifat
-          totalPoints += answer.score_awarded || 0;
+      if (element.task_element.element_type === 'scoring_boolean') {
+        const scoringOptions = element.task_element.scoring_options ? JSON.parse(element.task_element.scoring_options) : [];
+        
+        if (answer && answer.score_awarded > 0) {
+          // Elementul a fost completat - adaugă punctele câștigate
+          if (isOverdue) {
+            // Dacă este finalizat după deadline, scade punctele din toate opțiunile
+            const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
+            totalPoints -= totalPossiblePoints;
+          } else {
+            // Punctaj normal - doar ce a fost bifat
+            totalPoints += answer.score_awarded || 0;
+          }
         }
-      } else {
-        // Elementul NU a fost completat - scade punctele din toate opțiunile
-        const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
-        totalPoints -= totalPossiblePoints;
+        // Nu mai scădem punctele dacă nu este completat - scoring_boolean funcționează ca scoring_simple
+      } else if (element.task_element.element_type === 'scoring_simple') {
+        const simpleScorePoints = element.task_element.simple_score_points || 0;
+        console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple simple_score_points:`, simpleScorePoints)
+        
+        if (answer && answer.score_awarded > 0) {
+          console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple answer score_awarded:`, answer.score_awarded)
+          // Elementul a fost completat - adaugă punctele fixe
+          if (isOverdue) {
+            // Dacă este finalizat după deadline, scade punctele fixe
+            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple overdue, subtracting:`, simpleScorePoints)
+            totalPoints -= simpleScorePoints;
+          } else {
+            // Punctaj normal - punctele fixe
+            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple normal, adding:`, answer.score_awarded)
+            totalPoints += answer.score_awarded || 0;
+          }
+        } else {
+          console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple no answer or score_awarded = 0`)
+        }
+        // Nu mai scădem punctele dacă nu este completat - scoring_simple este întotdeauna bifat
       }
     }
 
@@ -609,12 +724,13 @@ export class ExecutionService {
       if (!assignmentElement) continue;
 
       const taskElement = assignmentElement.task_element;
-      if (taskElement.element_type !== 'scoring_boolean') {
+      if (taskElement.element_type !== 'scoring_boolean' && taskElement.element_type !== 'scoring_simple') {
         // Pentru alte tipuri de elemente, punctaj normal
         totalPoints += answer.score_awarded || 0;
       }
     }
 
+    console.log(`🔍 DEBUG BACKEND calculateTaskPoints - FINAL totalPoints:`, totalPoints, `isOverdue:`, isOverdue)
     return { points: totalPoints, isOverdue };
   }
 } 

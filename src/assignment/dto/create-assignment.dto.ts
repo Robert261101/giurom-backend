@@ -142,6 +142,16 @@ export class CreateAssignmentDto {
   requires_manager_check: boolean;
 
   @ApiProperty({
+    description: 'ID-ul grupului de departament pentru taskurile create în masă',
+    example: 'dept_3_1757683436910_v15fgpspu',
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  department_group_id?: string;
+
+  @ApiProperty({
     description: 'Valorile pentru elemente (scoruri pentru scoring_boolean, grupuri pentru group, valori pentru recurrence, etc.)',
     type: [CreateElementDto],
     example: [

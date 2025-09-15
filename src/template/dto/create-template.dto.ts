@@ -57,6 +57,16 @@ export class CreateElementDto {
   sort_order: number;
 
   @ApiProperty({
+    description: 'Opțiuni pentru elementele select și radio',
+    example: ['Opțiunea 1', 'Opțiunea 2', 'Opțiunea 3'],
+    required: false
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
+
+  @ApiProperty({
     description: 'Opțiuni cu punctaj pentru elementele scoring_boolean',
     example: [
       { name: 'Opțiunea 1', points: 1 },
@@ -68,6 +78,16 @@ export class CreateElementDto {
   @IsOptional()
   @IsString()
   scoring_options?: string;
+
+  @ApiProperty({
+    description: 'Punctele fixe pentru elementele scoring_simple',
+    example: 10,
+    required: false
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  simple_score_points?: number;
 
   @ApiProperty({
     description: 'Data și ora de finalizare pentru element',
@@ -182,12 +202,21 @@ export class CreateTemplateDto {
         sort_order: 9
       },
       {
+        element_type: ElementType.SCORING_SIMPLE,
+        label: 'Finalizare completă',
+        name: 'completion_bonus',
+        placeholder: 'Bonus pentru finalizare completă',
+        is_required: false,
+        sort_order: 10,
+        simple_score_points: 5
+      },
+      {
         element_type: ElementType.ALLOW_POSTPONE,
         label: 'Permite amânarea',
         name: 'allow_postpone',
         placeholder: 'Permite amânarea sarcinii',
         is_required: false,
-        sort_order: 10
+        sort_order: 11
       },
       {
         element_type: ElementType.PHOTO,
@@ -195,7 +224,7 @@ export class CreateTemplateDto {
         name: 'evidence_photos',
         placeholder: 'Adăugați poze de evidență',
         is_required: false,
-        sort_order: 11
+        sort_order: 12
       },
       {
         element_type: ElementType.TEXTAREA,
@@ -203,7 +232,7 @@ export class CreateTemplateDto {
         name: 'observations',
         placeholder: 'Introduceți observații',
         is_required: false,
-        sort_order: 12
+        sort_order: 13
       }
     ]
   })

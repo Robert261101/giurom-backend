@@ -12,7 +12,8 @@ export enum AssignmentStatus {
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',
   OVERDUE = 'overdue',
-  SCHEDULED = 'scheduled'
+  SCHEDULED = 'scheduled',
+  DEACTIVATED = 'deactivated'
 }
 
 export enum Priority {
@@ -78,6 +79,15 @@ export class TaskAssignment {
 
   @Column({ type: 'boolean', default: false })
   requires_manager_check: boolean;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  department_group_id: string;
+
+  @Column({ type: 'json', nullable: true })
+  recurrence_settings: any;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  parent_recurrence_id: string;
 
   @CreateDateColumn()
   created_at: Date;

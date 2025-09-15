@@ -19,6 +19,7 @@ export enum ElementType {
   VISIBLE_FROM = 'visible_from',
   RECURRENCE = 'recurrence',
   SCORING_BOOLEAN = 'scoring_boolean',
+  SCORING_SIMPLE = 'scoring_simple',
   ALLOW_POSTPONE = 'allow_postpone',
   PHOTO = 'photo',
   FINISH_AT = 'finish_at',
@@ -60,6 +61,12 @@ export class TaskElement {
 
   @Column({ type: 'json', nullable: true })
   scoring_options: string;
+
+  @Column({ type: 'int', nullable: true, default: 0 })
+  simple_score_points: number;
+
+  @Column({ type: 'json', nullable: true })
+  options: string[];
 
   @Column({ type: 'datetime', nullable: true })
   finish_at: Date;

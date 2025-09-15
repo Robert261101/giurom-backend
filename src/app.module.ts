@@ -43,7 +43,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         TaskAssignment,
         TaskAssignmentElement
       ],
-      synchronize: false,
+      synchronize: true, // Temporar pentru a adăuga câmpurile noi
       // dropSchema: true, 
     }),
     TypeOrmModule.forFeature([
@@ -56,7 +56,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
-        const secret = 'your-secret-key';
+        const secret = 'your-secret-key'; // Același secret ca în auth microservice pentru ACCESS TOKEN
         console.log('🔍 [AppModule] JWT Secret configurat în veziv-tasks:', secret);
         return {
           global: true,

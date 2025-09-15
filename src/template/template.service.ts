@@ -32,7 +32,9 @@ export class TemplateService {
       const elements = createTemplateDto.elements.map(elementDto => {
         console.log(`🔧 DEBUG Template Element:`, {
           type: elementDto.element_type,
-          finish_at: elementDto.finish_at
+          finish_at: elementDto.finish_at,
+          options: elementDto.options,
+          scoring_options: elementDto.scoring_options
         });
         
         return this.elementRepository.create({
@@ -81,6 +83,18 @@ export class TemplateService {
     console.log('🔍 DEBUG TemplateService.findAll - Found templateLocations:', templateLocations.length);
     const templates = templateLocations.map(tl => tl.template);
     console.log('🔍 DEBUG TemplateService.findAll - Returning templates:', templates.length);
+    
+    // Debug: afișează elementele pentru primul template
+    if (templates.length > 0 && templates[0].elements) {
+      console.log('🔍 DEBUG TemplateService.findAll - First template elements:', templates[0].elements.map(el => ({
+        id: el.id,
+        type: el.element_type,
+        label: el.label,
+        options: el.options,
+        scoring_options: el.scoring_options
+      })));
+    }
+    
     return templates;
   }
 

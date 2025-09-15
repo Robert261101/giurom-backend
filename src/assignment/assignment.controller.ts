@@ -155,4 +155,26 @@ export class AssignmentController {
   checkAndUpdateScheduledTasks(): Promise<{ activated: number; total: number }> {
     return this.scheduledTasksService.checkAndUpdateScheduledTasks();
   }
+
+  @Post(':id/accept')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.create')
+  @ApiOperation({ summary: 'Acceptă un task și șterge complet celelalte din același grup de departament' })
+  @ApiParam({ name: 'id', description: 'ID-ul task-ului de acceptat' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Task acceptat cu succes',
+    type: TaskAssignment
+  })
+  async acceptTask(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any
+  ): Promise<TaskAssignment> {
+    const userId = req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+
+    return this.assignmentService.acceptTask(id, userId);
+  }
 } 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual } from 'typeorm';
+import { Repository, LessThanOrEqual, Not, IsNull } from 'typeorm';
 import { TaskAssignment, AssignmentStatus } from './entity/task-assignment.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
@@ -92,6 +92,82 @@ export class ScheduledTasksService {
     } catch (error) {
       console.error(`❌ [ScheduledTasksService] Eroare la activarea sarcinilor programate:`, error);
     }
+  }
+
+  /**
+   * Generează sarcini recurente pentru ziua curentă
+   * Rulează automat la fiecare 12:00
+   */
+  @Cron('0 12 * * *')
+  async generateRecurringTasks(): Promise<void> {
+    const today = new Date();
+    console.log(`🔍 [ScheduledTasksService] Verificare sarcini recurente pentru ${today.toISOString().split('T')[0]}`);
+
+    try {
+      // Găsește toate sarcinile cu recurență activă
+      const recurringTasks = await this.assignmentRepository.find({
+        where: {
+          recurrence_settings: Not(IsNull())
+        },
+        relations: ['template', 'elements', 'elements.task_element']
+      });
+
+      console.log(`🔍 [ScheduledTasksService] Găsite ${recurringTasks.length} sarcini cu recurență`);
+
+      for (const task of recurringTasks) {
+        await this.processRecurringTask(task, today);
+      }
+    } catch (error) {
+      console.error(`❌ [ScheduledTasksService] Eroare la generarea sarcinilor recurente:`, error);
+    }
+  }
+
+  private async processRecurringTask(task: TaskAssignment, today: Date): Promise<void> {
+    try {
+      const recurrenceSettings = task.recurrence_settings;
+      
+      if (!recurrenceSettings?.enabled) {
+        return;
+      }
+
+      // Verifică dacă trebuie să creeze sarcini pentru ziua curentă
+      const shouldCreateToday = this.shouldCreateTasksForToday(recurrenceSettings, today);
+      
+      if (!shouldCreateToday) {
+        return;
+      }
+
+      console.log(`🔍 [ScheduledTasksService] Creez sarcini recurente pentru task-ul ${task.id}`);
+
+      // Simulează crearea de sarcini pentru departament (ca la departamente)
+      await this.createRecurringTasksForDepartment(task);
+
+    } catch (error) {
+      console.error(`❌ [ScheduledTasksService] Eroare la procesarea task-ului ${task.id}:`, error);
+    }
+  }
+
+  private shouldCreateTasksForToday(recurrenceSettings: any, today: Date): boolean {
+    const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const todayName = dayNames[dayOfWeek];
+
+    if (recurrenceSettings.frequency === 'daily') {
+      return recurrenceSettings.days?.includes(todayName) || false;
+    }
+
+    return false; // Pentru test, doar zilnic
+  }
+
+  private async createRecurringTasksForDepartment(parentTask: TaskAssignment): Promise<void> {
+    // Simulează crearea de sarcini pentru departament
+    // În realitate, aici ai apela assignmentService.create() pentru fiecare angajat
+    
+    console.log(`🔍 [ScheduledTasksService] Simulez crearea sarcinilor pentru departamentul ${parentTask.assigned_to_id}`);
+    console.log(`🔍 [ScheduledTasksService] Task părinte: ${parentTask.id}, Template: ${parentTask.template_id}`);
+    
+    // TODO: Implementează logica de creare reală aici
+    // Pentru test, doar loghează
   }
 
   /**

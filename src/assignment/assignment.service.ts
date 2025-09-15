@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { TaskAssignment } from './entity/task-assignment.entity';
+import { TaskAssignment, AssignmentStatus } from './entity/task-assignment.entity';
 import { TaskAssignmentElement } from './entity/task-assignment-element.entity';
 import { TaskTemplate } from '../template/entity/task-template.entity';
 import { TaskElement } from '../template/entity/task-element.entity';
@@ -61,6 +61,7 @@ export class AssignmentService {
       scheduled_datetime: createAssignmentDto.scheduled_datetime ? new Date(createAssignmentDto.scheduled_datetime) : null,
       notes: createAssignmentDto.notes,
       requires_manager_check: createAssignmentDto.requires_manager_check,
+      department_group_id: createAssignmentDto.department_group_id,
     });
     
     console.log('🔍 [AssignmentService] Assignment creat pentru salvare:', assignment);
@@ -143,6 +144,12 @@ export class AssignmentService {
     const assignment = await this.assignmentRepository.findOne({
       where: { id },
       relations: ['template', 'template.elements', 'elements', 'elements.task_element'],
+      select: [
+        'id', 'template_id', 'assigned_to_type', 'assigned_to_id', 'created_by_employee_id',
+        'total_score', 'status', 'priority', 'assigned_at', 'due_date', 'completed_at',
+        'scheduled_datetime', 'notes', 'requires_manager_check', 'department_group_id',
+        'created_at', 'updated_at'
+      ],
       order: {
         template: {
           elements: {
@@ -156,6 +163,9 @@ export class AssignmentService {
       throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
     }
 
+    console.log('🔍 DEBUG findOne - department_group_id:', assignment.department_group_id);
+    console.log('🔍 DEBUG findOne - status:', assignment.status);
+    console.log('🔍 DEBUG findOne - assigned_to_id:', assignment.assigned_to_id);
     return assignment;
   }
 
@@ -259,6 +269,7 @@ export class AssignmentService {
         'assignment.scheduled_datetime',
         'assignment.notes',
         'assignment.requires_manager_check',
+        'assignment.department_group_id',
         'assignment.created_at',
         'assignment.updated_at'
       ])
@@ -367,5 +378,92 @@ export class AssignmentService {
     // Dacă nu are nicio permisiune, returnează array gol
     console.log('❌ [assignment.service] User nu are nicio permisiune pentru assignments - returnez array gol')
     return [];
+  }
+
+  /**
+   * Acceptă un task și șterge complet toate celelalte taskuri din același grup de departament
+   */
+  async acceptTask(id: number, userId: number): Promise<TaskAssignment> {
+    console.log(`🔍 Accepting task ${id} for user ${userId}`);
+    
+    const assignment = await this.findOne(id);
+    
+    if (!assignment) {
+      console.log(`❌ Task assignment ${id} not found`);
+      throw new Error('Task assignment not found');
+    }
+
+    console.log(`🔍 Task found:`, {
+      id: assignment.id,
+      status: assignment.status,
+      department_group_id: assignment.department_group_id,
+      assigned_to_id: assignment.assigned_to_id
+    });
+
+    // Verifică dacă taskul aparține utilizatorului
+    if (assignment.assigned_to_id !== userId) {
+      console.log(`❌ User ${userId} cannot accept task assigned to ${assignment.assigned_to_id}`);
+      throw new Error('You can only accept tasks assigned to you');
+    }
+
+    // Verifică dacă taskul are department_group_id (este parte dintr-un grup de departament)
+    if (assignment.department_group_id) {
+      console.log(`🔍 Accepting task ${id} from department group: ${assignment.department_group_id}`);
+      
+      // Găsește toate taskurile din același grup
+      console.log(`🔍 Searching for tasks with department_group_id: "${assignment.department_group_id}" and status: assigned or scheduled`);
+      
+      const groupTasks = await this.assignmentRepository.find({
+        where: {
+          department_group_id: assignment.department_group_id,
+          status: In([AssignmentStatus.ASSIGNED, AssignmentStatus.SCHEDULED]) // Taskurile active și programate
+        }
+      });
+      
+      // Să verificăm și toate taskurile cu acel department_group_id, indiferent de status
+      const allGroupTasks = await this.assignmentRepository.find({
+        where: {
+          department_group_id: assignment.department_group_id
+        }
+      });
+      
+      console.log(`🔍 All tasks in department group (any status):`, allGroupTasks.map(t => ({ id: t.id, status: t.status, assigned_to_id: t.assigned_to_id })));
+
+      console.log(`🔍 Found ${groupTasks.length} tasks in department group:`, groupTasks.map(t => ({ id: t.id, status: t.status, assigned_to_id: t.assigned_to_id })));
+
+      // Șterge complet toate celelalte taskuri din grup (nu pe cel acceptat)
+      const otherTasks = groupTasks.filter(task => task.id !== id);
+      console.log(`🔍 Other tasks to delete:`, otherTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id })));
+      
+      if (otherTasks.length > 0) {
+        // Șterge complet celelalte taskuri din grup
+        const deleteResult = await this.assignmentRepository.delete(
+          otherTasks.map(task => task.id)
+        );
+        
+        console.log(`🔍 Delete result:`, deleteResult);
+        console.log(`✅ Deleted ${otherTasks.length} other tasks from the group`);
+      } else {
+        console.log(`🔍 No other tasks to delete`);
+      }
+    }
+
+    // Actualizează taskul acceptat la status IN_PROGRESS
+    const updateResult = await this.assignmentRepository.update(id, { 
+      status: AssignmentStatus.IN_PROGRESS,
+      updated_at: new Date()
+    });
+
+    console.log(`🔍 Update result for accepted task:`, updateResult);
+    console.log(`✅ Task ${id} accepted and updated to in_progress`);
+
+    const updatedTask = await this.findOne(id);
+    console.log(`🔍 Final task status:`, {
+      id: updatedTask.id,
+      status: updatedTask.status,
+      department_group_id: updatedTask.department_group_id
+    });
+
+    return updatedTask;
   }
 } 
