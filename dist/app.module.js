@@ -18,6 +18,7 @@ const employee_entity_1 = require("./entities/employee.entity");
 const employee_work_location_history_entity_1 = require("./entities/employee-work-location-history.entity");
 const employee_files_entity_1 = require("./entities/employee-files.entity");
 const generated_documents_entity_1 = require("./entities/generated-documents.entity");
+const employee_location_entity_1 = require("./entities/employee-location.entity");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -32,7 +33,7 @@ exports.AppModule = AppModule = __decorate([
                 username: process.env.DB_USERNAME,
                 password: process.env.DB_PASSWORD,
                 database: process.env.DB_DATABASE,
-                entities: [employee_entity_1.Employee, employee_work_location_history_entity_1.EmployeeWorkLocationHistory, employee_files_entity_1.EmployeeFiles, generated_documents_entity_1.GeneratedDocuments],
+                entities: [employee_entity_1.Employee, employee_work_location_history_entity_1.EmployeeWorkLocationHistory, employee_files_entity_1.EmployeeFiles, generated_documents_entity_1.GeneratedDocuments, employee_location_entity_1.EmployeeLocation],
                 synchronize: process.env.DB_SYNCHRONIZE === 'true',
                 logging: process.env.DB_LOGGING === 'true',
             }),
@@ -41,6 +42,7 @@ exports.AppModule = AppModule = __decorate([
                 employee_work_location_history_entity_1.EmployeeWorkLocationHistory,
                 employee_files_entity_1.EmployeeFiles,
                 generated_documents_entity_1.GeneratedDocuments,
+                employee_location_entity_1.EmployeeLocation,
             ]),
         ],
         controllers: [employee_micro_controller_1.EmployeeMicroController, employee_http_controller_1.EmployeeHttpController],

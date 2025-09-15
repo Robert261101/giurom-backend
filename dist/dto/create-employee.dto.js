@@ -203,16 +203,4 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Boolean)
 ], CreateEmployeeDto.prototype, "is_active", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({
-        description: 'Parola angajatului (va fi hash-uită automat)',
-        example: 'parola123',
-        maxLength: 255,
-        required: false,
-    }),
-    (0, class_validator_1.IsString)({ message: 'Parola trebuie să fie un string' }),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.Length)(6, 255, { message: 'Parola trebuie să aibă între 6 și 255 de caractere' }),
-    __metadata("design:type", String)
-], CreateEmployeeDto.prototype, "password", void 0);
 //# sourceMappingURL=create-employee.dto.js.map

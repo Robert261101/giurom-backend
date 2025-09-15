@@ -3,6 +3,7 @@ import { Employee } from './entities/employee.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
+import { EmployeeLocation } from './entities/employee-location.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
@@ -12,7 +13,8 @@ export declare class EmployeeService {
     private filesRepository;
     private documentsRepository;
     private workLocationHistoryRepository;
-    constructor(employeeRepository: Repository<Employee>, filesRepository: Repository<EmployeeFiles>, documentsRepository: Repository<GeneratedDocuments>, workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>);
+    private employeeLocationRepository;
+    constructor(employeeRepository: Repository<Employee>, filesRepository: Repository<EmployeeFiles>, documentsRepository: Repository<GeneratedDocuments>, workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>, employeeLocationRepository: Repository<EmployeeLocation>);
     private getEmployeesFilesRootDir;
     create(createEmployeeDto: CreateEmployeeDto): Promise<Employee>;
     findAll(page?: number, limit?: number, is_active?: boolean, department?: number, contract_type?: string, work_location_id?: number): Promise<{
@@ -22,6 +24,7 @@ export declare class EmployeeService {
     }>;
     findOne(id: number): Promise<Employee>;
     findByEmail(email: string): Promise<Employee>;
+    findByPhone(phone: string): Promise<Employee>;
     findByCNP(cnp: string): Promise<Employee>;
     update(id: number, updateEmployeeDto: UpdateEmployeeDto): Promise<Employee>;
     remove(id: number): Promise<{

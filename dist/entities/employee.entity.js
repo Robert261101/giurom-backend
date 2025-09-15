@@ -15,6 +15,7 @@ const swagger_1 = require("@nestjs/swagger");
 const employee_work_location_history_entity_1 = require("./employee-work-location-history.entity");
 const employee_files_entity_1 = require("./employee-files.entity");
 const generated_documents_entity_1 = require("./generated-documents.entity");
+const employee_location_entity_1 = require("./employee-location.entity");
 let Employee = class Employee {
 };
 exports.Employee = Employee;
@@ -265,6 +266,14 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => generated_documents_entity_1.GeneratedDocuments, document => document.employee),
     __metadata("design:type", Array)
 ], Employee.prototype, "generatedDocuments", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'Locațiile asociate cu angajatul',
+        type: () => [employee_location_entity_1.EmployeeLocation],
+    }),
+    (0, typeorm_1.OneToMany)(() => employee_location_entity_1.EmployeeLocation, location => location.employee),
+    __metadata("design:type", Array)
+], Employee.prototype, "employeeLocations", void 0);
 exports.Employee = Employee = __decorate([
     (0, typeorm_1.Entity)('employees')
 ], Employee);

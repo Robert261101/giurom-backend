@@ -3,6 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { EmployeeWorkLocationHistory } from './employee-work-location-history.entity';
 import { EmployeeFiles } from './employee-files.entity';
 import { GeneratedDocuments } from './generated-documents.entity';
+import { EmployeeLocation } from './employee-location.entity';
 
 @Entity('employees')
 export class Employee {
@@ -232,4 +233,11 @@ export class Employee {
   })
   @OneToMany(() => GeneratedDocuments, document => document.employee)
   generatedDocuments: GeneratedDocuments[];
+
+  @ApiProperty({
+    description: 'Locațiile asociate cu angajatul',
+    type: () => [EmployeeLocation],
+  })
+  @OneToMany(() => EmployeeLocation, location => location.employee)
+  employeeLocations: EmployeeLocation[];
 }

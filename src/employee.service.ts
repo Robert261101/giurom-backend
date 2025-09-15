@@ -1,10 +1,13 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, LessThan } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThan, In } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { Employee } from './entities/employee.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
+import { EmployeeLocation } from './entities/employee-location.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
@@ -13,6 +16,7 @@ import { CreateGeneratedDocumentDto } from './dto/create-generated-document.dto'
 import { UpdateGeneratedDocumentDto } from './dto/update-generated-document.dto';
 import { CreateWorkLocationHistoryDto } from './dto/create-work-location-history.dto';
 import { UpdateWorkLocationHistoryDto } from './dto/update-work-location-history.dto';
+import { CreateEmployeeLocationDto } from './dto/create-employee-location.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,6 +31,9 @@ export class EmployeeService {
     private documentsRepository: Repository<GeneratedDocuments>,
     @InjectRepository(EmployeeWorkLocationHistory)
     private workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>,
+    @InjectRepository(EmployeeLocation)
+    private employeeLocationRepository: Repository<EmployeeLocation>,
+    private httpService: HttpService,
   ) {}
 
   private getEmployeesFilesRootDir(): string {
@@ -85,7 +92,18 @@ export class EmployeeService {
 
 
     const employee = this.employeeRepository.create(createEmployeeDto);
-    return await this.employeeRepository.save(employee);
+    const savedEmployee = await this.employeeRepository.save(employee);
+
+    // Populează automat tabela Employees_Locations dacă există work_location_default_id
+    if (savedEmployee.work_location_default_id) {
+      const employeeLocation = this.employeeLocationRepository.create({
+        employeeId: savedEmployee.id,
+        idLocation: savedEmployee.work_location_default_id
+      });
+      await this.employeeLocationRepository.save(employeeLocation);
+    }
+
+    return savedEmployee;
   }
 
   // Listarea angajaților cu filtrare și paginare
@@ -96,8 +114,15 @@ export class EmployeeService {
     department?: number,
     contract_type?: string,
     work_location_id?: number,
+    location_id?: number,
+    department_name?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
-    const queryBuilder = this.employeeRepository.createQueryBuilder('employee');
+    console.log('🔍 [EMPLOYEES] findAll called with params:', {
+      page, limit, is_active, department, contract_type, work_location_id, location_id, department_name
+    });
+
+    const queryBuilder = this.employeeRepository.createQueryBuilder('employee')
+      .leftJoinAndSelect('employee.employeeLocations', 'employeeLocations');
 
     // Aplică filtrele
     if (is_active !== undefined) {
@@ -116,6 +141,18 @@ export class EmployeeService {
       queryBuilder.andWhere('employee.work_location_default_id = :work_location_id', { work_location_id });
     }
 
+    // Filtrare după locația din employees_locations
+    if (location_id) {
+      console.log('🔍 [EMPLOYEES] Applying location filter:', location_id);
+      queryBuilder.andWhere('employeeLocations.idLocation = :location_id', { location_id });
+    }
+
+    // Filtrare după numele departamentului - temporar dezactivată (tabela worklocation_departments nu există)
+    if (department_name) {
+      console.log('🔍 [EMPLOYEES] Department name filter requested but not available:', department_name);
+      // TODO: Implementează filtrarea după numele departamentului când tabela worklocation_departments va fi disponibilă
+    }
+
     // Calculează offset-ul pentru paginare
     const offset = (page - 1) * limit;
 
@@ -125,6 +162,27 @@ export class EmployeeService {
       .take(limit)
       .skip(offset)
       .getManyAndCount();
+
+    console.log('🔍 [EMPLOYEES] Query result:', {
+      totalEmployees: total,
+      returnedEmployees: employees.length,
+      employees: employees.map(emp => ({
+        id: emp.id,
+        name: `${emp.first_name} ${emp.last_name}`,
+        employeeLocations: emp.employeeLocations?.map(el => el.idLocation) || []
+      }))
+    });
+
+    // Log detaliat pentru debugging
+    if (location_id) {
+      console.log('🔍 [EMPLOYEES] Angajații din locația ' + location_id + ':');
+      employees.forEach((emp, index) => {
+        console.log(`  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map(el => el.idLocation).join(', ') || 'none'})`);
+      });
+      if (employees.length === 0) {
+        console.log('  ❌ Nu s-au găsit angajați în locația ' + location_id);
+      }
+    }
 
     // Dacă nu se cere parola, o eliminăm din răspuns
 
@@ -137,6 +195,7 @@ export class EmployeeService {
     };
   }
 
+
   // Găsirea unui angajat după ID
   async findOne(id: number): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({
@@ -148,15 +207,17 @@ export class EmployeeService {
     }
 
     // Load related collections separately to avoid join metadata issues
-    const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+    const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
       this.workLocationHistoryRepository.find({ where: { employee_id: id } as any }),
       this.filesRepository.find({ where: { employee_id: id } as any }),
       this.documentsRepository.find({ where: { employee_id: id } as any }),
+      this.employeeLocationRepository.find({ where: { employeeId: id } as any }),
     ]);
 
     (employee as any).workLocationHistory = workLocationHistory;
     (employee as any).employeeFiles = employeeFiles;
     (employee as any).generatedDocuments = generatedDocuments;
+    (employee as any).employeeLocations = employeeLocations;
 
     return employee;
   }
@@ -172,15 +233,17 @@ export class EmployeeService {
     }
 
     const id = employee.id;
-    const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+    const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
       this.workLocationHistoryRepository.find({ where: { employee_id: id } as any }),
       this.filesRepository.find({ where: { employee_id: id } as any }),
       this.documentsRepository.find({ where: { employee_id: id } as any }),
+      this.employeeLocationRepository.find({ where: { employeeId: id } as any }),
     ]);
 
     (employee as any).workLocationHistory = workLocationHistory;
     (employee as any).employeeFiles = employeeFiles;
     (employee as any).generatedDocuments = generatedDocuments;
+    (employee as any).employeeLocations = employeeLocations;
 
     return employee;
   }
@@ -196,15 +259,17 @@ export class EmployeeService {
     }
 
     const id = employee.id;
-    const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+    const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
       this.workLocationHistoryRepository.find({ where: { employee_id: id } as any }),
       this.filesRepository.find({ where: { employee_id: id } as any }),
       this.documentsRepository.find({ where: { employee_id: id } as any }),
+      this.employeeLocationRepository.find({ where: { employeeId: id } as any }),
     ]);
 
     (employee as any).workLocationHistory = workLocationHistory;
     (employee as any).employeeFiles = employeeFiles;
     (employee as any).generatedDocuments = generatedDocuments;
+    (employee as any).employeeLocations = employeeLocations;
 
     return employee;
   }
@@ -218,15 +283,17 @@ export class EmployeeService {
     }
 
     const id = employee.id;
-    const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+    const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
       this.workLocationHistoryRepository.find({ where: { employee_id: id } as any }),
       this.filesRepository.find({ where: { employee_id: id } as any }),
       this.documentsRepository.find({ where: { employee_id: id } as any }),
+      this.employeeLocationRepository.find({ where: { employeeId: id } as any }),
     ]);
 
     (employee as any).workLocationHistory = workLocationHistory;
     (employee as any).employeeFiles = employeeFiles;
     (employee as any).generatedDocuments = generatedDocuments;
+    (employee as any).employeeLocations = employeeLocations;
 
     return employee;
   }

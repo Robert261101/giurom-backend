@@ -1,6 +1,7 @@
 import { EmployeeWorkLocationHistory } from './employee-work-location-history.entity';
 import { EmployeeFiles } from './employee-files.entity';
 import { GeneratedDocuments } from './generated-documents.entity';
+import { EmployeeLocation } from './employee-location.entity';
 export declare class Employee {
     id: number;
     first_name: string;
@@ -25,4 +26,5 @@ export declare class Employee {
     workLocationHistory: EmployeeWorkLocationHistory[];
     employeeFiles: EmployeeFiles[];
     generatedDocuments: GeneratedDocuments[];
+    employeeLocations: EmployeeLocation[];
 }

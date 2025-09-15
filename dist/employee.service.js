@@ -20,14 +20,16 @@ const employee_entity_1 = require("./entities/employee.entity");
 const employee_files_entity_1 = require("./entities/employee-files.entity");
 const generated_documents_entity_1 = require("./entities/generated-documents.entity");
 const employee_work_location_history_entity_1 = require("./entities/employee-work-location-history.entity");
+const employee_location_entity_1 = require("./entities/employee-location.entity");
 const fs = require("fs");
 const path = require("path");
 let EmployeeService = class EmployeeService {
-    constructor(employeeRepository, filesRepository, documentsRepository, workLocationHistoryRepository) {
+    constructor(employeeRepository, filesRepository, documentsRepository, workLocationHistoryRepository, employeeLocationRepository) {
         this.employeeRepository = employeeRepository;
         this.filesRepository = filesRepository;
         this.documentsRepository = documentsRepository;
         this.workLocationHistoryRepository = workLocationHistoryRepository;
+        this.employeeLocationRepository = employeeLocationRepository;
     }
     getEmployeesFilesRootDir() {
         const repoRoot = path.resolve(__dirname, '../../..');
@@ -66,7 +68,15 @@ let EmployeeService = class EmployeeService {
             }
         }
         const employee = this.employeeRepository.create(createEmployeeDto);
-        return await this.employeeRepository.save(employee);
+        const savedEmployee = await this.employeeRepository.save(employee);
+        if (savedEmployee.work_location_default_id) {
+            const employeeLocation = this.employeeLocationRepository.create({
+                employee_id: savedEmployee.id,
+                id_location: savedEmployee.work_location_default_id
+            });
+            await this.employeeLocationRepository.save(employeeLocation);
+        }
+        return savedEmployee;
     }
     async findAll(page = 1, limit = 10, is_active, department, contract_type, work_location_id) {
         const queryBuilder = this.employeeRepository.createQueryBuilder('employee');
@@ -102,14 +112,16 @@ let EmployeeService = class EmployeeService {
         if (!employee) {
             throw new common_1.NotFoundException(`Angajatul cu ID-ul ${id} nu a fost găsit`);
         }
-        const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+        const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
             this.workLocationHistoryRepository.find({ where: { employee_id: id } }),
             this.filesRepository.find({ where: { employee_id: id } }),
             this.documentsRepository.find({ where: { employee_id: id } }),
+            this.employeeLocationRepository.find({ where: { employee_id: id } }),
         ]);
         employee.workLocationHistory = workLocationHistory;
         employee.employeeFiles = employeeFiles;
         employee.generatedDocuments = generatedDocuments;
+        employee.employeeLocations = employeeLocations;
         return employee;
     }
     async findByEmail(email) {
@@ -120,14 +132,36 @@ let EmployeeService = class EmployeeService {
             throw new common_1.NotFoundException(`Angajatul cu email-ul ${email} nu a fost găsit`);
         }
         const id = employee.id;
-        const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+        const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
             this.workLocationHistoryRepository.find({ where: { employee_id: id } }),
             this.filesRepository.find({ where: { employee_id: id } }),
             this.documentsRepository.find({ where: { employee_id: id } }),
+            this.employeeLocationRepository.find({ where: { employee_id: id } }),
         ]);
         employee.workLocationHistory = workLocationHistory;
         employee.employeeFiles = employeeFiles;
         employee.generatedDocuments = generatedDocuments;
+        employee.employeeLocations = employeeLocations;
+        return employee;
+    }
+    async findByPhone(phone) {
+        const employee = await this.employeeRepository.findOne({
+            where: { phone }
+        });
+        if (!employee) {
+            throw new common_1.NotFoundException(`Angajatul cu numărul de telefon ${phone} nu a fost găsit`);
+        }
+        const id = employee.id;
+        const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
+            this.workLocationHistoryRepository.find({ where: { employee_id: id } }),
+            this.filesRepository.find({ where: { employee_id: id } }),
+            this.documentsRepository.find({ where: { employee_id: id } }),
+            this.employeeLocationRepository.find({ where: { employee_id: id } }),
+        ]);
+        employee.workLocationHistory = workLocationHistory;
+        employee.employeeFiles = employeeFiles;
+        employee.generatedDocuments = generatedDocuments;
+        employee.employeeLocations = employeeLocations;
         return employee;
     }
     async findByCNP(cnp) {
@@ -136,14 +170,16 @@ let EmployeeService = class EmployeeService {
             throw new common_1.NotFoundException(`Angajatul cu CNP-ul ${cnp} nu a fost găsit`);
         }
         const id = employee.id;
-        const [workLocationHistory, employeeFiles, generatedDocuments] = await Promise.all([
+        const [workLocationHistory, employeeFiles, generatedDocuments, employeeLocations] = await Promise.all([
             this.workLocationHistoryRepository.find({ where: { employee_id: id } }),
             this.filesRepository.find({ where: { employee_id: id } }),
             this.documentsRepository.find({ where: { employee_id: id } }),
+            this.employeeLocationRepository.find({ where: { employee_id: id } }),
         ]);
         employee.workLocationHistory = workLocationHistory;
         employee.employeeFiles = employeeFiles;
         employee.generatedDocuments = generatedDocuments;
+        employee.employeeLocations = employeeLocations;
         return employee;
     }
     async update(id, updateEmployeeDto) {
@@ -748,7 +784,9 @@ exports.EmployeeService = EmployeeService = __decorate([
     __param(1, (0, typeorm_1.InjectRepository)(employee_files_entity_1.EmployeeFiles)),
     __param(2, (0, typeorm_1.InjectRepository)(generated_documents_entity_1.GeneratedDocuments)),
     __param(3, (0, typeorm_1.InjectRepository)(employee_work_location_history_entity_1.EmployeeWorkLocationHistory)),
+    __param(4, (0, typeorm_1.InjectRepository)(employee_location_entity_1.EmployeeLocation)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository])

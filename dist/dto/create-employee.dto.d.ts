@@ -16,5 +16,4 @@ export declare class CreateEmployeeDto {
     work_location_default_id?: number;
     contract_type: string;
     is_active?: boolean;
-    password?: string;
 }

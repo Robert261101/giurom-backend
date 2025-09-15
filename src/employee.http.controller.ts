@@ -58,7 +58,9 @@ export class EmployeeHttpController {
   @ApiQuery({ name: 'is_active', required: false, description: 'Filtrează după status activ' })
   @ApiQuery({ name: 'department', required: false, description: 'Filtrează după departament' })
   @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtrează după locația implicită a angajatului' })
+  @ApiQuery({ name: 'location_id', required: false, description: 'Filtrează după locația din employees_locations' })
   @ApiQuery({ name: 'contract_type', required: false, description: 'Filtrează după tipul contractului' })
+  @ApiQuery({ name: 'department_name', required: false, description: 'Filtrează după numele departamentului' })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista angajaților a fost returnată cu succes',
@@ -70,6 +72,8 @@ export class EmployeeHttpController {
     @Query('department') department?: string,
     @Query('contract_type') contract_type?: string,
     @Query('work_location_id') work_location_id?: string,
+    @Query('location_id') location_id?: string,
+    @Query('department_name') department_name?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
@@ -83,6 +87,8 @@ export class EmployeeHttpController {
       departmentFilter,
       contract_type,
       work_location_id ? parseInt(work_location_id, 10) : undefined,
+      location_id ? parseInt(location_id, 10) : undefined,
+      department_name,
     );
   }
 
@@ -314,5 +320,17 @@ export class EmployeeHttpController {
       file_content: first.content,
     } as CreateEmployeeFileDto);
   }
+
+  @Get('location/:locationId')
+  @ApiOperation({ summary: 'Obține toți angajații din locația specificată' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({ status: 200, description: 'Lista angajaților din locație' })
+  async getEmployeesByLocation(@Param('locationId', ParseIntPipe) locationId: number) {
+    console.log('🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:', locationId);
+    const employees = await this.employeeService.findAll(1, 1000, undefined, undefined, undefined, undefined, locationId);
+    console.log('🔍 [EMPLOYEES CONTROLLER] Angajați returnați:', employees.employees.length);
+    return { employees: employees.employees };
+  }
+
 
 }

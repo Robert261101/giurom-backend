@@ -28,6 +28,7 @@ export declare class EmployeeHttpController {
     getEmployeeFiles(employeeId: number): Promise<import("./entities/employee-files.entity").EmployeeFiles[]>;
     getFilesByQuery(employee_id?: string): Promise<import("./entities/employee-files.entity").EmployeeFiles[]>;
     findByEmail(email: string): Promise<Employee>;
+    findByPhone(phone: string): Promise<Employee>;
     findByCNP(cnp: string): Promise<Employee>;
     findOne(id: string): Promise<Employee>;
     update(id: string, updateEmployeeDto: UpdateEmployeeDto): Promise<Employee>;
@@ -35,8 +36,8 @@ export declare class EmployeeHttpController {
     remove(id: string): Promise<{
         message: string;
     }>;
-    getEmployeeFile(fileId: number, download: string, res: Response): Promise<any>;
-    viewEmployeeFile(fileId: number, res: Response): Promise<any>;
+    getEmployeeFile(fileId: number, download: string, res: Response): Promise<Response<any, Record<string, any>>>;
+    viewEmployeeFile(fileId: number, res: Response): Promise<Response<any, Record<string, any>>>;
     addEmployeeFile(employeeId: number, body: Omit<CreateEmployeeFileDto, 'employee_id'> & {
         employee_id?: number;
     }): Promise<import("./entities/employee-files.entity").EmployeeFiles>;

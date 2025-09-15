@@ -11,7 +11,6 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmployeeHttpController = void 0;
 const common_1 = require("@nestjs/common");
@@ -20,7 +19,6 @@ const employee_service_1 = require("./employee.service");
 const create_employee_dto_1 = require("./dto/create-employee.dto");
 const update_employee_dto_1 = require("./dto/update-employee.dto");
 const employee_entity_1 = require("./entities/employee.entity");
-const express_1 = require("express");
 const buffer_1 = require("buffer");
 let EmployeeHttpController = class EmployeeHttpController {
     constructor(employeeService) {
@@ -54,6 +52,9 @@ let EmployeeHttpController = class EmployeeHttpController {
     }
     async findByEmail(email) {
         return this.employeeService.findByEmail(email);
+    }
+    async findByPhone(phone) {
+        return this.employeeService.findByPhone(phone);
     }
     async findByCNP(cnp) {
         return this.employeeService.findByCNP(cnp);
@@ -202,6 +203,27 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], EmployeeHttpController.prototype, "findByEmail", null);
 __decorate([
+    (0, common_1.Get)('phone/:phone'),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Găsește angajat după telefon',
+        description: 'Returnează detaliile angajatului cu numărul de telefon specificat.',
+    }),
+    (0, swagger_1.ApiParam)({ name: 'phone', description: 'Numărul de telefon al angajatului' }),
+    (0, swagger_1.ApiResponse)({
+        status: common_1.HttpStatus.OK,
+        description: 'Angajatul a fost găsit',
+        type: employee_entity_1.Employee,
+    }),
+    (0, swagger_1.ApiResponse)({
+        status: common_1.HttpStatus.NOT_FOUND,
+        description: 'Angajatul nu a fost găsit',
+    }),
+    __param(0, (0, common_1.Param)('phone')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], EmployeeHttpController.prototype, "findByPhone", null);
+__decorate([
     (0, common_1.Get)('cnp/:cnp'),
     (0, swagger_1.ApiOperation)({
         summary: 'Găsește angajat după CNP',
@@ -292,7 +314,7 @@ __decorate([
     __param(1, (0, common_1.Query)('download')),
     __param(2, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, String, typeof (_a = typeof express_1.Response !== "undefined" && express_1.Response) === "function" ? _a : Object]),
+    __metadata("design:paramtypes", [Number, String, Object]),
     __metadata("design:returntype", Promise)
 ], EmployeeHttpController.prototype, "getEmployeeFile", null);
 __decorate([
@@ -300,7 +322,7 @@ __decorate([
     __param(0, (0, common_1.Param)('fileId', common_1.ParseIntPipe)),
     __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, typeof (_b = typeof express_1.Response !== "undefined" && express_1.Response) === "function" ? _b : Object]),
+    __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", Promise)
 ], EmployeeHttpController.prototype, "viewEmployeeFile", null);
 __decorate([
