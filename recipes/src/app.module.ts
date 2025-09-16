@@ -17,9 +17,14 @@ import { RecipesMicroController } from './recipes.micro.controller';
 import { RecipesHttpController } from './recipes.http.controller';
 import { RecipePreparationsService } from './recipes/recipes-preparations.service';
 import { RecipesLabelsService } from './recipes/recipes-labels.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ScheduleModule.forRoot(),
     ClientsModule.register([
@@ -61,7 +66,13 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
     TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, ProductRef, StockRef, StockTransactionRef]),
   ],
   controllers: [RecipesMicroController, RecipesHttpController],
-  providers: [RecipesService, RecipePreparationsService, RecipesLabelsService],
+  providers: [
+    RecipesService,
+    RecipePreparationsService,
+    RecipesLabelsService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}
 

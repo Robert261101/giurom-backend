@@ -7,11 +7,16 @@ import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { WasteRecord } from './stock/entities/waste-record.entity';
 import { StockService } from './stock/stock.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mariadb',
@@ -33,6 +38,10 @@ import { StockHttpController } from './stock/stock.http.controller';
     TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord]),
   ],
   controllers: [StockMicroController, StockHttpController],
-  providers: [StockService],
+  providers: [
+    StockService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}
