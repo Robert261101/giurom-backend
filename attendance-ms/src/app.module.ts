@@ -6,11 +6,16 @@ import { Shift } from './entities/shift.entity';
 import { Presence } from './entities/presence.entity';
 import { PresenceInflexion } from './entities/presence-inflexion.entity';
 import { AttendanceService } from './attendance.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceMicroController } from './attendance.micro.controller';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mysql',
@@ -35,7 +40,11 @@ import { AttendanceMicroController } from './attendance.micro.controller';
     ]),
   ],
   controllers: [AttendanceController, AttendanceMicroController],
-  providers: [AttendanceService],
+  providers: [
+    AttendanceService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
   exports: [AttendanceService, TypeOrmModule],
 })
 export class AppModule {}

@@ -20,6 +20,7 @@ import {
   ApiExtraModels,
 } from '@nestjs/swagger';
 import { AttendanceService } from './attendance.service';
+import { Permissions } from './permissions/permissions.decorator';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { CreatePresenceDto } from './dto/create-presence.dto';
@@ -39,6 +40,7 @@ export class AttendanceController {
 
   // SHIFT ENDPOINTS
   @Post('shifts')
+  @Permissions('attendance.create')
   @ApiOperation({
     summary: 'Creează un nou schimb de lucru',
     description: 'Creează un schimb de lucru pentru un angajat cu validare de overlap și conflicte.',
@@ -61,6 +63,7 @@ export class AttendanceController {
   }
 
   @Get('shifts')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Listează toate schimburile de lucru',
     description: 'Returnează o listă paginată cu toate schimburile de lucru cu opțiuni de filtrare.',
@@ -90,6 +93,7 @@ export class AttendanceController {
   }
 
   @Get('shifts/:id')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Obține un schimb de lucru după ID',
     description: 'Returnează detaliile complete ale unui schimb de lucru inclusiv relațiile.',
@@ -109,6 +113,7 @@ export class AttendanceController {
   }
 
   @Patch('shifts/:id')
+  @Permissions('attendance.update')
   @ApiOperation({
     summary: 'Actualizează un schimb de lucru',
     description: 'Actualizează datele unui schimb de lucru existent cu validare de conflicte.',
@@ -135,6 +140,7 @@ export class AttendanceController {
   }
 
   @Delete('shifts/:id')
+  @Permissions('attendance.delete')
   @ApiOperation({
     summary: 'Șterge un schimb de lucru',
     description: 'Șterge definitiv un schimb de lucru și toate prezențele asociate.',
@@ -154,6 +160,7 @@ export class AttendanceController {
 
   // PRESENCE ENDPOINTS
   @Post('presences')
+  @Permissions('attendance.create')
   @ApiOperation({
     summary: 'Înregistrează o nouă prezență',
     description: 'Creează o înregistrare de prezență pentru un schimb cu calculare automată a orelor lucrate.',
@@ -176,6 +183,7 @@ export class AttendanceController {
   }
 
   @Get('presences')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Listează toate prezențele',
     description: 'Returnează o listă paginată cu toate prezențele cu opțiuni avansate de filtrare.',
@@ -202,6 +210,7 @@ export class AttendanceController {
   }
 
   @Get('presences/:id')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Obține o prezență după ID',
     description: 'Returnează detaliile complete ale unei prezențe inclusiv punctele de inflexiune.',
@@ -221,6 +230,7 @@ export class AttendanceController {
   }
 
   @Patch('presences/:id')
+  @Permissions('attendance.update')
   @ApiOperation({
     summary: 'Actualizează o prezență',
     description: 'Actualizează datele unei prezențe existente cu recalculare automată a orelor.',
@@ -243,6 +253,7 @@ export class AttendanceController {
   }
 
   @Delete('presences/:id')
+  @Permissions('attendance.delete')
   @ApiOperation({
     summary: 'Șterge o prezență',
     description: 'Șterge definitiv o prezență și toate punctele de inflexiune asociate.',
@@ -262,6 +273,7 @@ export class AttendanceController {
 
   // PRESENCE INFLEXION ENDPOINTS
   @Post('presence-inflexions')
+  @Permissions('attendance.create')
   @ApiOperation({
     summary: 'Înregistrează un punct de inflexiune',
     description: 'Creează un punct de inflexiune (ieșire/intrare) pentru o prezență cu coordonate GPS.',
@@ -284,6 +296,7 @@ export class AttendanceController {
   }
 
   @Get('presence-inflexions')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Listează toate punctele de inflexiune',
     description: 'Returnează o listă paginată cu toate punctele de inflexiune cu opțiuni de filtrare.',
@@ -306,6 +319,7 @@ export class AttendanceController {
   }
 
   @Get('presence-inflexions/:id')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Obține un punct de inflexiune după ID',
     description: 'Returnează detaliile complete ale unui punct de inflexiune inclusiv datele GPS.',
@@ -325,6 +339,7 @@ export class AttendanceController {
   }
 
   @Patch('presence-inflexions/:id')
+  @Permissions('attendance.update')
   @ApiOperation({
     summary: 'Actualizează un punct de inflexiune',
     description: 'Actualizează datele unui punct de inflexiune existent.',
@@ -347,6 +362,7 @@ export class AttendanceController {
   }
 
   @Delete('presence-inflexions/:id')
+  @Permissions('attendance.delete')
   @ApiOperation({
     summary: 'Șterge un punct de inflexiune',
     description: 'Șterge definitiv un punct de inflexiune.',
@@ -366,6 +382,7 @@ export class AttendanceController {
 
   // STATISTICS ENDPOINT
   @Get('statistics')
+  @Permissions('attendance.read')
   @ApiOperation({
     summary: 'Obține statistici de prezență',
     description: 'Generează rapoarte și statistici detaliate despre prezența angajaților.',

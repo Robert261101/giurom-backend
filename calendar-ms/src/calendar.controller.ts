@@ -20,6 +20,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { CalendarService } from './calendar.service';
+import { Permissions } from './permissions/permissions.decorator';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
@@ -35,6 +36,7 @@ export class CalendarController {
 
   // POST /calendar/recurrence-rules – creare regulă recurență
   @Post('recurrence-rules')
+  @Permissions('calendar.create')
   @ApiOperation({ summary: 'Creează o regulă de recurență pentru evenimente' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -51,6 +53,7 @@ export class CalendarController {
 
   // GET /calendar/recurrence-rules – listare reguli de recurență
   @Get('recurrence-rules')
+  @Permissions('calendar.read')
   @ApiOperation({ summary: 'Obține toate regulile de recurență' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -63,6 +66,7 @@ export class CalendarController {
 
   // GET /calendar/recurrence-rules/:id – obținere regulă specifică
   @Get('recurrence-rules/:id')
+  @Permissions('calendar.read')
   @ApiOperation({ summary: 'Obține o regulă de recurență specifică' })
   @ApiParam({ name: 'id', description: 'ID-ul regulii de recurență' })
   @ApiResponse({
@@ -80,6 +84,7 @@ export class CalendarController {
 
   // POST /calendar/events – creare eveniment
   @Post('events')
+  @Permissions('calendar.create')
   @ApiOperation({ summary: 'Creează un eveniment în calendar' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -112,6 +117,7 @@ export class CalendarController {
 
   // GET /calendar/events – listare evenimente (filtrare opțională)
   @Get('events')
+  @Permissions('calendar.read')
   @ApiOperation({ summary: 'Obține evenimente din calendar cu filtrare opțională' })
   @ApiQuery({ name: 'start_date', required: false, description: 'Data de început pentru filtrare (ISO format)' })
   @ApiQuery({ name: 'end_date', required: false, description: 'Data de sfârșit pentru filtrare (ISO format)' })
@@ -133,6 +139,7 @@ export class CalendarController {
 
   // GET /calendar/events/:id – obținere eveniment specific
   @Get('events/:id')
+  @Permissions('calendar.read')
   @ApiOperation({ summary: 'Obține detaliile unui eveniment specific' })
   @ApiParam({ name: 'id', description: 'ID-ul evenimentului' })
   @ApiResponse({
@@ -158,6 +165,7 @@ export class CalendarController {
 
   // PATCH /calendar/events/:id – modificare eveniment
   @Patch('events/:id')
+  @Permissions('calendar.update')
   @ApiOperation({ summary: 'Modifică un eveniment din calendar' })
   @ApiParam({ name: 'id', description: 'ID-ul evenimentului' })
   @ApiResponse({
@@ -188,6 +196,7 @@ export class CalendarController {
 
   // PATCH /calendar/events/:id/recurrence-end-date – oprește recurența începând cu o dată
   @Patch('events/:id/recurrence-end-date')
+  @Permissions('calendar.update')
   @ApiOperation({ summary: 'Oprește recurența pentru evenimentul de bază începând cu o dată' })
   @ApiParam({ name: 'id', description: 'ID-ul evenimentului de bază' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Recurența a fost oprită' })
@@ -202,6 +211,7 @@ export class CalendarController {
 
   // DELETE /calendar/events/:id – ștergere eveniment
   @Delete('events/:id')
+  @Permissions('calendar.delete')
   @ApiOperation({ summary: 'Șterge un eveniment din calendar' })
   @ApiParam({ name: 'id', description: 'ID-ul evenimentului' })
   @ApiResponse({
@@ -226,6 +236,7 @@ export class CalendarController {
 
   // GET /calendar/recurrence-rules/:id/generate-events – generare evenimente recurente
   @Get('recurrence-rules/:id/generate-events')
+  @Permissions('calendar.read')
   @ApiOperation({ summary: 'Generează evenimente pe baza unei reguli de recurență' })
   @ApiParam({ name: 'id', description: 'ID-ul regulii de recurență' })
   @ApiQuery({ name: 'start_date', description: 'Data de început pentru generare (ISO format)' })

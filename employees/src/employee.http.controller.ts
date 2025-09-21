@@ -28,6 +28,7 @@ import { EmployeesLocations } from './entities/employees-locations.entity';
 import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.dto';
 import { Response } from 'express';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
+import { Permissions } from './permissions/permissions.decorator';
 
 @ApiTags('employees')
 @Controller('employees')
@@ -36,6 +37,7 @@ export class EmployeeHttpController {
   constructor(private readonly employeeService: EmployeeService) {}
 
   @Post()
+  @Permissions('employees.create')
   @ApiOperation({
     summary: 'Creează un angajat nou',
     description: 'Adaugă un nou angajat în sistem cu toate informațiile necesare.',
@@ -50,6 +52,7 @@ export class EmployeeHttpController {
   }
 
   @Get()
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Listează toți angajații',
     description: 'Returnează o listă paginată cu toți angajații din sistem cu opțiuni de filtrare.',
@@ -88,6 +91,7 @@ export class EmployeeHttpController {
   }
 
   @Get('statistics')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Statistici angajați',
     description: 'Returnează statistici detaliate despre angajați.',
@@ -109,6 +113,7 @@ export class EmployeeHttpController {
 
   // List employee files by employee ID
   @Get(':employeeId/files')
+  @Permissions('employees.read')
   async getEmployeeFiles(
     @Param('employeeId', ParseIntPipe) employeeId: number,
   ) {
@@ -117,6 +122,7 @@ export class EmployeeHttpController {
 
   // Optional: list via query (used by some legacy callers)
   @Get('files')
+  @Permissions('employees.read')
   async getFilesByQuery(@Query('employee_id') employee_id?: string) {
     if (!employee_id) {
       return [];
@@ -129,6 +135,7 @@ export class EmployeeHttpController {
   }
 
   @Get('email/:email')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Găsește angajat după email',
     description: 'Returnează detaliile angajatului cu email-ul specificat.',
@@ -144,6 +151,7 @@ export class EmployeeHttpController {
   }
 
   @Get('cnp/:cnp')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Găsește angajat după CNP',
     description: 'Returnează detaliile angajatului cu CNP-ul specificat.',
@@ -159,6 +167,7 @@ export class EmployeeHttpController {
   }
 
   @Get(':id')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Găsește angajat după ID',
     description: 'Returnează detaliile angajatului cu ID-ul specificat, incluzând toate relațiile.',
@@ -174,6 +183,7 @@ export class EmployeeHttpController {
   }
 
   @Patch(':id')
+  @Permissions('employees.update')
   @ApiOperation({
     summary: 'Actualizează un angajat',
     description: 'Actualizează informațiile unui angajat existent.',
@@ -192,6 +202,7 @@ export class EmployeeHttpController {
   }
 
   @Patch(':id/toggle-active')
+  @Permissions('employees.update')
   @ApiOperation({
     summary: 'Activează/dezactivează un angajat',
     description: 'Schimbă statusul activ al unui angajat (activ ↔ inactiv).',
@@ -207,6 +218,7 @@ export class EmployeeHttpController {
   }
 
   @Delete(':id')
+  @Permissions('employees.delete')
   @ApiOperation({
     summary: 'Șterge un angajat',
     description: 'Șterge definitiv un angajat din sistem. Atenție: această operație este ireversibilă!',
@@ -222,6 +234,7 @@ export class EmployeeHttpController {
 
   // Serve employee file (download or inline based on query)
   @Get('file/:fileId')
+  @Permissions('employees.read')
   async getEmployeeFile(
     @Param('fileId', ParseIntPipe) fileId: number,
     @Query('download') download: string,
@@ -241,6 +254,7 @@ export class EmployeeHttpController {
 
   // Force inline view
   @Get('file/:fileId/view')
+  @Permissions('employees.read')
   async viewEmployeeFile(
     @Param('fileId', ParseIntPipe) fileId: number,
     @Res() res: Response,
@@ -255,6 +269,7 @@ export class EmployeeHttpController {
 
   // Create employee file (metadata or with base64 content)
   @Post(':employeeId/files')
+  @Permissions('employees.create')
   async addEmployeeFile(
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Body() body: Omit<CreateEmployeeFileDto, 'employee_id'> & { employee_id?: number },
@@ -271,6 +286,7 @@ export class EmployeeHttpController {
 
   // Backwards-compatible route used by frontend add form
   @Post(':employeeId/documents-with-content')
+  @Permissions('employees.create')
   async addEmployeeDocumentWithContent(
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string }> },
@@ -294,6 +310,7 @@ export class EmployeeHttpController {
   // ==================== EMPLOYEES LOCATIONS ENDPOINTS ====================
 
   @Post('locations/assign')
+  @Permissions('employees.update')
   @ApiOperation({
     summary: 'Asignă un angajat la o locație',
     description: 'Creează o asociere între un angajat și o locație de lucru.',
@@ -312,6 +329,7 @@ export class EmployeeHttpController {
   }
 
   @Get(':employeeId/locations')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Obține locațiile unui angajat',
     description: 'Returnează toate locațiile la care este asignat un angajat.',
@@ -330,6 +348,7 @@ export class EmployeeHttpController {
   }
 
   @Get('locations/:locationId/employees')
+  @Permissions('employees.read')
   @ApiOperation({
     summary: 'Obține angajații unei locații',
     description: 'Returnează toți angajații asignați la o locație de lucru.',
@@ -347,6 +366,7 @@ export class EmployeeHttpController {
   }
 
   @Delete(':employeeId/locations/:locationId')
+  @Permissions('employees.update')
   @ApiOperation({
     summary: 'Elimină angajatul de la locație',
     description: 'Șterge asocierea dintre un angajat și o locație de lucru.',

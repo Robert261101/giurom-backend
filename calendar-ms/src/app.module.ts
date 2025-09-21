@@ -7,11 +7,16 @@ import { RecurrenceRule } from './entities/recurrence-rule.entity';
 import { ShiftChangeRequests } from './entities/shift-change-requests.entity';
 import { LeaveRequest } from './entities/leave-request.entity';
 import { CalendarService } from './calendar.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { CalendarController } from './calendar.controller';
 import { CalendarMicroController } from './calendar.micro.controller';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mysql',
@@ -33,7 +38,11 @@ import { CalendarMicroController } from './calendar.micro.controller';
     TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, ShiftChangeRequests, LeaveRequest]),
   ],
   controllers: [CalendarController, CalendarMicroController],
-  providers: [CalendarService],
+  providers: [
+    CalendarService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
   exports: [CalendarService, TypeOrmModule],
 })
 export class AppModule {}
