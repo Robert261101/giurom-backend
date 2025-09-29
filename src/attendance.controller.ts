@@ -384,4 +384,45 @@ export class AttendanceController {
   ) {
     return await this.attendanceService.getAttendanceStatistics(employee_id, start_date, end_date);
   }
+
+  // ENDPOINT-URI PENTRU RECURENȚA TASK-URILOR
+  @Get('shifts/by-date')
+  @ApiOperation({
+    summary: 'Obține schimburile pentru o anumită dată',
+    description: 'Returnează schimburile pentru o anumită dată cu filtrare opțională',
+  })
+  @ApiQuery({ name: 'date', required: true, description: 'Data pentru care se caută schimburile (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'department_id', required: false, description: 'Filtrare după departament' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Schimburile au fost returnate cu succes',
+  })
+  async getShiftsByDate(
+    @Query('date') date: string,
+    @Query('department_id') department_id?: string,
+  ) {
+    const targetDate = new Date(date);
+    const dep = department_id ? Number(department_id) : undefined;
+    return await this.attendanceService.getShiftsByDate(targetDate, dep);
+  }
+
+  @Get('presence/by-date')
+  @ApiOperation({
+    summary: 'Obține prezențele pentru o anumită dată',
+    description: 'Returnează prezențele pentru o anumită dată cu filtrare opțională',
+  })
+  @ApiQuery({ name: 'date', required: true, description: 'Data pentru care se caută prezențele (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'department_id', required: false, description: 'Filtrare după departament' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Prezențele au fost returnate cu succes',
+  })
+  async getPresenceByDate(
+    @Query('date') date: string,
+    @Query('department_id') department_id?: string,
+  ) {
+    const targetDate = new Date(date);
+    const dep = department_id ? Number(department_id) : undefined;
+    return await this.attendanceService.getPresenceByDate(targetDate, dep);
+  }
 }

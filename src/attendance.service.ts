@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
+import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Shift } from './entities/shift.entity';
@@ -394,5 +394,53 @@ export class AttendanceService implements OnModuleInit {
       totalHours: totalHours?.total || 0,
       attendanceRate: totalPresences > 0 ? ((presentFull + presentPartial) / totalPresences) * 100 : 0,
     };
+  }
+
+  // METODE PENTRU RECURENȚA TASK-URILOR
+  async getShiftsByDate(date: Date, department_id?: number): Promise<Shift[]> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const where: any = {
+      start_datetime: LessThanOrEqual(endOfDay),
+      end_datetime: MoreThanOrEqual(startOfDay),
+    };
+    
+    if (department_id) {
+      where.department_id = department_id;
+    }
+    
+    return await this.shiftRepository.find({
+      where,
+      relations: ['presences'],
+    });
+  }
+
+  async getPresenceByDate(date: Date, department_id?: number): Promise<Presence[]> {
+    const where: any = {
+      date: date,
+      status: In([PresenceStatus.PRESENT_FULL, PresenceStatus.PRESENT_PARTIAL]),
+    };
+    
+    if (department_id) {
+      // Join cu shifts pentru a filtra după departament
+      return await this.presenceRepository
+        .createQueryBuilder('presence')
+        .leftJoinAndSelect('presence.shift', 'shift')
+        .where('presence.date = :date', { date })
+        .andWhere('presence.status IN (:...statuses)', { 
+          statuses: [PresenceStatus.PRESENT_FULL, PresenceStatus.PRESENT_PARTIAL] 
+        })
+        .andWhere('shift.department_id = :department_id', { department_id })
+        .getMany();
+    }
+    
+    return await this.presenceRepository.find({
+      where,
+      relations: ['shift'],
+    });
   }
 }
