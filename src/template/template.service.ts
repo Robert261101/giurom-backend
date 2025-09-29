@@ -22,7 +22,6 @@ export class TemplateService {
     // Creează template-ul
     const template = this.templateRepository.create({
       template_name: createTemplateDto.template_name,
-      template_type: createTemplateDto.template_type,
     });
     
     const savedTemplate = await this.templateRepository.save(template);
@@ -162,13 +161,10 @@ export class TemplateService {
     const template = await this.findOneWithoutLocationCheck(id);
 
     // Actualizează template-ul dacă este specificat
-    if (updateTemplateDto.template_name || updateTemplateDto.template_type) {
     if (updateTemplateDto.template_name) {
-      template.template_name = updateTemplateDto.template_name;
-      }
-      if (updateTemplateDto.template_type) {
-        template.template_type = updateTemplateDto.template_type;
-      }
+      if (updateTemplateDto.template_name) {
+        template.template_name = updateTemplateDto.template_name;
+        }
       await this.templateRepository.save(template);
     }
 

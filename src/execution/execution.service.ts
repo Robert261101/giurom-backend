@@ -29,7 +29,7 @@ export class ExecutionService {
     private taskElementRepository: Repository<TaskElement>,
   ) {}
 
-  async create(createExecutionDto: CreateExecutionDto): Promise<TaskExecution> {
+  async create(createExecutionDto: CreateExecutionDto): Promise<{ execution: TaskExecution; points: number; isOverdue: boolean; message: string }> {
     // Verifică dacă assignment-ul există
     const assignment = await this.taskAssignmentRepository.findOne({ 
       where: { id: createExecutionDto.task_assignment_id } 
@@ -41,6 +41,9 @@ export class ExecutionService {
 
     // Extrage answers din DTO
     const { answers, ...executionData } = createExecutionDto;
+    
+    // Setează employee_id cu assigned_to_id din assignment (angajatul căruia i s-a atribuit sarcina)
+    executionData.employee_id = assignment.assigned_to_id;
     
     // Creează execuția
     const execution = this.executionRepository.create(executionData);
@@ -127,14 +130,55 @@ export class ExecutionService {
     const executionWithRelations = await this.findOne(savedExecution.id);
 
     // Dacă execuția este finalizată (completed_at este setat), verifică dacă are elemente cu puncte
+    let points = 0;
+    let isOverdue = false;
+    let message = 'Sarcina a fost finalizată cu succes!';
+
     if (executionWithRelations.completed_at) {
+      // Obține assignment-ul cu elementele pentru calculul punctajului
+      const assignmentWithElements = await this.taskAssignmentRepository.findOne({
+        where: { id: createExecutionDto.task_assignment_id },
+        relations: ['elements', 'elements.task_element']
+      });
+
+      if (assignmentWithElements) {
+        // Calculează punctajul și verifică dacă este întârziat
+        const result = this.calculateTaskPoints(executionWithRelations, assignmentWithElements);
+        points = result.points;
+        isOverdue = result.isOverdue;
+
+        // Generează mesajul în funcție de situație
+        console.log(`🔍 DEBUG BACKEND create - FINAL RESULT: points=${points}, isOverdue=${isOverdue}`);
+        
+        if (isOverdue && points < 0) {
+          message = `S-a finalizat sarcina cu succes, dar ai pierdut ${Math.abs(points)} puncte pentru că ai depășit termenul!`;
+        } else if (points > 0) {
+          message = `Sarcina a fost finalizată cu succes! Ai câștigat ${points} puncte.`;
+        } else if (isOverdue && points === 0) {
+          message = `S-a finalizat sarcina cu succes, dar ai pierdut puncte pentru că ai depășit termenul!`;
+        } else {
+          message = 'Sarcina a fost finalizată cu succes!';
+        }
+      }
+
       await this.handleTaskCompletion(executionWithRelations);
     }
 
-    return executionWithRelations;
+    return {
+      execution: executionWithRelations,
+      points,
+      isOverdue,
+      message
+    };
   }
 
   async findAll(user: any, includeAssignment: boolean = true): Promise<TaskExecution[]> {
+    console.log('🔍 [execution.service] findAll - User:', user ? 'EXISTĂ' : 'LIPSEȘTE')
+    if (user) {
+      console.log('🔍 [execution.service] User ID:', user.sub)
+      console.log('🔍 [execution.service] User permissions:', user.permissions)
+    }
+    
     const query = this.executionRepository
       .createQueryBuilder('execution')
       .leftJoinAndSelect('execution.answers', 'answers')
@@ -150,29 +194,57 @@ export class ExecutionService {
 
     // execution.read_all - vede toate
     if (user?.permissions?.includes('execution.read_all')) {
-      return await query.getMany();
+      console.log('✅ [execution.service] User are execution.read_all - returnez toate executions')
+      const result = await query.getMany();
+      console.log('🔍 [execution.service] Rezultat query read_all:', result.length, 'executions')
+      return result;
     }
 
     // execution.read_company - vede după compania din work_location
     if (user?.permissions?.includes('execution.read_company')) {
+      console.log('✅ [execution.service] User are execution.read_company - returnez toate executions')
       // TODO: Implementare când avem legătura cu compania
-      return await query.getMany();
+      // Pentru read_company, managerii văd TOATE executions (inclusiv invizibile)
+      const result = await query.getMany();
+      console.log('🔍 [execution.service] Rezultat query read_company:', result.length, 'executions')
+      return result;
     }
 
     // execution.read_location - vede după work_location
     if (user?.permissions?.includes('execution.read_location')) {
+      console.log('✅ [execution.service] User are execution.read_location - returnez toate executions')
       // TODO: Implementare când avem legătura cu work_location
-      return await query.getMany();
+      // Pentru read_location, managerii văd TOATE executions (inclusiv invizibile)
+      const result = await query.getMany();
+      console.log('🔍 [execution.service] Rezultat query read_location:', result.length, 'executions')
+      return result;
     }
 
     // execution.read_own - vede doar execuțiile lui (employee_id = user.sub)
     if (user?.permissions?.includes('execution.read_own')) {
-      return await query
-        .where('execution.employee_id = :userId', { userId: user.sub })
-        .getMany();
+      console.log('✅ [execution.service] User are execution.read_own - filtrez după employee_id și vizibilitate')
+      
+      // Dacă are și assignment.create (este manager), poate vedea executions invizibile
+      if (user?.permissions?.includes('assignment.create')) {
+        console.log('✅ [execution.service] User este manager (are assignment.create) - poate vedea executions invizibile')
+        const result = await query.getMany();
+        console.log('🔍 [execution.service] Rezultat query read_own (manager):', result.length, 'executions')
+        return result;
+      } else {
+        // Dacă nu este manager, filtrează doar executions vizibile
+        console.log('✅ [execution.service] User nu este manager - filtrez doar executions vizibile')
+        const result = await query
+          .leftJoin('execution.task_assignment', 'assignment')
+          .where('execution.employee_id = :userId', { userId: user.sub })
+          .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
+          .getMany();
+        console.log('🔍 [execution.service] Rezultat query read_own (angajat):', result.length, 'executions')
+        return result;
+      }
     }
 
     // Dacă nu are nicio permisiune, returnează array gol
+    console.log('❌ [execution.service] User nu are nicio permisiune pentru executions - returnez array gol')
     return [];
   }
 
@@ -635,28 +707,61 @@ export class ExecutionService {
 
     // Verifică dacă task-ul are deadline și dacă este finalizat în timp
     const deadlineElement = assignment.elements?.find(el => el.task_element.element_type === 'finish_at');
-    if (deadlineElement && execution.completed_at) {
-      // Folosește value din assignment element pentru deadline
-      console.log(`🔍 DEBUG Task ${execution.id} - deadlineElement.value:`, deadlineElement.value);
+    const finalizedInElement = assignment.elements?.find(el => el.task_element.element_type === 'finalized_in');
+    const allowPostponeElement = assignment.elements?.find(el => el.task_element.element_type === 'allow_postpone');
+    
+    // Verifică dacă există "permite amânarea" - dacă da, anulează efectul deadline-ului
+    const hasAllowPostpone = allowPostponeElement && allowPostponeElement.value === 'true';
+    
+    if ((deadlineElement || finalizedInElement) && execution.completed_at && !hasAllowPostpone) {
+      let deadline: Date | null = null;
       
-      if (deadlineElement.value && deadlineElement.value.trim() !== '') {
-        const deadline = new Date(deadlineElement.value);
+      // Verifică dacă există finish_at (deadline fix)
+      if (deadlineElement && deadlineElement.value && deadlineElement.value.trim() !== '') {
+        deadline = new Date(deadlineElement.value);
+        console.log(`🔍 DEBUG Task ${execution.id} - finish_at deadline:`, deadlineElement.value);
+      }
+      // Altfel, verifică dacă există finalized_in (deadline calculat)
+      else if (finalizedInElement && finalizedInElement.value && finalizedInElement.value.trim() !== '') {
+        try {
+          const durationData = JSON.parse(finalizedInElement.value);
+          const hours = durationData.hours || 0;
+          const minutes = durationData.minutes || 0;
+          
+          // Calculează deadline-ul bazat pe assigned_at + durata
+          deadline = new Date(assignment.assigned_at);
+          deadline.setHours(deadline.getHours() + hours);
+          deadline.setMinutes(deadline.getMinutes() + minutes);
+          
+          console.log(`🔍 DEBUG Task ${execution.id} - finalized_in duration:`, { hours, minutes });
+          console.log(`🔍 DEBUG Task ${execution.id} - assigned_at:`, assignment.assigned_at);
+          console.log(`🔍 DEBUG Task ${execution.id} - calculated deadline:`, deadline.toISOString());
+        } catch (e) {
+          console.log(`   ❌ Eroare la parsarea finalized_in:`, e);
+          deadline = null;
+        }
+      }
+      
+      if (deadline && !isNaN(deadline.getTime())) {
         const completionTime = new Date(execution.completed_at);
         
-        // Verifică dacă datele sunt valide
-        if (!isNaN(deadline.getTime()) && !isNaN(completionTime.getTime())) {
+        // Verifică dacă data de finalizare este validă
+        if (!isNaN(completionTime.getTime())) {
           isOverdue = completionTime > deadline;
           console.log(`   📅 Deadline: ${deadline.toISOString()}`);
           console.log(`   ✅ Finalizat: ${completionTime.toISOString()}`);
           console.log(`   ⏰ Este întârziat: ${isOverdue}`);
         } else {
-          console.log(`   ❌ Date invalide - deadline: ${deadlineElement.value}, completed_at: ${execution.completed_at}`);
-          isOverdue = false; // Default la false dacă datele sunt invalide
+          console.log(`   ❌ Data de finalizare invalidă: ${execution.completed_at}`);
+          isOverdue = false;
         }
       } else {
-        console.log(`   ℹ️ Nu există deadline setat`);
+        console.log(`   ℹ️ Nu există deadline valid setat`);
         isOverdue = false; // Nu este întârziat dacă nu există deadline
       }
+    } else if (hasAllowPostpone) {
+      console.log(`   🕐 Task-ul permite amânarea - deadline-ul este anulat`);
+      isOverdue = false; // Nu este întârziat dacă permite amânarea
     }
 
     // Găsește toate elementele cu puncte din assignment (scoring_boolean și scoring_simple)
@@ -708,8 +813,8 @@ export class ExecutionService {
             totalPoints -= simpleScorePoints;
           } else {
             // Punctaj normal - punctele fixe
-            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple normal, adding:`, answer.score_awarded)
-            totalPoints += answer.score_awarded || 0;
+            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple normal, adding:`, simpleScorePoints)
+            totalPoints += simpleScorePoints;
           }
         } else {
           console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple no answer or score_awarded = 0`)

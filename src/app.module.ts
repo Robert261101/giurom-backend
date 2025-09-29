@@ -7,6 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { TemplateModule } from './template/template.module';
 import { ExecutionModule } from './execution/execution.module';
 import { AssignmentModule } from './assignment/assignment.module';
+import { CronModule } from './cron/cron.module';
 import { TaskTemplate } from './template/entity/task-template.entity';
 import { TaskElement } from './template/entity/task-element.entity';
 import { TemplateLocation } from './template/entity/template-location.entity';
@@ -43,7 +44,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         TaskAssignment,
         TaskAssignmentElement
       ],
-      synchronize: true, // Temporar pentru a adăuga câmpurile noi
+      synchronize: false, // Temporar pentru a adăuga câmpurile noi
       // dropSchema: true, 
     }),
     TypeOrmModule.forFeature([
@@ -56,13 +57,15 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
-        const secret = 'your-secret-key'; // Același secret ca în auth microservice pentru ACCESS TOKEN
+        const secret = configService.get<string>('JWT_SECRET') || 'your-secret-key';
+        const expiresIn = configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '24h';
         console.log('🔍 [AppModule] JWT Secret configurat în veziv-tasks:', secret);
+        console.log('🔍 [AppModule] JWT ExpiresIn configurat în veziv-tasks:', expiresIn);
         return {
           global: true,
           secret: secret,
           signOptions: { 
-            expiresIn: '24h'
+            expiresIn: expiresIn
           },
         };
       },
@@ -71,6 +74,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
     TemplateModule,
     ExecutionModule,
     AssignmentModule,
+    CronModule,
   ],
   providers: [
     TemplateExistsValidator,

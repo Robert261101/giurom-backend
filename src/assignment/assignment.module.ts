@@ -9,6 +9,7 @@ import { TaskAssignment } from './entity/task-assignment.entity';
 import { TaskAssignmentElement } from './entity/task-assignment-element.entity';
 import { TaskTemplate } from '../template/entity/task-template.entity';
 import { TaskElement } from '../template/entity/task-element.entity';
+import { ExecutionModule } from '../execution/execution.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { TaskElement } from '../template/entity/task-element.entity';
       TaskElement
     ]),
     HttpModule,
+    ExecutionModule,
     JwtModule.register({
       secret: 'your-secret-key',
       signOptions: { expiresIn: '24h'},

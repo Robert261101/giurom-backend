@@ -75,7 +75,7 @@ export class ExecutionController {
   @ApiResponse({ status: 400, description: 'Date invalide' })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  create(@Body() createExecutionDto: CreateExecutionDto): Promise<TaskExecution> {
+  create(@Body() createExecutionDto: CreateExecutionDto): Promise<{ execution: TaskExecution; points: number; isOverdue: boolean; message: string }> {
     return this.executionService.create(createExecutionDto);
   }
 
@@ -124,7 +124,6 @@ export class ExecutionController {
         value: {
           completed_at: '2024-01-15T16:00:00Z',
           comment: 'Sarcina finalizată cu succes',
-          total_score: 90,
           answers: [
             {
               task_element_id: 3,
@@ -139,11 +138,9 @@ export class ExecutionController {
         }
       },
       example2: {
-        summary: 'Verificare de manager',
+        summary: 'Verificare de manager prin elemente',
         value: {
-          is_verified_by_manager: true,
-          verification_date: '2024-01-15T17:00:00Z',
-          total_score: 95
+          comment: 'Task verificat și aprobat de manager'
         }
       },
       example3: {

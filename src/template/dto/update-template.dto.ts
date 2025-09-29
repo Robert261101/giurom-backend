@@ -2,7 +2,6 @@ import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBo
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { ElementType } from '../entity/task-element.entity';
-import { TemplateType } from '../entity/task-template.entity';
 
 export class UpdateElementDto {
   @ApiProperty({
@@ -106,6 +105,15 @@ export class UpdateElementDto {
   @IsOptional()
   @IsDateString()
   finish_at?: string;
+
+  @ApiProperty({
+    description: 'Dacă elementul este vizibil pentru angajați (false = doar pentru manageri)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_visible_for_employee?: boolean;
 }
 
 export class UpdateTemplateDto {
@@ -119,15 +127,6 @@ export class UpdateTemplateDto {
   @MaxLength(255)
   template_name?: string;
 
-  @ApiProperty({
-    description: 'Tipul template-ului (employee sau manager)',
-    enum: TemplateType,
-    example: TemplateType.EMPLOYEE,
-    required: false
-  })
-  @IsOptional()
-  @IsEnum(TemplateType)
-  template_type?: TemplateType;
 
   @ApiProperty({
     description: 'Lista de elemente ale template-ului',
@@ -174,6 +173,14 @@ export class UpdateTemplateDto {
         placeholder: 'Introduceți durata în minute',
         is_required: false,
         sort_order: 5
+      },
+      {
+        element_type: ElementType.FINALIZED_IN,
+        label: 'Finalizat în (ore:minute)',
+        name: 'finalized_in',
+        placeholder: 'Introduceți durata în format HH:MM',
+        is_required: false,
+        sort_order: 6
       },
       {
         element_type: ElementType.VISIBLE_FROM,

@@ -2,10 +2,8 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { TaskTemplate } from '../../template/entity/task-template.entity';
 import { TaskAssignmentElement } from './task-assignment-element.entity';
 
-export enum AssignedToType {
-  PERSON = 'person',
-  GROUP = 'group'
-}
+// AssignedToType eliminat - toate task-urile sunt pentru persoane
+// Logica de grup se face prin department_group_id + assignment_mode
 
 export enum AssignmentStatus {
   ASSIGNED = 'assigned',
@@ -13,13 +11,20 @@ export enum AssignmentStatus {
   COMPLETED = 'completed',
   OVERDUE = 'overdue',
   SCHEDULED = 'scheduled',
-  DEACTIVATED = 'deactivated'
+  DEACTIVATED = 'deactivated',
+  WAITING_RESPONSE = 'waiting_response'
 }
 
 export enum Priority {
   LOW = 'low',
   MEDIUM = 'medium',
   HIGH = 'high'
+}
+
+export enum AssignmentMode {
+  FIRST_COME_FIRST_SERVED = 'first_come_first_served', // Primul care acceptă, ceilalți se șterg (pentru grupuri)
+  EVERYONE_GETS_IT = 'everyone_gets_it', // Toți din grup primesc taskul individual (pentru grupuri)
+  INDIVIDUAL = 'individual' // Task individual atribuit unei singure persoane
 }
 
 @Entity('Task_Assignment')
@@ -34,11 +39,7 @@ export class TaskAssignment {
   @JoinColumn({ name: 'template_id' })
   template: TaskTemplate;
 
-  @Column({
-    type: 'enum',
-    enum: AssignedToType
-  })
-  assigned_to_type: AssignedToType;
+  // assigned_to_type eliminat - toate task-urile sunt pentru persoane
 
   @Column({ type: 'int', nullable: true })
   assigned_to_id: number;
@@ -46,8 +47,6 @@ export class TaskAssignment {
   @Column({ name: 'created_by_employee_id', type: 'int' })
   created_by_employee_id: number;
 
-  @Column({ type: 'int', default: 0 })
-  total_score: number;
 
   @Column({
     type: 'enum',
@@ -80,6 +79,9 @@ export class TaskAssignment {
   @Column({ type: 'boolean', default: false })
   requires_manager_check: boolean;
 
+  @Column({ type: 'int', default: 0 })
+  rejecting_times: number;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   department_group_id: string;
 
@@ -88,6 +90,19 @@ export class TaskAssignment {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   parent_recurrence_id: string;
+
+  @Column({
+    type: 'enum',
+    enum: AssignmentMode,
+    default: AssignmentMode.INDIVIDUAL
+  })
+  assignment_mode: AssignmentMode;
+
+  @Column({ type: 'boolean', default: true })
+  is_visible_for_employee: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  was_postponed: boolean;
 
   @CreateDateColumn()
   created_at: Date;

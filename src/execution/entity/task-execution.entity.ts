@@ -27,14 +27,8 @@ export class TaskExecution {
   @Column({ type: 'text', nullable: true })
   comment: string;
 
-  @Column({ type: 'boolean', default: false })
-  is_verified_by_manager: boolean;
-
-  @Column({ type: 'datetime', nullable: true })
-  verification_date: Date;
-
-  @Column({ type: 'int', default: 0 })
-  total_score: number;
+  // is_verified_by_manager și verification_date eliminate - logica se face prin elemente
+  // total_score eliminat - punctajul se stochează în employee_daily_points
 
   @Column({ type: 'boolean', default: false })
   is_reactivation_compensation: boolean;

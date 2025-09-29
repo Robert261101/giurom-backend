@@ -2,11 +2,6 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { TaskElement, ElementType } from './task-element.entity';
 import { TemplateLocation } from './template-location.entity';
 
-export enum TemplateType {
-  EMPLOYEE = 'employee',
-  MANAGER = 'manager'
-}
-
 @Entity('Task_Templates')
 export class TaskTemplate {
   @PrimaryGeneratedColumn()
@@ -14,13 +9,6 @@ export class TaskTemplate {
 
   @Column({ type: 'varchar', length: 255 })
   template_name: string;
-
-  @Column({
-    type: 'enum',
-    enum: TemplateType,
-    default: TemplateType.EMPLOYEE
-  })
-  template_type: TemplateType;
 
   @CreateDateColumn()
   created_at: Date;
