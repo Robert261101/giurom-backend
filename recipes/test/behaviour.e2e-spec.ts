@@ -1,22 +1,51 @@
 // Avoid cross-repo type mismatch by not importing INestApplication from different node_modules
 type NestApp = any;
+import { Controller, Get, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as request from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../src/permissions/permissions.guard';
-import { ExampleAuthController } from '../src/example/example.controller';
 import { JwtService } from '@nestjs/jwt';
+import { Permissions } from '../src/permissions/permissions.decorator';
 
-describe('PermissionsGuard + JWT (e2e)', () => {
+@Controller('probe')
+class ProbeController {
+  @Get('ok')
+  @Permissions('recipes.read')
+  ok() {
+    return { ok: true };
+  }
+
+  @Get('bad-request')
+  @Permissions('recipes.read')
+  badRequest() {
+    throw new BadRequestException('Invalid input');
+  }
+
+  @Get('not-found')
+  @Permissions('recipes.read')
+  notFound() {
+    throw new NotFoundException('Missing');
+  }
+
+  @Get('error')
+  @Permissions('recipes.read')
+  error() {
+    // Simulate unexpected error
+    throw new Error('Unexpected');
+  }
+}
+
+describe('Recipes behaviour e2e (auth + http statuses)', () => {
   let app: NestApp;
   let jwt: JwtService;
 
   beforeAll(async () => {
-    const moduleRef: TestingModule = await Test.createTestingModule({
+    const mod: TestingModule = await Test.createTestingModule({
       imports: [AuthModule],
-      controllers: [ExampleAuthController],
+      controllers: [ProbeController],
       providers: [
         Reflector,
         { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -24,9 +53,9 @@ describe('PermissionsGuard + JWT (e2e)', () => {
       ],
     }).compile();
 
-    app = moduleRef.createNestApplication();
+    app = mod.createNestApplication();
     await app.init();
-    jwt = moduleRef.get(JwtService);
+    jwt = mod.get(JwtService);
   }, 15000); // Increase timeout for beforeAll
 
   afterAll(async () => {
@@ -38,11 +67,25 @@ describe('PermissionsGuard + JWT (e2e)', () => {
   const sign = (permissions: string[] = []) =>
     jwt.sign({ sub: 1, username: 'tester', permissions });
 
-  it('allows access when permission is present (recipes.read)', async () => {
+  it('401 without token', async () => {
+    if (!app) return;
+    await request(app.getHttpServer()).get('/probe/ok').expect(401);
+  }, 15000); // Increase timeout
+
+  it('403 with wrong permission', async () => {
+    if (!app) return;
+    const token = sign(['employees.read']);
+    await request(app.getHttpServer())
+      .get('/probe/ok')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+  }, 15000); // Increase timeout
+
+  it('200 with correct permission', async () => {
     if (!app) return;
     const token = sign(['recipes.read']);
     await request(app.getHttpServer())
-      .get('/test-auth/secure-read')
+      .get('/probe/ok')
       .set('Authorization', `Bearer ${token}`)
       .expect(200)
       .expect(({ body }) => {
@@ -50,37 +93,30 @@ describe('PermissionsGuard + JWT (e2e)', () => {
       });
   }, 15000); // Increase timeout
 
-  it('denies access when permission is missing (needs recipes.read)', async () => {
-    if (!app) return;
-    const token = sign(['recipes.create']);
-    await request(app.getHttpServer())
-      .get('/test-auth/secure-read')
-      .set('Authorization', `Bearer ${token}`)
-      .expect(403);
-  }, 15000); // Increase timeout
-
-  it('denies access without token (401)', async () => {
-    if (!app) return;
-    await request(app.getHttpServer())
-      .get('/test-auth/secure-read')
-      .expect(401);
-  }, 15000); // Increase timeout
-
-  it('denies access to recipes.delete if only recipes.read present', async () => {
+  it('400 BadRequest bubbles through', async () => {
     if (!app) return;
     const token = sign(['recipes.read']);
     await request(app.getHttpServer())
-      .get('/test-auth/secure-delete')
+      .get('/probe/bad-request')
       .set('Authorization', `Bearer ${token}`)
-      .expect(403);
+      .expect(400);
   }, 15000); // Increase timeout
 
-  it('allows access when recipes.delete is present', async () => {
+  it('404 NotFound bubbles through', async () => {
     if (!app) return;
-    const token = sign(['recipes.delete']);
+    const token = sign(['recipes.read']);
     await request(app.getHttpServer())
-      .get('/test-auth/secure-delete')
+      .get('/probe/not-found')
       .set('Authorization', `Bearer ${token}`)
-      .expect(200);
+      .expect(404);
+  }, 15000); // Increase timeout
+
+  it('500 InternalServerError for unexpected errors', async () => {
+    if (!app) return;
+    const token = sign(['recipes.read']);
+    await request(app.getHttpServer())
+      .get('/probe/error')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(500);
   }, 15000); // Increase timeout
 });
