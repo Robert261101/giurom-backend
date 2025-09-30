@@ -13,6 +13,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
+import { StockHealthController } from './stock/stock.health.controller';
 
 @Module({
   imports: [
@@ -37,7 +38,7 @@ import { StockHttpController } from './stock/stock.http.controller';
     }),
     TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord]),
   ],
-  controllers: [StockMicroController, StockHttpController],
+  controllers: [StockMicroController, StockHttpController, StockHealthController],
   providers: [
     StockService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
