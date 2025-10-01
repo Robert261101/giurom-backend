@@ -22,5 +22,3 @@ export class RecipeLabel {
   @JoinColumn({ name: 'recipe_preparation_id' })
   preparation: RecipePreparation;
 }
-
-

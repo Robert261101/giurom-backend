@@ -4,30 +4,24 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
   ManyToMany,
   JoinTable,
 } from 'typeorm';
-import { Stock } from './stock.entity';
-import { WasteRecord } from './waste-record.entity';
-import { Category } from './category.entity';
+import { Product } from './product.entity';
 
-@Entity('products')
-export class Product {
+@Entity('categories')
+export class Category {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'varchar', length: 150, unique: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  @Column({ type: 'varchar', length: 100, unique: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   name: string;
 
   @Column({ type: 'varchar', length: 50, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
-  unit: string;
+  type: string; // 'ingredient' or 'meal_time'
 
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   description?: string;
-
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
-  min_stock_level?: number;
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
@@ -38,23 +32,17 @@ export class Product {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at: Date;
 
-  @OneToMany(() => Stock, (stock) => stock.product)
-  stocks: Stock[];
-
-  @OneToMany(() => WasteRecord, (wasteRecord) => wasteRecord.product)
-  wasteRecords: WasteRecord[];
-
-  @ManyToMany(() => Category, (category) => category.products)
+  @ManyToMany(() => Product, (product) => product.categories)
   @JoinTable({
     name: 'product_category',
     joinColumn: {
-      name: 'product_id',
+      name: 'category_id',
       referencedColumnName: 'id'
     },
     inverseJoinColumn: {
-      name: 'category_id',
+      name: 'product_id',
       referencedColumnName: 'id'
     }
   })
-  categories: Category[];
+  products: Product[];
 }

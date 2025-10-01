@@ -28,12 +28,10 @@ export class RecipePreparation {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at: Date;
 
-  @ManyToOne(() => Recipe, (recipe) => recipe.id, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+  @ManyToOne(() => Recipe, (recipe) => recipe.recipe_preparations, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'recipe_id' })
   recipe: Recipe;
 
   @OneToMany(() => RecipeLabel, (label) => label.preparation)
   labels: RecipeLabel[];
 }
-
-
