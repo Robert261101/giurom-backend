@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 import { CronService } from './cron.service';
 import { CronController } from './cron.controller';
 import { TaskAssignment } from '../assignment/entity/task-assignment.entity';
@@ -14,6 +15,7 @@ import { ExecutionModule } from '../execution/execution.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    HttpModule,
     TypeOrmModule.forFeature([
       TaskAssignment,
       TaskExecution,

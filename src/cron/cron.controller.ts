@@ -35,7 +35,34 @@ export class CronController {
   async runDailyTaskCompletion() {
     return await this.cronService.runManualTaskCompletion();
   }
+
+  @Post('run-fcfs-auto-assignment')
+  @Permissions('execution.read_all', 'assignment.read_all')
+  @ApiOperation({ 
+    summary: 'Rulează manual cron job-ul pentru atribuirea automată FCFS',
+    description: 'Acest endpoint permite rularea manuală a cron job-ului care gestionează task-urile cu "primul venit, primul servit" și le atribuie automat dacă nu sunt preluate în timp.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Cron job FCFS executat cu succes',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        processedTasks: { type: 'number' },
+        autoAssignedTasks: { type: 'number' },
+        deletedTasks: { type: 'number' }
+      }
+    }
+  })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  async runFCFSAutoAssignment() {
+    return await this.cronService.runManualFCFSAutoAssignment();
+  }
 }
+
+
 
 
 

@@ -2,7 +2,6 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { TaskTemplate } from '../../template/entity/task-template.entity';
 import { TaskAssignmentElement } from './task-assignment-element.entity';
 
-// AssignedToType eliminat - toate task-urile sunt pentru persoane
 // Logica de grup se face prin department_group_id + assignment_mode
 
 export enum AssignmentStatus {
@@ -39,7 +38,6 @@ export class TaskAssignment {
   @JoinColumn({ name: 'template_id' })
   template: TaskTemplate;
 
-  // assigned_to_type eliminat - toate task-urile sunt pentru persoane
 
   @Column({ type: 'int', nullable: true })
   assigned_to_id: number;

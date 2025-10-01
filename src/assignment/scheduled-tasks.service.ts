@@ -59,20 +59,15 @@ export class ScheduledTasksService {
    * Rulează automat din minut în minut
    */
   async activateScheduledTasksForToday(): Promise<boolean> {
-    const today = new Date();
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+    const now = new Date();
 
-    console.log(`🔍 [ScheduledTasksService] Verificare sarcinile programate pentru ${today.toISOString().split('T')[0]}`);
+    console.log(`🔍 [ScheduledTasksService] Verificare sarcinile programate pentru ${now.toISOString()}`);
 
     try {
       const scheduledTasks = await this.assignmentRepository.find({
         where: {
           status: AssignmentStatus.SCHEDULED,
-          scheduled_datetime: LessThanOrEqual(endOfDay)
+          scheduled_datetime: LessThanOrEqual(now)
         }
       });
 
@@ -83,7 +78,7 @@ export class ScheduledTasksService {
         const updateResult = await this.assignmentRepository.update(
           {
             status: AssignmentStatus.SCHEDULED,
-            scheduled_datetime: LessThanOrEqual(endOfDay)
+            scheduled_datetime: LessThanOrEqual(now)
           },
           {
             status: AssignmentStatus.ASSIGNED
@@ -93,7 +88,7 @@ export class ScheduledTasksService {
         console.log(`✅ [ScheduledTasksService] ${updateResult.affected || 0} sarcini au fost activate`);
         return (updateResult.affected || 0) > 0;
       } else {
-        console.log(`ℹ️ [ScheduledTasksService] Nu sunt sarcini programate pentru activare astăzi`);
+        console.log(`ℹ️ [ScheduledTasksService] Nu sunt sarcini programate pentru activare acum`);
         return false;
       }
     } catch (error) {
@@ -151,9 +146,7 @@ export class ScheduledTasksService {
    * Procesează sarcinile recurente (la fiecare minut)
    */
   private async processRecurringTasks(today: Date, todayName: string): Promise<boolean> {
-    console.log(`🔄 [RECURENTA] ==========================================`);
     console.log(`🔄 [RECURENTA] PROCESARE RECURENȚĂ - ${todayName}`);
-    console.log(`🔄 [RECURENTA] ==========================================`);
 
       // Găsește toate sarcinile cu recurență activă
       const recurringTasks = await this.assignmentRepository.find({
@@ -177,10 +170,7 @@ export class ScheduledTasksService {
         // Verifică dacă este ora corectă pentru a crea task-ul
         const shouldCreateNow = this.shouldCreateTasksForCurrentTime(task.recurrence_settings, today, todayName);
         if (shouldCreateNow) {
-          console.log(`🔄 [RECURENTA] ==========================================`);
-          console.log(`🔄 [RECURENTA] CREARE TASK RECURENT - ${todayName}`);
-          console.log(`🔄 [RECURENTA] Task ID: ${task.id}`);
-          console.log(`🔄 [RECURENTA] ==========================================`);
+          console.log(`🔄 [RECURENTA] CREARE TASK RECURENT - ${todayName} - Task ID: ${task.id}`);
           
         await this.processRecurringTask(task, today);
           createdCount++;
@@ -188,11 +178,7 @@ export class ScheduledTasksService {
       }
     }
     
-    console.log(`🔄 [RECURENTA] ==========================================`);
-    console.log(`🔄 [RECURENTA] RECURENȚĂ COMPLETĂ`);
-    console.log(`🔄 [RECURENTA] Task-uri procesate: ${processedCount}`);
-    console.log(`🔄 [RECURENTA] Task-uri create: ${createdCount}`);
-    console.log(`🔄 [RECURENTA] ==========================================`);
+    console.log(`🔄 [RECURENTA] RECURENȚĂ COMPLETĂ - Task-uri procesate: ${processedCount}, create: ${createdCount}`);
     
     return createdCount > 0;
   }
@@ -355,19 +341,12 @@ export class ScheduledTasksService {
       const dateStr = today.toISOString().split('T')[0];
       const timeStr = assignedAt.toTimeString().split(' ')[0];
       
-      console.log(`🔄 [RECURENTA] ==========================================`);
-      console.log(`🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ`);
-      console.log(`🔄 [RECURENTA] Data: ${dateStr} (${todayName})`);
-      console.log(`🔄 [RECURENTA] Ora: ${timeStr}`);
-      console.log(`🔄 [RECURENTA] Task părinte ID: ${parentTask.id}`);
-      console.log(`🔄 [RECURENTA] Template ID: ${parentTask.template_id}`);
-      console.log(`🔄 [RECURENTA] ID atribuit: ${parentTask.assigned_to_id}`);
+      console.log(`🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ - Data: ${dateStr} (${todayName}), Ora: ${timeStr}, Task părinte ID: ${parentTask.id}`);
       
       // Toate task-urile sunt pentru persoane individuale
       // Logica de grup se face prin department_group_id
       if (parentTask.department_group_id) {
-        console.log(`🔄 [RECURENTA] Grup: Departament cu ID ${parentTask.assigned_to_id}`);
-        console.log(`🔄 [RECURENTA] Toate persoanele din grupul ${parentTask.assigned_to_id} vor primi sarcina`);
+        console.log(`🔄 [RECURENTA] Grup: Departament cu ID ${parentTask.assigned_to_id} - Toate persoanele din grup vor primi sarcina`);
         
         // Pentru grupuri, obține toate persoanele din grup și creează task-uri individuale
         await this.createRecurringTasksForGroup(parentTask, assignedAt, recurrenceId);
@@ -379,7 +358,6 @@ export class ScheduledTasksService {
       }
       
       console.log(`🔄 [RECURENTA] Setări recurență:`, JSON.stringify(parentTask.recurrence_settings, null, 2));
-      console.log(`🔄 [RECURENTA] ==========================================`);
       
     } catch (error) {
       console.error(`❌ [ScheduledTasksService] Eroare la crearea task-ului recurent pentru departamentul ${parentTask.assigned_to_id}:`, error);
@@ -605,10 +583,11 @@ export class ScheduledTasksService {
     console.log(`🔍 [ScheduledTasksService] Verificare task-uri cu "Vizibil de la" pentru ${today} și ${tomorrow}`);
 
     try {
-      // Găsește toate task-urile cu status ASSIGNED care au elemente
+      // Găsește toate task-urile cu status ASSIGNED care au elemente și nu sunt încă vizibile
       const assignments = await this.assignmentRepository.find({
         where: {
-          status: AssignmentStatus.ASSIGNED
+          status: AssignmentStatus.ASSIGNED,
+          is_visible_for_employee: false
         },
         relations: ['elements', 'elements.task_element']
       });
@@ -628,21 +607,23 @@ export class ScheduledTasksService {
           let visibleFromDate: string | null = null;
           
           try {
-            const visibleFromData = JSON.parse(visibleFromElement.value);
+            const visibleFromData = JSON.parse(visibleFromElement.value.trim());
             visibleFromDate = visibleFromData.date;
             console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - JSON parsed, date:`, visibleFromDate);
           } catch (e) {
-            // Dacă nu e JSON, folosește valoarea direct
-            visibleFromDate = visibleFromElement.value;
+            // Dacă nu e JSON, folosește valoarea direct (cu trim pentru a elimina \r\n)
+            visibleFromDate = visibleFromElement.value.trim();
             console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - direct value:`, visibleFromDate);
           }
 
           if (visibleFromDate) {
-            const visibleDate = new Date(visibleFromDate).toISOString().split('T')[0];
-            console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - today: ${today}, visibleDate: ${visibleDate}, match: ${today === visibleDate}`);
+            const visibleDateTime = new Date(visibleFromDate);
+            const now = new Date();
             
-            if (today === visibleDate || tomorrow === visibleDate) {
-              console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} devine vizibil ${today === visibleDate ? 'astăzi' : 'mâine'} (${visibleDate})`);
+            console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - now: ${now.toISOString()}, visibleFrom: ${visibleDateTime.toISOString()}, shouldBeVisible: ${now >= visibleDateTime}`);
+            
+            if (now >= visibleDateTime) {
+              console.log(`🔍 [ScheduledTasksService] Task ${assignment.id} devine vizibil (visible_from: ${visibleFromDate})`);
               
               // Schimbă is_visible_for_employee din false în true
               await this.assignmentRepository.update(
@@ -652,6 +633,8 @@ export class ScheduledTasksService {
               
               console.log(`✅ [ScheduledTasksService] Task ${assignment.id} este acum vizibil pentru angajați`);
               activatedCount++;
+            } else {
+              console.log(`⏳ [ScheduledTasksService] Task ${assignment.id} încă nu este vizibil (visible_from: ${visibleFromDate})`);
             }
           }
         }

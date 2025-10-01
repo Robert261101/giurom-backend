@@ -150,7 +150,9 @@ export class ExecutionService {
         // Generează mesajul în funcție de situație
         console.log(`🔍 DEBUG BACKEND create - FINAL RESULT: points=${points}, isOverdue=${isOverdue}`);
         
-        if (isOverdue && points < 0) {
+        if (assignmentWithElements.was_postponed === true && points > 0) {
+          message = `Sarcina a fost finalizată cu succes! Ai câștigat ${points} puncte.`;
+        } else if (isOverdue && points < 0) {
           message = `S-a finalizat sarcina cu succes, dar ai pierdut ${Math.abs(points)} puncte pentru că ai depășit termenul!`;
         } else if (points > 0) {
           message = `Sarcina a fost finalizată cu succes! Ai câștigat ${points} puncte.`;
@@ -713,18 +715,25 @@ export class ExecutionService {
     // Verifică dacă există "permite amânarea" - dacă da, anulează efectul deadline-ului
     const hasAllowPostpone = allowPostponeElement && allowPostponeElement.value === 'true';
     
-    if ((deadlineElement || finalizedInElement) && execution.completed_at && !hasAllowPostpone) {
+    // Verifică dacă task-ul a fost amânat
+    const wasPostponed = assignment.was_postponed === true;
+    
+    console.log(`🔍 DEBUG calculateTaskPoints - hasAllowPostpone: ${hasAllowPostpone}, wasPostponed: ${wasPostponed}`);
+    console.log(`🔍 DEBUG calculateTaskPoints - deadlineElement: ${deadlineElement ? 'found' : 'not found'}, finalizedInElement: ${finalizedInElement ? 'found' : 'not found'}`);
+    console.log(`🔍 DEBUG calculateTaskPoints - execution.completed_at: ${execution.completed_at}`);
+    
+    if ((deadlineElement || finalizedInElement) && execution.completed_at) {
       let deadline: Date | null = null;
       
       // Verifică dacă există finish_at (deadline fix)
       if (deadlineElement && deadlineElement.value && deadlineElement.value.trim() !== '') {
-        deadline = new Date(deadlineElement.value);
+        deadline = new Date(deadlineElement.value.trim());
         console.log(`🔍 DEBUG Task ${execution.id} - finish_at deadline:`, deadlineElement.value);
       }
       // Altfel, verifică dacă există finalized_in (deadline calculat)
       else if (finalizedInElement && finalizedInElement.value && finalizedInElement.value.trim() !== '') {
         try {
-          const durationData = JSON.parse(finalizedInElement.value);
+          const durationData = JSON.parse(finalizedInElement.value.trim());
           const hours = durationData.hours || 0;
           const minutes = durationData.minutes || 0;
           
@@ -759,9 +768,9 @@ export class ExecutionService {
         console.log(`   ℹ️ Nu există deadline valid setat`);
         isOverdue = false; // Nu este întârziat dacă nu există deadline
       }
-    } else if (hasAllowPostpone) {
-      console.log(`   🕐 Task-ul permite amânarea - deadline-ul este anulat`);
-      isOverdue = false; // Nu este întârziat dacă permite amânarea
+    } else if (wasPostponed) {
+      console.log(`   🕐 Task-ul a fost amânat - deadline-ul este anulat`);
+      isOverdue = false; // Nu este întârziat dacă a fost amânat
     }
 
     // Găsește toate elementele cu puncte din assignment (scoring_boolean și scoring_simple)
@@ -780,6 +789,8 @@ export class ExecutionService {
 
     // Calculează punctajul pentru fiecare element cu puncte
     console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoringElements count:`, scoringElements.length)
+    console.log(`🔍 DEBUG BACKEND calculateTaskPoints - wasPostponed:`, wasPostponed)
+    
     for (const element of scoringElements) {
       console.log(`🔍 DEBUG BACKEND calculateTaskPoints - processing element:`, element.task_element.element_type, element.task_element.id)
       const answer = execution.answers?.find(a => a.task_element_id === element.task_element_id);
@@ -790,7 +801,12 @@ export class ExecutionService {
         
         if (answer && answer.score_awarded > 0) {
           // Elementul a fost completat - adaugă punctele câștigate
-          if (isOverdue) {
+          if (wasPostponed) {
+            // Dacă task-ul a fost amânat, acordă punctele maxime pentru amânare
+            const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
+            totalPoints += totalPossiblePoints;
+            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_boolean postponed, awarding max points:`, totalPossiblePoints);
+          } else if (isOverdue) {
             // Dacă este finalizat după deadline, scade punctele din toate opțiunile
             const totalPossiblePoints = scoringOptions.reduce((sum: number, option: any) => sum + (option.points || 0), 0);
             totalPoints -= totalPossiblePoints;
@@ -807,7 +823,11 @@ export class ExecutionService {
         if (answer && answer.score_awarded > 0) {
           console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple answer score_awarded:`, answer.score_awarded)
           // Elementul a fost completat - adaugă punctele fixe
-          if (isOverdue) {
+          if (wasPostponed) {
+            // Dacă task-ul a fost amânat, acordă punctele maxime pentru amânare
+            console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple postponed, awarding max points:`, simpleScorePoints)
+            totalPoints += simpleScorePoints;
+          } else if (isOverdue) {
             // Dacă este finalizat după deadline, scade punctele fixe
             console.log(`🔍 DEBUG BACKEND calculateTaskPoints - scoring_simple overdue, subtracting:`, simpleScorePoints)
             totalPoints -= simpleScorePoints;

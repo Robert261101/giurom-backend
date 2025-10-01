@@ -84,10 +84,6 @@ export class AssignmentService {
 
   async create(createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
     console.log('🔍 [AssignmentService] CreateAssignmentDto primit:', createAssignmentDto);
-    console.log('🔍 [AssignmentService] scheduled_datetime primit:', createAssignmentDto.scheduled_datetime);
-    console.log('🔍 [AssignmentService] recurrence_settings primit:', createAssignmentDto.recurrence_settings);
-    console.log('🔍 [AssignmentService] assignment_mode primit:', createAssignmentDto.assignment_mode);
-    console.log('🔍 [AssignmentService] department_group_id primit:', createAssignmentDto.department_group_id);
     
     // Determină statusul în funcție de scheduled_datetime
     let status = createAssignmentDto.status;
@@ -98,18 +94,92 @@ export class AssignmentService {
       status = 'scheduled' as any; // Task-ul părinte rămâne scheduled
     } else if (createAssignmentDto.scheduled_datetime) {
       const scheduledDate = new Date(createAssignmentDto.scheduled_datetime);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      scheduledDate.setHours(0, 0, 0, 0);
+      const now = new Date();
       
       console.log('🔍 [AssignmentService] scheduledDate:', scheduledDate);
-      console.log('🔍 [AssignmentService] today:', today);
-      console.log('🔍 [AssignmentService] scheduledDate > today:', scheduledDate > today);
+      console.log('🔍 [AssignmentService] now:', now);
+      console.log('🔍 [AssignmentService] scheduledDate > now:', scheduledDate > now);
       
-      // Dacă data programată este în viitor, setează statusul ca SCHEDULED
-      if (scheduledDate > today) {
+      // Dacă data și ora programată este în viitor, setează statusul ca SCHEDULED
+      if (scheduledDate > now) {
         status = 'scheduled' as any;
         console.log('🔍 [AssignmentService] Status schimbat la SCHEDULED');
+      }
+    }
+
+    // Verifică dacă task-ul are visible_from în viitor
+    let shouldBeVisible = createAssignmentDto.is_visible_for_employee !== undefined ? createAssignmentDto.is_visible_for_employee : true;
+    
+    if (createAssignmentDto.elements) {
+      // Găsește template-ul pentru a verifica tipurile elementelor
+      const template = await this.templateRepository.findOne({
+        where: { id: createAssignmentDto.template_id },
+        relations: ['elements']
+      });
+      
+      if (template) {
+        // Găsește elementul visible_from din template
+        const visibleFromTemplateElement = template.elements.find(te => te.element_type === 'visible_from');
+        const scheduledDatetimeTemplateElement = template.elements.find(te => te.element_type === 'scheduled_datetime');
+        
+        if (visibleFromTemplateElement) {
+          // Găsește elementul corespunzător din assignment
+          const visibleFromElement = createAssignmentDto.elements.find(el => 
+            el.task_element_id === visibleFromTemplateElement.id
+          );
+          
+          if (visibleFromElement && visibleFromElement.value) {
+            // Verifică dacă visible_from este în viitor
+            const visibleFromDate = new Date(visibleFromElement.value.trim());
+            const now = new Date();
+            
+            console.log(`🔍 [AssignmentService] Verificare visible_from: ${visibleFromElement.value.trim()}, now: ${now.toISOString()}, visibleFromDate: ${visibleFromDate.toISOString()}`);
+            
+            if (visibleFromDate > now) {
+              shouldBeVisible = false;
+              console.log(`🔍 [AssignmentService] Task cu visible_from în viitor (${visibleFromElement.value.trim()}) - setez is_visible_for_employee=false`);
+            } else {
+              console.log(`🔍 [AssignmentService] Task cu visible_from în trecut sau prezent (${visibleFromElement.value.trim()}) - păstrez is_visible_for_employee=true`);
+            }
+          }
+        }
+        
+        // Verifică dacă există și scheduled_datetime și visible_from
+        if (visibleFromTemplateElement && scheduledDatetimeTemplateElement) {
+          const visibleFromElement = createAssignmentDto.elements.find(el => 
+            el.task_element_id === visibleFromTemplateElement.id
+          );
+          const scheduledDatetimeElement = createAssignmentDto.elements.find(el => 
+            el.task_element_id === scheduledDatetimeTemplateElement.id
+          );
+          
+          if (visibleFromElement?.value && scheduledDatetimeElement?.value) {
+            const visibleFromDate = new Date(visibleFromElement.value.trim());
+            const scheduledDate = new Date(scheduledDatetimeElement.value.trim());
+            
+            // Verifică dacă visible_from este mai mare decât scheduled_datetime
+            if (visibleFromDate > scheduledDate) {
+              // Formatează datele într-un mod mai frumos
+              const formatDateTime = (dateString: string) => {
+                const date = new Date(dateString);
+                return date.toLocaleString('ro-RO', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+              };
+              
+              const formattedVisibleFrom = formatDateTime(visibleFromElement.value.trim());
+              const formattedScheduled = formatDateTime(scheduledDatetimeElement.value.trim());
+              
+              throw new Error(`❌ EROARE: "Vizibil de la" (${formattedVisibleFrom}) nu poate fi mai mare decât "Programat la" (${formattedScheduled}). Task-ul trebuie să devină vizibil înainte sau la aceeași oră cu programarea.`);
+            }
+            
+            console.log(`✅ [AssignmentService] Verificare validă: visible_from (${visibleFromElement.value.trim()}) <= scheduled_datetime (${scheduledDatetimeElement.value.trim()})`);
+          }
+        }
       }
     }
 
@@ -128,42 +198,21 @@ export class AssignmentService {
       requires_manager_check: createAssignmentDto.requires_manager_check,
       department_group_id: createAssignmentDto.department_group_id,
       assignment_mode: createAssignmentDto.assignment_mode || AssignmentMode.INDIVIDUAL,
-      is_visible_for_employee: createAssignmentDto.is_visible_for_employee !== undefined ? createAssignmentDto.is_visible_for_employee : true,
+      is_visible_for_employee: shouldBeVisible,
       recurrence_settings: createAssignmentDto.recurrence_settings,
     });
     
-    console.log('🔍 [AssignmentService] assignment_mode înainte de salvare:', assignment.assignment_mode);
-    console.log('🔍 [AssignmentService] assignment_mode type înainte de salvare:', typeof assignment.assignment_mode);
-    
     console.log('🔍 [AssignmentService] Assignment creat pentru salvare:', assignment);
-    console.log('🔍 [AssignmentService] scheduled_datetime în assignment:', assignment.scheduled_datetime);
-    console.log('🔍 [AssignmentService] scheduled_datetime type:', typeof assignment.scheduled_datetime);
     
     const savedAssignment = await this.assignmentRepository.save(assignment);
     
     console.log('🔍 [AssignmentService] Assignment salvat:', savedAssignment);
-    console.log('🔍 [AssignmentService] scheduled_datetime în savedAssignment:', savedAssignment.scheduled_datetime);
-    console.log('🔍 [AssignmentService] scheduled_datetime type în savedAssignment:', typeof savedAssignment.scheduled_datetime);
-    console.log('🔍 [AssignmentService] recurrence_settings în savedAssignment:', savedAssignment.recurrence_settings);
-    console.log('🔍 [AssignmentService] assignment_mode în savedAssignment:', savedAssignment.assignment_mode);
-    console.log('🔍 [AssignmentService] assignment_mode type în savedAssignment:', typeof savedAssignment.assignment_mode);
     
     // Verifică din nou din baza de date
     const dbAssignment = await this.assignmentRepository.findOne({
       where: { id: savedAssignment.id }
     });
     console.log('🔍 [AssignmentService] Assignment din DB:', dbAssignment);
-    console.log('🔍 [AssignmentService] scheduled_datetime din DB:', dbAssignment?.scheduled_datetime);
-    console.log('🔍 [AssignmentService] scheduled_datetime type din DB:', typeof dbAssignment?.scheduled_datetime);
-    console.log('🔍 [AssignmentService] assignment_mode din DB:', dbAssignment?.assignment_mode);
-    console.log('🔍 [AssignmentService] assignment_mode type din DB:', typeof dbAssignment?.assignment_mode);
-    
-    // Verifică direct cu query raw
-    const rawResult = await this.assignmentRepository.query(
-      'SELECT id, scheduled_datetime, assignment_mode FROM Task_Assignment WHERE id = ?',
-      [savedAssignment.id]
-    );
-    console.log('🔍 [AssignmentService] Raw query result:', rawResult);
 
     // Încarcă template-ul pentru a obține toate elementele
     const template = await this.templateRepository.findOne({
@@ -240,10 +289,7 @@ export class AssignmentService {
       throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
     }
 
-    console.log('🔍 DEBUG findOne - department_group_id:', assignment.department_group_id);
-    console.log('🔍 DEBUG findOne - status:', assignment.status);
-    console.log('🔍 DEBUG findOne - assigned_to_id:', assignment.assigned_to_id);
-    console.log('🔍 DEBUG findOne - assignment_mode:', assignment.assignment_mode);
+    console.log('🔍 [AssignmentService] findOne - assignment:', { id: assignment.id, status: assignment.status, assigned_to_id: assignment.assigned_to_id });
     
     // Adaugă informații despre persoana responsabilă și departamentul din grup
     const enrichedAssignment = await this.enrichAssignmentWithDetails(assignment);
@@ -381,7 +427,7 @@ export class AssignmentService {
         // assigned_to_type eliminat - toate task-urile sunt pentru persoane
         .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
         .andWhere(
-          '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR (assignment.status = :scheduledStatus AND assignment.scheduled_datetime IS NULL))',
+          '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
           { 
             assignedStatus: 'assigned', 
             completedStatus: 'completed',
@@ -668,28 +714,16 @@ export class AssignmentService {
         // MODUL CLASIC: Primul care acceptă, ceilalți se șterg
         console.log(`🔍 [ACCEPT] [FIRST_COME_FIRST_SERVED] Șterg celelalte taskuri din grup`);
         
-        // Găsește toate taskurile din același grup (inclusiv cele în IN_PROGRESS)
-        const groupTasks = await this.assignmentRepository.find({
-          where: {
-            department_group_id: assignment.department_group_id,
-            status: In([AssignmentStatus.ASSIGNED, AssignmentStatus.SCHEDULED, AssignmentStatus.IN_PROGRESS])
-          }
-        });
-        
-        // Debug: să verificăm și toate task-urile din grup, indiferent de status
+        // Găsește toate taskurile din același grup
         const allGroupTasks = await this.assignmentRepository.find({
           where: {
             department_group_id: assignment.department_group_id
           }
         });
         
-        console.log(`🔍 [ACCEPT] All tasks in group (any status):`, allGroupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-        
-        console.log(`🔍 [ACCEPT] Found ${groupTasks.length} tasks in department group (including in_progress)`);
-        console.log(`🔍 [ACCEPT] Group tasks:`, groupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
+        console.log(`🔍 [ACCEPT] All tasks in group:`, allGroupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
 
         // Șterge complet toate celelalte taskuri din grup (nu pe cel acceptat)
-        // Folosim allGroupTasks pentru a include toate task-urile, indiferent de status
         const otherTasks = allGroupTasks.filter(task => task.id !== id);
         console.log(`🔍 [ACCEPT] Other tasks to delete:`, otherTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
         
@@ -704,15 +738,6 @@ export class AssignmentService {
           }
           
           console.log(`✅ [ACCEPT] [FIRST_COME_FIRST_SERVED] Deleted ${otherTasks.length} other tasks from the group`);
-          
-          // Verifică din nou task-urile din grup după ștergere
-          const remainingTasks = await this.assignmentRepository.find({
-            where: {
-              department_group_id: assignment.department_group_id
-            }
-          });
-          console.log(`🔍 [ACCEPT] Remaining tasks in group after deletion:`, remainingTasks.length);
-          console.log(`🔍 [ACCEPT] Remaining tasks:`, remainingTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
         } else {
           console.log(`ℹ️ [ACCEPT] [FIRST_COME_FIRST_SERVED] No other tasks to delete in the group`);
         }
@@ -995,10 +1020,10 @@ export class AssignmentService {
         let deadline: Date | null = null;
         
         if (finishAtElement?.value) {
-          deadline = new Date(finishAtElement.value);
+          deadline = new Date(finishAtElement.value.trim());
         } else if (finalizedInElement?.value) {
           try {
-            const durationData = JSON.parse(finalizedInElement.value);
+            const durationData = JSON.parse(finalizedInElement.value.trim());
             const hours = durationData.hours || 0;
             const minutes = durationData.minutes || 0;
             
@@ -1043,10 +1068,10 @@ export class AssignmentService {
         let deadline: Date | null = null;
         
         if (finishAtElement?.value) {
-          deadline = new Date(finishAtElement.value);
+          deadline = new Date(finishAtElement.value.trim());
         } else if (finalizedInElement?.value) {
           try {
-            const durationData = JSON.parse(finalizedInElement.value);
+            const durationData = JSON.parse(finalizedInElement.value.trim());
             const hours = durationData.hours || 0;
             const minutes = durationData.minutes || 0;
             
@@ -1135,23 +1160,8 @@ export class AssignmentService {
       throw new Error('Failed to update task assignment');
     }
 
-    // Creează execuția pentru amânare
-    try {
-      const executionData = {
-        task_assignment_id: id,
-        employee_id: userId,
-        started_at: assignment.assigned_at ? assignment.assigned_at.toISOString() : new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        comment: 'Task amânat de angajat - Managerul va fi notificat',
-        answers: []
-      };
-
-      await this.executionService.create(executionData);
-      console.log(`✅ [POSTPONE] Execution created for postponed task ${id}`);
-    } catch (error) {
-      console.error(`❌ [POSTPONE] Error creating execution for task ${id}:`, error);
-      throw new Error('Failed to postpone task');
-    }
+    // Nu se creează execuție pentru amânare - doar se marchează was_postponed = true
+    console.log(`✅ [POSTPONE] No execution created for postponed task ${id} - only was_postponed flag set`);
 
     console.log(`✅ [POSTPONE] Task ${id} postponed successfully by user ${userId}`);
     console.log(`🔍 [POSTPONE] ==========================================`);

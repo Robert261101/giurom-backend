@@ -1,0 +1,76 @@
+FCFS AUTO-ASSIGNMENT LOGIC DIAGRAM
+=====================================
+
+START: Task FCFS cu status ASSIGNED
+│
+├─ Au trecut 2 ore de la atribuire?
+│  ├─ NO → AȘTEAPTĂ
+│  └─ YES → CONTINUĂ
+│
+├─ Calculează orele până la 00:00
+│
+├─ Există finalized_in?
+│  ├─ NO (Fără finalized_in)
+│  │  ├─ Mai mult de 4 ore până la 00:00?
+│  │  │  ├─ YES → ATRIBUIE RANDOM DUPĂ 2 ORE
+│  │  │  └─ NO → NU ATRIBUIE
+│  │  └─
+│  │
+│  └─ YES (Cu finalized_in)
+│     ├─ Calculează deadline-ul (assigned_at + finalized_in)
+│     ├─ Mai mult de 4 ore până la deadline?
+│     │  ├─ NO → NU ATRIBUIE
+│     │  └─ YES → CONTINUĂ
+│     │
+│     ├─ Permite amânare (allow_postpone = true)?
+│     │  ├─ NO → ATRIBUIE RANDOM DUPĂ 2 ORE
+│     │  └─ YES → CONTINUĂ
+│     │
+│     └─ Mai mult de 4 ore până la 00:00?
+│        ├─ YES → ATRIBUIE RANDOM DUPĂ 2 ORE
+│        └─ NO → NU ATRIBUIE
+
+CONDIȚII PENTRU ATRIBUIRE RANDOM:
+================================
+
+1. Nu există finalized_in + Mai mult de 4 ore până la 00:00
+2. Există finalized_in + Mai mult de 4 ore până la deadline + Nu permite amânare
+3. Există finalized_in + Mai mult de 4 ore până la deadline + Permite amânare + Mai mult de 4 ore până la 00:00
+
+EXEMPLE PRACTICE:
+================
+
+Exemplu 1: Task fără finalized_in
+- Ora curentă: 14:00 (6 ore până la 00:00)
+- Au trecut 2 ore: YES
+- Mai mult de 4 ore până la 00:00: YES (6 > 4)
+- REZULTAT: ATRIBUIE RANDOM
+
+Exemplu 2: Task cu finalized_in, fără amânare
+- Ora curentă: 10:00
+- Deadline: 18:00 (8 ore până la deadline)
+- Au trecut 2 ore: YES
+- Mai mult de 4 ore până la deadline: YES (8 > 4)
+- Permite amânare: NO
+- REZULTAT: ATRIBUIE RANDOM
+
+Exemplu 3: Task cu finalized_in, cu amânare
+- Ora curentă: 20:00 (4 ore până la 00:00)
+- Deadline: 02:00 (6 ore până la deadline)
+- Au trecut 2 ore: YES
+- Mai mult de 4 ore până la deadline: YES (6 > 4)
+- Permite amânare: YES
+- Mai mult de 4 ore până la 00:00: NO (4 = 4)
+- REZULTAT: NU ATRIBUIE
+
+Exemplu 4: Task cu finalized_in, deadline aproape
+- Ora curentă: 15:00
+- Deadline: 17:00 (2 ore până la deadline)
+- Au trecut 2 ore: YES
+- Mai mult de 4 ore până la deadline: NO (2 < 4)
+- REZULTAT: NU ATRIBUIE
+
+
+
+
+
