@@ -9,7 +9,9 @@ import { RecipeCategory } from './recipes/entities/recipe-category.entity';
 import { RecipeProduct } from './recipes/entities/recipe-product.entity';
 import { RecipePreparation } from './recipes/entities/recipe-preparation.entity';
 import { RecipeLabel } from './recipes/entities/recipe-label.entity';
+import { RecipeMedia } from './recipes/entities/recipe-media.entity';
 import { RecipesService } from './recipes/recipes.service';
+import { RecipeMediaService } from './recipes/recipes-media.service';
 import { ProductRef } from './external/product-ref.entity';
 import { StockRef } from './external/stock-ref.entity';
 import { StockTransactionRef } from './external/stock-transaction-ref.entity';
@@ -40,7 +42,7 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, ProductRef, StockRef, StockTransactionRef],
+      entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, ProductRef, StockRef, StockTransactionRef],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -58,11 +60,9 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
         ],
       },
     }),
-    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, ProductRef, StockRef, StockTransactionRef]),
+    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, ProductRef, StockRef, StockTransactionRef]),
   ],
   controllers: [RecipesMicroController, RecipesHttpController],
-  providers: [RecipesService, RecipePreparationsService, RecipesLabelsService],
+  providers: [RecipesService, RecipeMediaService, RecipePreparationsService, RecipesLabelsService],
 })
 export class AppModule {}
-
-

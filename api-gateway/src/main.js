@@ -31,10 +31,11 @@ app.get('/health', (req, res) => {
       '/recipe-preparations': 'http://localhost:3005',
       '/recipe-labels': 'http://localhost:3005',
       '/stock': 'http://localhost:3006',
+      '/categories': 'http://localhost:3006',
       '/suppliers': 'http://localhost:3007',
-      '/waste-records': 'http://localhost:3012',
-      '/waste': 'http://localhost:3014'
-      , '/tasks': 'http://localhost:3008'
+      '/waste-records': 'http://localhost:3025',
+      '/waste': 'http://localhost:3014',
+      '/tasks': 'http://localhost:3008'
     }
   });
 });
@@ -125,6 +126,13 @@ const microservices = {
     logLevel: 'debug'
   },
 
+  // Categories (part of stock microservice)
+  '/categories': {
+    target: 'http://localhost:3006',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
   // Suppliers HTTP
   '/suppliers': {
     target: 'http://localhost:3007',
@@ -150,7 +158,10 @@ const microservices = {
   '/tasks': {
     target: 'http://localhost:3008',
     changeOrigin: true,
-    logLevel: 'debug'
+    logLevel: 'debug',
+    pathRewrite: {
+      '^/tasks': ''
+    }
   }
 };
 
@@ -162,6 +173,7 @@ Object.keys(microservices).forEach(path => {
     target: config.target,
     changeOrigin: config.changeOrigin,
     logLevel: config.logLevel,
+    pathRewrite: config.pathRewrite,
     ws: config.ws,
     onProxyReq: (proxyReq, req, res) => {
       console.log(`[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`);

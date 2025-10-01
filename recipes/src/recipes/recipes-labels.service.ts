@@ -35,7 +35,13 @@ export class RecipesLabelsService {
     const code = dto.label_code || this.generateCode();
     const path = `/files/recipes/labels/${code}.pdf`;
     const label = this.labelRepo.create({ recipe_preparation_id: prep.id, label_code: code, label_file_path: path });
-    return await this.labelRepo.save(label);
+    const savedLabel = await this.labelRepo.save(label);
+    
+    // Update the preparation's is_labeled flag
+    prep.is_labeled = true;
+    await this.prepRepo.save(prep);
+    
+    return savedLabel;
   }
 
   async remove(id: number): Promise<void> {

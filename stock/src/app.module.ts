@@ -6,9 +6,12 @@ import { Product } from './stock/entities/product.entity';
 import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { WasteRecord } from './stock/entities/waste-record.entity';
+import { Category } from './stock/entities/category.entity';
 import { StockService } from './stock/stock.service';
+import { CategoryService } from './stock/category.service';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
+import { CategoryController } from './stock/category.controller';
 
 @Module({
   imports: [
@@ -20,7 +23,7 @@ import { StockHttpController } from './stock/stock.http.controller';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Product, Stock, StockTransaction, WasteRecord],
+      entities: [Product, Stock, StockTransaction, WasteRecord, Category],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -30,9 +33,9 @@ import { StockHttpController } from './stock/stock.http.controller';
         charset: 'utf8mb4',
       },
     }),
-    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord]),
+    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, Category]),
   ],
-  controllers: [StockMicroController, StockHttpController],
-  providers: [StockService],
+  controllers: [StockMicroController, StockHttpController, CategoryController],
+  providers: [StockService, CategoryService],
 })
 export class AppModule {}

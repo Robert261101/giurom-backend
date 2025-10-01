@@ -1,22 +1,25 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { RecipesService } from './recipes/recipes.service';
+import { RecipeMediaService } from './recipes/recipes-media.service';
+import { RecipePreparationsService } from './recipes/recipes-preparations.service';
+import { RecipesLabelsService } from './recipes/recipes-labels.service';
 import { CreateRecipeDto } from './recipes/dto/create-recipe.dto';
 import { UpdateRecipeDto } from './recipes/dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './recipes/dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './recipes/dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './recipes/dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './recipes/dto/update-recipe-product.dto';
-import { RecipePreparationsService } from './recipes/recipes-preparations.service';
+import { CreateRecipeMediaDto } from './recipes/dto/create-recipe-media.dto';
 import { CreateRecipePreparationDto } from './recipes/dto/create-recipe-preparation.dto';
 import { UpdateRecipePreparationDto } from './recipes/dto/update-recipe-preparation.dto';
-import { RecipesLabelsService } from './recipes/recipes-labels.service';
 import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
 
 @Controller()
 export class RecipesMicroController {
   constructor(
     private readonly service: RecipesService,
+    private readonly mediaService: RecipeMediaService,
     private readonly prepService: RecipePreparationsService,
     private readonly labelsService: RecipesLabelsService,
   ) {}
@@ -24,57 +27,66 @@ export class RecipesMicroController {
   // Categories
   @MessagePattern('recipes.categories.create')
   createCategory(@Payload() dto: CreateRecipeCategoryDto) {
-    return this.service.createRecipeCategory(dto);
+    return this.service.createCategory(dto);
   }
 
   @MessagePattern('recipes.categories.findAll')
   findAllCategories(
     @Payload() payload: { page?: number; limit?: number; search?: string },
   ) {
-    return this.service.findAllRecipeCategories(payload.page || 1, payload.limit || 10, payload.search);
+    return this.service.findAllCategories({
+      page: payload.page || 1,
+      limit: payload.limit || 10,
+      search: payload.search
+    });
   }
 
   @MessagePattern('recipes.categories.findOne')
   findCategory(@Payload() id: number) {
-    return this.service.findRecipeCategoryById(id);
+    return this.service.findOneCategory(id);
   }
 
   @MessagePattern('recipes.categories.update')
   updateCategory(@Payload() payload: { id: number; dto: UpdateRecipeCategoryDto }) {
-    return this.service.updateRecipeCategory(payload.id, payload.dto);
+    return this.service.updateCategory(payload.id, payload.dto);
   }
 
   @MessagePattern('recipes.categories.delete')
   deleteCategory(@Payload() id: number) {
-    return this.service.deleteRecipeCategory(id);
+    return this.service.removeCategory(id);
   }
 
   // Recipes
   @MessagePattern('recipes.create')
   create(@Payload() dto: CreateRecipeDto) {
-    return this.service.createRecipe(dto);
+    return this.service.create(dto);
   }
 
   @MessagePattern('recipes.findAll')
   findAllRecipes(
     @Payload() payload: { page?: number; limit?: number; search?: string; category_id?: number },
   ) {
-    return this.service.findAllRecipes(payload.page || 1, payload.limit || 10, payload.search, payload.category_id);
+    return this.service.findAll({
+      page: payload.page || 1,
+      limit: payload.limit || 10,
+      search: payload.search,
+      category_id: payload.category_id
+    });
   }
 
   @MessagePattern('recipes.findOne')
   findOne(@Payload() id: number) {
-    return this.service.findRecipeById(id);
+    return this.service.findOne(id);
   }
 
   @MessagePattern('recipes.update')
   update(@Payload() payload: { id: number; dto: UpdateRecipeDto }) {
-    return this.service.updateRecipe(payload.id, payload.dto);
+    return this.service.update(payload.id, payload.dto);
   }
 
   @MessagePattern('recipes.delete')
   delete(@Payload() id: number) {
-    return this.service.deleteRecipe(id);
+    return this.service.remove(id);
   }
 
   // Recipe Products
@@ -95,13 +107,24 @@ export class RecipesMicroController {
 
   @MessagePattern('recipes.products.remove')
   removeRecipeProduct(@Payload() id: number) {
-    return this.service.removeProductFromRecipe(id);
+    return this.service.removeRecipeProduct(id);
+  }
+
+  // Recipe Media
+  @MessagePattern('recipes.media.create')
+  createMedia(@Payload() dto: CreateRecipeMediaDto) {
+    return this.mediaService.createMedia(dto);
+  }
+
+  @MessagePattern('recipes.media.findByRecipe')
+  findMediaByRecipe(@Payload() recipe_id: number) {
+    return this.mediaService.findMediaByRecipe(recipe_id);
   }
 
   // Statistics
   @MessagePattern('recipes.statistics')
   statistics() {
-    return this.service.getRecipeStatistics();
+    return this.service.getStatistics();
   }
 
   // Temporary recipe preparations endpoints to satisfy frontend routing
@@ -144,5 +167,3 @@ export class RecipesMicroController {
   @MessagePattern('recipe-labels.delete')
   labelDelete(@Payload() id: number) { return this.labelsService.remove(id); }
 }
-
-
