@@ -237,6 +237,24 @@ export class ScheduledTasksService {
         return;
       }
 
+      // Verifică dacă task-ul a fost deja creat astăzi pentru a evita duplicatele
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const existingTaskToday = await this.assignmentRepository.findOne({
+        where: {
+          parent_recurrence_id: task.id.toString(),
+          assigned_at: Between(todayStart, todayEnd)
+        }
+      });
+
+      if (existingTaskToday) {
+        console.log(`⏭️ [RECURENTA] Task recurent ${task.id} deja creat astăzi (ID: ${existingTaskToday.id}), skip.`);
+        return;
+      }
+
       console.log(`🔍 [ScheduledTasksService] Creez sarcini recurente pentru task-ul ${task.id}`);
 
       // Simulează crearea de sarcini pentru departament (ca la departamente)
@@ -298,15 +316,19 @@ export class ScheduledTasksService {
     if (specificTime) {
       const [hours, minutes] = specificTime.split(':').map(Number);
       
-      // Verifică dacă ora curentă corespunde cu ora programată
-      if (currentHour === hours && currentMinute === minutes) {
-        console.log(`🕐 [RECURENTA] Ora corectă pentru ${todayName}: ${specificTime} (curent: ${currentTime})`);
+      // Verifică dacă ora curentă a trecut de ora programată
+      // (ora curentă > ora programată SAU ora egală și minutele >= minutele programate)
+      const isPastScheduledTime = currentHour > hours || (currentHour === hours && currentMinute >= minutes);
+      
+      if (isPastScheduledTime) {
+        console.log(`🕐 [RECURENTA] Ora a trecut pentru ${todayName}: ${specificTime} (curent: ${currentTime})`);
         return true;
       }
     } else {
       // Fallback la 09:00 dacă nu există oră specifică
-      if (currentHour === 9 && currentMinute === 0) {
-        console.log(`🕐 [RECURENTA] Ora fallback pentru ${todayName}: 09:00 (curent: ${currentTime})`);
+      const isPastNineAM = currentHour > 9 || (currentHour === 9 && currentMinute >= 0);
+      if (isPastNineAM) {
+        console.log(`🕐 [RECURENTA] Ora fallback a trecut pentru ${todayName}: 09:00 (curent: ${currentTime})`);
         return true;
       }
     }
@@ -316,10 +338,9 @@ export class ScheduledTasksService {
 
   private async createRecurringTasksForDepartment(parentTask: TaskAssignment): Promise<void> {
     try {
-      // Generează un ID unic pentru această recurență
-      const recurrenceId = `recurrence_${parentTask.id}_${Date.now()}`;
+      console.log(`🔄 [RECURENTA] Procesare task recurent ${parentTask.id}`);
       
-      // Calculează datele pentru task-urile noi
+      // Calculează datele pentru task-ul curent
       const today = new Date();
       const assignedAt = new Date(today);
       
@@ -342,6 +363,9 @@ export class ScheduledTasksService {
       const timeStr = assignedAt.toTimeString().split(' ')[0];
       
       console.log(`🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ - Data: ${dateStr} (${todayName}), Ora: ${timeStr}, Task părinte ID: ${parentTask.id}`);
+      
+      // Generează un ID unic pentru această recurență
+      const recurrenceId = `recurrence_${parentTask.id}_${Date.now()}`;
       
       // Toate task-urile sunt pentru persoane individuale
       // Logica de grup se face prin department_group_id
@@ -405,9 +429,29 @@ export class ScheduledTasksService {
    */
   private async createRecurringTasksForGroup(parentTask: TaskAssignment, assignedAt: Date, recurrenceId: string): Promise<void> {
     try {
-      // Obține toate persoanele din departamentul selectat
-      const departmentId = parentTask.assigned_to_id;
+      // Extrage department ID din department_group_id (format: dept_3_timestamp_random)
+      let departmentId: number | null = null;
+      
+      if (parentTask.department_group_id) {
+        const match = parentTask.department_group_id.match(/^dept_(\d+)_/);
+        if (match) {
+          departmentId = parseInt(match[1]);
+          console.log(`🔍 [RECURENTA] Department ID extras din group_id: ${departmentId}`);
+        }
+      }
+      
+      // Fallback la assigned_to_id dacă nu se găsește în department_group_id
+      if (!departmentId && parentTask.assigned_to_id) {
+        departmentId = parentTask.assigned_to_id;
+      }
+      
       console.log(`🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId} pentru data ${assignedAt.toISOString().split('T')[0]}`);
+      
+      // Verifică dacă departmentId este valid
+      if (!departmentId) {
+        console.error(`❌ [RECURENTA] Nu s-a putut extrage department ID din task-ul ${parentTask.id}`);
+        return;
+      }
       
       // Obține doar angajații care lucrează în ziua respectivă
       const departmentEmployees = await this.getDepartmentEmployees(departmentId, assignedAt);
@@ -419,50 +463,110 @@ export class ScheduledTasksService {
         return;
       }
       
-      // Pentru grupuri, se creează ÎNTOTDEAUNA task-uri pentru toți angajații
-      // assignment_mode determină doar ce se întâmplă când cineva acceptă task-ul
-      const employeesToAssign = departmentEmployees;
-      
-      console.log(`🔍 [RECURENTA] Pentru grupuri: Creez task pentru TOȚI angajații (${employeesToAssign.length})`);
-      console.log(`🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`);
-      console.log(`🔍 [RECURENTA] - FIRST_COME_FIRST_SERVED: Primul care acceptă păstrează, ceilalți se șterg`);
-      console.log(`🔍 [RECURENTA] - EVERYONE_GETS_IT: Toți păstrează task-ul individual`);
-      
-      // Creează task-uri pentru fiecare angajat selectat
       const dueDate = new Date(assignedAt);
       dueDate.setHours(18, 0, 0, 0);
       
-      for (const employee of employeesToAssign) {
-        const createAssignmentDto: CreateAssignmentDto = {
-          template_id: parentTask.template_id,
-          // assigned_to_type eliminat - toate task-urile sunt pentru persoane
-          assigned_to_id: employee.id,
-          created_by_employee_id: parentTask.created_by_employee_id,
-          status: AssignmentStatus.ASSIGNED,
-          priority: parentTask.priority,
-          assigned_at: assignedAt.toISOString(),
-          due_date: dueDate.toISOString(),
-          scheduled_datetime: assignedAt.toISOString(),
-          notes: `Task recurent generat automat - ${parentTask.notes || 'Fără note'}`,
-          requires_manager_check: parentTask.requires_manager_check,
-          department_group_id: recurrenceId,
-          assignment_mode: parentTask.assignment_mode,
-          is_visible_for_employee: parentTask.is_visible_for_employee,
-          elements: this.prepareRecurringElements(parentTask)
-        };
-        
-        const newTask = await this.assignmentService.create(createAssignmentDto);
-        
-      await this.assignmentRepository.update(newTask.id, {
-        parent_recurrence_id: parentTask.id.toString(),
-          recurrence_settings: undefined
-        });
-        
-        console.log(`✅ [RECURENTA] Task recurent creat pentru angajatul ${employee.id} (${employee.first_name} ${employee.last_name})`);
-        console.log(`✅ [RECURENTA] Task nou ID: ${newTask.id}`);
-      }
+      console.log(`🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`);
       
-      console.log(`✅ [RECURENTA] Creat ${employeesToAssign.length} task-uri recurente pentru grupul ${departmentId}`);
+      // Logică diferită în funcție de assignment_mode
+      if (parentTask.assignment_mode === 'first_come_first_served') {
+        // Pentru FCFS: verifică dacă există un singur angajat
+        if (departmentEmployees.length === 1) {
+          // ✅ UN SINGUR ANGAJAT → Atribuire automată directă
+          const singleEmployee = departmentEmployees[0];
+          console.log(`🎯 [RECURENTA] FCFS cu UN SINGUR angajat → Atribuire automată pentru ${singleEmployee.first_name} ${singleEmployee.last_name} (ID: ${singleEmployee.id})`);
+          
+          const createAssignmentDto: CreateAssignmentDto = {
+            template_id: parentTask.template_id,
+            assigned_to_id: singleEmployee.id, // ✅ Atribuire directă
+            created_by_employee_id: parentTask.created_by_employee_id,
+            status: AssignmentStatus.ASSIGNED,
+            priority: parentTask.priority,
+            assigned_at: assignedAt.toISOString(),
+            due_date: dueDate.toISOString(),
+            scheduled_datetime: assignedAt.toISOString(),
+            notes: `Task recurent atribuit automat (un singur angajat) - ${parentTask.notes || 'Fără note'}`,
+            requires_manager_check: parentTask.requires_manager_check,
+            department_group_id: recurrenceId,
+            assignment_mode: AssignmentMode.INDIVIDUAL, // Schimbă în individual deoarece e atribuit direct
+            is_visible_for_employee: parentTask.is_visible_for_employee,
+            elements: this.prepareRecurringElements(parentTask)
+          };
+          
+          const newTask = await this.assignmentService.create(createAssignmentDto);
+          
+          await this.assignmentRepository.update(newTask.id, {
+            parent_recurrence_id: parentTask.id.toString(),
+            recurrence_settings: undefined
+          });
+          
+          console.log(`✅ [RECURENTA] Task atribuit automat cu ID: ${newTask.id} pentru ${singleEmployee.first_name} ${singleEmployee.last_name}`);
+          
+        } else {
+          // ❌ MULȚI ANGAJAȚI → Creează task FCFS normal (neatribuit)
+          console.log(`🔍 [RECURENTA] FIRST_COME_FIRST_SERVED: Creez UN SINGUR task FCFS pentru grup (${departmentEmployees.length} angajați)`);
+          
+          const createAssignmentDto: CreateAssignmentDto = {
+            template_id: parentTask.template_id,
+            assigned_to_id: undefined, // undefined pentru FCFS - taskul nu e atribuit încă
+            created_by_employee_id: parentTask.created_by_employee_id,
+            status: AssignmentStatus.ASSIGNED,
+            priority: parentTask.priority,
+            assigned_at: assignedAt.toISOString(),
+            due_date: dueDate.toISOString(),
+            scheduled_datetime: assignedAt.toISOString(),
+            notes: `Task FCFS generat automat - ${parentTask.notes || 'Fără note'}`,
+            requires_manager_check: parentTask.requires_manager_check,
+            department_group_id: recurrenceId,
+            assignment_mode: parentTask.assignment_mode,
+            is_visible_for_employee: parentTask.is_visible_for_employee,
+            elements: this.prepareRecurringElements(parentTask)
+          };
+          
+          const newTask = await this.assignmentService.create(createAssignmentDto);
+          
+          await this.assignmentRepository.update(newTask.id, {
+            parent_recurrence_id: parentTask.id.toString(),
+            recurrence_settings: undefined
+          });
+          
+          console.log(`✅ [RECURENTA] Task FCFS creat cu ID: ${newTask.id} - vizibil pentru toți ${departmentEmployees.length} angajați din departament ${departmentId}`);
+        }
+        
+      } else {
+        // Pentru EVERYONE_GETS_IT: creează task-uri individuale pentru fiecare angajat
+        console.log(`🔍 [RECURENTA] EVERYONE_GETS_IT: Creez task pentru TOȚI angajații (${departmentEmployees.length})`);
+        
+        for (const employee of departmentEmployees) {
+          const createAssignmentDto: CreateAssignmentDto = {
+            template_id: parentTask.template_id,
+            assigned_to_id: employee.id,
+            created_by_employee_id: parentTask.created_by_employee_id,
+            status: AssignmentStatus.ASSIGNED,
+            priority: parentTask.priority,
+            assigned_at: assignedAt.toISOString(),
+            due_date: dueDate.toISOString(),
+            scheduled_datetime: assignedAt.toISOString(),
+            notes: `Task recurent generat automat - ${parentTask.notes || 'Fără note'}`,
+            requires_manager_check: parentTask.requires_manager_check,
+            department_group_id: recurrenceId,
+            assignment_mode: parentTask.assignment_mode,
+            is_visible_for_employee: parentTask.is_visible_for_employee,
+            elements: this.prepareRecurringElements(parentTask)
+          };
+          
+          const newTask = await this.assignmentService.create(createAssignmentDto);
+          
+          await this.assignmentRepository.update(newTask.id, {
+            parent_recurrence_id: parentTask.id.toString(),
+            recurrence_settings: undefined
+          });
+          
+          console.log(`✅ [RECURENTA] Task recurent creat pentru angajatul ${employee.id} (${employee.first_name} ${employee.last_name})`);
+        }
+        
+        console.log(`✅ [RECURENTA] Creat ${departmentEmployees.length} task-uri recurente pentru grupul ${departmentId}`);
+      }
       
     } catch (error) {
       console.error(`❌ [RECURENTA] Eroare la crearea task-urilor pentru grupul ${parentTask.assigned_to_id}:`, error);
@@ -498,44 +602,58 @@ export class ScheduledTasksService {
       const workingEmployees: any[] = [];
       const targetDateStr = targetDate.toISOString().split('T')[0];
       
-      for (const employee of allEmployees) {
-        try {
-          // Verifică schimburile pentru angajatul respectiv în ziua țintă
-          const shiftsResponse = await firstValueFrom(
-            this.httpService.get(`http://localhost:3010/attendance/shifts?employee_id=${employee.id}&start_date=${targetDateStr}&end_date=${targetDateStr}`)
-          );
-          
-          const shifts = shiftsResponse.data?.data || [];
-          
-          if (shifts.length > 0) {
-            // Verifică dacă are prezență înregistrată pentru acea zi
-            const presenceResponse = await firstValueFrom(
-              this.httpService.get(`http://localhost:3010/attendance/presence?shift_id=${employee.id}&start_date=${targetDateStr}&end_date=${targetDateStr}`)
-            );
-            
-            const presences = presenceResponse.data?.data || [];
-            const hasPresence = presences.some((p: any) => 
-              p.status === 'present_full' || p.status === 'present_partial'
-            );
-            
-            if (hasPresence) {
-              workingEmployees.push(employee);
-              console.log(`✅ [RECURENTA] Angajatul ${employee.first_name} ${employee.last_name} lucrează în ${targetDateStr}`);
-            } else {
-              console.log(`⏭️ [RECURENTA] Angajatul ${employee.first_name} ${employee.last_name} nu are prezență înregistrată în ${targetDateStr}`);
-            }
-          } else {
-            console.log(`⏭️ [RECURENTA] Angajatul ${employee.first_name} ${employee.last_name} nu are schimburi programate în ${targetDateStr}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [RECURENTA] Nu s-au putut verifica schimburile pentru angajatul ${employee.id}:`, error.message);
-          // În caz de eroare, include angajatul (fallback)
-          workingEmployees.push(employee as any);
+      try {
+        // Obține toate shift-urile pentru data respectivă din attendance-ms
+        console.log(`🔍 [RECURENTA] Obțin shift-urile pentru ${targetDateStr} de la attendance-ms`);
+        const shiftsResponse = await firstValueFrom(
+          this.httpService.get(`http://localhost:3007/attendance/shifts?work_location_id=1&limit=1000`)
+        );
+        
+        // Extrage array-ul de shifts (format: { data: [...], total, page, limit })
+        let allShifts: any[] = [];
+        if (Array.isArray(shiftsResponse.data)) {
+          allShifts = shiftsResponse.data;
+        } else if (shiftsResponse.data && Array.isArray(shiftsResponse.data.data)) {
+          allShifts = shiftsResponse.data.data;
         }
+        
+        console.log(`🔍 [RECURENTA] Total shifts de la attendance: ${allShifts.length}`);
+        
+        // Filtrează shift-urile pentru data și departamentul specificat
+        const targetDateObj = new Date(targetDateStr);
+        targetDateObj.setHours(0, 0, 0, 0);
+        
+        const relevantShifts = allShifts.filter((shift: any) => {
+          const shiftStart = new Date(shift.start_datetime);
+          shiftStart.setHours(0, 0, 0, 0);
+          return shiftStart.getTime() === targetDateObj.getTime() && shift.department_id === departmentId;
+        });
+        
+        console.log(`🔍 [RECURENTA] Shifts pentru departamentul ${departmentId} în ${targetDateStr}: ${relevantShifts.length}`);
+        
+        // Extrage employee_ids unici din shifts
+        const employeeIdsWorking = [...new Set(relevantShifts.map((s: any) => s.employee_id))];
+        console.log(`🔍 [RECURENTA] Employee IDs care lucrează în ${targetDateStr}:`, employeeIdsWorking);
+        
+        // Filtrează doar angajații care au shift în acea zi
+        for (const employee of allEmployees) {
+          if (employeeIdsWorking.includes(employee.id)) {
+            workingEmployees.push(employee);
+            console.log(`✅ [RECURENTA] Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) lucrează în ${targetDateStr}`);
+          } else {
+            console.log(`⏭️ [RECURENTA] Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) NU lucrează în ${targetDateStr}`);
+          }
+        }
+        
+        console.log(`🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați care lucrează în ${targetDateStr} din ${allEmployees.length} total`);
+        return workingEmployees;
+        
+      } catch (error) {
+        console.error(`❌ [RECURENTA] Eroare la verificarea shift-urilor:`, error.message);
+        // În caz de eroare, returnează toți angajații din departament (fallback)
+        console.log(`⚠️ [RECURENTA] Fallback - returnez toți angajații din departament`);
+        return allEmployees;
       }
-      
-      console.log(`🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați care lucrează în ${targetDateStr} din ${allEmployees.length} total`);
-      return workingEmployees;
       
     } catch (error) {
       console.error(`❌ [RECURENTA] Eroare la obținerea persoanelor din departamentul ${departmentId}:`, error.message);

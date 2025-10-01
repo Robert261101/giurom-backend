@@ -1,41 +1,62 @@
-FCFS AUTO-ASSIGNMENT LOGIC DIAGRAM
-=====================================
+FCFS AUTO-ASSIGNMENT LOGIC DIAGRAM (SIMPLIFICAT)
+=================================================
 
-START: Task FCFS cu status ASSIGNED
+START: Task FCFS cu status ASSIGNED și assigned_to_id = NULL
 │
-├─ Au trecut 2 ore de la atribuire?
+├─ Au trecut 3 ore de la atribuire?
 │  ├─ NO → AȘTEAPTĂ
 │  └─ YES → CONTINUĂ
 │
 ├─ Calculează orele până la 00:00
 │
-├─ Există finalized_in?
-│  ├─ NO (Fără finalized_in)
+├─ Există deadline (finalized_in / finalized_la / finish_at)?
+│  ├─ NO (Fără deadline)
 │  │  ├─ Mai mult de 4 ore până la 00:00?
-│  │  │  ├─ YES → ATRIBUIE RANDOM DUPĂ 2 ORE
-│  │  │  └─ NO → NU ATRIBUIE
+│  │  │  ├─ YES → ATRIBUIE RANDOM (setează assigned_to_id)
+│  │  │  └─ NO → ȘTERGE TASK-UL ❌
 │  │  └─
 │  │
-│  └─ YES (Cu finalized_in)
-│     ├─ Calculează deadline-ul (assigned_at + finalized_in)
+│  └─ YES (Cu deadline)
+│     ├─ Calculează deadline-ul
 │     ├─ Mai mult de 4 ore până la deadline?
-│     │  ├─ NO → NU ATRIBUIE
+│     │  ├─ NO → ȘTERGE TASK-UL ❌ (nu mai poate fi finalizat)
 │     │  └─ YES → CONTINUĂ
 │     │
 │     ├─ Permite amânare (allow_postpone = true)?
-│     │  ├─ NO → ATRIBUIE RANDOM DUPĂ 2 ORE
+│     │  ├─ NO → ATRIBUIE RANDOM (setează assigned_to_id)
 │     │  └─ YES → CONTINUĂ
 │     │
 │     └─ Mai mult de 4 ore până la 00:00?
-│        ├─ YES → ATRIBUIE RANDOM DUPĂ 2 ORE
-│        └─ NO → NU ATRIBUIE
+│        ├─ YES → ATRIBUIE RANDOM (setează assigned_to_id)
+│        └─ NO → ȘTERGE TASK-UL ❌
 
-CONDIȚII PENTRU ATRIBUIRE RANDOM:
-================================
+CONDIȚII PENTRU ATRIBUIRE RANDOM (UPDATE assigned_to_id):
+=========================================================
 
-1. Nu există finalized_in + Mai mult de 4 ore până la 00:00
-2. Există finalized_in + Mai mult de 4 ore până la deadline + Nu permite amânare
-3. Există finalized_in + Mai mult de 4 ore până la deadline + Permite amânare + Mai mult de 4 ore până la 00:00
+1. Nu există deadline + Mai mult de 4 ore până la 00:00
+2. Există deadline + Mai mult de 4 ore până la deadline + Nu permite amânare
+3. Există deadline + Mai mult de 4 ore până la deadline + Permite amânare + Mai mult de 4 ore până la 00:00
+
+CONDIȚII PENTRU DEZACTIVARE (STATUS = DEACTIVATED):
+===================================================
+
+1. Nu există deadline + Mai puțin de 4 ore până la 00:00
+2. Există deadline + Mai puțin de 4 ore până la deadline (indiferent de amânare)
+3. Există deadline + Mai mult de 4 ore până la deadline + Permite amânare + Mai puțin de 4 ore până la 00:00
+
+Task-urile DEZACTIVATE:
+- Rămân în baza de date cu status DEACTIVATED
+- Păstrează assigned_to_id = NULL
+- NU sunt șterse - rămân în istoric
+- NU sunt vizibile pentru angajați
+
+CURĂȚARE AUTOMATĂ LA 00:00:
+============================
+
+- Cron job la miezul nopții șterge doar task-urile FCFS cu:
+  * assigned_to_id = NULL
+  * status = ASSIGNED (NU DEACTIVATED)
+- Task-urile DEACTIVATED rămân în istoric pentru raportare
 
 EXEMPLE PRACTICE:
 ================

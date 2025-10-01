@@ -1,5 +1,5 @@
 
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../permissions/permissions.decorator';
 
@@ -32,10 +32,16 @@ export class PermissionsGuard implements CanActivate {
       console.log('🔍 [PermissionsGuard] User permissions:', user.permissions)
     }
 
-    // Dacă userul nu are permisiuni în payload → blocăm accesul
+    // Dacă userul nu are permisiuni în payload → blocăm accesul cu mesaj personalizat
     if (!user?.permissions) {
       console.log('❌ [PermissionsGuard] User nu are permisiuni - bloc accesul')
-      return false;
+      throw new ForbiddenException({
+        statusCode: 403,
+        message: 'Nu aveți permisiunile necesare pentru a accesa această resursă.',
+        error: 'Forbidden',
+        requiredPermissions: requiredPermissions,
+        userPermissions: []
+      });
     }
 
     // Verificăm dacă userul are cel puțin o permisiune cerută
@@ -44,6 +50,48 @@ export class PermissionsGuard implements CanActivate {
     );
     
     console.log('🔍 [PermissionsGuard] User are permisiunea cerută:', hasPermission)
+    
+    // Dacă nu are permisiunea → aruncăm eroare personalizată
+    if (!hasPermission) {
+      const actionMap: { [key: string]: string } = {
+        'template.create': 'crea șabloane',
+        'template.read_all': 'vizualiza șabloanele',
+        'template.update': 'modifica șabloane',
+        'template.delete': 'șterge șabloane',
+        'assignment.create': 'crea sarcini',
+        'assignment.read_all': 'vizualiza toate sarcinile',
+        'assignment.read_own': 'vizualiza sarcinile proprii',
+        'assignment.update': 'modifica sarcini',
+        'assignment.delete': 'șterge sarcini',
+        'execution.create': 'executa sarcini',
+        'execution.read_all': 'vizualiza toate execuțiile',
+        'execution.read_own': 'vizualiza execuțiile proprii',
+        'execution.update': 'modifica execuții',
+        'execution.delete': 'șterge execuții',
+      };
+
+      const missingPermissions = requiredPermissions.filter(
+        perm => !user.permissions.includes(perm)
+      );
+      
+      const actionDescriptions = missingPermissions
+        .map(perm => actionMap[perm] || perm)
+        .join(', ');
+
+      console.log(`❌ [PermissionsGuard] User ${user.email} NU are permisiunile: ${missingPermissions.join(', ')}`)
+      
+      throw new ForbiddenException({
+        statusCode: 403,
+        message: `Nu aveți permisiunea de a ${actionDescriptions}.`,
+        error: 'Forbidden',
+        details: `Pentru a efectua această acțiune, aveți nevoie de una dintre următoarele permisiuni: ${missingPermissions.join(', ')}`,
+        requiredPermissions: missingPermissions,
+        userPermissions: user.permissions,
+        userEmail: user.email,
+        userName: `${user.first_name} ${user.last_name}`
+      });
+    }
+    
     return hasPermission;
   }
 }

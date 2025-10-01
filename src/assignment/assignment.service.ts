@@ -417,15 +417,85 @@ export class AssignmentService {
       console.log('🔍 [assignment.service] User ID:', user.sub)
       console.log('🔍 [assignment.service] User permissions:', user.permissions)
       
+      // Obține grupul angajatului din shift-ul zilei curente (pentru task-urile FCFS)
+      let userDepartmentId = null;
+      try {
+        const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+        console.log('🔍 [assignment.service] Încerc să obțin shift pentru user:', user.sub, 'data:', today);
+        
+        // Apelează microserviciul attendance pentru a obține shift-ul angajatului astăzi
+        // Folosește același endpoint ca frontend-ul: GET /attendance/shifts?work_location_id=X
+        const shiftsResponse = await firstValueFrom(
+          this.httpService.get(`http://localhost:3007/attendance/shifts?work_location_id=${user.work_location_id || 1}&limit=1000`)
+        );
+        
+        console.log('🔍 [assignment.service] Răspuns RAW de la attendance:', typeof shiftsResponse.data, Array.isArray(shiftsResponse.data));
+        console.log('🔍 [assignment.service] Răspuns COMPLET:', JSON.stringify(shiftsResponse.data));
+        
+        // Răspunsul are structura: { data: [...], total: X, page: Y, limit: Z }
+        let allShifts: any[] = [];
+        if (Array.isArray(shiftsResponse.data)) {
+          allShifts = shiftsResponse.data;
+        } else if (shiftsResponse.data && Array.isArray(shiftsResponse.data.data)) {
+          allShifts = shiftsResponse.data.data; // Extragem array-ul din "data"
+        } else if (shiftsResponse.data && Array.isArray(shiftsResponse.data.shifts)) {
+          allShifts = shiftsResponse.data.shifts;
+        } else if (shiftsResponse.data) {
+          console.log('🔍 [assignment.service] Keys în răspuns:', Object.keys(shiftsResponse.data));
+          allShifts = [];
+        }
+        
+        console.log('🔍 [assignment.service] Total shifts de la attendance:', allShifts.length);
+        
+        // Filtrează shift-urile pentru ziua curentă (today)
+        const todayDate = new Date(today);
+        todayDate.setHours(0, 0, 0, 0);
+        
+        const shifts = allShifts.filter((shift: any) => {
+          const shiftStart = new Date(shift.start_datetime);
+          shiftStart.setHours(0, 0, 0, 0);
+          return shiftStart.getTime() === todayDate.getTime();
+        });
+        
+        console.log('🔍 [assignment.service] Shifts filtrate pentru astăzi (', today, '):', shifts.length);
+        if (shifts.length > 0) {
+          console.log('🔍 [assignment.service] Primul shift:', JSON.stringify(shifts[0]));
+          console.log('🔍 [assignment.service] Toate employee_ids din shifts de astăzi:', shifts.map((s: any) => s.employee_id));
+        }
+        
+        // Găsește shift-ul pentru angajatul curent
+        const userShift = shifts.find((shift: any) => shift.employee_id === user.sub);
+        
+        if (userShift) {
+          userDepartmentId = userShift.department_id;
+          console.log('✅ [assignment.service] User department_id din shift (ziua curentă):', userDepartmentId);
+        } else {
+          console.log('⚠️ [assignment.service] Nu există shift pentru user-ul', user.sub, 'în ziua', today);
+          console.log('⚠️ [assignment.service] Shifts disponibile pentru:', shifts.map((s: any) => `employee_id: ${s.employee_id}, dept: ${s.department_id}`));
+        }
+        
+        // Fallback: dacă nu există shift astăzi, folosește JWT payload department_id
+        if (!userDepartmentId && user.department_id) {
+          userDepartmentId = user.department_id;
+          console.log('🔍 [assignment.service] Folosesc department_id din JWT payload:', userDepartmentId);
+        }
+      } catch (error) {
+        console.log('⚠️ [assignment.service] Eroare la obținerea shift-ului user-ului:', error.message);
+        
+        // Fallback: folosește department_id din JWT payload
+        if (user.department_id) {
+          userDepartmentId = user.department_id;
+          console.log('🔍 [assignment.service] Fallback - User department_id din JWT:', userDepartmentId);
+        }
+      }
+      
       // Filtrează sarcinile active și finalizate doar pe ziua curentă
       const today = new Date();
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
       
-      const result = await query
-        .where('assignment.assigned_to_id = :userId', { userId: user.sub })
-        // assigned_to_type eliminat - toate task-urile sunt pentru persoane
-        .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
+      const queryBuilder = query
+        .where('assignment.is_visible_for_employee = :visible', { visible: true })
         .andWhere(
           '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
           { 
@@ -442,15 +512,31 @@ export class AssignmentService {
             startOfDay: startOfDay,
             endOfDay: endOfDay
           }
-        )
-        .getMany();
+        );
+      
+      // Adaugă condiția pentru assigned_to_id SAU task-uri FCFS din departamentul user-ului
+      if (userDepartmentId) {
+        queryBuilder.andWhere(
+          '(assignment.assigned_to_id = :userId OR (assignment.assignment_mode = :fcfsMode AND assignment.assigned_to_id IS NULL AND assignment.department_group_id LIKE :departmentPattern))',
+          { 
+            userId: user.sub,
+            fcfsMode: 'first_come_first_served',
+            departmentPattern: `dept_${userDepartmentId}_%`
+          }
+        );
+      } else {
+        queryBuilder.andWhere('assignment.assigned_to_id = :userId', { userId: user.sub });
+      }
+      
+      const result = await queryBuilder.getMany();
       
       console.log('🔍 [assignment.service] Rezultat query own:', result.length, 'assignments')
       if (result.length > 0) {
         console.log('🔍 [assignment.service] Primul assignment din rezultat:', {
           id: result[0].id,
           is_visible_for_employee: result[0].is_visible_for_employee,
-          assigned_to_id: result[0].assigned_to_id
+          assigned_to_id: result[0].assigned_to_id,
+          assignment_mode: result[0].assignment_mode
         })
       }
       // Adaugă informații despre persoane și departamente
@@ -711,36 +797,9 @@ export class AssignmentService {
       
       // Comportament diferit bazat pe assignment_mode
       if (assignment.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED) {
-        // MODUL CLASIC: Primul care acceptă, ceilalți se șterg
-        console.log(`🔍 [ACCEPT] [FIRST_COME_FIRST_SERVED] Șterg celelalte taskuri din grup`);
-        
-        // Găsește toate taskurile din același grup
-        const allGroupTasks = await this.assignmentRepository.find({
-          where: {
-            department_group_id: assignment.department_group_id
-          }
-        });
-        
-        console.log(`🔍 [ACCEPT] All tasks in group:`, allGroupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-
-        // Șterge complet toate celelalte taskuri din grup (nu pe cel acceptat)
-        const otherTasks = allGroupTasks.filter(task => task.id !== id);
-        console.log(`🔍 [ACCEPT] Other tasks to delete:`, otherTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-        
-        if (otherTasks.length > 0) {
-          console.log(`🔍 [ACCEPT] Attempting to delete ${otherTasks.length} tasks...`);
-          
-          // Șterge task-urile unul câte unul pentru debugging mai bun
-          for (const taskToDelete of otherTasks) {
-            console.log(`🔍 [ACCEPT] Deleting task ${taskToDelete.id} (assigned to ${taskToDelete.assigned_to_id}, status: ${taskToDelete.status})`);
-            const deleteResult = await this.assignmentRepository.delete(taskToDelete.id);
-            console.log(`🔍 [ACCEPT] Delete result for task ${taskToDelete.id}:`, deleteResult);
-          }
-          
-          console.log(`✅ [ACCEPT] [FIRST_COME_FIRST_SERVED] Deleted ${otherTasks.length} other tasks from the group`);
-        } else {
-          console.log(`ℹ️ [ACCEPT] [FIRST_COME_FIRST_SERVED] No other tasks to delete in the group`);
-        }
+        // MODUL NOU SIMPLU: Task-ul e deja unic, doar setăm assigned_to_id
+        console.log(`🔍 [ACCEPT] [FIRST_COME_FIRST_SERVED] Task unic pentru grup - doar setăm proprietarul`);
+        console.log(`✅ [ACCEPT] [FIRST_COME_FIRST_SERVED] Task acceptat de ${userId} - devine proprietarul`);
       } else if (assignment.assignment_mode === AssignmentMode.EVERYONE_GETS_IT) {
         // MODUL NOU: Toți din grup păstrează taskul și îl fac individual
         console.log(`🔍 [ACCEPT] [EVERYONE_GETS_IT] Toți din grup păstrează taskul - nu se șterge nimic`);
@@ -755,15 +814,14 @@ export class AssignmentService {
     // Actualizează taskul acceptat la status IN_PROGRESS
     console.log(`🔍 [ACCEPT] Updating task ${id} to IN_PROGRESS...`);
     
-    // Dacă managerul acceptă task-ul pentru alt angajat, actualizează assigned_to_id
     const updateData: any = {
       status: AssignmentStatus.IN_PROGRESS,
       updated_at: new Date()
     };
     
-    // Dacă task-ul este atribuit altui angajat, îl atribuim managerului care îl acceptă
-    if (assignment.assigned_to_id !== userId) {
-      console.log(`🔍 [ACCEPT] Manager ${userId} accepting task for employee ${assignment.assigned_to_id}, reassigning to manager`);
+    // Pentru task-uri FCFS (assigned_to_id = NULL) sau când managerul acceptă task-ul altui angajat
+    if (assignment.assigned_to_id === null || assignment.assigned_to_id !== userId) {
+      console.log(`🔍 [ACCEPT] Assigning task to user ${userId} (previous: ${assignment.assigned_to_id})`);
       updateData.assigned_to_id = userId;
     }
     

@@ -2,13 +2,21 @@
 
 ## Descriere
 
-Această funcționalitate implementează logica de atribuire automată pentru task-urile cu modul "primul venit, primul servit" (FCFS). Sistemul monitorizează task-urile care nu au fost preluate de angajați și le atribuie automat conform unor reguli specifice.
+Această funcționalitate implementează logica de atribuire automată pentru task-urile cu modul "primul venit, primul servit" (FCFS). Sistemul monitorizează task-urile care nu au fost preluate de angajați și le atribuie automat sau le șterge conform unor reguli specifice.
+
+## Arhitectură Simplificată
+
+### Task-uri FCFS
+- **Creare**: Se creează **UN SINGUR** task cu `assigned_to_id = NULL` pentru întreg departamentul
+- **Vizibilitate**: Task-ul este vizibil pentru **toți** angajații din departament
+- **Acceptare**: Primul angajat care acceptă devine proprietar (`assigned_to_id = employee_id`)
+- **Curățare**: Task-urile neacceptate se șterg automat la 00:00 sau când nu îndeplinesc condițiile
 
 ## Cum Funcționează
 
 ### 1. Monitorizare Automată
-- **Cron Job**: Rulează la fiecare 30 de minute
-- **Filtrare**: Identifică task-urile FCFS cu status `ASSIGNED` care nu au fost preluate
+- **Cron Job**: Rulează la fiecare minut (`@Cron('0 * * * * *')`)
+- **Filtrare**: Identifică task-urile FCFS cu status `ASSIGNED` și `assigned_to_id = NULL`
 - **Procesare**: Aplică logica de decizie pentru fiecare task
 
 ### 2. Logica de Decizie
@@ -17,40 +25,41 @@ Această funcționalitate implementează logica de atribuire automată pentru ta
 - Task-ul trebuie să aibă `assignment_mode = 'first_come_first_served'`
 - Task-ul trebuie să aibă `department_group_id` (task de grup)
 - Task-ul trebuie să fie în status `ASSIGNED`
+- Task-ul trebuie să aibă `assigned_to_id = NULL` (neacceptat încă)
 
-#### Reguli de Atribuire
+#### Reguli de Atribuire și Ștergere
 
 **1. Timpul de Așteptare**
 - Dacă au trecut mai puțin de 2 ore de la atribuire → **Așteaptă**
 - Dacă au trecut 2 ore sau mai mult → **Procesează**
 
-**2. Logica Bazată pe `finalized_in`**
+**2. Logica Bazată pe `finalized_in` / `finalized_la` / `finish_at`**
 
-**Fără `finalized_in`:**
-- **Mai mult de 4 ore până la 00:00** → Atribuie după 2 ore
-- **Mai puțin de 4 ore până la 00:00** → Nu atribuie
+**Fără deadline (`finalized_in`, `finalized_la`, `finish_at`):**
+- **Mai mult de 4 ore până la 00:00** → **Atribuie random** după 2 ore
+- **Mai puțin de 4 ore până la 00:00** → **ȘTERGE task-ul** (nu mai are sens să fie atribuit)
 
-**Cu `finalized_in`:**
-- Calculează deadline-ul: `assigned_at + finalized_in`
+**Cu deadline:**
+- Calculează deadline-ul din `finalized_in` / `finalized_la` / `finish_at`
 - Calculează orele până la 00:00
 - Aplică următoarele reguli:
 
 **Dacă sunt mai mult de 4 ore până la deadline:**
-- **Nu permite amânare** → Atribuie după 2 ore
+- **Nu permite amânare** → **Atribuie random** după 2 ore
 - **Permite amânare:**
-  - **Mai mult de 4 ore până la 00:00** → Atribuie după 2 ore
-  - **Mai puțin de 4 ore până la 00:00** → Nu atribuie
+  - **Mai mult de 4 ore până la 00:00** → **Atribuie random** după 2 ore
+  - **Mai puțin de 4 ore până la 00:00** → **ȘTERGE task-ul**
 
 **Dacă sunt mai puțin de 4 ore până la deadline:**
-- Nu atribuie (indiferent de amânare)
+- **ȘTERGE task-ul** (indiferent de amânare) - nu mai poate fi finalizat la timp
 
-### 3. Procesul de Atribuire
+### 3. Procesul de Atribuire Automată
 
 **Când se decide atribuirea automată:**
 
 1. **Obține angajații din departament**
-   - Face request la microserviciul locations
-   - Endpoint: `GET /work-location-departments/{departmentId}/employees`
+   - Extrage `department_id` din `department_group_id` (format: `dept_{departmentId}_timestamp_random`)
+   - Face request la microserviciul employees: `GET /employees?department={departmentId}`
 
 2. **Selectează angajat random**
    - Alege un angajat aleatoriu din lista departamentului
@@ -58,10 +67,17 @@ Această funcționalitate implementează logica de atribuire automată pentru ta
 3. **Actualizează task-ul**
    - Setează `assigned_to_id` cu ID-ul angajatului selectat
    - Păstrează statusul `ASSIGNED`
+   - **NU mai șterge alte task-uri** (există deja un singur task)
 
-4. **Șterge task-urile duplicate**
-   - Șterge toate celelalte task-uri din același `department_group_id`
-   - Implementează logica FCFS: doar un task rămâne activ
+### 4. Curățare Automată
+
+**Cron Job la Miezul Nopții:**
+- Rulează la 00:00 (`@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)`)
+- Șterge doar task-urile FCFS cu:
+  - `assigned_to_id = NULL` (neacceptate)
+  - `status = ASSIGNED` (încă active)
+- **NU șterge** task-urile cu `status = DEACTIVATED`
+- Task-urile DEACTIVATED rămân în istoric pentru raportare și analiză
 
 ## API Endpoints
 

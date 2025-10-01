@@ -58,10 +58,34 @@ export class CronService {
   }
 
   /**
-   * Cron job care rulează la fiecare minut pentru atribuirea automată FCFS
+   * Cron job care rulează la 00:00 pentru curățarea task-urilor FCFS nepreluate
+   * Șterge doar task-urile FCFS cu status ASSIGNED și assigned_to_id = NULL
+   * Task-urile DEACTIVATED rămân în istoric
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleFCFSCleanup() {
+    this.logger.log('🧹 Starting FCFS unaccepted tasks cleanup...');
+    
+    try {
+      const result = await this.assignmentRepository.delete({
+        assignment_mode: 'first_come_first_served' as any,
+        assigned_to_id: IsNull(),
+        status: AssignmentStatus.ASSIGNED // Doar ASSIGNED, nu DEACTIVATED
+      });
+      
+      const deletedCount = result.affected || 0;
+      this.logger.log(`✅ Cleanup completed: deleted ${deletedCount} unaccepted FCFS tasks (DEACTIVATED tasks preserved)`);
+    } catch (error) {
+      this.logger.error('❌ Error in FCFS cleanup cron job:', error);
+    }
+  }
+
+  /**
+   * Cron job care rulează pentru atribuirea automată FCFS
    * Gestionează task-urile cu "primul venit, primul servit" care nu au fost preluate
    */
-  @Cron('0 * * * * *') // La fiecare minut
+  @Cron('0 */2 * * * *') // La fiecare 2 minute (pentru testare)
+  // @Cron('0 0 */2 * * *') // La fiecare 2 ore (pentru producție) - decomentează când e cazul
   async handleFCFSAutoAssignment() {
     this.logger.log('🎯 Starting FCFS auto-assignment cron job...');
     
@@ -526,60 +550,32 @@ export class CronService {
   private async processFCFSAutoAssignment(): Promise<void> {
     const now = new Date();
     
-    // Găsește toate task-urile FCFS care sunt în status ASSIGNED și nu au fost preluate
+    // Găsește toate task-urile FCFS care sunt în status ASSIGNED și nu au fost preluate (assigned_to_id = NULL)
     const fcfsAssignments = await this.assignmentRepository.find({
       where: {
         status: AssignmentStatus.ASSIGNED,
         assignment_mode: 'first_come_first_served' as any,
-        department_group_id: Not(IsNull()) // Doar task-urile de grup
+        department_group_id: Not(IsNull()), // Doar task-urile de grup
+        assigned_to_id: IsNull() // Doar task-urile neacceptate încă
       },
       relations: ['elements', 'elements.task_element', 'template']
     });
 
-    // Grupează task-urile după department_group_id pentru a procesa doar un task per grup
-    const groupedAssignments = new Map<string, TaskAssignment[]>();
-    for (const assignment of fcfsAssignments) {
-      const groupId = assignment.department_group_id;
-      if (!groupedAssignments.has(groupId)) {
-        groupedAssignments.set(groupId, []);
-      }
-      groupedAssignments.get(groupId)!.push(assignment);
-    }
-
-    // Pentru fiecare grup, alege doar primul task pentru procesare
-    const validFCFSAssignments: TaskAssignment[] = [];
-    for (const [groupId, tasks] of groupedAssignments) {
-      // Verifică dacă există deja un task acceptat în acest grup
-      const existingAcceptedTask = await this.assignmentRepository.findOne({
-        where: {
-          department_group_id: groupId,
-          status: AssignmentStatus.IN_PROGRESS
-        }
-      });
-
-      if (!existingAcceptedTask) {
-        // Alege primul task din grup pentru procesare
-        validFCFSAssignments.push(tasks[0]);
-        this.logger.log(`🎯 Selected task ${tasks[0].id} from group ${groupId} (${tasks.length} tasks in group)`);
-      } else {
-        this.logger.log(`⏭️ Skipping group ${groupId} - already has accepted task ${existingAcceptedTask.id}`);
-      }
-    }
-
-    this.logger.log(`🎯 Found ${fcfsAssignments.length} FCFS assignments, ${validFCFSAssignments.length} valid to process`);
+    this.logger.log(`🎯 Found ${fcfsAssignments.length} unassigned FCFS tasks to process`);
 
     let processedCount = 0;
     let autoAssignedCount = 0;
-    let deletedCount = 0;
+    let deactivatedCount = 0;
 
-    for (const assignment of validFCFSAssignments) {
+    // Procesează fiecare task FCFS (fiecare grup are deja UN SINGUR task cu assigned_to_id = NULL)
+    for (const assignment of fcfsAssignments) {
       try {
         const result = await this.processFCFSAssignment(assignment, now);
         
         if (result.action === 'auto_assigned') {
           autoAssignedCount++;
-        } else if (result.action === 'deleted') {
-          deletedCount++;
+        } else if (result.action === 'deactivated') {
+          deactivatedCount++;
         }
         
         processedCount++;
@@ -590,7 +586,7 @@ export class CronService {
       }
     }
 
-    this.logger.log(`🎯 FCFS auto-assignment completed: ${processedCount} processed, ${autoAssignedCount} auto-assigned, ${deletedCount} deleted`);
+    this.logger.log(`🎯 FCFS auto-assignment completed: ${processedCount} processed, ${autoAssignedCount} auto-assigned, ${deactivatedCount} deactivated`);
   }
 
   /**
@@ -602,9 +598,12 @@ export class CronService {
     
     this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: hoursSinceAssigned=${hoursSinceAssigned.toFixed(2)}`);
     
-    // Verifică dacă au trecut 1 minut de la atribuire (pentru testare)
-    if (hoursSinceAssigned < 0.016) { // 1 minut = 0.016 ore
-      this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Still waiting (${hoursSinceAssigned.toFixed(2)} hours < 0.016)`);
+    // Verifică dacă au trecut 3 ore de la atribuire (pentru testare: 3 minute = 0.05 ore)
+    const waitingHours = 0.05; // 3 minute pentru testare - schimbă la 3 pentru producție
+    // const waitingHours = 3; // 3 ore pentru producție - decomentează când e cazul
+    
+    if (hoursSinceAssigned < waitingHours) {
+      this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Still waiting (${hoursSinceAssigned.toFixed(2)} hours < ${waitingHours})`);
       return { action: 'waiting', details: { hoursSinceAssigned } };
     }
 
@@ -648,13 +647,16 @@ export class CronService {
       // Nu există finalized_in, finalized_la sau finish_at
       this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: No finalized_in, finalized_la or finish_at, hoursUntilMidnight=${hoursUntilMidnight.toFixed(2)}`);
       if (hoursUntilMidnight > 4) {
-        // Mai mult de 4 ore până la 00:00 - atribuie după 2 ore
+        // Mai mult de 4 ore până la 00:00 - atribuie după 3 ore
         this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Auto-assigning (no deadline elements, >4h to midnight)`);
         return await this.autoAssignFCFSTask(assignment);
       } else {
-        // Mai puțin de 4 ore până la 00:00 - nu atribuie
-        this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Waiting (no deadline elements, <4h to midnight)`);
-        return { action: 'waiting', details: { reason: 'less_than_4_hours_to_midnight', hoursUntilMidnight } };
+        // Mai puțin de 4 ore până la 00:00 - DEZACTIVEAZĂ task-ul
+        this.logger.log(`⏸️ [FCFS-DEBUG] Task ${assignment.id}: Deactivating (no deadline elements, <4h to midnight)`);
+        await this.assignmentRepository.update(assignment.id, {
+          status: AssignmentStatus.DEACTIVATED
+        });
+        return { action: 'deactivated', details: { reason: 'less_than_4_hours_to_midnight', hoursUntilMidnight } };
       }
     } else {
       // Există finalized_in, finalized_la sau finish_at
@@ -686,26 +688,32 @@ export class CronService {
         } else {
           // Există amânare
           if (hoursUntilMidnight > 4) {
-            // Mai mult de 4 ore până la 00:00 - atribuie după 2 ore
+            // Mai mult de 4 ore până la 00:00 - atribuie după 3 ore
             this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Auto-assigning (>4h to deadline, with postpone, >4h to midnight)`);
             return await this.autoAssignFCFSTask(assignment);
           } else {
-            // Mai puțin de 4 ore până la 00:00 - nu atribuie
-            this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Waiting (>4h to deadline, with postpone, <4h to midnight)`);
-            return { action: 'waiting', details: { reason: 'less_than_4_hours_to_midnight_with_postpone', hoursUntilMidnight } };
+            // Mai puțin de 4 ore până la 00:00 - DEZACTIVEAZĂ task-ul
+            this.logger.log(`⏸️ [FCFS-DEBUG] Task ${assignment.id}: Deactivating (>4h to deadline, with postpone, <4h to midnight)`);
+            await this.assignmentRepository.update(assignment.id, {
+              status: AssignmentStatus.DEACTIVATED
+            });
+            return { action: 'deactivated', details: { reason: 'less_than_4_hours_to_midnight_with_postpone', hoursUntilMidnight } };
           }
         }
       } else {
-        // Mai puțin de 4 ore până la deadline - nu atribuie
-        this.logger.log(`🔍 [FCFS-DEBUG] Task ${assignment.id}: Waiting (<4h to deadline)`);
-        return { action: 'waiting', details: { reason: 'less_than_4_hours_to_deadline', hoursUntilDeadline } };
+        // Mai puțin de 4 ore până la deadline - DEZACTIVEAZĂ task-ul
+        this.logger.log(`⏸️ [FCFS-DEBUG] Task ${assignment.id}: Deactivating (<4h to deadline)`);
+        await this.assignmentRepository.update(assignment.id, {
+          status: AssignmentStatus.DEACTIVATED
+        });
+        return { action: 'deactivated', details: { reason: 'less_than_4_hours_to_deadline', hoursUntilDeadline } };
       }
     }
   }
 
   /**
    * Atribuie automat un task FCFS unui angajat random din departament
-   * Face exact același lucru ca acceptTask() manual, doar că automat
+   * Simplu: doar UPDATE assigned_to_id, fără DELETE (task-ul e deja unic)
    */
   private async autoAssignFCFSTask(assignment: TaskAssignment): Promise<{ action: string; details?: any }> {
     try {
@@ -713,81 +721,45 @@ export class CronService {
       this.logger.log(`🔍 [AUTO-ACCEPT] Auto-accepting task ${assignment.id} for department group: ${assignment.department_group_id}`);
       this.logger.log(`🔍 [AUTO-ACCEPT] ==========================================`);
 
-      // Obține angajații care sunt deja atribuiți la task-urile din acest grup
-      const allGroupTasks = await this.assignmentRepository.find({
-        where: { department_group_id: assignment.department_group_id }
-      });
-
-      this.logger.log(`🔍 [AUTO-ACCEPT] All tasks in group:`, allGroupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-
-      // Extrage ID-urile unice ale angajaților atribuiți
-      const assignedEmployeeIds = [...new Set(allGroupTasks.map(task => task.assigned_to_id).filter(id => id !== null))];
+      // Extrage department_id din department_group_id (format: dept_X_timestamp_random)
+      const departmentId = assignment.department_group_id?.split('_')[1];
       
-      if (assignedEmployeeIds.length === 0) {
-        this.logger.warn(`⚠️ No assigned employees found for department group ${assignment.department_group_id}`);
-        return { action: 'no_employees' };
+      if (!departmentId) {
+        this.logger.warn(`⚠️ Cannot extract department ID from group ID: ${assignment.department_group_id}`);
+        return { action: 'invalid_group_id' };
       }
 
-      this.logger.log(`🔍 [AUTO-ACCEPT] Assigned employee IDs:`, assignedEmployeeIds);
+      this.logger.log(`🔍 [AUTO-ACCEPT] Department ID extracted: ${departmentId}`);
 
-      // Obține informațiile despre angajați
-      const departmentEmployees = await this.getEmployeesByIds(assignedEmployeeIds);
+      // Obține angajații care lucrează în departament ÎN ZIUA task-ului (din shifts)
+      const taskDate = new Date(assignment.assigned_at).toISOString().split('T')[0];
+      this.logger.log(`🔍 [AUTO-ACCEPT] Getting employees working on date: ${taskDate}`);
+      
+      const departmentEmployees = await this.getEmployeesWorkingOnDate(parseInt(departmentId), taskDate);
       
       if (!departmentEmployees || departmentEmployees.length === 0) {
-        this.logger.warn(`⚠️ No employee details found for IDs: ${assignedEmployeeIds.join(', ')}`);
+        this.logger.warn(`⚠️ No employees found working in department ${departmentId} on ${taskDate}`);
         return { action: 'no_employees' };
       }
 
-      // Alege un angajat random din cei atribuiți
+      this.logger.log(`🔍 [AUTO-ACCEPT] Found ${departmentEmployees.length} employees working in department on ${taskDate}`);
+
+      // Alege un angajat random
       const randomIndex = Math.floor(Math.random() * departmentEmployees.length);
       const selectedEmployee = departmentEmployees[randomIndex];
 
       this.logger.log(`🔍 [AUTO-ACCEPT] Selected employee: ${selectedEmployee.id} (${selectedEmployee.first_name} ${selectedEmployee.last_name})`);
 
-      // LOGICA EXACTĂ CA ÎN acceptTask() - Șterge toate celelalte task-uri din grup
-      let deletedTasksCount = 0;
-      
-      if (assignment.assignment_mode === 'first_come_first_served') {
-        this.logger.log(`🔍 [AUTO-ACCEPT] [FIRST_COME_FIRST_SERVED] Șterg celelalte taskuri din grup`);
-        
-        // Găsește toate task-urile din același grup (orice status)
-        const allGroupTasks = await this.assignmentRepository.find({
-          where: { department_group_id: assignment.department_group_id }
-        });
-
-        this.logger.log(`🔍 [AUTO-ACCEPT] All tasks in group (any status):`, allGroupTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-
-        // Filtrează doar task-urile care nu sunt cel acceptat
-        const otherTasks = allGroupTasks.filter(task => task.id !== assignment.id);
-        
-        this.logger.log(`🔍 [AUTO-ACCEPT] Other tasks to delete:`, otherTasks.map(t => ({ id: t.id, assigned_to_id: t.assigned_to_id, status: t.status })));
-
-        if (otherTasks.length > 0) {
-          this.logger.log(`🔍 [AUTO-ACCEPT] Attempting to delete ${otherTasks.length} tasks...`);
-          
-          for (const taskToDelete of otherTasks) {
-            this.logger.log(`🔍 [AUTO-ACCEPT] Deleting task ${taskToDelete.id} (assigned to ${taskToDelete.assigned_to_id}, status: ${taskToDelete.status})`);
-            const deleteResult = await this.assignmentRepository.remove(taskToDelete);
-            this.logger.log(`🔍 [AUTO-ACCEPT] Delete result for task ${taskToDelete.id}:`, deleteResult);
-          }
-          
-          deletedTasksCount = otherTasks.length;
-          this.logger.log(`✅ [AUTO-ACCEPT] [FIRST_COME_FIRST_SERVED] Deleted ${otherTasks.length} other tasks from the group`);
-        } else {
-          this.logger.log(`ℹ️ [AUTO-ACCEPT] [FIRST_COME_FIRST_SERVED] No other tasks to delete in the group`);
-        }
-      }
-
-      // Actualizează task-ul acceptat (rămâne ASSIGNED pentru consistență cu logica manuală)
-      this.logger.log(`🔍 [AUTO-ACCEPT] Updating task ${assignment.id} to ASSIGNED...`);
+      // Actualizează task-ul: setează assigned_to_id (task-ul devine al angajatului)
+      this.logger.log(`🔍 [AUTO-ACCEPT] Updating task ${assignment.id} assigned_to_id to ${selectedEmployee.id}...`);
       
       const updateResult = await this.assignmentRepository.update(assignment.id, {
         assigned_to_id: selectedEmployee.id,
         status: AssignmentStatus.ASSIGNED
       });
 
-      this.logger.log(`🔍 [AUTO-ACCEPT] Update result for accepted task:`, updateResult);
-      this.logger.log(`✅ [AUTO-ACCEPT] Task ${assignment.id} auto-accepted and updated to assigned`);
+      this.logger.log(`🔍 [AUTO-ACCEPT] Update result:`, updateResult);
+      this.logger.log(`✅ [AUTO-ACCEPT] Task ${assignment.id} auto-assigned to employee ${selectedEmployee.id}`);
 
       this.logger.log(`🔍 [AUTO-ACCEPT] ==========================================`);
       this.logger.log(`✅ [AUTO-ACCEPT] Task auto-acceptance completed successfully!`);
@@ -796,8 +768,7 @@ export class CronService {
       return { 
         action: 'auto_assigned', 
         details: { 
-          assignedTo: selectedEmployee.id,
-          deletedOthers: deletedTasksCount 
+          assignedTo: selectedEmployee.id
         } 
       };
 
@@ -830,7 +801,70 @@ export class CronService {
   }
 
   /**
-   * Obține angajații dintr-un departament
+   * Obține angajații care lucrează într-un departament într-o anumită zi (din shifts)
+   */
+  private async getEmployeesWorkingOnDate(departmentId: number, date: string): Promise<Array<{id: number, first_name: string, last_name: string}> | null> {
+    try {
+      this.logger.log(`🔍 Getting employees working in department ${departmentId} on ${date} from attendance shifts`);
+      
+      // Obține shift-urile din ziua respectivă
+      const shiftsResponse = await firstValueFrom(
+        this.httpService.get(`http://localhost:3007/attendance/shifts?work_location_id=1&limit=1000`)
+      );
+      
+      // Extrage array-ul de shifts (format: { data: [...], total, page, limit })
+      let allShifts: any[] = [];
+      if (Array.isArray(shiftsResponse.data)) {
+        allShifts = shiftsResponse.data;
+      } else if (shiftsResponse.data && Array.isArray(shiftsResponse.data.data)) {
+        allShifts = shiftsResponse.data.data;
+      }
+      
+      this.logger.log(`🔍 Total shifts from attendance: ${allShifts.length}`);
+      
+      // Filtrează shift-urile pentru data și departamentul specificat
+      const targetDate = new Date(date);
+      targetDate.setHours(0, 0, 0, 0);
+      
+      const relevantShifts = allShifts.filter((shift: any) => {
+        const shiftStart = new Date(shift.start_datetime);
+        shiftStart.setHours(0, 0, 0, 0);
+        return shiftStart.getTime() === targetDate.getTime() && shift.department_id === departmentId;
+      });
+      
+      this.logger.log(`🔍 Shifts for department ${departmentId} on ${date}: ${relevantShifts.length}`);
+      
+      if (relevantShifts.length === 0) {
+        return [];
+      }
+      
+      // Extrage employee_ids unici din shifts
+      const employeeIds = [...new Set(relevantShifts.map((s: any) => s.employee_id))];
+      this.logger.log(`🔍 Employee IDs working on ${date}:`, employeeIds);
+      
+      // Obține detalii despre angajați
+      const employeesResponse = await firstValueFrom(
+        this.httpService.get(`http://localhost:3012/employees`)
+      );
+      
+      const allEmployees = employeesResponse.data?.employees || [];
+      const workingEmployees = allEmployees.filter((emp: any) => employeeIds.includes(emp.id));
+      
+      this.logger.log(`✅ Found ${workingEmployees.length} employees working in department ${departmentId} on ${date}`);
+      
+      return workingEmployees.map((emp: any) => ({
+        id: emp.id,
+        first_name: emp.first_name,
+        last_name: emp.last_name
+      }));
+    } catch (error) {
+      this.logger.error(`❌ Error getting employees working on date ${date}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Obține angajații dintr-un departament (DEPRECATED - folosește getEmployeesWorkingOnDate)
    */
   private async getDepartmentEmployees(departmentGroupId: string): Promise<Array<{id: number, first_name: string, last_name: string}> | null> {
     try {
@@ -851,7 +885,7 @@ export class CronService {
       
       // Folosește microserviciul employees cu filtrul de departament
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3012/employees?department=${departmentId}`)
+        this.httpService.get(`http://localhost:3012/employees?department_id=${departmentId}`)
       );
       
       const employees = response.data?.employees || [];

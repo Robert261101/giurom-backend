@@ -21,7 +21,7 @@ export enum Priority {
 }
 
 export enum AssignmentMode {
-  FIRST_COME_FIRST_SERVED = 'first_come_first_served', // Primul care acceptă, ceilalți se șterg (pentru grupuri)
+  FIRST_COME_FIRST_SERVED = 'first_come_first_served', // Un singur task pentru grup, primul care acceptă devine proprietar
   EVERYONE_GETS_IT = 'everyone_gets_it', // Toți din grup primesc taskul individual (pentru grupuri)
   INDIVIDUAL = 'individual' // Task individual atribuit unei singure persoane
 }
