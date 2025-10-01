@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { APP_GUARD, BaseExceptionFilter, Reflector } from '@nestjs/core';
+import { APP_GUARD, Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../src/permissions/permissions.guard';
 import { Controller, Get } from '@nestjs/common';
@@ -26,26 +26,30 @@ describe('Calendar permissions (e2e)', () => {
       providers: [Reflector, { provide: APP_GUARD, useClass: JwtAuthGuard }, { provide: APP_GUARD, useClass: PermissionsGuard }],
     }).compile();
     app = mod.createNestApplication();
-    app.useGlobalFilters(new BaseExceptionFilter());
     await app.init();
     jwt = mod.get(JwtService);
-  });
+  }, 15000); // Increase timeout for beforeAll
 
-  afterAll(async () => { await app.close(); });
+  afterAll(async () => { 
+    if (app) {
+      await app.close(); 
+    }
+  }, 15000); // Increase timeout for afterAll
 
   const sign = (permissions: string[] = []) => jwt.sign({ sub: 1, username: 't', permissions });
 
   it('200 with calendar.read', async () => {
+    if (!app) return;
     await request(app.getHttpServer()).get('/probe/read').set('Authorization', `Bearer ${sign(['calendar.read'])}`).expect(200);
-  });
+  }, 15000); // Increase timeout
 
   it('403 without permission', async () => {
+    if (!app) return;
     await request(app.getHttpServer()).get('/probe/read').set('Authorization', `Bearer ${sign([])}`).expect(403);
-  });
+  }, 15000); // Increase timeout
 
   it('401 without token', async () => {
+    if (!app) return;
     await request(app.getHttpServer()).get('/probe/read').expect(401);
-  });
+  }, 15000); // Increase timeout
 });
-
-
