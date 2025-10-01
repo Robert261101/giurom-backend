@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Request } from '@nestjs/common';
 import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
 import { UpdateWorkLocationDepartmentsDto } from './locations/dto/update-work-location-departments.dto';
 import { LocationsService } from './locations/locations.service';
@@ -33,6 +33,47 @@ export class LocationsHttpController {
 
 	@Get('company/:companyId')
 	findByCompany(@Param('companyId') companyId: string) { return this.service.findWorkLocationsByCompany(parseInt(companyId, 10)); }
+
+	@Get('employee-locations')
+	async getEmployeeLocations(@Request() req: any) {
+		try {
+			// Preia token-ul din header
+			const authHeader = req.headers.authorization;
+			if (!authHeader) {
+				return { error: 'Authorization header missing' };
+			}
+
+			// Obține informațiile despre angajat din employees microservice
+			const employeeResponse = await fetch('http://localhost:3002/employees/me', {
+				headers: { 'Authorization': authHeader }
+			});
+			
+			if (!employeeResponse.ok) {
+				return { error: 'Error fetching employee data' };
+			}
+			
+			const employee = await employeeResponse.json();
+			
+			if (!employee.work_location_default_id) {
+				return { locations: [] };
+			}
+			
+			// Obține locația default
+			const location = await this.service.findWorkLocationById(employee.work_location_default_id);
+			
+			if (!location?.company_id) {
+				return { locations: [] };
+			}
+			
+			// Obține toate locațiile din compania respectivă
+			const companyLocations = await this.service.findWorkLocationsByCompany(location.company_id);
+			
+			return { locations: companyLocations || [] };
+		} catch (error) {
+			console.error('Error in getEmployeeLocations:', error);
+			return { error: 'Internal server error' };
+		}
+	}
 
 	@Patch(':id')
 	update(@Param('id') id: string, @Body() dto: UpdateWorkLocationDto) { return this.service.updateWorkLocation(parseInt(id, 10), dto); }
