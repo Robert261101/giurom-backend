@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
@@ -12,6 +14,7 @@ import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
 import { RecipeMediaService } from './recipes-media.service';
+import { ProductRef } from '../external/product-ref.entity';
 
 @Injectable()
 export class RecipesService {
@@ -23,6 +26,7 @@ export class RecipesService {
     @InjectRepository(RecipeProduct)
     private recipeProductsRepository: Repository<RecipeProduct>,
     private recipeMediaService: RecipeMediaService,
+    private readonly httpService: HttpService,
   ) {}
 
   // ==================== RECIPES METHODS ====================
@@ -44,8 +48,7 @@ export class RecipesService {
     const limit = params.limit ?? 10;
     const queryBuilder = this.recipesRepository.createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.category', 'category')
-      .leftJoinAndSelect('recipe.recipe_products', 'recipe_products')
-      .leftJoinAndSelect('recipe_products.product', 'product');
+      .leftJoinAndSelect('recipe.recipe_products', 'recipe_products');
     
     // Add search filter
     if (params.search) {
@@ -64,6 +67,25 @@ export class RecipesService {
       .skip(offset)
       .getManyAndCount();
     
+    // Populate product data for each recipe
+    for (const recipe of recipes) {
+      if (recipe.recipe_products && recipe.recipe_products.length > 0) {
+        for (const recipeProduct of recipe.recipe_products) {
+          if (recipeProduct.product_id) {
+            try {
+              const response = await lastValueFrom(
+                this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+              );
+              recipeProduct.product = response.data;
+            } catch (error) {
+              // Handle case where product might not exist
+              recipeProduct.product = null;
+            }
+          }
+        }
+      }
+    }
+    
     const totalPages = Math.ceil(total / limit);
     
     return { recipes, total, totalPages };
@@ -72,11 +94,28 @@ export class RecipesService {
   async findOne(id: number): Promise<Recipe> {
     const recipe = await this.recipesRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_products', 'recipe_products.product', 'recipeMedia'],
+      relations: ['category', 'recipe_products', 'recipeMedia'],
     });
     
     if (!recipe) {
       throw new NotFoundException(`Recipe with ID ${id} not found`);
+    }
+    
+    // Populate product data
+    if (recipe.recipe_products && recipe.recipe_products.length > 0) {
+      for (const recipeProduct of recipe.recipe_products) {
+        if (recipeProduct.product_id) {
+          try {
+            const response = await lastValueFrom(
+              this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+            );
+            recipeProduct.product = response.data;
+          } catch (error) {
+            // Handle case where product might not exist
+            recipeProduct.product = null;
+          }
+        }
+      }
     }
     
     return recipe;
@@ -162,7 +201,15 @@ export class RecipesService {
       throw new NotFoundException(`Recipe with ID ${createRecipeProductDto.recipe_id} not found`);
     }
     
-    // Verify product exists (assuming product validation is done in the controller)
+    // Verify product exists via HTTP call
+    try {
+      await lastValueFrom(
+        this.httpService.get(`http://localhost:3000/api/stock/products/${createRecipeProductDto.product_id}`)
+      );
+    } catch (error) {
+      throw new BadRequestException(`Product with ID ${createRecipeProductDto.product_id} not found`);
+    }
+    
     const recipeProduct = this.recipeProductsRepository.create(createRecipeProductDto);
     return await this.recipeProductsRepository.save(recipeProduct);
   }
@@ -177,20 +224,48 @@ export class RecipesService {
       throw new NotFoundException(`Recipe with ID ${recipe_id} not found`);
     }
     
-    return await this.recipeProductsRepository.find({
+    const recipeProducts = await this.recipeProductsRepository.find({
       where: { recipe_id },
-      relations: ['recipe', 'product'],
+      relations: ['recipe'],
     });
+    
+    // Populate product data
+    for (const recipeProduct of recipeProducts) {
+      if (recipeProduct.product_id) {
+        try {
+          const response = await lastValueFrom(
+            this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+          );
+          recipeProduct.product = response.data;
+        } catch (error) {
+          // Handle case where product might not exist
+          recipeProduct.product = null;
+        }
+      }
+    }
+    
+    return recipeProducts;
   }
 
   async updateRecipeProduct(id: number, updateRecipeProductDto: UpdateRecipeProductDto): Promise<RecipeProduct> {
     const recipeProduct = await this.recipeProductsRepository.findOne({
       where: { id },
-      relations: ['recipe', 'product'],
+      relations: ['recipe'],
     });
     
     if (!recipeProduct) {
       throw new NotFoundException(`Recipe product with ID ${id} not found`);
+    }
+    
+    // If product_id is being updated, verify the new product exists
+    if (updateRecipeProductDto.product_id && updateRecipeProductDto.product_id !== recipeProduct.product_id) {
+      try {
+        await lastValueFrom(
+          this.httpService.get(`http://localhost:3000/api/stock/products/${updateRecipeProductDto.product_id}`)
+        );
+      } catch (error) {
+        throw new BadRequestException(`Product with ID ${updateRecipeProductDto.product_id} not found`);
+      }
     }
     
     Object.assign(recipeProduct, updateRecipeProductDto);
@@ -200,7 +275,6 @@ export class RecipesService {
   async removeRecipeProduct(id: number): Promise<void> {
     const recipeProduct = await this.recipeProductsRepository.findOne({
       where: { id },
-      relations: ['recipe', 'product'],
     });
     
     if (!recipeProduct) {

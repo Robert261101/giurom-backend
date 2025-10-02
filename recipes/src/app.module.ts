@@ -4,6 +4,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { Recipe } from './recipes/entities/recipe.entity';
 import { RecipeCategory } from './recipes/entities/recipe-category.entity';
 import { RecipeProduct } from './recipes/entities/recipe-product.entity';
@@ -12,7 +13,6 @@ import { RecipeLabel } from './recipes/entities/recipe-label.entity';
 import { RecipeMedia } from './recipes/entities/recipe-media.entity';
 import { RecipesService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
-import { ProductRef } from './external/product-ref.entity';
 import { StockRef } from './external/stock-ref.entity';
 import { StockTransactionRef } from './external/stock-transaction-ref.entity';
 import { RecipesMicroController } from './recipes.micro.controller';
@@ -22,6 +22,7 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
 
 @Module({
   imports: [
+    HttpModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ScheduleModule.forRoot(),
     ClientsModule.register([
@@ -42,7 +43,8 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, ProductRef, StockRef, StockTransactionRef],
+      // Removed ProductRef from entities list
+      entities: [Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, StockRef, StockTransactionRef],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -60,7 +62,8 @@ import { RecipesLabelsService } from './recipes/recipes-labels.service';
         ],
       },
     }),
-    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, ProductRef, StockRef, StockTransactionRef]),
+    // Removed ProductRef from TypeOrmModule.forFeature
+    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipePreparation, RecipeLabel, RecipeMedia, StockRef, StockTransactionRef]),
   ],
   controllers: [RecipesMicroController, RecipesHttpController],
   providers: [RecipesService, RecipeMediaService, RecipePreparationsService, RecipesLabelsService],
