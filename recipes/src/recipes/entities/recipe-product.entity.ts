@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Recipe } from './recipe.entity';
+// Import the class instead of the entity
 import { ProductRef } from '../../external/product-ref.entity';
 
 @Entity('recipe_products')
@@ -29,10 +30,6 @@ export class RecipeProduct {
   @JoinColumn({ name: 'recipe_id' })
   recipe: Recipe;
 
-  // Reference to product from stock service schema (if present in same DB)
-  @ManyToOne(() => ProductRef, { onDelete: 'RESTRICT', onUpdate: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'product_id' })
+  // Reference to product from stock service - stored as plain object since we removed the entity mapping
   product?: ProductRef | null;
 }
-
-
