@@ -24,7 +24,7 @@ app.get('/health', (req, res) => {
       '/calendar': 'http://localhost:3010', 
       '/leave-requests': 'http://localhost:3013',
       '/shift-change-requests': 'http://localhost:3013',
-      '/notifications': 'http://localhost:3011',
+      '/notifications': 'http://localhost:3020',
       '/companies': 'http://localhost:3003',
       '/locations': 'http://localhost:3004',
       '/recipes': 'http://localhost:3005',
@@ -32,9 +32,12 @@ app.get('/health', (req, res) => {
       '/recipe-labels': 'http://localhost:3005',
       '/stock': 'http://localhost:3006',
       '/suppliers': 'http://localhost:3007',
-      '/waste-records': 'http://localhost:3012',
-      '/waste': 'http://localhost:3014'
-      , '/tasks': 'http://localhost:3008'
+      '/waste-records': 'http://localhost:3014',
+      '/waste': 'http://localhost:3014',
+      '/tasks': 'http://localhost:3008',
+      '/templates': 'http://localhost:3008',
+      '/auth': 'http://localhost:3021',
+      '/users': 'http://localhost:3021'
     }
   });
 });
@@ -149,6 +152,31 @@ const microservices = {
   // Veziv Tasks Service
   '/tasks': {
     target: 'http://localhost:3008',
+    changeOrigin: true,
+    logLevel: 'debug',
+    ws: true
+    // NU mai folosim pathRewrite - microserviciul expune deja rutele cu /tasks
+  },
+
+  // Templates Service (parte din veziv-tasks2)
+  '/templates': {
+    target: 'http://localhost:3008',
+    changeOrigin: true,
+    logLevel: 'debug',
+    pathRewrite: { '^/templates': '/tasks/templates' }
+    // Rewrites /templates -> /tasks/templates pentru veziv-tasks2
+  },
+
+  // Auth Service
+  '/auth': {
+    target: 'http://localhost:3021',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Users Service (part of auth)
+  '/users': {
+    target: 'http://localhost:3021',
     changeOrigin: true,
     logLevel: 'debug'
   }

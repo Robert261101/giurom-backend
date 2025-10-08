@@ -14,6 +14,7 @@ import { EmployeeWorkLocationHistory } from './entities/employee-work-location-h
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeesLocations, WorkLocation } from './entities/employees-locations.entity';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Module({
   imports: [
@@ -42,6 +43,8 @@ import { EmployeesLocations, WorkLocation } from './entities/employees-locations
   controllers: [EmployeeMicroController, EmployeeHttpController],
   providers: [
     EmployeeService,
+    InternalServiceGuard, // Register the internal service guard
+    { provide: APP_GUARD, useClass: InternalServiceGuard }, // Apply InternalServiceGuard first
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

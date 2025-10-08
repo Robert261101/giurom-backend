@@ -29,6 +29,7 @@ import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.d
 import { Response } from 'express';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 import { Permissions } from './permissions/permissions.decorator';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @ApiTags('employees')
 @Controller('employees')
@@ -52,6 +53,7 @@ export class EmployeeHttpController {
   }
 
   @Get()
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'Listează toți angajații',
@@ -65,7 +67,7 @@ export class EmployeeHttpController {
   @ApiQuery({ name: 'contract_type', required: false, description: 'Filtrează după tipul contractului' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista angajaților a fost returnată cu succes',
+    description: 'Lista angajații a fost returnată cu succes',
   })
   async findAll(
     @Query('page') page: string = '1',
@@ -135,6 +137,7 @@ export class EmployeeHttpController {
   }
 
   @Get('email/:email')
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'Găsește angajat după email',
@@ -167,6 +170,7 @@ export class EmployeeHttpController {
   }
 
   @Get(':id')
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'Găsește angajat după ID',
