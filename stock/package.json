@@ -7,7 +7,9 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "start:dev": "ts-node -r tsconfig-paths/register src/main.ts",
-    "start:debug": "ts-node --inspect-brk -r tsconfig-paths/register src/main.ts"
+    "start:debug": "ts-node --inspect-brk -r tsconfig-paths/register src/main.ts",
+    "test": "jest -i --config jest.config.js",
+    "test:watch": "jest --watch --config jest.config.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -24,10 +26,11 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.5",
+    "@types/supertest": "^6.0.3",
+    "jest": "^30.2.0",
+    "supertest": "^7.1.4",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.3.3"
   }
 }
-
-

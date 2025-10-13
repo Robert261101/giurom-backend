@@ -5,14 +5,20 @@ import { join } from 'path';
 import { EmployeeMicroController } from './employee.micro.controller';
 import { EmployeeHttpController } from './employee.http.controller';
 import { EmployeeService } from './employee.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { Employee } from './entities/employee.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeesLocations, WorkLocation } from './entities/employees-locations.entity';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mysql',
@@ -35,6 +41,12 @@ import { EmployeesLocations, WorkLocation } from './entities/employees-locations
     ]),
   ],
   controllers: [EmployeeMicroController, EmployeeHttpController],
-  providers: [EmployeeService],
+  providers: [
+    EmployeeService,
+    InternalServiceGuard, // Register the internal service guard
+    { provide: APP_GUARD, useClass: InternalServiceGuard }, // Apply InternalServiceGuard first
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}

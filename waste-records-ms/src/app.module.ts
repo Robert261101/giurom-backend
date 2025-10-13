@@ -4,10 +4,15 @@ import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WasteRecord } from './waste-records/entities/waste-record.entity';
 import { WasteRecordsService } from './waste-records/waste-records.service';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { WasteRecordsMicroController } from './waste-records.micro.controller';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     TypeOrmModule.forRoot({
       type: 'mariadb',
@@ -37,7 +42,11 @@ import { WasteRecordsMicroController } from './waste-records.micro.controller';
     TypeOrmModule.forFeature([WasteRecord]),
   ],
   controllers: [WasteRecordsMicroController],
-  providers: [WasteRecordsService],
+  providers: [
+    WasteRecordsService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}
 

@@ -24,7 +24,7 @@ app.get('/health', (req, res) => {
       '/calendar': 'http://localhost:3010', 
       '/leave-requests': 'http://localhost:3013',
       '/shift-change-requests': 'http://localhost:3013',
-      '/notifications': 'http://localhost:3011',
+      '/notifications': 'http://localhost:3020',
       '/companies': 'http://localhost:3003',
       '/locations': 'http://localhost:3004',
       '/recipes': 'http://localhost:3005',
@@ -33,9 +33,12 @@ app.get('/health', (req, res) => {
       '/stock': 'http://localhost:3006',
       '/categories': 'http://localhost:3006',
       '/suppliers': 'http://localhost:3007',
-      '/waste-records': 'http://localhost:3025',
+      '/waste-records': 'http://localhost:3014',
       '/waste': 'http://localhost:3014',
-      '/tasks': 'http://localhost:3008'
+      '/tasks': 'http://localhost:3008',
+      '/templates': 'http://localhost:3008',
+      '/auth': 'http://localhost:3021',
+      '/users': 'http://localhost:3021'
     }
   });
 });

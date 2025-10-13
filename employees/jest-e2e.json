@@ -1,0 +1,12 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testMatch": ["<rootDir>/test/**/*.e2e-spec.ts"],
+  "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+  "moduleNameMapper": {
+    "^@nestjs/(.*)$": "<rootDir>/../node_modules/@nestjs/$1"
+  },
+  "testEnvironment": "node"
+}
+
+
