@@ -1,164 +1,305 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository, Like, MoreThan, LessThan } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
+import { RecipeMedia } from './entities/recipe-media.entity';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
+import { RecipeMediaService } from './recipes-media.service';
+import { ProductRef } from '../external/product-ref.entity';
 
 @Injectable()
 export class RecipesService {
   constructor(
-    @InjectRepository(Recipe) private readonly recipeRepository: Repository<Recipe>,
-    @InjectRepository(RecipeCategory) private readonly categoryRepository: Repository<RecipeCategory>,
-    @InjectRepository(RecipeProduct) private readonly recipeProductRepository: Repository<RecipeProduct>,
+    @InjectRepository(Recipe)
+    private recipesRepository: Repository<Recipe>,
+    @InjectRepository(RecipeCategory)
+    private categoriesRepository: Repository<RecipeCategory>,
+    @InjectRepository(RecipeProduct)
+    private recipeProductsRepository: Repository<RecipeProduct>,
+    private recipeMediaService: RecipeMediaService,
+    private readonly httpService: HttpService,
   ) {}
 
-  async createRecipeCategory(dto: CreateRecipeCategoryDto): Promise<RecipeCategory> {
-    const existing = await this.categoryRepository.findOne({ where: { name: dto.name } });
-    if (existing) throw new ConflictException('Categoria există deja');
-    const category = this.categoryRepository.create(dto);
-    return await this.categoryRepository.save(category);
+  // ==================== RECIPES METHODS ====================
+
+  async create(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
+    const recipe = this.recipesRepository.create(createRecipeDto);
+    return await this.recipesRepository.save(recipe);
   }
 
-  async findAllRecipeCategories(page = 1, limit = 10, search?: string) {
-    const safePage = Number.isFinite(page as any) && (page as number) > 0 ? (page as number) : 1;
-    const safeLimit = Number.isFinite(limit as any) && (limit as number) > 0 ? (limit as number) : 10;
-    const where = search ? { name: Like(`%${search}%`) } : {};
-    const [data, total] = await this.categoryRepository.findAndCount({
-      where,
-      relations: ['recipes'],
-      skip: (safePage - 1) * safeLimit,
-      take: safeLimit,
-      order: { name: 'ASC' },
-    });
-    return { data, total, page: safePage, limit: safeLimit };
-  }
-
-  async findRecipeCategoryById(id: number): Promise<RecipeCategory> {
-    const category = await this.categoryRepository.findOne({ where: { id }, relations: ['recipes'] });
-    if (!category) throw new NotFoundException('Categoria nu a fost găsită');
-    return category;
-  }
-
-  async updateRecipeCategory(id: number, dto: UpdateRecipeCategoryDto): Promise<RecipeCategory> {
-    const category = await this.findRecipeCategoryById(id);
-    if (dto.name && dto.name !== category.name) {
-      const existing = await this.categoryRepository.findOne({ where: { name: dto.name } });
-      if (existing) throw new ConflictException('Categoria există deja');
-    }
-    Object.assign(category, dto);
-    return await this.categoryRepository.save(category);
-  }
-
-  async deleteRecipeCategory(id: number): Promise<void> {
-    const category = await this.findRecipeCategoryById(id);
-    const recipeCount = await this.recipeRepository.count({ where: { category_id: id } });
-    if (recipeCount > 0) throw new BadRequestException('Categoria are rețete asociate');
-    await this.categoryRepository.remove(category);
-  }
-
-  async createRecipe(dto: CreateRecipeDto): Promise<Recipe> {
-    const category = await this.categoryRepository.findOne({ where: { id: dto.category_id } });
-    if (!category) throw new NotFoundException('Categoria nu a fost găsită');
-    const recipe = this.recipeRepository.create(dto);
-    return await this.recipeRepository.save(recipe);
-  }
-
-  async findAllRecipes(page = 1, limit = 10, search?: string, category_id?: number) {
-    const qb = this.recipeRepository.createQueryBuilder('recipe')
+  async findAll(params: { 
+    page?: number; 
+    limit?: number; 
+    search?: string; 
+    category_id?: number;
+    difficulty?: 'easy' | 'medium' | 'hard';
+    max_cooking_time?: number;
+  }): Promise<{ recipes: Recipe[]; total: number; totalPages: number }> {
+    const page = params.page ?? 1;
+    const limit = params.limit ?? 10;
+    const queryBuilder = this.recipesRepository.createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.category', 'category')
-      .leftJoinAndSelect('recipe.recipe_products', 'rp')
-      .leftJoinAndSelect('rp.product', 'product');
-
-    if (search) {
-      qb.andWhere('recipe.name LIKE :s OR recipe.description LIKE :s', { s: `%${search}%` });
+      .leftJoinAndSelect('recipe.recipe_products', 'recipe_products');
+    
+    // Add search filter
+    if (params.search) {
+      queryBuilder.andWhere('recipe.name LIKE :search', { search: `%${params.search}%` });
     }
-
-    if (Number.isFinite(category_id as any) && (category_id as number) > 0) {
-      qb.andWhere('recipe.category_id = :cid', { cid: category_id });
+    
+    // Add category filter
+    if (params.category_id) {
+      queryBuilder.andWhere('recipe.category_id = :category_id', { category_id: params.category_id });
     }
-
-    const safePage = Number.isFinite(page as any) && (page as number) > 0 ? (page as number) : 1;
-    const safeLimit = Number.isFinite(limit as any) && (limit as number) > 0 ? (limit as number) : 10;
-
-    const total = await qb.getCount();
-    const data = await qb
+    
+    const offset = (page - 1) * limit;
+    const [recipes, total] = await queryBuilder
       .orderBy('recipe.created_at', 'DESC')
-      .skip((safePage - 1) * safeLimit)
-      .take(safeLimit)
-      .getMany();
-
-    return { data, total, page: safePage, limit: safeLimit };
+      .take(limit)
+      .skip(offset)
+      .getManyAndCount();
+    
+    // Populate product data for each recipe
+    for (const recipe of recipes) {
+      if (recipe.recipe_products && recipe.recipe_products.length > 0) {
+        for (const recipeProduct of recipe.recipe_products) {
+          if (recipeProduct.product_id) {
+            try {
+              const response = await lastValueFrom(
+                this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+              );
+              recipeProduct.product = response.data;
+            } catch (error) {
+              // Handle case where product might not exist
+              recipeProduct.product = null;
+            }
+          }
+        }
+      }
+    }
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return { recipes, total, totalPages };
   }
 
-  async findRecipeById(id: number): Promise<Recipe> {
-    const recipe = await this.recipeRepository.findOne({
+  async findOne(id: number): Promise<Recipe> {
+    const recipe = await this.recipesRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_products', 'recipe_products.product'],
+      relations: ['category', 'recipe_products', 'recipeMedia'],
     });
-    if (!recipe) throw new NotFoundException('Rețeta nu a fost găsită');
+    
+    if (!recipe) {
+      throw new NotFoundException(`Recipe with ID ${id} not found`);
+    }
+    
+    // Populate product data
+    if (recipe.recipe_products && recipe.recipe_products.length > 0) {
+      for (const recipeProduct of recipe.recipe_products) {
+        if (recipeProduct.product_id) {
+          try {
+            const response = await lastValueFrom(
+              this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+            );
+            recipeProduct.product = response.data;
+          } catch (error) {
+            // Handle case where product might not exist
+            recipeProduct.product = null;
+          }
+        }
+      }
+    }
+    
     return recipe;
   }
 
-  async updateRecipe(id: number, dto: UpdateRecipeDto): Promise<Recipe> {
-    const recipe = await this.findRecipeById(id);
-    if (dto.category_id && dto.category_id !== recipe.category_id) {
-      const category = await this.categoryRepository.findOne({ where: { id: dto.category_id } });
-      if (!category) throw new NotFoundException('Categoria nu a fost găsită');
+  async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
+    const recipe = await this.findOne(id);
+    Object.assign(recipe, updateRecipeDto);
+    return await this.recipesRepository.save(recipe);
+  }
+
+  async remove(id: number): Promise<void> {
+    const recipe = await this.findOne(id);
+    await this.recipesRepository.remove(recipe);
+  }
+
+  // ==================== CATEGORIES METHODS ====================
+
+  async createCategory(createCategoryDto: CreateRecipeCategoryDto): Promise<RecipeCategory> {
+    const category = this.categoriesRepository.create(createCategoryDto);
+    return await this.categoriesRepository.save(category);
+  }
+
+  async findAllCategories(params: { 
+    page?: number; 
+    limit?: number; 
+    search?: string 
+  }): Promise<{ categories: RecipeCategory[]; total: number; totalPages: number }> {
+    const page = params.page ?? 1;
+    const limit = params.limit ?? 10;
+    const queryBuilder = this.categoriesRepository.createQueryBuilder('category');
+    
+    // Add search filter
+    if (params.search) {
+      queryBuilder.andWhere('category.name LIKE :search', { search: `%${params.search}%` });
     }
-    Object.assign(recipe, dto);
-    return await this.recipeRepository.save(recipe);
+    
+    const offset = (page - 1) * limit;
+    const [categories, total] = await queryBuilder
+      .orderBy('category.created_at', 'DESC')
+      .take(limit)
+      .skip(offset)
+      .getManyAndCount();
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return { categories, total, totalPages };
   }
 
-  async deleteRecipe(id: number): Promise<void> {
-    const recipe = await this.findRecipeById(id);
-    await this.recipeRepository.remove(recipe);
+  async findOneCategory(id: number): Promise<RecipeCategory> {
+    const category = await this.categoriesRepository.findOne({
+      where: { id },
+      relations: ['recipes'],
+    });
+    
+    if (!category) {
+      throw new NotFoundException(`Category with ID ${id} not found`);
+    }
+    
+    return category;
   }
 
-  async addProductToRecipe(dto: CreateRecipeProductDto): Promise<RecipeProduct> {
-    const recipe = await this.recipeRepository.findOne({ where: { id: dto.recipe_id } });
-    if (!recipe) throw new NotFoundException('Rețeta nu a fost găsită');
-    // Notă: izolăm de modulul stock; aici nu validăm existența produsului în nomenclator
-    const existing = await this.recipeProductRepository.findOne({ where: { recipe_id: dto.recipe_id, product_id: dto.product_id } });
-    if (existing) throw new ConflictException('Produsul este deja adăugat în rețetă');
-    const rp = this.recipeProductRepository.create(dto);
-    return await this.recipeProductRepository.save(rp);
+  async updateCategory(id: number, updateCategoryDto: UpdateRecipeCategoryDto): Promise<RecipeCategory> {
+    const category = await this.findOneCategory(id);
+    Object.assign(category, updateCategoryDto);
+    return await this.categoriesRepository.save(category);
+  }
+
+  async removeCategory(id: number): Promise<void> {
+    const category = await this.findOneCategory(id);
+    await this.categoriesRepository.remove(category);
+  }
+
+  // ==================== RECIPE PRODUCTS METHODS ====================
+
+  async addProductToRecipe(createRecipeProductDto: CreateRecipeProductDto): Promise<RecipeProduct> {
+    // Verify recipe exists
+    const recipe = await this.recipesRepository.findOne({
+      where: { id: createRecipeProductDto.recipe_id }
+    });
+    
+    if (!recipe) {
+      throw new NotFoundException(`Recipe with ID ${createRecipeProductDto.recipe_id} not found`);
+    }
+    
+    // Verify product exists via HTTP call
+    try {
+      await lastValueFrom(
+        this.httpService.get(`http://localhost:3000/api/stock/products/${createRecipeProductDto.product_id}`)
+      );
+    } catch (error) {
+      throw new BadRequestException(`Product with ID ${createRecipeProductDto.product_id} not found`);
+    }
+    
+    const recipeProduct = this.recipeProductsRepository.create(createRecipeProductDto);
+    return await this.recipeProductsRepository.save(recipeProduct);
   }
 
   async findRecipeProducts(recipe_id: number): Promise<RecipeProduct[]> {
-    return await this.recipeProductRepository.find({
-      where: { recipe_id },
-      relations: ['product'],
-      order: { created_at: 'ASC' },
+    // Verify recipe exists
+    const recipe = await this.recipesRepository.findOne({
+      where: { id: recipe_id }
     });
+    
+    if (!recipe) {
+      throw new NotFoundException(`Recipe with ID ${recipe_id} not found`);
+    }
+    
+    const recipeProducts = await this.recipeProductsRepository.find({
+      where: { recipe_id },
+      relations: ['recipe'],
+    });
+    
+    // Populate product data
+    for (const recipeProduct of recipeProducts) {
+      if (recipeProduct.product_id) {
+        try {
+          const response = await lastValueFrom(
+            this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+          );
+          recipeProduct.product = response.data;
+        } catch (error) {
+          // Handle case where product might not exist
+          recipeProduct.product = null;
+        }
+      }
+    }
+    
+    return recipeProducts;
   }
 
-  async updateRecipeProduct(id: number, dto: UpdateRecipeProductDto): Promise<RecipeProduct> {
-    const rp = await this.recipeProductRepository.findOne({ where: { id } });
-    if (!rp) throw new NotFoundException('Asocierea nu a fost găsită');
-    Object.assign(rp, dto);
-    return await this.recipeProductRepository.save(rp);
+  async updateRecipeProduct(id: number, updateRecipeProductDto: UpdateRecipeProductDto): Promise<RecipeProduct> {
+    const recipeProduct = await this.recipeProductsRepository.findOne({
+      where: { id },
+      relations: ['recipe'],
+    });
+    
+    if (!recipeProduct) {
+      throw new NotFoundException(`Recipe product with ID ${id} not found`);
+    }
+    
+    // If product_id is being updated, verify the new product exists
+    if (updateRecipeProductDto.product_id && updateRecipeProductDto.product_id !== recipeProduct.product_id) {
+      try {
+        await lastValueFrom(
+          this.httpService.get(`http://localhost:3000/api/stock/products/${updateRecipeProductDto.product_id}`)
+        );
+      } catch (error) {
+        throw new BadRequestException(`Product with ID ${updateRecipeProductDto.product_id} not found`);
+      }
+    }
+    
+    Object.assign(recipeProduct, updateRecipeProductDto);
+    return await this.recipeProductsRepository.save(recipeProduct);
   }
 
-  async removeProductFromRecipe(id: number): Promise<void> {
-    const rp = await this.recipeProductRepository.findOne({ where: { id } });
-    if (!rp) throw new NotFoundException('Asocierea nu a fost găsită');
-    await this.recipeProductRepository.remove(rp);
+  async removeRecipeProduct(id: number): Promise<void> {
+    const recipeProduct = await this.recipeProductsRepository.findOne({
+      where: { id },
+    });
+    
+    if (!recipeProduct) {
+      throw new NotFoundException(`Recipe product with ID ${id} not found`);
+    }
+    
+    await this.recipeProductsRepository.remove(recipeProduct);
   }
 
-  async getRecipeStatistics() {
-    const [totalRecipes, totalCategories] = await Promise.all([
-      this.recipeRepository.count(),
-      this.categoryRepository.count(),
-    ]);
-    return { totalRecipes, totalCategories };
+  // ==================== STATISTICS METHODS ====================
+
+  async getStatistics(): Promise<any> {
+    const total = await this.recipesRepository.count();
+    
+    const byCategory = await this.recipesRepository
+      .createQueryBuilder('recipe')
+      .select('category.name', 'category')
+      .addSelect('COUNT(recipe.id)', 'count')
+      .leftJoin('recipe.category', 'category')
+      .groupBy('category.name')
+      .getRawMany();
+    
+    return {
+      total,
+      byCategory,
+    };
   }
 }
-
-

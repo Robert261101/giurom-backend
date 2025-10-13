@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsPositive, Length, Min, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsPositive, Length, Min, Max, IsOptional, IsUrl } from 'class-validator';
 
 export class CreateRecipeDto {
   @ApiProperty()
@@ -32,6 +32,13 @@ export class CreateRecipeDto {
   @Min(1)
   @Max(50000)
   quantity: number;
+
+  @ApiProperty({
+    description: 'Link către un videoclip YouTube cu prepararea rețetei',
+    example: 'https://www.youtube.com/watch?v=example',
+    required: false,
+  })
+  @IsOptional()
+  @IsUrl()
+  video_link?: string;
 }
-
-

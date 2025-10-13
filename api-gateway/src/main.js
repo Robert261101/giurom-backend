@@ -31,6 +31,7 @@ app.get('/health', (req, res) => {
       '/recipe-preparations': 'http://localhost:3005',
       '/recipe-labels': 'http://localhost:3005',
       '/stock': 'http://localhost:3006',
+      '/categories': 'http://localhost:3006',
       '/suppliers': 'http://localhost:3007',
       '/waste-records': 'http://localhost:3014',
       '/waste': 'http://localhost:3014',
@@ -128,6 +129,13 @@ const microservices = {
     logLevel: 'debug'
   },
 
+  // Categories (part of stock microservice)
+  '/categories': {
+    target: 'http://localhost:3006',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
   // Suppliers HTTP
   '/suppliers': {
     target: 'http://localhost:3007',
@@ -154,31 +162,9 @@ const microservices = {
     target: 'http://localhost:3008',
     changeOrigin: true,
     logLevel: 'debug',
-    ws: true
-    // NU mai folosim pathRewrite - microserviciul expune deja rutele cu /tasks
-  },
-
-  // Templates Service (parte din veziv-tasks2)
-  '/templates': {
-    target: 'http://localhost:3008',
-    changeOrigin: true,
-    logLevel: 'debug',
-    pathRewrite: { '^/templates': '/tasks/templates' }
-    // Rewrites /templates -> /tasks/templates pentru veziv-tasks2
-  },
-
-  // Auth Service
-  '/auth': {
-    target: 'http://localhost:3021',
-    changeOrigin: true,
-    logLevel: 'debug'
-  },
-
-  // Users Service (part of auth)
-  '/users': {
-    target: 'http://localhost:3021',
-    changeOrigin: true,
-    logLevel: 'debug'
+    pathRewrite: {
+      '^/tasks': ''
+    }
   }
 };
 
@@ -190,6 +176,7 @@ Object.keys(microservices).forEach(path => {
     target: config.target,
     changeOrigin: config.changeOrigin,
     logLevel: config.logLevel,
+    pathRewrite: config.pathRewrite,
     ws: config.ws,
     onProxyReq: (proxyReq, req, res) => {
       console.log(`[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`);

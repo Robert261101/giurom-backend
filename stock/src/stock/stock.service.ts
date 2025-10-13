@@ -13,6 +13,8 @@ import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { UpdateStockTransactionDto } from './dto/update-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { AssignCategoryDto } from './dto/assign-category.dto';
+import { Category } from './entities/category.entity';
 
 @Injectable()
 export class StockService {
@@ -21,6 +23,7 @@ export class StockService {
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
     @InjectRepository(WasteRecord) private readonly wasteRecordRepo: Repository<WasteRecord>,
+    @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
   ) {}
 
   async createProduct(dto: CreateProductDto): Promise<Product> {
@@ -55,6 +58,13 @@ export class StockService {
 
   async createStock(dto: CreateStockDto): Promise<Stock> {
     const product = await this.findProduct(dto.product_id);
+    // Idempotency: if supplier_order_item_id provided, avoid duplicates
+    if (dto.supplier_order_item_id) {
+      const existing = await this.stockRepo.findOne({ where: { supplier_order_item_id: dto.supplier_order_item_id } });
+      if (existing) {
+        return existing;
+      }
+    }
     const stock = this.stockRepo.create({ ...dto, product });
     return await this.stockRepo.save(stock);
   }
@@ -115,6 +125,13 @@ export class StockService {
 
   async createTransaction(dto: CreateStockTransactionDto): Promise<StockTransaction> {
     const stock = await this.findStock(dto.stock_id);
+    // Idempotency: avoid duplicate transactions for the same stock_id + type + target
+    if (dto.target) {
+      const existingTx = await this.txRepo.findOne({ where: { stock_id: stock.id, type: dto.type as any, target: dto.target } as any });
+      if (existingTx) {
+        return existingTx;
+      }
+    }
     if (dto.type === TransactionType.ENTRY) {
       stock.quantity += dto.quantity;
     } else {
@@ -165,6 +182,58 @@ export class StockService {
   async deleteWasteRecord(id: number): Promise<void> {
     const wasteRecord = await this.findWasteRecord(id);
     await this.wasteRecordRepo.remove(wasteRecord);
+  }
+
+  // === CATEGORY METHODS ===
+  async findAllCategories(): Promise<Category[]> {
+    return await this.categoryRepo.find({
+      where: { is_active: true },
+      order: { name: 'ASC' }
+    });
+  }
+
+  async findCategoriesByType(type: string): Promise<Category[]> {
+    return await this.categoryRepo.find({
+      where: { type, is_active: true },
+      order: { name: 'ASC' }
+    });
+  }
+
+  async findProductsWithCategories(): Promise<Product[]> {
+    return await this.productRepo.find({
+      relations: ['categories'],
+      order: { name: 'ASC' }
+    });
+  }
+
+  async findProductWithCategories(id: number): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id },
+      relations: ['categories']
+    });
+    
+    if (!product) throw new NotFoundException('Produsul nu a fost găsit');
+    return product;
+  }
+
+  async assignCategoriesToProduct(productId: number, assignCategoryDto: AssignCategoryDto): Promise<Product> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId },
+      relations: ['categories']
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (assignCategoryDto.category_ids) {
+      const categories = await this.categoryRepo.findByIds(assignCategoryDto.category_ids);
+      product.categories = categories;
+    } else {
+      product.categories = [];
+    }
+
+    return this.productRepo.save(product);
   }
 }
 

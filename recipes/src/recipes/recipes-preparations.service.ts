@@ -19,7 +19,7 @@ export class RecipePreparationsService {
   async findAll(page = 1, limit = 50) {
     const [rows] = await Promise.all([
       this.prepRepo.find({
-        relations: ['recipe', 'recipe.category'],
+        relations: ['recipe', 'recipe.category', 'labels'],
         order: { created_at: 'DESC' },
         skip: (page - 1) * limit,
         take: limit,
@@ -29,7 +29,10 @@ export class RecipePreparationsService {
   }
 
   async findOne(id: number) {
-    const p = await this.prepRepo.findOne({ where: { id }, relations: ['recipe', 'recipe.category'] });
+    const p = await this.prepRepo.findOne({ 
+      where: { id }, 
+      relations: ['recipe', 'recipe.category', 'labels'] 
+    });
     if (!p) throw new NotFoundException('Preparation not found');
     return p;
   }

@@ -1,16 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
-
-// Lightweight read-only mirror for products table, to allow joins without importing across packages
-@Entity('products')
+// This is a lightweight reference class for product data from the stock service
+// It should not create a table in this database, only used for data mapping
 export class ProductRef {
-	@PrimaryGeneratedColumn()
-	id: number;
-
-	@Column({ type: 'varchar', length: 150 })
-	name: string;
-
-	@Column({ type: 'varchar', length: 50 })
-	unit: string;
+  id: number;
+  name: string;
+  unit: string;
+  created_at: string;
+  updated_at: string;
 }
-
-

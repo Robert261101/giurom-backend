@@ -8,6 +8,7 @@ import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { AssignCategoryDto } from './dto/assign-category.dto';
 
 @Controller('stock')
 export class StockHttpController {
@@ -52,6 +53,24 @@ export class StockHttpController {
 
 	@Delete('waste-records/:id') @Permissions('stock.delete')
 	deleteWasteRecord(@Param('id') id: string) { return this.service.deleteWasteRecord(Number(id)); }
+
+  // === CATEGORY ENDPOINTS ===
+  @Get('categories')
+  getCategories() { return this.service.findAllCategories(); }
+
+  @Get('categories/type/:type')
+  getCategoriesByType(@Param('type') type: string) { return this.service.findCategoriesByType(type); }
+
+  @Get('products-with-categories')
+  getProductsWithCategories() { return this.service.findProductsWithCategories(); }
+
+  @Post('products/:id/categories')
+  assignCategoriesToProduct(
+    @Param('id') id: string,
+    @Body() assignCategoryDto: AssignCategoryDto
+  ) { 
+    return this.service.assignCategoriesToProduct(Number(id), assignCategoryDto); 
+  }
 }
 
 
