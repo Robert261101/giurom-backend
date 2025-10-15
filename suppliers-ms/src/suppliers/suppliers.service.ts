@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Supplier } from './entities/supplier.entity';
 import { SupplierFolder } from './entities/supplier-folder.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
@@ -29,8 +31,89 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
     private readonly stockHttpService: StockHttpService,
   ) {}
+
+  private async sendSupplierNotification(
+    type: string,
+    title: string,
+    description: string,
+    supplierId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: supplierId,
+          entity_type: 'supplier',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send supplier notification:', error);
+    }
+  }
+
+  private async sendOrderNotification(
+    type: string,
+    title: string,
+    description: string,
+    orderId: number,
+    supplierId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: orderId,
+          entity_type: 'supplier_order',
+          metadata: {
+            ...metadata,
+            supplierId,
+          },
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send order notification:', error);
+    }
+  }
+
+  private async sendProductNotification(
+    type: string,
+    title: string,
+    description: string,
+    productId: number,
+    supplierId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: productId,
+          entity_type: 'supplier_product',
+          metadata: {
+            ...metadata,
+            supplierId,
+          },
+          priority: 'low',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send product notification:', error);
+    }
+  }
 
   async create(dto: CreateSupplierDto): Promise<Supplier> {
     const existingSupplier = await this.supplierRepo.findOne({
@@ -49,6 +132,15 @@ export class SuppliersService {
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     await this.createSupplierFolders(savedSupplier);
+    
+    // Send notification for new supplier
+    await this.sendSupplierNotification(
+      'supplier_created',
+      'Furnizor nou adăugat',
+      `Furnizorul ${savedSupplier.supplier_name} a fost adăugat în sistem`,
+      savedSupplier.id,
+      { supplierName: savedSupplier.supplier_name }
+    );
     
     // Automatically assign supplier to location if location_id is provided
     if (location_id) {
@@ -233,8 +325,25 @@ export class SuppliersService {
         throw new BadRequestException('Furnizor duplicat');
       }
     }
+    
+    const oldName = supplier.supplier_name;
     Object.assign(supplier, dto);
-    return this.supplierRepo.save(supplier);
+    const updatedSupplier = await this.supplierRepo.save(supplier);
+    
+    // Send notification for supplier update
+    await this.sendSupplierNotification(
+      'supplier_updated',
+      'Furnizor modificat',
+      `Furnizorul ${oldName} a fost modificat`,
+      updatedSupplier.id,
+      { 
+        oldName,
+        newName: updatedSupplier.supplier_name,
+        updatedFields: Object.keys(dto)
+      }
+    );
+    
+    return updatedSupplier;
   }
 
   async remove(id: number): Promise<void> {
@@ -248,7 +357,22 @@ export class SuppliersService {
     const existingProduct = await this.supplierProductRepo.findOne({ where: { supplier_id: dto.supplier_id, product_id: dto.product_id } });
     if (existingProduct) throw new BadRequestException('Produsul este deja asociat');
     const supplierProduct = this.supplierProductRepo.create(dto);
-    return this.supplierProductRepo.save(supplierProduct);
+    const savedProduct = await this.supplierProductRepo.save(supplierProduct);
+    
+    // Send notification for new product
+    await this.sendProductNotification(
+      'supplier_product_added',
+      'Produs adăugat la furnizor',
+      `Un nou produs a fost adăugat la furnizorul ${supplier.supplier_name}`,
+      savedProduct.id,
+      supplier.id,
+      { 
+        supplierName: supplier.supplier_name,
+        productId: dto.product_id
+      }
+    );
+    
+    return savedProduct;
   }
 
   async getSupplierProducts(supplierId: number): Promise<SupplierProduct[]> {
@@ -286,6 +410,21 @@ export class SuppliersService {
     savedOrder.total_amount = totalAmount;
     await this.orderRepo.save(savedOrder);
     await this.generateOrderPDF(savedOrder, supplier);
+    
+    // Send notification for new order
+    await this.sendOrderNotification(
+      'supplier_order_created',
+      'Comandă nouă pentru furnizor',
+      `A fost creată o comandă nouă pentru furnizorul ${supplier.supplier_name}`,
+      savedOrder.id,
+      supplier.id,
+      { 
+        supplierName: supplier.supplier_name,
+        totalAmount: savedOrder.total_amount,
+        orderDate: savedOrder.order_date
+      }
+    );
+    
     return (await this.orderRepo.findOne({ where: { id: savedOrder.id }, relations: ['items', 'documents'] })) as SupplierOrder;
   }
 

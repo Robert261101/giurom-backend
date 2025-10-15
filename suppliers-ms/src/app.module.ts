@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { Supplier } from './suppliers/entities/supplier.entity';
 import { SupplierFolder } from './suppliers/entities/supplier-folder.entity';
 import { SupplierProduct } from './suppliers/entities/supplier-product.entity';
@@ -23,6 +24,17 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
       timeout: 10000,
       maxRedirects: 5,
     }),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST as string,
@@ -74,5 +86,3 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
   providers: [SuppliersService, StockHttpService],
 })
 export class AppModule {}
-
-

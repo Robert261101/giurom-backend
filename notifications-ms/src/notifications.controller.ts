@@ -54,12 +54,14 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'suppliers.notification' })
+  async handleSupplierNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onSupplierNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };
   }
 }
-
-
-
-
