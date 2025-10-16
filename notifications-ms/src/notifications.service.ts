@@ -60,6 +60,96 @@ export class NotificationsService {
     return saved;
   }
 
+  async onRecipeNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onStockNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
   async onSupplierNotification(event: { 
     type: string;
     title: string;

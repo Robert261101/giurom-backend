@@ -60,6 +60,18 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'recipes.notification' })
+  async handleRecipeNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onRecipeNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'stock.notification' })
+  async handleStockNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onStockNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };

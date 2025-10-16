@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
@@ -24,7 +26,32 @@ export class StockService {
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
     @InjectRepository(WasteRecord) private readonly wasteRecordRepo: Repository<WasteRecord>,
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendStockNotification(
+    type: string,
+    title: string,
+    description: string,
+    productId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'stock.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: productId,
+          entity_type: 'stock_product',
+          metadata,
+          priority: 'high',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send stock notification:', error);
+    }
+  }
 
   async createProduct(dto: CreateProductDto): Promise<Product> {
     const existing = await this.productRepo.findOne({ where: { name: dto.name } });
@@ -149,13 +176,6 @@ export class StockService {
   }
 
   // === WASTE RECORDS ===
-  async createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord> {
-    // Verify product exists
-    const product = await this.findProduct(dto.product_id);
-    
-    const wasteRecord = this.wasteRecordRepo.create({ ...dto, product });
-    return await this.wasteRecordRepo.save(wasteRecord);
-  }
 
   async findAllWasteRecords(): Promise<WasteRecord[]> {
     return await this.wasteRecordRepo.find({ relations: ['product'], order: { created_at: 'DESC' } });
@@ -235,6 +255,110 @@ export class StockService {
 
     return this.productRepo.save(product);
   }
+
+  async checkExpiringProducts(): Promise<void> {
+    try {
+      const now = new Date();
+      const inSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      // Find products with stock expiring within 7 days
+      const expiringStocks = await this.stockRepo.find({
+        where: {
+          expiration_date: MoreThan(now),
+          status: StockStatus.VALID,
+        },
+        relations: ['product'],
+      });
+
+      for (const stock of expiringStocks) {
+        // Check if expiration_date exists
+        if (!stock.expiration_date) {
+          continue;
+        }
+        
+        const expirationDate = new Date(stock.expiration_date);
+        if (expirationDate <= inSevenDays) {
+          // Send notification for expiring product
+          await this.sendStockNotification(
+            'stock_expiring_soon',
+            'Produs care expiră în 7 zile',
+            `Produsul ${stock.product?.name} va expira la ${expirationDate.toLocaleDateString('ro-RO')}`,
+            stock.product_id,
+            {
+              productName: stock.product?.name,
+              expirationDate: expirationDate.toISOString(),
+              daysUntilExpiration: Math.ceil((expirationDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error checking expiring products:', error);
+    }
+  }
+
+  async checkLowStockProducts(): Promise<void> {
+    try {
+      // Get all products with their total stock quantities
+      const products = await this.productRepo.find();
+      
+      for (const product of products) {
+        // Calculate total quantity for this product across all valid stock entries
+        const totalQuantity = await this.stockRepo
+          .createQueryBuilder('stock')
+          .select('SUM(stock.quantity)', 'total')
+          .where('stock.product_id = :productId', { productId: product.id })
+          .andWhere('stock.status = :status', { status: StockStatus.VALID })
+          .getRawOne();
+        
+        const quantity = parseFloat(totalQuantity?.total || '0');
+        
+        // Check if quantity is at or below the minimum threshold (5)
+        if (quantity <= 5 && quantity > 0) {
+          // Send notification for low stock product
+          await this.sendStockNotification(
+            'stock_low_quantity',
+            'Stoc minim atins',
+            `Produsul ${product.name} are doar ${quantity} unități rămase în stoc`,
+            product.id,
+            {
+              productName: product.name,
+              currentQuantity: quantity,
+              threshold: 5,
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error checking low stock products:', error);
+    }
+  }
+
+  async createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord> {
+    // Verify product exists
+    const product = await this.findProduct(dto.product_id);
+    
+    const wasteRecord = this.wasteRecordRepo.create({ ...dto, product });
+    const savedWasteRecord = await this.wasteRecordRepo.save(wasteRecord);
+    
+    // Send notification for wasted product
+    await this.sendStockNotification(
+      'stock_wasted',
+      'Produs aruncat',
+      `Produsul ${product.name} a fost înregistrat ca deșeu (cantitate: ${dto.quantity} ${dto.unit})`,
+      product.id,
+      {
+        productName: product.name,
+        quantity: dto.quantity,
+        unit: dto.unit,
+        reason: dto.reason,
+        wasteRecordId: savedWasteRecord.id,
+      }
+    );
+    
+    return savedWasteRecord;
+  }
+
 }
 
 
