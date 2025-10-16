@@ -197,13 +197,16 @@ export class NotificationsService {
 
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      
       // First get all roles
       const rolesResponse = await firstValueFrom(
-        this.httpService.get('http://localhost:3003/users/roles')
+        this.httpService.get(`${apiGatewayUrl}/users/roles`)
       );
       
-      // Filter roles by names
-      const targetRoles = rolesResponse.data.filter((role: any) => 
+      // Filter roles by names - the response is wrapped in a data object
+      const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : rolesResponse.data.data || [];
+      const targetRoles = rolesData.filter((role: any) => 
         roleNames.includes(role.name)
       );
       
@@ -213,12 +216,15 @@ export class NotificationsService {
       
       // Get all user roles
       const userRolesResponse = await firstValueFrom(
-        this.httpService.get('http://localhost:3003/users/user-roles')
+        this.httpService.get(`${apiGatewayUrl}/users/user-roles`)
       );
+      
+      // User roles data is also wrapped in a data object
+      const userRolesData = Array.isArray(userRolesResponse.data) ? userRolesResponse.data : userRolesResponse.data.data || [];
       
       // Find user IDs that have the target roles
       const targetRoleIds = targetRoles.map((role: any) => role.id);
-      const targetUserIds = userRolesResponse.data
+      const targetUserIds = userRolesData
         .filter((userRole: any) => targetRoleIds.includes(userRole.roleId))
         .map((userRole: any) => userRole.userId);
       
@@ -234,11 +240,14 @@ export class NotificationsService {
       for (const userId of uniqueUserIds) {
         try {
           const userResponse = await firstValueFrom(
-            this.httpService.get(`http://localhost:3003/users/employee/${userId}`)
+            this.httpService.get(`${apiGatewayUrl}/users/employee/${userId}`)
           );
           
+          // User data is also wrapped in a data object
+          const userData = userResponse.data.data || userResponse.data;
+          
           // Get user roles
-          const userRoles = userRolesResponse.data
+          const userRoles = userRolesData
             .filter((userRole: any) => userRole.userId === userId)
             .map((userRole: any) => {
               const role = targetRoles.find((r: any) => r.id === userRole.roleId);
@@ -247,8 +256,8 @@ export class NotificationsService {
             .filter(Boolean);
           
           users.push({
-            id: userResponse.data.id,
-            email: userResponse.data.email,
+            id: userData.id,
+            email: userData.email,
             roles: userRoles
           });
         } catch (error) {
@@ -271,6 +280,8 @@ export class NotificationsService {
   }
 
   async create(notification: Partial<NotificationEntity>) {
+    console.log('Creating notification with data:', notification);
+    
     const entity = this.repo.create({
       type: notification.type || 'general',
       title: notification.title || 'Notificare',
@@ -284,6 +295,9 @@ export class NotificationsService {
       expires_at: (notification.expires_at as any) ?? null,
       priority: (notification.priority as any) || 'low',
     } as any);
+    
+    console.log('Entity to be saved:', entity);
+    
     const saved = await this.repo.save(entity);
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);

@@ -73,6 +73,7 @@ import { PermissionsGuard } from './permissions/permissions.guard';
   controllers: [RecipesMicroController, RecipesHttpController],
   providers: [
     RecipesService,
+    RecipeMediaService,
     RecipePreparationsService,
     RecipesLabelsService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
