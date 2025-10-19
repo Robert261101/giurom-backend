@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository, MoreThanOrEqual, LessThan } from 'typeorm';
 import { Employee } from './entities/employee.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
@@ -31,6 +33,7 @@ export class EmployeeService {
     private workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>,
     @InjectRepository(EmployeesLocations)
     private employeesLocationsRepository: Repository<EmployeesLocations>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
   private getEmployeesFilesRootDir(): string {
@@ -38,6 +41,28 @@ export class EmployeeService {
     // __dirname is .../giurom-backend/employees/src (dev with ts-node) or .../giurom-backend/employees/dist (prod)
     const repoRoot = path.resolve(__dirname, '../../..');
     return path.join(repoRoot, 'files', 'employees');
+  }
+
+  private async sendEmployeeNotification(
+    type: string,
+    title: string,
+    description: string,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'employees.notification' }, {
+          type,
+          title,
+          description,
+          entity_type: 'employee',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send employee notification:', error);
+    }
   }
 
   // Crearea unui angajat nou
@@ -88,7 +113,21 @@ export class EmployeeService {
     }
 
     const employee = this.employeeRepository.create(createEmployeeDto);
-    return await this.employeeRepository.save(employee);
+    const savedEmployee = await this.employeeRepository.save(employee);
+    
+    // Send notification to admin that a new employee was created
+    await this.sendEmployeeNotification(
+      'employee_created',
+      'Angajat nou creat',
+      `A fost creat un nou angajat: ${savedEmployee.first_name} ${savedEmployee.last_name}`,
+      {
+        employeeId: savedEmployee.id,
+        firstName: savedEmployee.first_name,
+        lastName: savedEmployee.last_name,
+      }
+    );
+
+    return savedEmployee;
   }
 
   // Listarea angajaților cu filtrare și paginare
@@ -254,12 +293,39 @@ export class EmployeeService {
 
     // Actualizează entitatea
     await this.employeeRepository.update(id, updateEmployeeDto);
-    return await this.findOne(id);
+    const updatedEmployee = await this.findOne(id);
+    
+    // Send notification to admin that an employee was updated
+    await this.sendEmployeeNotification(
+      'employee_updated',
+      'Angajat modificat',
+      `Au fost modificate informațiile angajatului: ${updatedEmployee.first_name} ${updatedEmployee.last_name}`,
+      {
+        employeeId: updatedEmployee.id,
+        firstName: updatedEmployee.first_name,
+        lastName: updatedEmployee.last_name,
+      }
+    );
+
+    return updatedEmployee;
   }
 
   // Ștergerea unui angajat
   async remove(id: number): Promise<{ message: string }> {
     const employee = await this.findOne(id);
+    
+    // Send notification to admin that an employee was deleted
+    await this.sendEmployeeNotification(
+      'employee_deleted',
+      'Angajat șters',
+      `A fost șters angajatul: ${employee.first_name} ${employee.last_name}`,
+      {
+        employeeId: employee.id,
+        firstName: employee.first_name,
+        lastName: employee.last_name,
+      }
+    );
+    
     await this.employeeRepository.delete(id);
     
     return {

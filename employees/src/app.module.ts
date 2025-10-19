@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { EmployeeMicroController } from './employee.micro.controller';
 import { EmployeeHttpController } from './employee.http.controller';
 import { EmployeeService } from './employee.service';
@@ -20,6 +21,17 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   imports: [
     AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mysql',
       host: process.env.DB_HOST as string,
