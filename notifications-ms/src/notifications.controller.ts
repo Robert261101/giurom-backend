@@ -78,6 +78,18 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'leave.notification' })
+  async handleLeaveNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onLeaveNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'shift-change.notification' })
+  async handleShiftChangeNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onShiftChangeNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };
