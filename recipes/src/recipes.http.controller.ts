@@ -27,7 +27,7 @@ export class RecipesHttpController {
   // Recipes
   @Get('recipes')
   @Permissions('recipes.read')
-  findAll(@Query() q: any) {
+  async findAll(@Query() q: any) {
     const page = Number.parseInt(q.page, 10);
     const limit = Number.parseInt(q.limit, 10);
     const maybeCid = q.category_id !== undefined ? Number(q.category_id) : undefined;
@@ -45,18 +45,19 @@ export class RecipesHttpController {
       data: result.recipes,
       total: result.total,
       page: page || 1,
+      totalPages: result.totalPages,
       limit: limit || 50
     };
   }
   
   @Post('recipes')
   @Permissions('recipes.create')
-  create(@Body() dto: CreateRecipeDto) { return this.recipes.createRecipe(dto); }
+  create(@Body() dto: CreateRecipeDto) { return this.recipes.create(dto); }
 
   // Categories
   @Get('recipes/categories')
   @Permissions('recipes.read')
-  categoriesFindAll(@Query() q: any) {
+  async categoriesFindAll(@Query() q: any) {
     const page = Number.parseInt(q.page, 10);
     const limit = Number.parseInt(q.limit, 10);
     
@@ -71,49 +72,50 @@ export class RecipesHttpController {
       data: result.categories,
       total: result.total,
       page: page || 1,
+      totalPages: result.totalPages,
       limit: limit || 50
     };
   }
   
   @Get('recipes/categories/:id')
   @Permissions('recipes.read')
-  categoryFindOne(@Param('id') id: string) { return (this.recipes as any).findRecipeCategoryById(Number(id)); }
+  categoryFindOne(@Param('id') id: string) { return this.recipes.findOneCategory(Number(id)); }
   @Post('recipes/categories')
   @Permissions('recipes.create')
-  categoryCreate(@Body() dto: CreateRecipeCategoryDto) { return (this.recipes as any).createRecipeCategory(dto); }
+  categoryCreate(@Body() dto: CreateRecipeCategoryDto) { return this.recipes.createCategory(dto); }
   @Patch('recipes/categories/:id')
   @Permissions('recipes.update')
-  categoryUpdate(@Param('id') id: string, @Body() dto: UpdateRecipeCategoryDto) { return (this.recipes as any).updateRecipeCategory(Number(id), dto); }
+  categoryUpdate(@Param('id') id: string, @Body() dto: UpdateRecipeCategoryDto) { return this.recipes.updateCategory(Number(id), dto); }
   @Delete('recipes/categories/:id')
   @Permissions('recipes.delete')
-  categoryRemove(@Param('id') id: string) { return (this.recipes as any).deleteRecipeCategory(Number(id)); }
+  categoryRemove(@Param('id') id: string) { return this.recipes.removeCategory(Number(id)); }
 
   // Recipe products (ingredients)
   @Post('recipes/recipe-products')
   @Permissions('recipes.update')
-  addRecipeProduct(@Body() dto: CreateRecipeProductDto) { return (this.recipes as any).addProductToRecipe(dto); }
+  addRecipeProduct(@Body() dto: CreateRecipeProductDto) { return this.recipes.addProductToRecipe(dto); }
   @Patch('recipes/recipe-products/:id')
   @Permissions('recipes.update')
-  updateRecipeProduct(@Param('id') id: string, @Body() dto: UpdateRecipeProductDto) { return (this.recipes as any).updateRecipeProduct(Number(id), dto); }
+  updateRecipeProduct(@Param('id') id: string, @Body() dto: UpdateRecipeProductDto) { return this.recipes.updateRecipeProduct(Number(id), dto); }
   @Delete('recipes/recipe-products/:id')
   @Permissions('recipes.update')
-  removeRecipeProduct(@Param('id') id: string) { return (this.recipes as any).removeProductFromRecipe(Number(id)); }
+  removeRecipeProduct(@Param('id') id: string) { return this.recipes.removeRecipeProduct(Number(id)); }
 
   // Recipe products list for a recipe
   @Get('recipes/:id/products')
   @Permissions('recipes.read')
-  getRecipeProducts(@Param('id') id: string) { return (this.recipes as any).findRecipeProducts(Number(id)); }
+  getRecipeProducts(@Param('id') id: string) { return this.recipes.findRecipeProducts(Number(id)); }
 
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
   @Permissions('recipes.read')
-  findOne(@Param('id') id: string) { return this.recipes.findRecipeById(Number(id)); }
+  findOne(@Param('id') id: string) { return this.recipes.findOne(Number(id)); }
   @Patch('recipes/:id')
   @Permissions('recipes.update')
-  update(@Param('id') id: string, @Body() dto: UpdateRecipeDto) { return this.recipes.updateRecipe(Number(id), dto); }
+  update(@Param('id') id: string, @Body() dto: UpdateRecipeDto) { return this.recipes.update(Number(id), dto); }
   @Delete('recipes/:id')
   @Permissions('recipes.delete')
-  remove(@Param('id') id: string) { return this.recipes.deleteRecipe(Number(id)); }
+  remove(@Param('id') id: string) { return this.recipes.remove(Number(id)); }
 
   // Preparations
   @Get('recipe-preparations')
@@ -144,7 +146,7 @@ export class RecipesHttpController {
   
   @Post('recipe-preparations/prepare-with-stock')
   @Permissions('recipes.create')
-  prepareWithStock(@Body() dto: CreateRecipePreparationDto) { return (this.preps as any).prepareWithStock(dto); }
+  prepareWithStock(@Body() dto: CreateRecipePreparationDto) { return this.preps.prepareWithStock(dto); }
 
   // Labels
   @Get('recipe-labels')
