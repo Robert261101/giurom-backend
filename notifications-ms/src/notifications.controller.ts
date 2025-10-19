@@ -72,6 +72,12 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'locations.notification' })
+  async handleLocationNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onLocationNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };

@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeepPartial, Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { WorkLocation } from '../locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from '../locations/entity/work-location-departments.entity';
@@ -23,13 +25,48 @@ export class LocationsService {
     @InjectRepository(WorkLocationRevenue) private readonly revenueRepository: Repository<WorkLocationRevenue>,
     @InjectRepository(WorkLocationRevenuePoints) private readonly revenuePointsRepository: Repository<WorkLocationRevenuePoints>,
     @InjectRepository(WorkLocationManagerConfig) private readonly managerConfigRepository: Repository<WorkLocationManagerConfig>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendLocationNotification(
+    type: string,
+    title: string,
+    description: string,
+    locationId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'locations.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: locationId,
+          entity_type: 'location',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send location notification:', error);
+    }
+  }
 
   async createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation> {
     const entity: WorkLocation = this.workLocationRepository.create(
       dto as unknown as Partial<WorkLocation>,
     ) as WorkLocation;
     const saved: WorkLocation = await this.workLocationRepository.save(entity as WorkLocation);
+    
+    // Send notification for new location
+    await this.sendLocationNotification(
+      'location_created',
+      'Locație nouă adăugată',
+      `A fost adăugată o nouă locație: ${saved.location_name}`,
+      saved.id,
+      { locationName: saved.location_name }
+    );
+    
     return saved;
   }
 
@@ -79,12 +116,53 @@ export class LocationsService {
 
   async updateWorkLocation(id: number, dto: UpdateWorkLocationDto): Promise<WorkLocation> {
     const workLocation = await this.findWorkLocationById(id);
+    const oldName = workLocation.location_name;
     Object.assign(workLocation, dto);
-    return await this.workLocationRepository.save(workLocation as WorkLocation);
+    const updatedLocation = await this.workLocationRepository.save(workLocation as WorkLocation);
+    
+    // Send notification for updated location
+    await this.sendLocationNotification(
+      'location_updated',
+      'Locație modificată',
+      `Locația ${oldName} a fost modificată`,
+      updatedLocation.id,
+      { 
+        oldName,
+        newName: updatedLocation.location_name,
+        updatedFields: Object.keys(dto)
+      }
+    );
+    
+    return updatedLocation;
   }
 
   async removeWorkLocation(id: number): Promise<void> {
     const workLocation = await this.findWorkLocationById(id);
+    const locationName = workLocation.location_name;
+    
+    // Get related departments count
+    const departmentsCount = await this.departmentsRepository.count({ 
+      where: { work_location_id: id } as any 
+    });
+    
+    // Get related revenue points count
+    const revenuePointsCount = await this.revenuePointsRepository.count({ 
+      where: { work_location_id: id } as any 
+    });
+    
+    // Send notification for deleted location
+    await this.sendLocationNotification(
+      'location_deleted',
+      'Locație ștearsă',
+      `Locația ${locationName} a fost ștearsă (Departamente: ${departmentsCount}, Puncte: ${revenuePointsCount}, Angajați afectați)`,
+      id,
+      { 
+        locationName,
+        departmentsCount,
+        revenuePointsCount
+      }
+    );
+    
     await this.workLocationRepository.remove(workLocation as WorkLocation);
   }
 
