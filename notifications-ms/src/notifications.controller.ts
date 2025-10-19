@@ -90,6 +90,12 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'attendance.notification' })
+  async handleAttendanceNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onAttendanceNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };

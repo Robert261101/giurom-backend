@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
@@ -20,6 +22,7 @@ export class AttendanceService implements OnModuleInit {
     private readonly presenceRepository: Repository<Presence>,
     @InjectRepository(PresenceInflexion)
     private readonly presenceInflexionRepository: Repository<PresenceInflexion>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
   async onModuleInit() {
@@ -28,6 +31,30 @@ export class AttendanceService implements OnModuleInit {
       await this.shiftRepository.query("ALTER TABLE `shifts` MODIFY `position_id` INT NULL DEFAULT NULL");
     } catch (_e) {
       // ignore if already applied or lacks permission
+    }
+  }
+
+  private async sendAttendanceNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'attendance.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_type: 'attendance',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send attendance notification:', error);
     }
   }
 
@@ -189,7 +216,23 @@ export class AttendanceService implements OnModuleInit {
       check_out: check_out ? new Date(check_out) : null,
     });
 
-    return await this.presenceRepository.save(presence);
+    const savedPresence = await this.presenceRepository.save(presence);
+    
+    // Send notification to admin and the employee for whom the attendance was created
+    await this.sendAttendanceNotification(
+      'attendance_created',
+      'Pontaj creat',
+      `A fost creat un nou pontaj pentru data de ${new Date(date).toLocaleDateString('ro-RO')}`,
+      shift.employee_id,
+      {
+        presenceId: savedPresence.id,
+        shiftId: shift_id,
+        date: date,
+        employeeId: shift.employee_id,
+      }
+    );
+
+    return savedPresence;
   }
 
   async findAllPresences(

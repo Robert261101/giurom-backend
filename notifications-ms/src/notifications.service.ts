@@ -348,6 +348,59 @@ export class NotificationsService {
     return notifications;
   }
 
+  async onAttendanceNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    user_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.user_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles for admin notifications
+    // Also include the employee for whom the attendance was created
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    const employeeUser = [{ id: event.user_id }];
+    
+    // Combine both groups (avoiding duplicates)
+    const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
+    const uniqueTargetUsers = allTargetUsers.filter((user, index, self) => 
+      index === self.findIndex(u => u.id === user.id)
+    );
+    
+    // Create notifications for target users
+    const notifications = [];
+    for (const user of uniqueTargetUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.user_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
