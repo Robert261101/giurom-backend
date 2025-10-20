@@ -24,6 +24,7 @@ export class CalendarService {
     type: string,
     title: string,
     description: string,
+    entity_id?: number,
     metadata?: any
   ): Promise<void> {
     try {
@@ -32,6 +33,7 @@ export class CalendarService {
           type,
           title,
           description,
+          entity_id,
           entity_type: 'calendar_event',
           metadata,
           priority: 'medium',
@@ -104,6 +106,7 @@ export class CalendarService {
       'calendar_event_created',
       'Eveniment nou creat',
       `A fost creat un nou eveniment în calendar: ${savedEvent.title}`,
+      savedEvent.id,
       {
         eventId: savedEvent.id,
         title: savedEvent.title,

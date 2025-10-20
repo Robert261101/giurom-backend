@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException, 
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { firstValueFrom } from 'rxjs';
 import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
@@ -256,6 +257,7 @@ export class StockService {
     return this.productRepo.save(product);
   }
 
+  @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async checkExpiringProducts(): Promise<void> {
     try {
       const now = new Date();
@@ -297,6 +299,7 @@ export class StockService {
     }
   }
 
+  @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async checkLowStockProducts(): Promise<void> {
     try {
       // Get all products with their total stock quantities
@@ -313,8 +316,8 @@ export class StockService {
         
         const quantity = parseFloat(totalQuantity?.total || '0');
         
-        // Check if quantity is at or below the minimum threshold (5)
-        if (quantity <= 5 && quantity > 0) {
+        // Check if the product has a minimum stock level defined and if quantity is at or below that level
+        if (product.min_stock_level && quantity <= product.min_stock_level && quantity > 0) {
           // Send notification for low stock product
           await this.sendStockNotification(
             'stock_low_quantity',
@@ -324,7 +327,7 @@ export class StockService {
             {
               productName: product.name,
               currentQuantity: quantity,
-              threshold: 5,
+              threshold: product.min_stock_level,
             }
           );
         }
@@ -332,6 +335,18 @@ export class StockService {
     } catch (error) {
       console.error('Error checking low stock products:', error);
     }
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleExpiringProductsCheck() {
+    console.log('Checking for expiring products...');
+    await this.checkExpiringProducts();
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async handleLowStockCheck() {
+    console.log('Checking for low stock products...');
+    await this.checkLowStockProducts();
   }
 
   async createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord> {

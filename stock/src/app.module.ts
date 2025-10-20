@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Product } from './stock/entities/product.entity';
 import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
@@ -19,6 +20,7 @@ import { StockHealthController } from './stock/stock.health.controller';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ClientsModule.register([

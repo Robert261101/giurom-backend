@@ -47,7 +47,8 @@ export class EmployeeService {
     type: string,
     title: string,
     description: string,
-    metadata?: any
+    metadata?: any,
+    entity_id?: number
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -55,6 +56,7 @@ export class EmployeeService {
           type,
           title,
           description,
+          entity_id,
           entity_type: 'employee',
           metadata,
           priority: 'medium',

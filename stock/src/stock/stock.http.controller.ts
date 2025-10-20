@@ -71,6 +71,17 @@ export class StockHttpController {
   ) { 
     return this.service.assignCategoriesToProduct(Number(id), assignCategoryDto); 
   }
+
+  // === MANUAL NOTIFICATION TRIGGERS ===
+  @Post('trigger-expiring-check') @Permissions('stock.update')
+  triggerExpiringProductsCheck() { 
+    return this.service.checkExpiringProducts(); 
+  }
+
+  @Post('trigger-low-stock-check') @Permissions('stock.update')
+  triggerLowStockCheck() { 
+    return this.service.checkLowStockProducts(); 
+  }
 }
 
 

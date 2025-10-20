@@ -58,6 +58,32 @@ export class AttendanceService implements OnModuleInit {
     }
   }
 
+  private async sendShiftNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    shiftId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'shift.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_id: shiftId,
+          entity_type: 'shift',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send shift notification:', error);
+    }
+  }
+
   // SHIFT METHODS
   async createShift(createShiftDto: CreateShiftDto): Promise<Shift> {
     const { start_datetime, end_datetime, employee_id, ...rest } = createShiftDto;
@@ -93,7 +119,24 @@ export class AttendanceService implements OnModuleInit {
       end_datetime: endDate,
     });
 
-    return await this.shiftRepository.save(shift);
+    const savedShift = await this.shiftRepository.save(shift);
+    
+    // Send notification to admin and the employee for whom the shift was created
+    await this.sendShiftNotification(
+      'shift_created',
+      'Schimb programat',
+      `A fost creat un nou schimb programat pentru data de ${startDate.toLocaleDateString('ro-RO')} - ${endDate.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' })}`,
+      employee_id,
+      savedShift.id,
+      {
+        shiftId: savedShift.id,
+        employeeId: employee_id,
+        startDate: startDate,
+        endDate: endDate,
+      }
+    );
+
+    return savedShift;
   }
 
   async findAllShifts(
