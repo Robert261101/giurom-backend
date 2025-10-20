@@ -102,6 +102,12 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'calendar.notification' })
+  async handleCalendarNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onCalendarNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };

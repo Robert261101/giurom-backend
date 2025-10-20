@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository, Between, Like } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule, RecurrenceFrequency } from './entities/recurrence-rule.entity';
@@ -15,7 +17,30 @@ export class CalendarService {
     private readonly eventRepo: Repository<CalendarEvent>,
     @InjectRepository(RecurrenceRule)
     private readonly recurrenceRepo: Repository<RecurrenceRule>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendCalendarNotification(
+    type: string,
+    title: string,
+    description: string,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'calendar.notification' }, {
+          type,
+          title,
+          description,
+          entity_type: 'calendar_event',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send calendar notification:', error);
+    }
+  }
 
   // Creare regulă de recurență
   async createRecurrenceRule(dto: CreateRecurrenceRuleDto): Promise<RecurrenceRule> {
@@ -72,7 +97,22 @@ export class CalendarService {
       end_datetime: endDate,
     });
 
-    return this.eventRepo.save(event);
+    const savedEvent = await this.eventRepo.save(event);
+    
+    // Send notification to admin and manager that a new event was created
+    await this.sendCalendarNotification(
+      'calendar_event_created',
+      'Eveniment nou creat',
+      `A fost creat un nou eveniment în calendar: ${savedEvent.title}`,
+      {
+        eventId: savedEvent.id,
+        title: savedEvent.title,
+        startDatetime: savedEvent.start_datetime,
+        createdBy: savedEvent.created_by,
+      }
+    );
+
+    return savedEvent;
   }
 
   // Listare evenimente cu filtrare
