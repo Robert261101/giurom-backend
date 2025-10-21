@@ -212,8 +212,40 @@ export class AttendanceService implements OnModuleInit {
   }
 
   async deleteShift(id: number): Promise<void> {
-    const shift = await this.findShiftById(id);
+    const shift = await this.shiftRepository.findOne({
+      where: { id },
+      relations: ['presences'],
+    });
+
+    if (!shift) {
+      throw new NotFoundException(`Schimbul cu ID-ul ${id} nu a fost găsit`);
+    }
+
+    // Delete all associated presences and their inflexions
+    for (const presence of shift.presences) {
+      // Delete all inflexions for this presence
+      await this.presenceInflexionRepository.delete({ presence_id: presence.id } as any);
+      // Delete the presence
+      await this.presenceRepository.remove(presence);
+    }
+
+    // Delete the shift
     await this.shiftRepository.remove(shift);
+
+    // Send notification that shift was deleted
+    await this.sendShiftNotification(
+      'shift_deleted',
+      'Schimb șters',
+      `Schimbul pentru data de ${shift.start_datetime.toLocaleDateString('ro-RO')} a fost șters`,
+      shift.employee_id,
+      shift.id,
+      {
+        shiftId: shift.id,
+        employeeId: shift.employee_id,
+        startDate: shift.start_datetime,
+        endDate: shift.end_datetime,
+      }
+    );
   }
 
   // PRESENCE METHODS
@@ -350,8 +382,35 @@ export class AttendanceService implements OnModuleInit {
   }
 
   async deletePresence(id: number): Promise<void> {
-    const presence = await this.findPresenceById(id);
+    const presence = await this.presenceRepository.findOne({
+      where: { id },
+      relations: ['inflexions', 'shift'],
+    });
+
+    if (!presence) {
+      throw new NotFoundException(`Prezența cu ID-ul ${id} nu a fost găsită`);
+    }
+
+    // Delete all associated inflexions
+    for (const inflexion of presence.inflexions) {
+      await this.presenceInflexionRepository.remove(inflexion);
+    }
+
+    // Delete the presence
     await this.presenceRepository.remove(presence);
+
+    // Send notification that presence was deleted
+    await this.sendAttendanceNotification(
+      'presence_deleted',
+      'Prezență ștearsă',
+      `Prezența pentru data de ${presence.date.toLocaleDateString('ro-RO')} a fost ștearsă`,
+      presence.shift.employee_id,
+      {
+        presenceId: presence.id,
+        employeeId: presence.shift.employee_id,
+        date: presence.date,
+      }
+    );
   }
 
   // PRESENCE INFLEXION METHODS
