@@ -19,6 +19,7 @@ import { UpdateWorkLocationHistoryDto } from './dto/update-work-location-history
 import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import axios from 'axios';
 
 @Injectable()
 export class EmployeeService {
@@ -312,24 +313,99 @@ export class EmployeeService {
     return updatedEmployee;
   }
 
+  // Helper method to delete all shifts for an employee from attendance service
+  private async deleteEmployeeShifts(employeeId: number): Promise<void> {
+    try {
+      // Get attendance service URL from environment or use default
+      const attendanceServiceUrl = process.env.ATTENDANCE_SERVICE_URL || 'http://localhost:3016';
+      
+      // First, get all shifts for this employee
+      const shiftsResponse = await axios.get(`${attendanceServiceUrl}/attendance/shifts`, {
+        params: { employee_id: employeeId },
+        timeout: 5000
+      });
+      
+      const shifts = shiftsResponse.data.data || [];
+      
+      // Delete each shift
+      for (const shift of shifts) {
+        try {
+          await axios.delete(`${attendanceServiceUrl}/attendance/shifts/${shift.id}`, {
+            timeout: 5000
+          });
+        } catch (error) {
+          console.error(`Failed to delete shift ${shift.id} for employee ${employeeId}:`, error);
+          // Continue with other shifts even if one fails
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to fetch or delete shifts for employee ${employeeId}:`, error);
+      // Don't throw error here as we still want to delete the employee
+    }
+  }
+
   // Ștergerea unui angajat
   async remove(id: number): Promise<{ message: string }> {
-    const employee = await this.findOne(id);
-    
-    // Send notification to admin that an employee was deleted
+    const employee = await this.employeeRepository.findOne({ where: { id } });
+
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${id} nu a fost găsit`);
+    }
+
+    try {
+      // Delete all shifts for this employee from attendance service first
+      await this.deleteEmployeeShifts(id);
+    } catch (error) {
+      console.error(`Error deleting employee shifts:`, error);
+      // Continue with employee deletion even if shift deletion fails
+    }
+
+    // Delete associated files from the file system
+    const employeeFilesDir = path.join(this.getEmployeesFilesRootDir(), id.toString());
+    if (fs.existsSync(employeeFilesDir)) {
+      try {
+        fs.rmSync(employeeFilesDir, { recursive: true, force: true });
+      } catch (error) {
+        console.error(`Failed to delete employee files directory: ${employeeFilesDir}`, error);
+      }
+    }
+
+    try {
+      // Delete associated records from database
+      await this.documentsRepository.delete({ employee_id: id } as any);
+      await this.filesRepository.delete({ employee_id: id } as any);
+      
+      // Handle database tables that might not exist
+      try {
+        await this.workLocationHistoryRepository.delete({ employee_id: id } as any);
+      } catch (error) {
+        console.error(`Failed to delete work location history for employee ${id}:`, error);
+      }
+      
+      try {
+        await this.employeesLocationsRepository.delete({ employee_id: id } as any);
+      } catch (error) {
+        console.error(`Failed to delete employee locations for employee ${id}:`, error);
+      }
+    } catch (error) {
+      console.error(`Failed to delete associated records for employee ${id}:`, error);
+    }
+
+    // Finally, delete the employee record
+    await this.employeeRepository.remove(employee);
+
+    // Send notification that employee was deleted
     await this.sendEmployeeNotification(
       'employee_deleted',
       'Angajat șters',
-      `A fost șters angajatul: ${employee.first_name} ${employee.last_name}`,
+      `Angajatul ${employee.first_name} ${employee.last_name} a fost șters din sistem`,
       {
         employeeId: employee.id,
         firstName: employee.first_name,
         lastName: employee.last_name,
       }
     );
-    
-    await this.employeeRepository.delete(id);
-    
+
     return {
       message: `Angajatul ${employee.first_name} ${employee.last_name} a fost șters cu succes`,
     };
