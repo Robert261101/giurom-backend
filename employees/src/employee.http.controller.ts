@@ -24,8 +24,8 @@ import { EmployeeService } from './employee.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { Employee } from './entities/employee.entity';
-import { EmployeesLocations } from './entities/employees-locations.entity';
-import { AssignEmployeeToLocationDto } from './dto/assign-employee-to-location.dto';
+import { EmployeeLocation } from './entities/employee-location.entity';
+import { CreateEmployeeLocationDto } from './dto/create-employee-location.dto';
 import { Response } from 'express';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 import { Permissions } from './permissions/permissions.decorator';
@@ -322,13 +322,13 @@ export class EmployeeHttpController {
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Angajatul a fost asignat cu succes la locație',
-    type: EmployeesLocations,
+    type: EmployeeLocation,
   })
   @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Angajatul este deja asignat la această locație' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
   async assignEmployeeToLocation(
-    @Body() assignDto: AssignEmployeeToLocationDto,
-  ): Promise<EmployeesLocations> {
+    @Body() assignDto: CreateEmployeeLocationDto,
+  ): Promise<EmployeeLocation> {
     return this.employeeService.assignEmployeeToLocation(assignDto);
   }
 
@@ -342,12 +342,12 @@ export class EmployeeHttpController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista locațiilor angajatului',
-    type: [EmployeesLocations],
+    type: [EmployeeLocation],
   })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
   async getEmployeeLocations(
     @Param('employeeId', ParseIntPipe) employeeId: number,
-  ): Promise<EmployeesLocations[]> {
+  ): Promise<EmployeeLocation[]> {
     return this.employeeService.findEmployeeLocations(employeeId);
   }
 
@@ -361,11 +361,11 @@ export class EmployeeHttpController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista angajaților de la locație',
-    type: [EmployeesLocations],
+    type: [EmployeeLocation],
   })
   async getLocationEmployees(
     @Param('locationId', ParseIntPipe) locationId: number,
-  ): Promise<EmployeesLocations[]> {
+  ): Promise<EmployeeLocation[]> {
     return this.employeeService.findLocationEmployees(locationId);
   }
 
