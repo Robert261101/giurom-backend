@@ -1,0 +1,24 @@
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { TaskElement, ElementType } from './task-element.entity';
+import { TemplateLocation } from './template-location.entity';
+
+@Entity('Task_Templates')
+export class TaskTemplate {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ type: 'varchar', length: 255 })
+  template_name: string;
+
+  @CreateDateColumn()
+  created_at: Date;
+
+  @UpdateDateColumn()
+  updated_at: Date;
+
+  @OneToMany(() => TaskElement, element => element.template)
+  elements: TaskElement[];
+
+  @OneToMany(() => TemplateLocation, location => location.template)
+  locations: TemplateLocation[];
+} 

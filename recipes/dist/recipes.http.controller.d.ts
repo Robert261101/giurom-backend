@@ -1,0 +1,57 @@
+import { RecipesService } from './recipes/recipes.service';
+import { RecipeMediaService } from './recipes/recipes-media.service';
+import { RecipePreparationsService } from './recipes/recipes-preparations.service';
+import { RecipesLabelsService } from './recipes/recipes-labels.service';
+import { CreateRecipeDto } from './recipes/dto/create-recipe.dto';
+import { UpdateRecipeDto } from './recipes/dto/update-recipe.dto';
+import { CreateRecipeCategoryDto } from './recipes/dto/create-recipe-category.dto';
+import { UpdateRecipeCategoryDto } from './recipes/dto/update-recipe-category.dto';
+import { CreateRecipeProductDto } from './recipes/dto/create-recipe-product.dto';
+import { UpdateRecipeProductDto } from './recipes/dto/update-recipe-product.dto';
+import { CreateRecipeMediaDto } from './recipes/dto/create-recipe-media.dto';
+import { CreateRecipePreparationDto } from './recipes/dto/create-recipe-preparation.dto';
+import { UpdateRecipePreparationDto } from './recipes/dto/update-recipe-preparation.dto';
+import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
+export declare class RecipesHttpController {
+    private readonly recipes;
+    private readonly media;
+    private readonly preps;
+    private readonly labels;
+    constructor(recipes: RecipesService, media: RecipeMediaService, preps: RecipePreparationsService, labels: RecipesLabelsService);
+    findAll(q: any): Promise<{
+        data: import("./recipes/entities/recipe.entity").Recipe[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
+    create(dto: CreateRecipeDto): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    categoriesFindAll(q: any): Promise<{
+        data: import("./recipes/entities/recipe-category.entity").RecipeCategory[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
+    categoryFindOne(id: string): Promise<import("./recipes/entities/recipe-category.entity").RecipeCategory>;
+    categoryCreate(dto: CreateRecipeCategoryDto): Promise<import("./recipes/entities/recipe-category.entity").RecipeCategory>;
+    categoryUpdate(id: string, dto: UpdateRecipeCategoryDto): Promise<import("./recipes/entities/recipe-category.entity").RecipeCategory>;
+    categoryRemove(id: string): Promise<void>;
+    addRecipeProduct(dto: CreateRecipeProductDto): Promise<import("./recipes/entities/recipe-product.entity").RecipeProduct>;
+    updateRecipeProduct(id: string, dto: UpdateRecipeProductDto): Promise<import("./recipes/entities/recipe-product.entity").RecipeProduct>;
+    removeRecipeProduct(id: string): Promise<void>;
+    getRecipeProducts(id: string): Promise<import("./recipes/entities/recipe-product.entity").RecipeProduct[]>;
+    findOne(id: string): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    update(id: string, dto: UpdateRecipeDto): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    remove(id: string): Promise<void>;
+    uploadRecipeMedia(id: string, dto: CreateRecipeMediaDto): Promise<import("./recipes/entities/recipe-media.entity").RecipeMedia>;
+    getRecipeMedia(id: string): Promise<import("./recipes/entities/recipe-media.entity").RecipeMedia[]>;
+    getPreparations(page?: string, limit?: string): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation[]>;
+    getPreparation(id: string): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
+    createPreparation(dto: CreateRecipePreparationDto): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
+    updatePreparation(id: string, dto: UpdateRecipePreparationDto): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
+    removePreparation(id: string): Promise<void>;
+    prepareWithStock(dto: CreateRecipePreparationDto): any;
+    labelsAll(): Promise<import("./recipes/entities/recipe-label.entity").RecipeLabel[]>;
+    labelsOne(id: string): Promise<import("./recipes/entities/recipe-label.entity").RecipeLabel>;
+    labelsCreate(dto: CreateRecipeLabelDto): Promise<import("./recipes/entities/recipe-label.entity").RecipeLabel>;
+    labelsRemove(id: string): Promise<void>;
+}

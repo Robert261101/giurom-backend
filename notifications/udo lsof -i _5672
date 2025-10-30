@@ -1,0 +1,26 @@
+[0;1;32m●[0m rabbitmq-server.service - RabbitMQ broker
+   Loaded: loaded (/usr/lib/systemd/system/rabbitmq-server.service; enabled; vendor preset: disabled)
+   Active: [0;1;32mactive (running)[0m since Mon 2025-09-08 11:14:14 EEST; 9min ago
+  Process: 388209 ExecStop=/usr/sbin/rabbitmqctl shutdown (code=exited, status=0/SUCCESS)
+ Main PID: 388248 (beam.smp)
+   CGroup: /system.slice/rabbitmq-server.service
+           ├─388248 /usr/lib64/erlang/erts-14.2.5.11/bin/beam.smp -W w -MBas ageffcbf -MHas ageffcbf -MBlmbcs 512 -MHlmbcs 512 -MMmcs 30 -pc unicode -P 1048576 -t 5000000 -stbt db -zdbbl 128000 -sbwt none -sbwtdcpu none -sbwtdio none -- -root /usr/lib64/erlang -bindir /usr/lib64/erlang/erts-14.2.5.11/bin -progname erl -- -home /var/lib/rabbitmq -- -pa -noshell -noinput -s rabbit boot -boot start_sasl -syslog logger [] -syslog syslog_error_logger false -kernel prevent_overlapping_partitions false
+           ├─388262 erl_child_setup 32768
+           ├─388279 sh -s disksup
+           ├─388281 /usr/lib64/erlang/lib/os_mon-2.9.1/priv/bin/memsup
+           ├─388282 /usr/lib64/erlang/lib/os_mon-2.9.1/priv/bin/cpu_sup
+           ├─388283 /usr/lib64/erlang/erts-14.2.5.11/bin/inet_gethost 4
+           ├─388284 /usr/lib64/erlang/erts-14.2.5.11/bin/inet_gethost 4
+           ├─388293 /usr/lib64/erlang/erts-14.2.5.11/bin/epmd -daemon
+           └─388317 /bin/sh -s rabbit_disk_monitor
+
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Doc guides:  https://www.rabbitmq.com/docs
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Support:     https://www.rabbitmq.com/docs/contact
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Tutorials:   https://www.rabbitmq.com/tutorials
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Monitoring:  https://www.rabbitmq.com/docs/monitoring
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Upgrading:   https://www.rabbitmq.com/docs/upgrade
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Logs: /var/log/rabbitmq/rabbit@server2.log
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:         <stdout>
+Sep 08 11:14:11 server2.bitap.ro rabbitmq-server[388248]:   Config file(s): (none)
+Sep 08 11:14:14 server2.bitap.ro rabbitmq-server[388248]:   Starting broker... completed with 3 plugins.
+Sep 08 11:14:14 server2.bitap.ro systemd[1]: Started RabbitMQ broker.

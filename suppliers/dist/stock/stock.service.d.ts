@@ -1,0 +1,37 @@
+import { Repository } from 'typeorm';
+import { Product } from './entities/product.entity';
+import { Stock } from './entities/stock.entity';
+import { StockTransaction } from './entities/stock-transaction.entity';
+import { WasteRecord } from './entities/waste-record.entity';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateStockDto } from './dto/create-stock.dto';
+import { UpdateStockDto } from './dto/update-stock.dto';
+import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
+import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
+import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+export declare class StockService {
+    private readonly productRepo;
+    private readonly stockRepo;
+    private readonly txRepo;
+    private readonly wasteRecordRepo;
+    constructor(productRepo: Repository<Product>, stockRepo: Repository<Stock>, txRepo: Repository<StockTransaction>, wasteRecordRepo: Repository<WasteRecord>);
+    createProduct(dto: CreateProductDto): Promise<Product>;
+    findAllProducts(): Promise<Product[]>;
+    findProduct(id: number): Promise<Product>;
+    updateProduct(id: number, dto: UpdateProductDto): Promise<Product>;
+    deleteProduct(id: number): Promise<void>;
+    createStock(dto: CreateStockDto): Promise<Stock>;
+    findAllStocks(): Promise<Stock[]>;
+    findStock(id: number): Promise<Stock>;
+    updateStock(id: number, dto: UpdateStockDto): Promise<Stock>;
+    deleteStock(id: number): Promise<void>;
+    consumeProduct(productId: number, quantity: number, target?: string): Promise<void>;
+    createTransaction(dto: CreateStockTransactionDto): Promise<StockTransaction>;
+    findAllTransactions(): Promise<StockTransaction[]>;
+    createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord>;
+    findAllWasteRecords(): Promise<WasteRecord[]>;
+    findWasteRecord(id: number): Promise<WasteRecord>;
+    updateWasteRecord(id: number, dto: UpdateWasteRecordDto): Promise<WasteRecord>;
+    deleteWasteRecord(id: number): Promise<void>;
+}

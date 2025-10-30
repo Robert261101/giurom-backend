@@ -1,0 +1,28 @@
+import { IsString, IsNotEmpty, Length, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class VerifyOtpDto {
+  @ApiProperty({
+    description: 'Email-ul sau numărul de telefon al utilizatorului',
+    example: 'test@example.com sau 0787448331'
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'Email-ul sau numărul de telefon este obligatoriu' })
+  @Matches(
+    /^([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|(\+40)?7[0-9]{8})$/,
+    { 
+      message: 'Trebuie să fie un email valid sau un număr de telefon românesc (07XXXXXXXX sau +407XXXXXXXX)' 
+    }
+  )
+  identifier: string;
+
+  @ApiProperty({
+    description: 'Codul OTP de 6 cifre',
+    example: '123456',
+    minLength: 6,
+    maxLength: 6
+  })
+  @IsString()
+  @Length(6, 6)
+  otp: string;
+} 
