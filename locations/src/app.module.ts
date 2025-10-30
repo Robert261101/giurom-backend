@@ -10,6 +10,7 @@ import { WorkLocationDepartmentPositions } from './locations/entity/work-locatio
 import { WorkLocationRevenue } from './locations/entity/work-location-revenue.entity';
 import { WorkLocationRevenuePoints } from './locations/entity/work-location-revenue-points.entity';
 import { WorkLocationManagerConfig } from './locations/entity/work-location-manager-config.entity';
+import { WorkLocationFiles } from './locations/entity/work-location-files.entity';
 import { LocationsService } from './locations/locations.service';
 import { LocationsMicroController } from './locations.micro.controller';
 import { LocationsHttpController } from './locations.http.controller';
@@ -43,6 +44,7 @@ import { LocationsHttpController } from './locations.http.controller';
         WorkLocationRevenue,
         WorkLocationRevenuePoints,
         WorkLocationManagerConfig,
+        WorkLocationFiles,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -57,6 +59,7 @@ import { LocationsHttpController } from './locations.http.controller';
       WorkLocationRevenue,
       WorkLocationRevenuePoints,
       WorkLocationManagerConfig,
+      WorkLocationFiles,
     ]),
   ],
   controllers: [LocationsMicroController, LocationsHttpController],

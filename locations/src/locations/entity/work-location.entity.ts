@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { WorkLocationTaskTemplate } from '../entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from '../entity/work-location-departments.entity';
+import { WorkLocationFiles } from './work-location-files.entity';
 
 @Entity('work_location')
 export class WorkLocation {
@@ -61,4 +62,7 @@ export class WorkLocation {
 
   @OneToMany(() => WorkLocationDepartments, (department) => department.work_location, { cascade: true, eager: false })
   departments: WorkLocationDepartments[];
+
+  @OneToMany(() => WorkLocationFiles, (file) => file.workLocation, { cascade: true, eager: false })
+  location_files: WorkLocationFiles[];
 } 
