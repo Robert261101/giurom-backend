@@ -11,8 +11,15 @@ export class SuppliersHttpController {
 	constructor(private readonly service: SuppliersService) {}
 
 	@Get()
-	getSuppliers(@Query('page') _page?: string, @Query('limit') _limit?: string, @Query('search') _search?: string, @Query('is_active') _is_active?: string) {
-		return this.service.findAll();
+	getSuppliers(
+		@Query('page') _page?: string, 
+		@Query('limit') _limit?: string, 
+		@Query('search') _search?: string, 
+		@Query('is_active') _is_active?: string,
+		@Query('location_id') location_id?: string
+	) {
+		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+		return this.service.findAll(locationId);
 	}
 
 	@Post()
@@ -37,7 +44,13 @@ export class SuppliersHttpController {
 	@Delete('products/:productId') removeProduct(@Param('productId') productId: string) { return this.service.removeSupplierProduct(Number(productId)); }
 
 	// Orders
-	@Get(':supplierId/orders') getOrders(@Param('supplierId') supplierId: string) { return this.service.getSupplierOrders(Number(supplierId)); }
+	@Get(':supplierId/orders') getOrders(
+		@Param('supplierId') supplierId: string,
+		@Query('location_id') location_id?: string
+	) { 
+		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+		return this.service.getSupplierOrders(Number(supplierId), locationId); 
+	}
 	@Post('orders') createOrder(@Body() dto: any) { return this.service.createOrder(dto); }
 	@Patch('orders/:orderId/deliver') deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
 	@Patch('orders/:orderId/status') updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }

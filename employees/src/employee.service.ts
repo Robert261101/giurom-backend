@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
+import { Repository, MoreThanOrEqual, LessThan, In } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { Repository, MoreThanOrEqual, LessThan } from 'typeorm';
 import { Employee } from './entities/employee.entity';
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
@@ -35,6 +36,7 @@ export class EmployeeService {
     @InjectRepository(EmployeeLocation)
     private employeeLocationRepository: Repository<EmployeeLocation>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private httpService: HttpService,
   ) {}
 
   private getEmployeesFilesRootDir(): string {
@@ -114,6 +116,7 @@ export class EmployeeService {
         throw new BadRequestException('Data încetării contractului trebuie să fie după data angajării');
       }
     }
+
 
     const employee = this.employeeRepository.create(createEmployeeDto);
     const savedEmployee = await this.employeeRepository.save(employee);
@@ -229,9 +232,47 @@ export class EmployeeService {
     };
   }
 
+  // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
+  async findAllByCompany(companyId: number): Promise<Employee[]> {
+    // 1) Preia toate locațiile companiei din microserviciul locations
+    const baseUrl = process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
+    let locationIds: number[] = [];
+    try {
+      const resp = await axios.get(`${baseUrl}/locations`, {
+        params: { company_id: companyId },
+        headers: {
+          'x-internal-service': 'employees',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        },
+      });
+      const locations = (resp.data?.locations || resp.data || []) as any[];
+      locationIds = locations.map((l: any) => l.id).filter((id: any) => typeof id === 'number');
+    } catch (e) {
+      // Dacă microserviciul nu răspunde, întoarce gol (nicio locație -> niciun angajat)
+      return [];
+    }
+
+    if (locationIds.length === 0) return [];
+
+    // 2) Găsește angajații care au fie locația implicită în acele locații, fie asociere în employees_locations
+    const qb = this.employeeRepository
+      .createQueryBuilder('employee')
+      .leftJoin('employee.employeeLocations', 'el')
+      .where('employee.work_location_default_id IN (:...locIds)', { locIds: locationIds })
+      .orWhere('el.idLocation IN (:...locIds)', { locIds: locationIds })
+      .orderBy('employee.created_at', 'DESC')
+      .distinct(true);
+
+    const employees = await qb.getMany();
+    return employees;
+  }
+
   // Găsirea unui angajat după ID
   async findOne(id: number): Promise<Employee> {
-    const employee = await this.employeeRepository.findOne({ where: { id } });
+    const employee = await this.employeeRepository.findOne({
+      where: { id }
+    });
 
     if (!employee) {
       throw new NotFoundException(`Angajatul cu ID-ul ${id} nu a fost găsit`);
@@ -255,7 +296,9 @@ export class EmployeeService {
 
   // Căutarea angajaților după email
   async findByEmail(email: string): Promise<Employee> {
-    const employee = await this.employeeRepository.findOne({ where: { email } });
+    const employee = await this.employeeRepository.findOne({
+      where: { email }
+    });
 
     if (!employee) {
       throw new NotFoundException(`Angajatul cu email-ul ${email} nu a fost găsit`);

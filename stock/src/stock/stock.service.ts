@@ -97,8 +97,16 @@ export class StockService {
     return await this.stockRepo.save(stock);
   }
 
-  async findAllStocks(): Promise<Stock[]> {
-    return await this.stockRepo.find({ relations: ['product'] });
+  async findAllStocks(locationId?: number): Promise<Stock[]> {
+    const queryBuilder = this.stockRepo.createQueryBuilder('stock')
+      .leftJoinAndSelect('stock.product', 'product');
+    
+    if (locationId !== undefined) {
+      queryBuilder.where('stock.location_id = :locationId', { locationId });
+      console.log('🔍 [StockService] Filtrăm stock-urile după location_id:', locationId);
+    }
+    
+    return await queryBuilder.getMany();
   }
 
   async findStock(id: number): Promise<Stock> {

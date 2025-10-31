@@ -18,6 +18,9 @@ export class Recipe {
   @Column()
   category_id: number;
 
+  @Column({ type: 'int', nullable: true })
+  location_id?: number;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

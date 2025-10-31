@@ -78,6 +78,7 @@ export class RecipesService {
     limit?: number; 
     search?: string; 
     category_id?: number;
+    location_id?: number;
     difficulty?: 'easy' | 'medium' | 'hard';
     max_cooking_time?: number;
   }): Promise<{ recipes: Recipe[]; total: number; totalPages: number }> {
@@ -95,6 +96,15 @@ export class RecipesService {
     // Add category filter
     if (params.category_id) {
       queryBuilder.andWhere('recipe.category_id = :category_id', { category_id: params.category_id });
+    }
+    
+    // FILTRARE OBLIGATORIE - afișează DOAR recipes cu location_id setat
+    queryBuilder.andWhere('recipe.location_id IS NOT NULL');
+    
+    // Add location filter
+    if (params.location_id !== undefined) {
+      queryBuilder.andWhere('recipe.location_id = :location_id', { location_id: params.location_id });
+      console.log('🔍 [RecipesService] Filtrăm recipes după location_id:', params.location_id);
     }
     
     const offset = (page - 1) * limit;

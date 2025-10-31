@@ -23,7 +23,7 @@ export class StockHttpController {
 
 	// Stock items
 	@Post('items') @Permissions('stock.create') createStock(@Body() dto: CreateStockDto) { return this.service.createStock(dto); }
-	@Get('items') @Permissions('stock.read') getStocks() { return this.service.findAllStocks(); }
+	@Get('items') @Permissions('stock.read') getStocks(@Query('location_id') locationId?: string) { return this.service.findAllStocks(locationId ? Number(locationId) : undefined); }
 	@Get('items/:id') @Permissions('stock.read') getStock(@Param('id') id: string) { return this.service.findStock(Number(id)); }
 	@Patch('items/:id') @Permissions('stock.update') updateStock(@Param('id') id: string, @Body() dto: UpdateStockDto) { return this.service.updateStock(Number(id), dto); }
 	@Delete('items/:id') @Permissions('stock.delete') deleteStock(@Param('id') id: string) { return this.service.deleteStock(Number(id)); }

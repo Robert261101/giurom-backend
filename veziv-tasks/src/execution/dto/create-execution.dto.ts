@@ -80,34 +80,7 @@ export class CreateExecutionDto {
   @MaxLength(1000)
   comment?: string;
 
-  @ApiProperty({
-    description: 'Dacă execuția a fost verificată de manager',
-    example: false,
-    required: false
-  })
-  @IsBoolean()
-  @IsOptional()
-  is_verified_by_manager?: boolean;
-
-  @ApiProperty({
-    description: 'Data verificării de către manager',
-    example: '2024-01-15T17:00:00Z',
-    required: false
-  })
-  @IsDateString()
-  @IsOptional()
-  verification_date?: string;
-
-  @ApiProperty({
-    description: 'Scorul total al execuției',
-    example: 85,
-    minimum: 0,
-    required: false
-  })
-  @IsInt()
-  @Min(0)
-  @IsOptional()
-  total_score?: number;
+  // is_verified_by_manager, verification_date și total_score eliminate - logica se face prin elemente și employee_daily_points
 
   @ApiProperty({
     description: 'Răspunsurile pentru elementele din template',

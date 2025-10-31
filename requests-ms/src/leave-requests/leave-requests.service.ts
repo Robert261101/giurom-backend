@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { LeaveRequest, LeaveStatus, DurationUnit } from './entities/leave-request.entity';
-import { Employee } from '../employee/entities/employee.entity';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.dto';
 import { FilterLeaveRequestsDto } from './dto/filter-leave-requests.dto';
@@ -17,8 +17,7 @@ export class LeaveRequestsService implements OnModuleInit {
   constructor(
     @InjectRepository(LeaveRequest)
     private readonly leaveRequestRepo: Repository<LeaveRequest>,
-    @InjectRepository(Employee)
-    private readonly employeeRepo: Repository<Employee>,
+    private readonly httpService: HttpService,
   ) {}
   onModuleInit() {
     this.notificationsClient = ClientProxyFactory.create({
@@ -59,10 +58,23 @@ export class LeaveRequestsService implements OnModuleInit {
   async create(dto: CreateLeaveRequestDto, currentUserId?: number): Promise<LeaveRequest> {
     this.logger.log(`Creating leave request for employee ${dto.employee_id}`);
 
-    // Verifică dacă angajatul există
-    const employee = await this.employeeRepo.findOne({ where: { id: dto.employee_id } });
-    if (!employee) {
-      this.logger.error(`Employee with ID ${dto.employee_id} not found`);
+    // Verifică dacă angajatul există prin HTTP call către microserviciul employees
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
+          headers: {
+            'x-internal-service': 'requests',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      const employeeData = response.data as any;
+      if (!employeeData) {
+        this.logger.error(`Employee with ID ${dto.employee_id} not found`);
+        throw new NotFoundException('Angajatul nu a fost găsit');
+      }
+    } catch (error) {
+      this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul nu a fost găsit');
     }
 
@@ -124,11 +136,11 @@ export class LeaveRequestsService implements OnModuleInit {
     await this.sendLeaveNotification(
       'leave_request_created',
       'Cerere de concediu nouă',
-      `A fost creată o nouă cerere de ${dto.leave_type} de către ${employee.first_name} ${employee.last_name}`,
+      `A fost creată o nouă cerere de ${dto.leave_type}`,
       dto.employee_id,
       {
         requestId: savedRequest.id,
-        employeeName: `${employee.first_name} ${employee.last_name}`,
+        employeeId: dto.employee_id,
         leaveType: dto.leave_type,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
@@ -143,9 +155,8 @@ export class LeaveRequestsService implements OnModuleInit {
   async findAll(filters: FilterLeaveRequestsDto, currentUserId?: number): Promise<LeaveRequest[]> {
     this.logger.log(`Fetching leave requests with filters: ${JSON.stringify(filters)}`);
 
-    const queryBuilder = this.leaveRequestRepo.createQueryBuilder('lr')
-      .leftJoinAndSelect('lr.employee', 'employee')
-      .leftJoinAndSelect('lr.reviewed_by', 'reviewer');
+    const queryBuilder = this.leaveRequestRepo.createQueryBuilder('lr');
+      // Employee relations removed - using HTTP calls to employees microservice
 
     // Filtrare pe status
     if (filters.status) {
@@ -207,7 +218,7 @@ export class LeaveRequestsService implements OnModuleInit {
   async findOne(id: number, currentUserId?: number): Promise<LeaveRequest> {
     const leaveRequest = await this.leaveRequestRepo.findOne({
       where: { id },
-      relations: ['employee', 'reviewed_by'],
+      // Employee relations removed - using HTTP calls to employees microservice
     });
 
     if (!leaveRequest) {
@@ -230,10 +241,18 @@ export class LeaveRequestsService implements OnModuleInit {
 
     const leaveRequest = await this.findOne(id);
 
-    // Verifică dacă reviewerul există
-    const reviewer = await this.employeeRepo.findOne({ where: { id: dto.reviewed_by_id } });
-    if (!reviewer) {
-      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found`);
+    // Verifică dacă reviewerul există prin HTTP call către microserviciul employees
+    try {
+      await firstValueFrom(
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
+          headers: {
+            'x-internal-service': 'requests',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+    } catch (error) {
+      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
@@ -271,8 +290,7 @@ export class LeaveRequestsService implements OnModuleInit {
     const updatedRequest = await this.leaveRequestRepo.save(leaveRequest);
 
     // Send notification to employee about the decision
-    const employee = await this.employeeRepo.findOne({ where: { id: leaveRequest.employee_id } });
-    if (employee) {
+    try {
       if (dto.status === LeaveStatus.APPROVED) {
         await this.sendLeaveNotification(
           'leave_request_approved',
@@ -284,7 +302,7 @@ export class LeaveRequestsService implements OnModuleInit {
             leaveType: leaveRequest.leave_type,
             startDate: leaveRequest.start_datetime.toISOString(),
             endDate: leaveRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
           }
         );
       } else if (dto.status === LeaveStatus.REJECTED) {
@@ -298,11 +316,13 @@ export class LeaveRequestsService implements OnModuleInit {
             leaveType: leaveRequest.leave_type,
             startDate: leaveRequest.start_datetime.toISOString(),
             endDate: leaveRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           }
         );
       }
+    } catch (error) {
+      this.logger.warn(`Failed to send notification: ${error.message}`);
     }
 
     // Logare acțiune critică

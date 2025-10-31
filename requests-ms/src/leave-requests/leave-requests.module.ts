@@ -1,15 +1,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { LeaveRequestsController } from './leave-requests.controller';
 import { LeaveRequestsService } from './leave-requests.service';
 import { LeaveRequest } from './entities/leave-request.entity';
-import { Employee } from '../employee/entities/employee.entity';
 
 @Module({
   imports: [
+    HttpModule,
     TypeOrmModule.forFeature([
       LeaveRequest,
-      Employee,
     ]),
   ],
   controllers: [LeaveRequestsController],

@@ -4,6 +4,19 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
+  
+  // Enable CORS for frontend communication
+  httpApp.enableCors({
+    origin: [
+      'http://localhost:3000', 
+      'http://localhost:3001',
+      'https://giurom-frontend.vercel.app'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  });
+  
   const httpPort = parseInt(process.env.LOCATIONS_HTTP_PORT || '3004', 10);
   const config = new DocumentBuilder()
     .setTitle('Locations API')

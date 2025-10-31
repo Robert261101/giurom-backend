@@ -180,4 +180,5 @@ export class CreateEmployeeDto {
   @IsBoolean({ message: 'Statusul activ trebuie să fie boolean' })
   @IsOptional()
   is_active?: boolean = true;
+
 }

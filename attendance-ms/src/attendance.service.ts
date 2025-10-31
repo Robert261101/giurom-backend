@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
+import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
 import { Shift } from './entities/shift.entity';
@@ -23,6 +24,7 @@ export class AttendanceService implements OnModuleInit {
     @InjectRepository(PresenceInflexion)
     private readonly presenceInflexionRepository: Repository<PresenceInflexion>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly httpService: HttpService,
   ) {}
 
   async onModuleInit() {
@@ -55,6 +57,21 @@ export class AttendanceService implements OnModuleInit {
       );
     } catch (error) {
       console.error('Failed to send attendance notification:', error);
+    }
+  }
+
+  private async addEmployeePoints(employeeId: number, points: number, reason: string): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post('http://giurom.bitap.ro:3002/tasks/executions/daily-points', {
+          employee_id: employeeId,
+          total_points: points,
+          work_date: new Date().toISOString().split('T')[0] // YYYY-MM-DD format
+        })
+      );
+      console.log(`✅ Added ${points} points to employee ${employeeId}: ${reason}`);
+    } catch (error) {
+      console.error(`❌ Failed to add points to employee ${employeeId}:`, error.response?.data || error.message);
     }
   }
 
@@ -293,6 +310,41 @@ export class AttendanceService implements OnModuleInit {
 
     const savedPresence = await this.presenceRepository.save(presence);
     
+    // Logica pentru puncte - doar dacă există check_in
+    if (check_in) {
+      const checkInTime = new Date(check_in);
+      const shiftStartTime = new Date(shift.start_datetime);
+      
+      // Extrag doar ora din shift (ignorăm data)
+      const shiftStartHour = shiftStartTime.getHours();
+      const shiftStartMinute = shiftStartTime.getMinutes();
+      
+      // Creez ora de început pentru ziua curentă
+      const today = new Date(date);
+      const todayShiftStart = new Date(today);
+      todayShiftStart.setHours(shiftStartHour, shiftStartMinute, 0, 0);
+      
+      // Ora maximă permisă (ora de început + 15 minute)
+      const maxAllowedTime = new Date(todayShiftStart.getTime() + 15 * 60 * 1000);
+      
+      console.log(`🕐 Check-in time: ${checkInTime.toISOString()}`);
+      console.log(`🕐 Shift start time: ${todayShiftStart.toISOString()}`);
+      console.log(`🕐 Max allowed time: ${maxAllowedTime.toISOString()}`);
+      console.log(`🕐 Shift original: ${shiftStartTime.toISOString()}`);
+      console.log(`🕐 Shift hour: ${shiftStartHour}, minute: ${shiftStartMinute}`);
+      
+      // Dacă s-a făcut check-in înainte de ora de început + 15 minute
+      if (checkInTime <= maxAllowedTime) {
+        await this.addEmployeePoints(
+          shift.employee_id, 
+          5, 
+          `Punctualitate - început program la timp (${checkInTime.toLocaleTimeString('ro-RO')})`
+        );
+      } else {
+        console.log(`⏰ Check-in tardiv pentru angajat ${shift.employee_id} - nu se acordă puncte`);
+      }
+    }
+    
     // Send notification to admin and the employee for whom the attendance was created
     await this.sendAttendanceNotification(
       'attendance_created',
@@ -311,34 +363,53 @@ export class AttendanceService implements OnModuleInit {
   }
 
   async findAllPresences(
-    page: number = 1,
-    limit: number = 10,
-    shift_id?: number,
+    page?: string,
+    limit?: string,
+    shift_id?: string,
     status?: PresenceStatus,
     start_date?: string,
     end_date?: string,
   ): Promise<{ data: Presence[]; total: number; page: number; limit: number }> {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const shiftIdNum = shift_id ? parseInt(shift_id, 10) : undefined;
+    
     const where: any = {};
-    if (shift_id) where.shift_id = shift_id;
+    if (shiftIdNum) where.shift_id = shiftIdNum;
     if (status) where.status = status;
+    
+    console.log('🔍 [findAllPresences] Parametrii primiti:', { page, limit, shift_id, status, start_date, end_date });
+    console.log('🔍 [findAllPresences] Parametrii convertiti:', { pageNum, limitNum, shiftIdNum, status, start_date, end_date });
 
     if (start_date && end_date) {
-      where.date = Between(new Date(start_date), new Date(end_date));
+      if (start_date === end_date) {
+        // Când start_date și end_date sunt egale, filtrează doar pentru acea dată
+        const targetDate = new Date(start_date);
+        const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+        const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999);
+        where.date = Between(startOfDay, endOfDay);
+      } else {
+        where.date = Between(new Date(start_date), new Date(end_date));
+      }
     } else if (start_date) {
       where.date = MoreThanOrEqual(new Date(start_date));
     } else if (end_date) {
       where.date = LessThanOrEqual(new Date(end_date));
     }
 
+    console.log('🔍 [findAllPresences] Where clause:', where);
+    
     const [data, total] = await this.presenceRepository.findAndCount({
       where,
       relations: ['shift', 'inflexions'],
-      skip: (page - 1) * limit,
-      take: limit,
+      skip: (pageNum - 1) * limitNum,
+      take: limitNum,
       order: { date: 'DESC' },
     });
 
-    return { data, total, page, limit };
+    console.log('🔍 [findAllPresences] Rezultat query:', { dataCount: data.length, total });
+    
+    return { data, total, page: pageNum, limit: limitNum };
   }
 
   async findPresenceById(id: number): Promise<Presence> {

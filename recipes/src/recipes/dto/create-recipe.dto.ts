@@ -19,6 +19,11 @@ export class CreateRecipeDto {
   @IsPositive()
   category_id: number;
 
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  location_id?: number;
+
   @ApiProperty()
   @IsNumber()
   @IsNotEmpty()

@@ -18,6 +18,9 @@ export class TaskExecution {
   @Column({ name: 'employee_id', type: 'int' })
   employee_id: number;
 
+  @Column({ type: 'int', nullable: true })
+  location_id: number;
+
   @Column({ type: 'datetime' })
   started_at: Date;
 
@@ -27,14 +30,9 @@ export class TaskExecution {
   @Column({ type: 'text', nullable: true })
   comment: string;
 
+
   @Column({ type: 'boolean', default: false })
-  is_verified_by_manager: boolean;
-
-  @Column({ type: 'datetime', nullable: true })
-  verification_date: Date;
-
-  @Column({ type: 'int', default: 0 })
-  total_score: number;
+  is_reactivation_compensation: boolean;
 
   @CreateDateColumn()
   created_at: Date;

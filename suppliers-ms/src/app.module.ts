@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { join } from 'path';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ClientsModule, Transport } from '@nestjs/microservices';
 import { Supplier } from './suppliers/entities/supplier.entity';
 import { SupplierFolder } from './suppliers/entities/supplier-folder.entity';
 import { SupplierProduct } from './suppliers/entities/supplier-product.entity';
@@ -11,7 +11,7 @@ import { SupplierOrder } from './suppliers/entities/supplier-order.entity';
 import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
-import { SupplierLocations, WorkLocation } from './suppliers/entities/supplier-locations.entity';
+import { SupplierLocations } from './suppliers/entities/supplier-locations.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
 import { StockHttpService } from './suppliers/stock-http.service';
 import { SuppliersMicroController } from './suppliers.micro.controller';
@@ -20,10 +20,6 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
-    HttpModule.register({
-      timeout: 10000,
-      maxRedirects: 5,
-    }),
     ClientsModule.register([
       {
         name: 'NOTIFICATIONS_RMQ',
@@ -35,6 +31,10 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
         },
       },
     ]),
+    HttpModule.register({
+      timeout: 10000,
+      maxRedirects: 5,
+    }),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST as string,
@@ -51,7 +51,6 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
         SupplierOrderDocument,
         SupplierDocument,
         SupplierLocations,
-        WorkLocation,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -79,10 +78,11 @@ import { SuppliersHttpController } from './suppliers/suppliers.http.controller';
       SupplierOrderDocument,
       SupplierDocument,
       SupplierLocations,
-      WorkLocation,
     ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],
   providers: [SuppliersService, StockHttpService],
 })
 export class AppModule {}
+
+

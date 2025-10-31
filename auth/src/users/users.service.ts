@@ -290,6 +290,41 @@ export class UsersService {
   }
 
   /**
+   * Obține roles și permissions pentru un utilizator
+   */
+  async getUserRolesAndPermissions(userId: number): Promise<{ roles: string[]; permissions: string[] }> {
+    try {
+      // Obține toate role-urile utilizatorului
+      const userRoles = await this.userRoleRepository
+        .createQueryBuilder('ur')
+        .leftJoinAndSelect('ur.role', 'role')
+        .where('ur.userId = :userId', { userId })
+        .getMany();
+
+      const roles = userRoles.map(ur => ur.role.name);
+
+      // Obține toate permisiunile pentru role-urile utilizatorului
+      const roleIds = userRoles.map(ur => ur.roleId);
+      
+      let permissions: string[] = [];
+      if (roleIds.length > 0) {
+        const rolePermissions = await this.rolePermissionRepository
+          .createQueryBuilder('rp')
+          .leftJoinAndSelect('rp.permission', 'permission')
+          .where('rp.roleId IN (:...roleIds)', { roleIds })
+          .getMany();
+
+        permissions = rolePermissions.map(rp => rp.permission.name);
+      }
+
+      return { roles, permissions };
+    } catch (error) {
+      console.error('Eroare la obținerea roles și permissions:', error);
+      return { roles: [], permissions: [] };
+    }
+  }
+
+  /**
    * Șterge un utilizator
    */
   async remove(id_employee: number): Promise<void> {
