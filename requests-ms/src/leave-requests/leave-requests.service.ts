@@ -31,6 +31,30 @@ export class LeaveRequestsService implements OnModuleInit {
     });
   }
 
+  private async sendLeaveNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'leave.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_type: 'leave_request',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to send leave notification: ${error?.message || error}`);
+    }
+  }
+
   // Creare cerere de concediu
   async create(dto: CreateLeaveRequestDto, currentUserId?: number): Promise<LeaveRequest> {
     this.logger.log(`Creating leave request for employee ${dto.employee_id}`);
@@ -92,19 +116,25 @@ export class LeaveRequestsService implements OnModuleInit {
 
     this.logger.log(`Leave request ${savedRequest.id} created successfully for employee ${dto.employee_id}`);
     
-    // Emit event to notifications via RabbitMQ (non-blocking)
-    try {
-      await firstValueFrom(
-        this.notificationsClient.send({ cmd: 'labels.expiring-soon' }, {
-          labelId: savedRequest.id,
-          labelCode: 'leave-request',
-          preparationId: dto.employee_id,
-          expiresAt: endDate.toISOString(),
-        })
-      );
-    } catch (e) {
-      this.logger.warn(`Failed to emit notification event: ${e?.message || e}`);
-    }
+    // Calculate duration in days
+    const durationMs = endDate.getTime() - startDate.getTime();
+    const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
+
+    // Send notification to admins/managers about new leave request
+    await this.sendLeaveNotification(
+      'leave_request_created',
+      'Cerere de concediu nouă',
+      `A fost creată o nouă cerere de ${dto.leave_type} de către ${employee.first_name} ${employee.last_name}`,
+      dto.employee_id,
+      {
+        requestId: savedRequest.id,
+        employeeName: `${employee.first_name} ${employee.last_name}`,
+        leaveType: dto.leave_type,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        duration: durationDays,
+      }
+    );
 
     return this.findOne(savedRequest.id);
   }
@@ -239,6 +269,41 @@ export class LeaveRequestsService implements OnModuleInit {
     }
 
     const updatedRequest = await this.leaveRequestRepo.save(leaveRequest);
+
+    // Send notification to employee about the decision
+    const employee = await this.employeeRepo.findOne({ where: { id: leaveRequest.employee_id } });
+    if (employee) {
+      if (dto.status === LeaveStatus.APPROVED) {
+        await this.sendLeaveNotification(
+          'leave_request_approved',
+          'Cerere de concediu aprobată',
+          `Cererea dumneavoastră de ${leaveRequest.leave_type} a fost aprobată`,
+          leaveRequest.employee_id,
+          {
+            requestId: updatedRequest.id,
+            leaveType: leaveRequest.leave_type,
+            startDate: leaveRequest.start_datetime.toISOString(),
+            endDate: leaveRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+          }
+        );
+      } else if (dto.status === LeaveStatus.REJECTED) {
+        await this.sendLeaveNotification(
+          'leave_request_rejected',
+          'Cerere de concediu respinsă',
+          `Cererea dumneavoastră de ${leaveRequest.leave_type} a fost respinsă`,
+          leaveRequest.employee_id,
+          {
+            requestId: updatedRequest.id,
+            leaveType: leaveRequest.leave_type,
+            startDate: leaveRequest.start_datetime.toISOString(),
+            endDate: leaveRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            comment: dto.review_comment,
+          }
+        );
+      }
+    }
 
     // Logare acțiune critică
     this.logger.log(

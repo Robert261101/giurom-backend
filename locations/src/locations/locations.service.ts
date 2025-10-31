@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DeepPartial, Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+import * as path from 'path';
+import * as fs from 'fs';
 import { WorkLocation } from '../locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from '../locations/entity/work-location-departments.entity';
@@ -12,6 +16,8 @@ import { UpdateTaskTemplateAssignmentDto } from './dto/update-task-template-assi
 import { WorkLocationRevenue } from './entity/work-location-revenue.entity';
 import { WorkLocationRevenuePoints } from './entity/work-location-revenue-points.entity';
 import { WorkLocationManagerConfig } from './entity/work-location-manager-config.entity';
+import { WorkLocationFiles } from './entity/work-location-files.entity';
+import { CreateWorkLocationFileDto } from './dto/create-work-location-file.dto';
 
 @Injectable()
 export class LocationsService {
@@ -23,13 +29,56 @@ export class LocationsService {
     @InjectRepository(WorkLocationRevenue) private readonly revenueRepository: Repository<WorkLocationRevenue>,
     @InjectRepository(WorkLocationRevenuePoints) private readonly revenuePointsRepository: Repository<WorkLocationRevenuePoints>,
     @InjectRepository(WorkLocationManagerConfig) private readonly managerConfigRepository: Repository<WorkLocationManagerConfig>,
+    @InjectRepository(WorkLocationFiles) private readonly filesRepository: Repository<WorkLocationFiles>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private getLocationsFilesRootDir(): string {
+    // Resolve to giurom root (one level above giurom-backend)
+    // __dirname is .../giurom-backend/locations/src (dev with ts-node) or .../giurom-backend/locations/dist (prod)
+    const repoRoot = path.resolve(__dirname, '../../../..');
+    return path.join(repoRoot, 'files', 'locations');
+  }
+
+  private async sendLocationNotification(
+    type: string,
+    title: string,
+    description: string,
+    locationId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'locations.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: locationId,
+          entity_type: 'location',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send location notification:', error);
+    }
+  }
 
   async createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation> {
     const entity: WorkLocation = this.workLocationRepository.create(
       dto as unknown as Partial<WorkLocation>,
     ) as WorkLocation;
     const saved: WorkLocation = await this.workLocationRepository.save(entity as WorkLocation);
+    
+    // Send notification for new location
+    await this.sendLocationNotification(
+      'location_created',
+      'Locație nouă adăugată',
+      `A fost adăugată o nouă locație: ${saved.location_name}`,
+      saved.id,
+      { locationName: saved.location_name }
+    );
+    
     return saved;
   }
 
@@ -79,12 +128,53 @@ export class LocationsService {
 
   async updateWorkLocation(id: number, dto: UpdateWorkLocationDto): Promise<WorkLocation> {
     const workLocation = await this.findWorkLocationById(id);
+    const oldName = workLocation.location_name;
     Object.assign(workLocation, dto);
-    return await this.workLocationRepository.save(workLocation as WorkLocation);
+    const updatedLocation = await this.workLocationRepository.save(workLocation as WorkLocation);
+    
+    // Send notification for updated location
+    await this.sendLocationNotification(
+      'location_updated',
+      'Locație modificată',
+      `Locația ${oldName} a fost modificată`,
+      updatedLocation.id,
+      { 
+        oldName,
+        newName: updatedLocation.location_name,
+        updatedFields: Object.keys(dto)
+      }
+    );
+    
+    return updatedLocation;
   }
 
   async removeWorkLocation(id: number): Promise<void> {
     const workLocation = await this.findWorkLocationById(id);
+    const locationName = workLocation.location_name;
+    
+    // Get related departments count
+    const departmentsCount = await this.departmentsRepository.count({ 
+      where: { work_location_id: id } as any 
+    });
+    
+    // Get related revenue points count
+    const revenuePointsCount = await this.revenuePointsRepository.count({ 
+      where: { work_location_id: id } as any 
+    });
+    
+    // Send notification for deleted location
+    await this.sendLocationNotification(
+      'location_deleted',
+      'Locație ștearsă',
+      `Locația ${locationName} a fost ștearsă (Departamente: ${departmentsCount}, Puncte: ${revenuePointsCount}, Angajați afectați)`,
+      id,
+      { 
+        locationName,
+        departmentsCount,
+        revenuePointsCount
+      }
+    );
+    
     await this.workLocationRepository.remove(workLocation as WorkLocation);
   }
 
@@ -339,5 +429,206 @@ export class LocationsService {
       breakdown.push({ amount, pointsPerUnit, interval: matched as any, points: pts, managerShare: managerPts });
     }
     return { totalPoints, managerPoints: totalManagerPoints, managerPercent: Number(cfg.manager_percent), breakdown } as any;
+  }
+
+  // ==================== LOCATION FILES METHODS ====================
+
+  // Creează un nou fișier pentru locație
+  async createFile(createFileDto: CreateWorkLocationFileDto): Promise<WorkLocationFiles> {
+    console.log('📥 Received createFileDto:', {
+      work_location_id: createFileDto.work_location_id,
+      file_name: createFileDto.file_name,
+      file_type: createFileDto.file_type,
+      has_content: !!createFileDto.file_content,
+      content_length: createFileDto.file_content?.length || 0
+    });
+    
+    // Verifică dacă locația există
+    const location = await this.workLocationRepository.findOne({
+      where: { id: createFileDto.work_location_id }
+    });
+
+    if (!location) {
+      throw new NotFoundException(`Locația cu ID-ul ${createFileDto.work_location_id} nu a fost găsită`);
+    }
+
+    // Generate unique filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const fileExtension = createFileDto.file_name.split('.').pop() || 'txt';
+    const baseFileName = createFileDto.file_name.replace(/\.[^/.]+$/, "") || 'file';
+    const uniqueFileName = `${baseFileName}_${timestamp}.${fileExtension}`;
+
+    console.log(`📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`);
+
+    // Update the file_link to use the unique filename
+    const updatedFileLink = createFileDto.file_link.replace(createFileDto.file_name, uniqueFileName);
+
+    // Create the directory if it doesn't exist
+    const locationId = createFileDto.work_location_id?.toString() || 'unknown';
+    console.log(`📁 Creating directory for location ID: ${locationId}`);
+    const baseDir = this.getLocationsFilesRootDir();
+    const fileDir = path.join(baseDir, locationId);
+    if (!fs.existsSync(fileDir)) {
+      fs.mkdirSync(fileDir, { recursive: true });
+    }
+
+    // If file content is provided (base64), save it to disk
+    if (createFileDto.file_content) {
+      try {
+        const filePath = path.join(fileDir, uniqueFileName);
+        
+        // Extract base64 content from data URL (remove data:type;base64, prefix)
+        let base64Data = createFileDto.file_content;
+        if (base64Data.includes(',')) {
+          base64Data = base64Data.split(',')[1];
+        }
+        
+        console.log(`💾 Saving file with ${base64Data.length} base64 characters`);
+        const buffer = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(filePath, buffer);
+        console.log(`✅ File saved to disk: ${filePath} (${buffer.length} bytes)`);
+      } catch (error) {
+        console.error('❌ Error saving file to disk:', error);
+      }
+    }
+
+    // Verifică dacă există deja un fișier cu același nume pentru aceeași locație
+    const existingFile = await this.filesRepository.findOne({
+      where: {
+        work_location_id: createFileDto.work_location_id,
+        file_name: uniqueFileName
+      }
+    });
+
+    if (existingFile) {
+      throw new ConflictException(`Un fișier cu numele "${uniqueFileName}" există deja pentru această locație`);
+    }
+
+    // Create the file record with unique filename
+    const file = this.filesRepository.create({
+      ...createFileDto,
+      file_name: uniqueFileName,
+      file_link: updatedFileLink
+    });
+
+    const savedFile = await this.filesRepository.save(file);
+    console.log(`✅ File record saved to database with ID: ${savedFile.id}`);
+    
+    return savedFile;
+  }
+
+  // Găsește un fișier după ID
+  async findOneFile(id: number): Promise<WorkLocationFiles> {
+    const file = await this.filesRepository.findOne({
+      where: { id },
+      relations: ['workLocation'],
+    });
+
+    if (!file) {
+      throw new NotFoundException(`Fișierul cu ID-ul ${id} nu a fost găsit`);
+    }
+
+    return file;
+  }
+
+  // Găsește toate fișierele unei locații
+  async findFilesByLocation(work_location_id: number): Promise<WorkLocationFiles[]> {
+    const location = await this.workLocationRepository.findOne({
+      where: { id: work_location_id }
+    });
+
+    if (!location) {
+      throw new NotFoundException(`Locația cu ID-ul ${work_location_id} nu a fost găsită`);
+    }
+
+    return await this.filesRepository.find({
+      where: { work_location_id },
+      relations: ['workLocation'],
+      order: { updated_at: 'DESC' },
+    });
+  }
+
+  // Servește fișierul de pe disk
+  async serveFile(file_id: number, forceDownload: boolean = false): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
+    try {
+      console.log(`🔍 [serveFile] Starting to serve file with ID: ${file_id}, forceDownload: ${forceDownload}`);
+      
+      const file = await this.findOneFile(file_id);
+      console.log(`📄 [serveFile] File metadata retrieved:`, {
+        id: file.id,
+        name: file.file_name,
+        work_location_id: file.work_location_id,
+        file_link: file.file_link
+      });
+      
+      const baseDir = this.getLocationsFilesRootDir();
+      console.log(`📁 [serveFile] Base directory: ${baseDir}`);
+      
+      const filePath = path.join(baseDir, file.work_location_id.toString(), file.file_name);
+      console.log(`📁 [serveFile] Full file path: ${filePath}`);
+      console.log(`📁 [serveFile] Path exists check: ${fs.existsSync(filePath)}`);
+      
+      // Check if directory exists
+      const fileDir = path.join(baseDir, file.work_location_id.toString());
+      console.log(`📁 [serveFile] Directory path: ${fileDir}`);
+      console.log(`📁 [serveFile] Directory exists: ${fs.existsSync(fileDir)}`);
+      
+      if (fs.existsSync(fileDir)) {
+        const filesInDir = fs.readdirSync(fileDir);
+        console.log(`📁 [serveFile] Files in directory:`, filesInDir);
+      }
+      
+      if (!fs.existsSync(filePath)) {
+        console.error(`❌ [serveFile] File not found on disk: ${filePath}`);
+        throw new NotFoundException(`Fișierul nu a fost găsit pe disk la calea: ${filePath}`);
+      }
+      
+      const mimeType = this.getMimeType(file.file_name);
+      console.log(`📋 [serveFile] MIME type determined: ${mimeType}`);
+      
+      const fileBuffer = fs.readFileSync(filePath);
+      console.log(`✅ [serveFile] File read successfully: ${file.file_name} (${fileBuffer.length} bytes)`);
+
+      return {
+        data: fileBuffer.toString('base64'),
+        mimeType,
+        fileName: file.file_name,
+        disposition: forceDownload ? 'attachment' : 'inline',
+      };
+    } catch (error) {
+      console.error(`❌ [serveFile] Error serving file ${file_id}:`, error);
+      console.error(`❌ [serveFile] Error message:`, error.message);
+      console.error(`❌ [serveFile] Error stack:`, error.stack);
+      throw error;
+    }
+  }
+
+  // Determină tipul MIME bazat pe extensia fișierului
+  private getMimeType(fileName: string): string {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    
+    const mimeTypes: { [key: string]: string } = {
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'txt': 'text/plain',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'xls': 'application/vnd.ms-excel',
+    };
+    
+    return mimeTypes[extension || ''] || 'application/octet-stream';
+  }
+
+  // Șterge un fișier
+  async removeFile(id: number): Promise<{ message: string }> {
+    const file = await this.findOneFile(id);
+    await this.filesRepository.delete(id);
+    
+    return {
+      message: `Fișierul "${file.file_name}" al locației ${file.workLocation.location_name} a fost șters cu succes`,
+    };
   }
 } 

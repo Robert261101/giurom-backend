@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import axios from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from './entities/recipe.entity';
 import { StockRef, StockStatusRef } from '../external/stock-ref.entity';
@@ -14,7 +16,36 @@ export class RecipePreparationsService {
     @InjectRepository(Recipe) private readonly recipeRepo: Repository<Recipe>,
     @InjectRepository(StockRef) private readonly stockRepo: Repository<StockRef>,
     @InjectRepository(StockTransactionRef) private readonly txRepo: Repository<StockTransactionRef>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendPreparationNotification(
+    type: string,
+    title: string,
+    description: string,
+    preparationId: number,
+    recipeId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: preparationId,
+          entity_type: 'recipe_preparation',
+          metadata: {
+            ...metadata,
+            recipeId,
+          },
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send preparation notification:', error);
+    }
+  }
 
   async findAll(page = 1, limit = 50) {
     const [rows] = await Promise.all([
@@ -48,6 +79,20 @@ export class RecipePreparationsService {
       is_labeled: false,
     } as any);
     const saved: RecipePreparation = (await this.prepRepo.save(p as any)) as RecipePreparation;
+
+    // Send notification for new preparation
+    await this.sendPreparationNotification(
+      'recipe_preparation_created',
+      'Preparat realizat',
+      `A fost realizat un nou preparat pentru rețeta: ${recipe.name}`,
+      saved.id,
+      recipe.id,
+      { 
+        recipeName: recipe.name,
+        quantity: dto.quantity,
+        producedBy: dto.employee_id
+      }
+    );
 
     // After saving, consume stock FIFO by expiration for each ingredient
     try {

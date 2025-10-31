@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WorkLocation } from './locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from './locations/entity/work-location-task-template.entity';
@@ -9,6 +10,7 @@ import { WorkLocationDepartmentPositions } from './locations/entity/work-locatio
 import { WorkLocationRevenue } from './locations/entity/work-location-revenue.entity';
 import { WorkLocationRevenuePoints } from './locations/entity/work-location-revenue-points.entity';
 import { WorkLocationManagerConfig } from './locations/entity/work-location-manager-config.entity';
+import { WorkLocationFiles } from './locations/entity/work-location-files.entity';
 import { LocationsService } from './locations/locations.service';
 import { LocationsMicroController } from './locations.micro.controller';
 import { LocationsHttpController } from './locations.http.controller';
@@ -16,6 +18,17 @@ import { LocationsHttpController } from './locations.http.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST as string,
@@ -31,6 +44,7 @@ import { LocationsHttpController } from './locations.http.controller';
         WorkLocationRevenue,
         WorkLocationRevenuePoints,
         WorkLocationManagerConfig,
+        WorkLocationFiles,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -45,6 +59,7 @@ import { LocationsHttpController } from './locations.http.controller';
       WorkLocationRevenue,
       WorkLocationRevenuePoints,
       WorkLocationManagerConfig,
+      WorkLocationFiles,
     ]),
   ],
   controllers: [LocationsMicroController, LocationsHttpController],

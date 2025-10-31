@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationEntity } from './notification.entity';
 
@@ -8,6 +10,7 @@ import { NotificationEntity } from './notification.entity';
 export class NotificationsService {
   constructor(
     private readonly gateway: NotificationsGateway,
+    private readonly httpService: HttpService,
     @InjectRepository(NotificationEntity) private readonly repo: Repository<NotificationEntity>,
   ) {}
 
@@ -57,12 +60,535 @@ export class NotificationsService {
     return saved;
   }
 
+  async onRecipeNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onStockNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onLocationNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onSupplierNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onLeaveNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    user_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.user_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles for admin/manager notifications
+    // For employee notifications, send directly to the employee
+    let targetUsers = [];
+    
+    if (event.type === 'leave_request_created') {
+      // Send to managers and admins
+      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    } else {
+      // Send to the specific employee
+      targetUsers = [{ id: event.user_id }];
+    }
+    
+    // Create notifications for target users
+    const notifications = [];
+    for (const user of targetUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.user_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onShiftChangeNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    user_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.user_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles for admin/manager notifications
+    // For employee notifications, send directly to the employee
+    let targetUsers = [];
+    
+    if (event.type === 'shift_change_request_created') {
+      // Send to managers and admins
+      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    } else {
+      // Send to the specific employee
+      targetUsers = [{ id: event.user_id }];
+    }
+    
+    // Create notifications for target users
+    const notifications = [];
+    for (const user of targetUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.user_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onAttendanceNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    user_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.user_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles for admin notifications
+    // Also include the employee for whom the attendance was created
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    const employeeUser = [{ id: event.user_id }];
+    
+    // Combine both groups (avoiding duplicates)
+    const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
+    const uniqueTargetUsers = allTargetUsers.filter((user, index, self) => 
+      index === self.findIndex(u => u.id === user.id)
+    );
+    
+    // Create notifications for target users
+    const notifications = [];
+    for (const user of uniqueTargetUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.user_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  async onShiftNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    user_id: number;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.entity_id, 
+        entity_type: event.entity_type, 
+        type: event.type 
+      } as any 
+    });
+    
+    if (existing) {
+      return existing;
+    }
+    
+    // Get users with manager and admin roles for admin notifications
+    // Also include the employee for whom the shift was created
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    const employeeUser = [{ id: event.user_id }];
+    
+    // Combine both groups (avoiding duplicates)
+    const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
+    const uniqueTargetUsers = allTargetUsers.filter((user, index, self) => 
+      index === self.findIndex(u => u.id === user.id)
+    );
+    
+    // Create notifications for target users
+    const notifications = [];
+    for (const user of uniqueTargetUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
+  private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      
+      // First get all roles
+      const rolesResponse = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/users/roles`)
+      );
+      
+      // Filter roles by names - the response is wrapped in a data object
+      const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : rolesResponse.data.data || [];
+      const targetRoles = rolesData.filter((role: any) => 
+        roleNames.includes(role.name)
+      );
+      
+      if (targetRoles.length === 0) {
+        return [];
+      }
+      
+      // Get all user roles
+      const userRolesResponse = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/users/user-roles`)
+      );
+      
+      // User roles data is also wrapped in a data object
+      const userRolesData = Array.isArray(userRolesResponse.data) ? userRolesResponse.data : userRolesResponse.data.data || [];
+      
+      // Find user IDs that have the target roles
+      const targetRoleIds = targetRoles.map((role: any) => role.id);
+      const targetUserIds = userRolesData
+        .filter((userRole: any) => targetRoleIds.includes(userRole.roleId))
+        .map((userRole: any) => userRole.userId);
+      
+      // Get unique user IDs
+      const uniqueUserIds = [...new Set(targetUserIds)];
+      
+      if (uniqueUserIds.length === 0) {
+        return [];
+      }
+      
+      // Get user details for these users
+      const users = [];
+      for (const userId of uniqueUserIds) {
+        try {
+          const userResponse = await firstValueFrom(
+            this.httpService.get(`${apiGatewayUrl}/users/employee/${userId}`)
+          );
+          
+          // User data is also wrapped in a data object
+          const userData = userResponse.data.data || userResponse.data;
+          
+          // Get user roles
+          const userRoles = userRolesData
+            .filter((userRole: any) => userRole.userId === userId)
+            .map((userRole: any) => {
+              const role = targetRoles.find((r: any) => r.id === userRole.roleId);
+              return role ? role.name : null;
+            })
+            .filter(Boolean);
+          
+          users.push({
+            id: userData.id,
+            email: userData.email,
+            roles: userRoles
+          });
+        } catch (error) {
+          // Skip users that can't be fetched
+          console.warn(`Could not fetch user with ID ${userId}:`, error);
+        }
+      }
+      
+      return users;
+    } catch (error) {
+      console.error('Error fetching users with roles:', error);
+      // Return empty array if there's an error
+      return [];
+    }
+  }
+
+  async onEmployeeNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id?: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    if (event.entity_id) {
+      const existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type 
+        } as any 
+      });
+      
+      if (existing) {
+        return existing;
+      }
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
+
   // --- Minimal HTTP helpers to satisfy frontend ---
   async findAll() {
     return this.repo.find({ order: { created_at: 'DESC' } as any });
   }
 
   async create(notification: Partial<NotificationEntity>) {
+    console.log('Creating notification with data:', notification);
+    
     const entity = this.repo.create({
       type: notification.type || 'general',
       title: notification.title || 'Notificare',
@@ -76,6 +602,9 @@ export class NotificationsService {
       expires_at: (notification.expires_at as any) ?? null,
       priority: (notification.priority as any) || 'low',
     } as any);
+    
+    console.log('Entity to be saved:', entity);
+    
     const saved = await this.repo.save(entity);
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);
@@ -105,6 +634,51 @@ export class NotificationsService {
       target_url: '/retetar/istoric-etichete',
     } as any);
   }
+
+  async onCalendarNotification(event: { 
+    type: string;
+    title: string;
+    description: string;
+    entity_id?: number;
+    entity_type: string;
+    metadata?: any;
+    priority: 'low' | 'medium' | 'high';
+  }) {
+    // Avoid duplicate notifications for the same entity if one already exists
+    if (event.entity_id) {
+      const existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type 
+        } as any 
+      });
+      
+      if (existing) {
+        return existing;
+      }
+    }
+    
+    // Get users with manager and admin roles
+    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    
+    // Create notifications for each manager and admin user
+    const notifications = [];
+    for (const user of managerAndAdminUsers) {
+      const saved = await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type,
+        metadata: event.metadata,
+        priority: event.priority,
+        status: 'unread',
+      } as any);
+      notifications.push(saved);
+    }
+    
+    return notifications;
+  }
 }
-
-

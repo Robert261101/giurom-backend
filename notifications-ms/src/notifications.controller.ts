@@ -54,12 +54,68 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'suppliers.notification' })
+  async handleSupplierNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onSupplierNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'recipes.notification' })
+  async handleRecipeNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onRecipeNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'stock.notification' })
+  async handleStockNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onStockNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'locations.notification' })
+  async handleLocationNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onLocationNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'leave.notification' })
+  async handleLeaveNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onLeaveNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'shift-change.notification' })
+  async handleShiftChangeNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onShiftChangeNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'shift.notification' })
+  async handleShiftNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onShiftNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'attendance.notification' })
+  async handleAttendanceNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onAttendanceNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'employees.notification' })
+  async handleEmployeeNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onEmployeeNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'calendar.notification' })
+  async handleCalendarNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onCalendarNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };
   }
 }
-
-
-
-

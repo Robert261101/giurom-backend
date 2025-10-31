@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
@@ -11,6 +12,7 @@ import { NotificationEntity } from './notification.entity';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    HttpModule,
     // Database connection for persistent notifications storage
     TypeOrmModule.forRoot({
       type: 'mysql',
@@ -40,5 +42,3 @@ import { NotificationEntity } from './notification.entity';
   providers: [NotificationsService, NotificationsGateway],
 })
 export class AppModule {}
-
-

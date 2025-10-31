@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Product } from './stock/entities/product.entity';
 import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
@@ -15,11 +17,25 @@ import { PermissionsGuard } from './permissions/permissions.guard';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
 import { StockHealthController } from './stock/stock.health.controller';
+import { CategoryController } from './stock/category.controller';
+import { CategoryService } from './stock/category.service';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST as string,
@@ -39,9 +55,10 @@ import { StockHealthController } from './stock/stock.health.controller';
     }),
     TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, Category]),
   ],
-  controllers: [StockMicroController, StockHttpController, StockHealthController],
+  controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController],
   providers: [
     StockService,
+    CategoryService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

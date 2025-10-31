@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
@@ -20,6 +22,7 @@ export class AttendanceService implements OnModuleInit {
     private readonly presenceRepository: Repository<Presence>,
     @InjectRepository(PresenceInflexion)
     private readonly presenceInflexionRepository: Repository<PresenceInflexion>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
   async onModuleInit() {
@@ -28,6 +31,56 @@ export class AttendanceService implements OnModuleInit {
       await this.shiftRepository.query("ALTER TABLE `shifts` MODIFY `position_id` INT NULL DEFAULT NULL");
     } catch (_e) {
       // ignore if already applied or lacks permission
+    }
+  }
+
+  private async sendAttendanceNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'attendance.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_type: 'attendance',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send attendance notification:', error);
+    }
+  }
+
+  private async sendShiftNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    shiftId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'shift.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_id: shiftId,
+          entity_type: 'shift',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send shift notification:', error);
     }
   }
 
@@ -66,7 +119,24 @@ export class AttendanceService implements OnModuleInit {
       end_datetime: endDate,
     });
 
-    return await this.shiftRepository.save(shift);
+    const savedShift = await this.shiftRepository.save(shift);
+    
+    // Send notification to admin and the employee for whom the shift was created
+    await this.sendShiftNotification(
+      'shift_created',
+      'Schimb programat',
+      `A fost creat un nou schimb programat pentru data de ${startDate.toLocaleDateString('ro-RO')} - ${endDate.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' })}`,
+      employee_id,
+      savedShift.id,
+      {
+        shiftId: savedShift.id,
+        employeeId: employee_id,
+        startDate: startDate,
+        endDate: endDate,
+      }
+    );
+
+    return savedShift;
   }
 
   async findAllShifts(
@@ -142,8 +212,40 @@ export class AttendanceService implements OnModuleInit {
   }
 
   async deleteShift(id: number): Promise<void> {
-    const shift = await this.findShiftById(id);
+    const shift = await this.shiftRepository.findOne({
+      where: { id },
+      relations: ['presences'],
+    });
+
+    if (!shift) {
+      throw new NotFoundException(`Schimbul cu ID-ul ${id} nu a fost găsit`);
+    }
+
+    // Delete all associated presences and their inflexions
+    for (const presence of shift.presences) {
+      // Delete all inflexions for this presence
+      await this.presenceInflexionRepository.delete({ presence_id: presence.id } as any);
+      // Delete the presence
+      await this.presenceRepository.remove(presence);
+    }
+
+    // Delete the shift
     await this.shiftRepository.remove(shift);
+
+    // Send notification that shift was deleted
+    await this.sendShiftNotification(
+      'shift_deleted',
+      'Schimb șters',
+      `Schimbul pentru data de ${shift.start_datetime.toLocaleDateString('ro-RO')} a fost șters`,
+      shift.employee_id,
+      shift.id,
+      {
+        shiftId: shift.id,
+        employeeId: shift.employee_id,
+        startDate: shift.start_datetime,
+        endDate: shift.end_datetime,
+      }
+    );
   }
 
   // PRESENCE METHODS
@@ -189,7 +291,23 @@ export class AttendanceService implements OnModuleInit {
       check_out: check_out ? new Date(check_out) : null,
     });
 
-    return await this.presenceRepository.save(presence);
+    const savedPresence = await this.presenceRepository.save(presence);
+    
+    // Send notification to admin and the employee for whom the attendance was created
+    await this.sendAttendanceNotification(
+      'attendance_created',
+      'Pontaj creat',
+      `A fost creat un nou pontaj pentru data de ${new Date(date).toLocaleDateString('ro-RO')}`,
+      shift.employee_id,
+      {
+        presenceId: savedPresence.id,
+        shiftId: shift_id,
+        date: date,
+        employeeId: shift.employee_id,
+      }
+    );
+
+    return savedPresence;
   }
 
   async findAllPresences(
@@ -264,8 +382,35 @@ export class AttendanceService implements OnModuleInit {
   }
 
   async deletePresence(id: number): Promise<void> {
-    const presence = await this.findPresenceById(id);
+    const presence = await this.presenceRepository.findOne({
+      where: { id },
+      relations: ['inflexions', 'shift'],
+    });
+
+    if (!presence) {
+      throw new NotFoundException(`Prezența cu ID-ul ${id} nu a fost găsită`);
+    }
+
+    // Delete all associated inflexions
+    for (const inflexion of presence.inflexions) {
+      await this.presenceInflexionRepository.remove(inflexion);
+    }
+
+    // Delete the presence
     await this.presenceRepository.remove(presence);
+
+    // Send notification that presence was deleted
+    await this.sendAttendanceNotification(
+      'presence_deleted',
+      'Prezență ștearsă',
+      `Prezența pentru data de ${presence.date.toLocaleDateString('ro-RO')} a fost ștearsă`,
+      presence.shift.employee_id,
+      {
+        presenceId: presence.id,
+        employeeId: presence.shift.employee_id,
+        date: presence.date,
+      }
+    );
   }
 
   // PRESENCE INFLEXION METHODS

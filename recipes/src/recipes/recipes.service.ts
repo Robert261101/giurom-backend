@@ -2,7 +2,8 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
-import { lastValueFrom } from 'rxjs';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
@@ -27,13 +28,49 @@ export class RecipesService {
     private recipeProductsRepository: Repository<RecipeProduct>,
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendRecipeNotification(
+    type: string,
+    title: string,
+    description: string,
+    recipeId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: recipeId,
+          entity_type: 'recipe',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send recipe notification:', error);
+    }
+  }
 
   // ==================== RECIPES METHODS ====================
 
   async create(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
     const recipe = this.recipesRepository.create(createRecipeDto);
-    return await this.recipesRepository.save(recipe);
+    const savedRecipe = await this.recipesRepository.save(recipe);
+    
+    // Send notification for new recipe
+    await this.sendRecipeNotification(
+      'recipe_created',
+      'Rețetă nouă creată',
+      `A fost creată o nouă rețetă: ${savedRecipe.name}`,
+      savedRecipe.id,
+      { recipeName: savedRecipe.name }
+    );
+    
+    return savedRecipe;
   }
 
   async findAll(params: { 
@@ -73,7 +110,7 @@ export class RecipesService {
         for (const recipeProduct of recipe.recipe_products) {
           if (recipeProduct.product_id) {
             try {
-              const response = await lastValueFrom(
+              const response = await firstValueFrom(
                 this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
               );
               recipeProduct.product = response.data;
@@ -106,7 +143,7 @@ export class RecipesService {
       for (const recipeProduct of recipe.recipe_products) {
         if (recipeProduct.product_id) {
           try {
-            const response = await lastValueFrom(
+            const response = await firstValueFrom(
               this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
             );
             recipeProduct.product = response.data;
@@ -123,13 +160,39 @@ export class RecipesService {
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
     const recipe = await this.findOne(id);
+    const oldName = recipe.name;
     Object.assign(recipe, updateRecipeDto);
-    return await this.recipesRepository.save(recipe);
+    const updatedRecipe = await this.recipesRepository.save(recipe);
+    
+    // Send notification for updated recipe
+    await this.sendRecipeNotification(
+      'recipe_updated',
+      'Rețetă modificată',
+      `Rețeta ${oldName} a fost modificată`,
+      updatedRecipe.id,
+      { 
+        oldName,
+        newName: updatedRecipe.name,
+        updatedFields: Object.keys(updateRecipeDto)
+      }
+    );
+    
+    return updatedRecipe;
   }
 
   async remove(id: number): Promise<void> {
     const recipe = await this.findOne(id);
+    const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
+    
+    // Send notification for deleted recipe
+    await this.sendRecipeNotification(
+      'recipe_deleted',
+      'Rețetă ștearsă',
+      `Rețeta ${recipeName} a fost ștearsă`,
+      id,
+      { recipeName }
+    );
   }
 
   // ==================== CATEGORIES METHODS ====================
@@ -203,7 +266,7 @@ export class RecipesService {
     
     // Verify product exists via HTTP call
     try {
-      await lastValueFrom(
+      await firstValueFrom(
         this.httpService.get(`http://localhost:3000/api/stock/products/${createRecipeProductDto.product_id}`)
       );
     } catch (error) {
@@ -233,7 +296,7 @@ export class RecipesService {
     for (const recipeProduct of recipeProducts) {
       if (recipeProduct.product_id) {
         try {
-          const response = await lastValueFrom(
+          const response = await firstValueFrom(
             this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
           );
           recipeProduct.product = response.data;
@@ -260,7 +323,7 @@ export class RecipesService {
     // If product_id is being updated, verify the new product exists
     if (updateRecipeProductDto.product_id && updateRecipeProductDto.product_id !== recipeProduct.product_id) {
       try {
-        await lastValueFrom(
+        await firstValueFrom(
           this.httpService.get(`http://localhost:3000/api/stock/products/${updateRecipeProductDto.product_id}`)
         );
       } catch (error) {

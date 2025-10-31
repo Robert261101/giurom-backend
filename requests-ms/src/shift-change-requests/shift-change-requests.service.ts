@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { Repository, DeepPartial } from 'typeorm';
 import { ShiftChangeRequest, ShiftChangeStatus } from './entities/shift-change-request.entity';
 import { Employee } from '../employee/entities/employee.entity';
@@ -10,13 +12,47 @@ import { FilterShiftChangeRequestsDto } from './dto/filter-shift-change-requests
 @Injectable()
 export class ShiftChangeRequestsService {
   private readonly logger = new Logger(ShiftChangeRequestsService.name);
+  private notificationsClient: ClientProxy;
 
   constructor(
     @InjectRepository(ShiftChangeRequest)
     private readonly shiftChangeRepo: Repository<ShiftChangeRequest>,
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
-  ) {}
+  ) {
+    this.notificationsClient = ClientProxyFactory.create({
+      transport: Transport.RMQ,
+      options: {
+        urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+        queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+        queueOptions: { durable: false },
+      },
+    });
+  }
+
+  private async sendShiftChangeNotification(
+    type: string,
+    title: string,
+    description: string,
+    userId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'shift-change.notification' }, {
+          type,
+          title,
+          description,
+          user_id: userId,
+          entity_type: 'shift_change_request',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to send shift change notification: ${error?.message || error}`);
+    }
+  }
 
   // Creare cerere de schimb de tură
   async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
@@ -110,6 +146,21 @@ export class ShiftChangeRequestsService {
 
     this.logger.log(`Shift change request ${savedRequest.id} created successfully`);
     
+    // Send notification to admins/managers about new shift change request
+    await this.sendShiftChangeNotification(
+      'shift_change_request_created',
+      'Cerere de schimb de tură nouă',
+      `A fost creată o nouă cerere de schimb de tură de către ${employee.first_name} ${employee.last_name}`,
+      dto.employee_id,
+      {
+        requestId: savedRequest.id,
+        employeeName: `${employee.first_name} ${employee.last_name}`,
+        replacementName: `${replacement.first_name} ${replacement.last_name}`,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      }
+    );
+
     return this.findOne(savedRequest.id);
   }
 
@@ -247,6 +298,76 @@ export class ShiftChangeRequestsService {
     }
 
     const updatedRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
+
+    // Send notifications to both employees about the decision
+    const employee = await this.employeeRepo.findOne({ where: { id: shiftChangeRequest.employee_id } });
+    const replacement = await this.employeeRepo.findOne({ where: { id: shiftChangeRequest.replacement_id } });
+    
+    if (employee && replacement) {
+      if (dto.status === ShiftChangeStatus.APPROVED) {
+        // Notify employee who requested the change
+        await this.sendShiftChangeNotification(
+          'shift_change_request_approved',
+          'Cerere de schimb de tură aprobată',
+          `Cererea dumneavoastră de schimb de tură cu ${replacement.first_name} ${replacement.last_name} a fost aprobată`,
+          shiftChangeRequest.employee_id,
+          {
+            requestId: updatedRequest.id,
+            replacementName: `${replacement.first_name} ${replacement.last_name}`,
+            startDate: shiftChangeRequest.start_datetime.toISOString(),
+            endDate: shiftChangeRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+          }
+        );
+
+        // Notify replacement employee
+        await this.sendShiftChangeNotification(
+          'shift_change_request_approved',
+          'Cerere de schimb de tură aprobată',
+          `Cererea de schimb de tură cu ${employee.first_name} ${employee.last_name} a fost aprobată`,
+          shiftChangeRequest.replacement_id,
+          {
+            requestId: updatedRequest.id,
+            employeeName: `${employee.first_name} ${employee.last_name}`,
+            startDate: shiftChangeRequest.start_datetime.toISOString(),
+            endDate: shiftChangeRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+          }
+        );
+      } else if (dto.status === ShiftChangeStatus.REJECTED) {
+        // Notify employee who requested the change
+        await this.sendShiftChangeNotification(
+          'shift_change_request_rejected',
+          'Cerere de schimb de tură respinsă',
+          `Cererea dumneavoastră de schimb de tură cu ${replacement.first_name} ${replacement.last_name} a fost respinsă`,
+          shiftChangeRequest.employee_id,
+          {
+            requestId: updatedRequest.id,
+            replacementName: `${replacement.first_name} ${replacement.last_name}`,
+            startDate: shiftChangeRequest.start_datetime.toISOString(),
+            endDate: shiftChangeRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            comment: dto.review_comment,
+          }
+        );
+
+        // Notify replacement employee
+        await this.sendShiftChangeNotification(
+          'shift_change_request_rejected',
+          'Cerere de schimb de tură respinsă',
+          `Cererea de schimb de tură cu ${employee.first_name} ${employee.last_name} a fost respinsă`,
+          shiftChangeRequest.replacement_id,
+          {
+            requestId: updatedRequest.id,
+            employeeName: `${employee.first_name} ${employee.last_name}`,
+            startDate: shiftChangeRequest.start_datetime.toISOString(),
+            endDate: shiftChangeRequest.end_datetime.toISOString(),
+            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            comment: dto.review_comment,
+          }
+        );
+      }
+    }
 
     // Logare acțiune critică
     this.logger.log(
