@@ -14,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: any) {
     return {
       userId: payload.sub,
+      id: payload.id || payload.sub, // ID-ul angajatului (id_employee din JWT)
       username: payload.username,
       permissions: payload.permissions || [],
     };

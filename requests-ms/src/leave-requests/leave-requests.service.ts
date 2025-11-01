@@ -70,7 +70,7 @@ export class LeaveRequestsService implements OnModuleInit {
       );
       const employeeData = response.data as any;
       if (!employeeData) {
-        this.logger.error(`Employee with ID ${dto.employee_id} not found`);
+      this.logger.error(`Employee with ID ${dto.employee_id} not found`);
         throw new NotFoundException('Angajatul nu a fost găsit');
       }
     } catch (error) {
