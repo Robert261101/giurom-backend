@@ -7,6 +7,7 @@ import { UpdateWorkLocationDto } from './locations/dto/update-work-location.dto'
 import { CreateTaskTemplateAssignmentDto } from './locations/dto/create-task-template-assignment.dto';
 import { UpdateTaskTemplateAssignmentDto } from './locations/dto/update-task-template-assignment.dto';
 import { CreateWorkLocationFileDto } from './locations/dto/create-work-location-file.dto';
+import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 
 @Controller('locations')
 export class LocationsHttpController {
@@ -124,8 +125,8 @@ export class LocationsHttpController {
 	}
 
 	@Post(':id/revenue')
-	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; revenue_amount: number }) {
-		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.revenue_amount);
+	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string }) {
+		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url);
 	}
 
 	@Get(':id/revenue')
@@ -142,6 +143,16 @@ export class LocationsHttpController {
 	@Get(':id/manager-points')
 	managerPoints(@Param('id') id: string, @Query('date') date: string) {
 		return this.service.getManagerPointsForDate(parseInt(id, 10), date);
+	}
+
+	@Delete('revenue/:revenueId')
+	deleteRevenue(@Param('revenueId') revenueId: string) {
+		return this.service.deleteRevenue(parseInt(revenueId, 10));
+	}
+
+	@Patch('revenue/:revenueId')
+	updateRevenue(@Param('revenueId') revenueId: string, @Body() body: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }) {
+		return this.service.updateRevenue(parseInt(revenueId, 10), body);
 	}
 
 	// ==================== LOCATION FILES ENDPOINTS ====================

@@ -13,7 +13,7 @@ import { CreateWorkLocationDto } from './dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 import { CreateTaskTemplateAssignmentDto } from './dto/create-task-template-assignment.dto';
 import { UpdateTaskTemplateAssignmentDto } from './dto/update-task-template-assignment.dto';
-import { WorkLocationRevenue } from './entity/work-location-revenue.entity';
+import { WorkLocationRevenue, RevenueStatus } from './entity/work-location-revenue.entity';
 import { WorkLocationRevenuePoints } from './entity/work-location-revenue-points.entity';
 import { WorkLocationManagerConfig } from './entity/work-location-manager-config.entity';
 import { WorkLocationFiles } from './entity/work-location-files.entity';
@@ -371,13 +371,18 @@ export class LocationsService {
     return this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
   }
 
-  async recordRevenue(workLocationId: number, revenueDate: string, revenueAmount: number) {
+  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string) {
     // Always insert a new revenue row (allow multiple entries per day)
     await this.findWorkLocationById(workLocationId);
     const row = this.revenueRepository.create({
       work_location_id: workLocationId,
       revenue_date: revenueDate,
-      revenue_amount: revenueAmount as any,
+      online_amount: onlineAmount as any,
+      cash_amount: cashAmount as any,
+      card_amount: cardAmount as any,
+      total_amount: totalAmount as any,
+      status: status,
+      image_url: imageUrl,
     } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
     return this.revenueRepository.save(row);
   }
@@ -402,6 +407,25 @@ export class LocationsService {
     return { revenues: items, total, totalPages: Math.ceil(total / limit) };
   }
 
+  async deleteRevenue(revenueId: number): Promise<void> {
+    const revenue = await this.revenueRepository.findOne({ where: { id: revenueId } as any });
+    if (!revenue) throw new NotFoundException(`Încasarea cu ID-ul ${revenueId} nu a fost găsită`);
+    await this.revenueRepository.remove(revenue as WorkLocationRevenue);
+  }
+
+  async updateRevenue(revenueId: number, data: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }): Promise<WorkLocationRevenue> {
+    const revenue = await this.revenueRepository.findOne({ where: { id: revenueId } as any });
+    if (!revenue) throw new NotFoundException(`Încasarea cu ID-ul ${revenueId} nu a fost găsită`);
+    if (data.revenue_date) revenue.revenue_date = data.revenue_date;
+    if (data.online_amount !== undefined) revenue.online_amount = data.online_amount as any;
+    if (data.cash_amount !== undefined) revenue.cash_amount = data.cash_amount as any;
+    if (data.card_amount !== undefined) revenue.card_amount = data.card_amount as any;
+    if (data.total_amount !== undefined) revenue.total_amount = data.total_amount as any;
+    if (data.status !== undefined) revenue.status = data.status;
+    if (data.image_url !== undefined) revenue.image_url = data.image_url;
+    return await this.revenueRepository.save(revenue as WorkLocationRevenue);
+  }
+
   async getManagerPointsForDate(workLocationId: number, revenueDate: string) {
     const cfg = await this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
     if (!cfg) return { totalPoints: 0, managerPoints: 0, managerPercent: 0, breakdown: [] } as any;
@@ -415,13 +439,13 @@ export class LocationsService {
       let pointsPerUnit: number | null = null;
       let matched: { min: number; max: number | null } | null = null;
       for (const intv of intervals) {
-        const minOk = Number(rev.revenue_amount) >= Number(intv.min_revenue);
-        const maxOk = intv.max_revenue == null ? true : Number(rev.revenue_amount) <= Number(intv.max_revenue);
+        const minOk = Number(rev.total_amount) >= Number(intv.min_revenue);
+        const maxOk = intv.max_revenue == null ? true : Number(rev.total_amount) <= Number(intv.max_revenue);
         if (minOk && maxOk) { pointsPerUnit = Number(intv.points); matched = { min: Number(intv.min_revenue), max: intv.max_revenue == null ? null : Number(intv.max_revenue) }; break; }
       }
       if (!pointsPerUnit || pointsPerUnit <= 0) continue;
       // Interpret pointsPerUnit as "amount per 1 point"
-      const amount = Number(rev.revenue_amount);
+      const amount = Number(rev.total_amount);
       const pts = amount / pointsPerUnit;
       totalPoints += pts;
       const managerPts = pts * (Number(cfg.manager_percent) / 100);
