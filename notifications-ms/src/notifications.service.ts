@@ -159,25 +159,46 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`🔔 Received location notification: ${event.type} for entity ID: ${event.entity_id}`);
+    
     // Avoid duplicate notifications for the same entity if one already exists
+    // For update notifications, allow duplicates if they are more than 5 minutes apart
     const existing = await this.repo.findOne({ 
       where: { 
         entity_id: event.entity_id, 
         entity_type: event.entity_type, 
         type: event.type 
-      } as any 
+      } as any,
+      order: { created_at: 'DESC' } as any
     });
     
     if (existing) {
-      return existing;
+      // For update notifications, check if the last notification was recent (within 5 minutes)
+      if (event.type === 'location_updated') {
+        const lastNotificationTime = new Date(existing.created_at).getTime();
+        const currentTime = new Date().getTime();
+        const timeDifference = currentTime - lastNotificationTime;
+        
+        // If less than 5 minutes have passed, skip the notification
+        if (timeDifference < 5 * 1000) { // 5 seconds in milliseconds
+          console.log(`⚠️ Duplicate location update notification detected (within 5 minutes), skipping: ${event.type} for entity ID: ${event.entity_id}`);
+          return existing;
+        }
+      } else {
+        // For other notification types, always deduplicate
+        console.log(`⚠️ Duplicate location notification detected, skipping: ${event.type} for entity ID: ${event.entity_id}`);
+        return existing;
+      }
     }
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    console.log(`👥 Found ${managerAndAdminUsers.length} manager/admin users for notification`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
     for (const user of managerAndAdminUsers) {
+      console.log(`📧 Creating notification for user ID: ${user.id}`);
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -192,6 +213,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ Created ${notifications.length} location notifications for event: ${event.type}`);
     return notifications;
   }
 
@@ -458,10 +480,20 @@ export class NotificationsService {
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      const serviceToken = process.env.SERVICE_AUTH_TOKEN;
+      
+      // Configure headers with authentication token if available
+      const headers: any = {
+        'Accept': 'application/json',
+      };
+      
+      if (serviceToken) {
+        headers['Authorization'] = `Bearer ${serviceToken}`;
+      }
       
       // First get all roles
       const rolesResponse = await firstValueFrom(
-        this.httpService.get(`${apiGatewayUrl}/users/roles`)
+        this.httpService.get(`${apiGatewayUrl}/users/roles`, { headers })
       );
       
       // Filter roles by names - the response is wrapped in a data object
@@ -476,7 +508,7 @@ export class NotificationsService {
       
       // Get all user roles
       const userRolesResponse = await firstValueFrom(
-        this.httpService.get(`${apiGatewayUrl}/users/user-roles`)
+        this.httpService.get(`${apiGatewayUrl}/users/user-roles`, { headers })
       );
       
       // User roles data is also wrapped in a data object
@@ -500,7 +532,7 @@ export class NotificationsService {
       for (const userId of uniqueUserIds) {
         try {
           const userResponse = await firstValueFrom(
-            this.httpService.get(`${apiGatewayUrl}/users/employee/${userId}`)
+            this.httpService.get(`${apiGatewayUrl}/users/employee/${userId}`, { headers })
           );
           
           // User data is also wrapped in a data object
@@ -587,7 +619,7 @@ export class NotificationsService {
   }
 
   async create(notification: Partial<NotificationEntity>) {
-    console.log('Creating notification with data:', notification);
+    console.log('📥 Creating notification with data:', notification);
     
     const entity = this.repo.create({
       type: notification.type || 'general',
@@ -603,11 +635,12 @@ export class NotificationsService {
       priority: (notification.priority as any) || 'low',
     } as any);
     
-    console.log('Entity to be saved:', entity);
+    console.log('📄 Entity to be saved:', entity);
     
     const saved = await this.repo.save(entity);
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);
+    console.log('💾 Notification saved successfully with ID:', (saved as any).id);
     return saved;
   }
 

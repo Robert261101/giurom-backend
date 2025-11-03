@@ -12,7 +12,11 @@ import { NotificationEntity } from './notification.entity';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
-    HttpModule,
+    HttpModule.register({
+      headers: {
+        'Accept': 'application/json',
+      },
+    }),
     // Database connection for persistent notifications storage
     TypeOrmModule.forRoot({
       type: 'mysql',
