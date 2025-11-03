@@ -5,6 +5,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationEntity } from './notification.entity';
+import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class NotificationsService {
@@ -480,16 +481,17 @@ export class NotificationsService {
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-      const serviceToken = process.env.SERVICE_AUTH_TOKEN;
       
-      // Configure headers with authentication token if available
+      // Generate a token dynamically with required permissions
+      const permissions = ['roles.read', 'users.read'];
+      const secret = process.env.JWT_SECRET || 'your-secret-key';
+      const token = jwt.sign({ sub: 1, username: 'tester', permissions }, secret);
+      
+      // Configure headers with the generated authentication token
       const headers: any = {
         'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
       };
-      
-      if (serviceToken) {
-        headers['Authorization'] = `Bearer ${serviceToken}`;
-      }
       
       // First get all roles
       const rolesResponse = await firstValueFrom(
