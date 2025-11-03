@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { ExecutionService } from './execution.service';
 import { CreateExecutionDto } from './dto/create-execution.dto';
@@ -8,6 +8,9 @@ import { CreateEmployeeDailyTaskPointsDto } from './dto/create-employee-daily-ta
 import { TaskExecution } from './entity/task-execution.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
 import { EmployeeDailyTaskPoints } from './entity/employee-daily-task-points.entity';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { PermissionsGuard } from '../guards/permissions.guard';
+import { Permissions } from '../permissions/permissions.decorator';
 
 @ApiTags('Executions')
 @Controller('executions')
@@ -15,6 +18,8 @@ export class ExecutionController {
   constructor(private readonly executionService: ExecutionService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.create')
   @ApiOperation({ summary: 'Creează o execuție nouă' })
   @ApiBody({
     description: 'Datele pentru crearea execuției',
@@ -68,22 +73,31 @@ export class ExecutionController {
     type: TaskExecution 
   })
   @ApiResponse({ status: 400, description: 'Date invalide' })
-  create(@Body() createExecutionDto: CreateExecutionDto): Promise<TaskExecution> {
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  create(@Body() createExecutionDto: CreateExecutionDto): Promise<{ execution: TaskExecution; points: number; isOverdue: boolean; message: string }> {
     return this.executionService.create(createExecutionDto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Obține toate execuțiile' })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all')
+  @ApiOperation({ summary: 'Obține execuțiile în funcție de permisiuni' })
   @ApiResponse({ 
     status: 200, 
-    description: 'Lista de execuții',
+    description: 'Lista de execuții filtrată după permisiuni',
     type: [TaskExecution] 
   })
-  findAll(@Query('include_assignment') includeAssignment?: string): Promise<TaskExecution[]> {
-    return this.executionService.findAll(includeAssignment === 'true');
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  findAll(@Request() req, @Query('include_assignment') includeAssignment?: string, @Query('location_id') location_id?: string): Promise<TaskExecution[]> {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId);
   }
 
   @Get(':id')
+  // @UseGuards(JwtAuthGuard, PermissionsGuard)
+  // @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all')
   @ApiOperation({ summary: 'Obține o execuție specifică' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
   @ApiResponse({ 
@@ -92,11 +106,15 @@ export class ExecutionController {
     type: TaskExecution 
   })
   @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
   findOne(@Param('id', ParseIntPipe) id: number): Promise<TaskExecution> {
     return this.executionService.findOne(id);
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.update')
   @ApiOperation({ summary: 'Actualizează o execuție' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
   @ApiBody({
@@ -107,7 +125,6 @@ export class ExecutionController {
         value: {
           completed_at: '2024-01-15T16:00:00Z',
           comment: 'Sarcina finalizată cu succes',
-          total_score: 90,
           answers: [
             {
               task_element_id: 3,
@@ -122,11 +139,9 @@ export class ExecutionController {
         }
       },
       example2: {
-        summary: 'Verificare de manager',
+        summary: 'Verificare de manager prin elemente',
         value: {
-          is_verified_by_manager: true,
-          verification_date: '2024-01-15T17:00:00Z',
-          total_score: 95
+          comment: 'Task verificat și aprobat de manager'
         }
       },
       example3: {
@@ -149,6 +164,8 @@ export class ExecutionController {
     type: TaskExecution 
   })
   @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
   update(
     @Param('id', ParseIntPipe) id: number, 
     @Body() updateExecutionDto: UpdateExecutionDto,
@@ -157,12 +174,64 @@ export class ExecutionController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.delete')
   @ApiOperation({ summary: 'Șterge o execuție' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
   @ApiResponse({ status: 200, description: 'Execuție ștearsă cu succes' })
   @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
   remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.executionService.remove(id);
+  }
+
+  @Post(':id/reactivate')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.update', 'execution.delete')
+  @ApiOperation({ summary: 'Reactivează o execuție (respinge și reactivează assignment-ul)' })
+  @ApiParam({ name: 'id', description: 'ID-ul execuției care trebuie reactivată' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Execuția a fost reactivată cu succes (assignment-ul a fost reactivat)',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        executionId: { type: 'number' },
+        assignmentId: { type: 'number' }
+      }
+    }
+  })
+  @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  reactivateExecution(@Param('id', ParseIntPipe) id: number): Promise<{ message: string; executionId: number; assignmentId: number }> {
+    return this.executionService.reactivateExecution(id);
+  }
+
+  @Post(':id/approve')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.update', 'execution.delete')
+  @ApiOperation({ summary: 'Aprobă o execuție finalizată (marchează assignment-ul ca completed)' })
+  @ApiParam({ name: 'id', description: 'ID-ul execuției care trebuie aprobată' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Execuția a fost aprobată cu succes',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        executionId: { type: 'number' },
+        assignmentId: { type: 'number' }
+      }
+    }
+  })
+  @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  approveExecution(@Param('id', ParseIntPipe) id: number, @Request() req): Promise<{ message: string; executionId: number; assignmentId: number; approvedBy: string }> {
+    return this.executionService.approveExecution(id, req.user);
   }
 
   // ===== ENDPOINT-URI PENTRU PUNCTAJ ZILNIC =====

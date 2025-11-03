@@ -4,7 +4,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
-  const httpPort = parseInt(process.env.SUPPLIERS_HTTP_PORT || '3007', 10);
+  const httpPort = parseInt(process.env.PORT || '3007', 10);
   const config = new DocumentBuilder()
     .setTitle('Suppliers API')
     .setDescription('Suppliers service endpoints')

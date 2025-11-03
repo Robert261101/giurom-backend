@@ -2,13 +2,10 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  ManyToOne,
-  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
-import { Employee } from '../../employee/entities/employee.entity';
 
 export enum DurationUnit {
   DAYS = 'days',
@@ -110,13 +107,7 @@ export class LeaveRequest {
   updated_at: Date;
 
   // Relations
-  @ManyToOne(() => Employee, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'employee_id' })
-  employee: Employee;
-
-  @ManyToOne(() => Employee, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'reviewed_by_id' })
-  reviewed_by?: Employee;
+  // Employee relationship removed - using HTTP calls to employees microservice
 
   // Computed properties
   get duration_in_days(): number {

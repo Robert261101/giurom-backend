@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { TaskTemplate } from './entity/task-template.entity';
 import { TaskElement } from './entity/task-element.entity';
-import { TemplatesLocations } from './entity/templates-locations.entity';
+import { TemplateLocation } from './entity/template-location.entity';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 
@@ -14,15 +16,39 @@ export class TemplateService {
     private templateRepository: Repository<TaskTemplate>,
     @InjectRepository(TaskElement)
     private elementRepository: Repository<TaskElement>,
-    @InjectRepository(TemplatesLocations)
-    private templatesLocationsRepository: Repository<TemplatesLocations>,
+    @InjectRepository(TemplateLocation)
+    private templateLocationRepository: Repository<TemplateLocation>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
+
+  private async sendTemplateNotification(
+    type: string,
+    title: string,
+    description: string,
+    templateId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'tasks.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: templateId,
+          entity_type: 'task_template',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send template notification:', error);
+    }
+  }
 
   async create(createTemplateDto: CreateTemplateDto): Promise<TaskTemplate> {
     // Creează template-ul
     const template = this.templateRepository.create({
       template_name: createTemplateDto.template_name,
-      template_type: createTemplateDto.template_type,
     });
     
     const savedTemplate = await this.templateRepository.save(template);
@@ -30,10 +56,6 @@ export class TemplateService {
     // Creează elementele pentru template
     if (createTemplateDto.elements && createTemplateDto.elements.length > 0) {
       const elements = createTemplateDto.elements.map(elementDto => {
-        console.log(`🔧 DEBUG Template Element:`, {
-          type: elementDto.element_type,
-          finish_at: elementDto.finish_at
-        });
         
         return this.elementRepository.create({
           ...elementDto,
@@ -44,23 +66,89 @@ export class TemplateService {
       await this.elementRepository.save(elements);
     }
 
-    // Returnează template-ul cu elementele
-    return this.findOne(savedTemplate.id);
+    // Creează relația template-locație în tabela templates_locations
+    if (createTemplateDto.locationId) {
+      const templateLocation = this.templateLocationRepository.create({
+        taskTemplateId: savedTemplate.id,
+        idLocation: createTemplateDto.locationId
+      });
+      
+      await this.templateLocationRepository.save(templateLocation);
+    }
+
+    // Trimite notificare pentru creare template
+    await this.sendTemplateNotification(
+      'template.created',
+      'Template creat',
+      `Template-ul "${savedTemplate.template_name}" a fost creat cu succes`,
+      savedTemplate.id,
+      { locationId: createTemplateDto.locationId }
+    );
+
+    // Returnează template-ul cu elementele (fără verificare locație la creare)
+    return this.findOneWithoutLocationCheck(savedTemplate.id);
   }
 
-  async findAll(): Promise<TaskTemplate[]> {
-    return this.templateRepository.find({
+  async findAll(locationId: number): Promise<TaskTemplate[]> {
+    
+    if (!locationId) {
+      throw new Error('locationId este obligatoriu pentru a obține template-urile');
+    }
+    
+    // Găsește template-urile pentru o locație specifică
+    const templateLocations = await this.templateLocationRepository.find({
+      where: { idLocation: locationId },
+      relations: ['template', 'template.elements'],
+      order: { createdAt: 'DESC' }
+    });
+
+    const templates = templateLocations.map(tl => tl.template);
+    
+    // Debug: afișează elementele pentru primul template
+    if (templates.length > 0 && templates[0].elements) {
+    }
+    
+    return templates;
+  }
+
+  async findOne(id: number, locationId: number): Promise<TaskTemplate> {
+    
+    if (!locationId) {
+      throw new Error('locationId este obligatoriu pentru a obține template-ul');
+    }
+    
+    const template = await this.templateRepository.findOne({
+      where: { id },
       relations: ['elements'],
       order: {
-        created_at: 'DESC',
         elements: {
           sort_order: 'ASC'
         }
       }
     });
+
+    if (!template) {
+      throw new NotFoundException(`Template cu ID ${id} nu a fost găsit`);
+    }
+
+    // Verifică dacă template-ul este disponibil în locația specificată
+    
+    const templateLocation = await this.templateLocationRepository.findOne({
+      where: { 
+        taskTemplateId: id,
+        idLocation: locationId 
+      }
+    });
+
+    if (!templateLocation) {
+      throw new NotFoundException(`Template cu ID ${id} nu este disponibil în locația specificată`);
+    }
+    
+    return template;
   }
 
-  async findOne(id: number): Promise<TaskTemplate> {
+  // Metodă privată pentru a găsi un template fără verificare de locație (folosită intern)
+  private async findOneWithoutLocationCheck(id: number): Promise<TaskTemplate> {
     const template = await this.templateRepository.findOne({
       where: { id },
       relations: ['elements'],
@@ -79,16 +167,13 @@ export class TemplateService {
   }
 
   async update(id: number, updateTemplateDto: UpdateTemplateDto): Promise<TaskTemplate> {
-    const template = await this.findOne(id);
+    const template = await this.findOneWithoutLocationCheck(id);
 
     // Actualizează template-ul dacă este specificat
-    if (updateTemplateDto.template_name || updateTemplateDto.template_type) {
     if (updateTemplateDto.template_name) {
-      template.template_name = updateTemplateDto.template_name;
-      }
-      if (updateTemplateDto.template_type) {
-        template.template_type = updateTemplateDto.template_type;
-      }
+      if (updateTemplateDto.template_name) {
+        template.template_name = updateTemplateDto.template_name;
+        }
       await this.templateRepository.save(template);
     }
 
@@ -110,61 +195,40 @@ export class TemplateService {
       }
     }
 
-    // Returnează template-ul actualizat
-    return this.findOne(id);
+    // Trimite notificare pentru actualizare template
+    await this.sendTemplateNotification(
+      'template.updated',
+      'Template actualizat',
+      `Template-ul "${template.template_name}" a fost actualizat`,
+      id,
+      { templateName: template.template_name }
+    );
+
+    // Returnează template-ul actualizat (fără verificare locație la update)
+    return this.findOneWithoutLocationCheck(id);
   }
 
   async remove(id: number): Promise<void> {
-    const template = await this.findOne(id);
+    const template = await this.findOneWithoutLocationCheck(id);
+    const templateName = template.template_name;
+    
+    // Șterge toate elementele template-ului
+    await this.elementRepository.delete({ template_id: id });
+    
+    // Șterge toate relațiile template-locație
+    await this.templateLocationRepository.delete({ taskTemplateId: id });
+    
+    // Șterge template-ul
     await this.templateRepository.remove(template);
+
+    // Trimite notificare pentru ștergere template
+    await this.sendTemplateNotification(
+      'template.deleted',
+      'Template șters',
+      `Template-ul "${templateName}" a fost șters`,
+      id,
+      { templateName }
+    );
   }
 
-  // === TEMPLATES LOCATIONS METHODS ===
-  async assignTemplateToLocation(templateId: number, locationId: number): Promise<TemplatesLocations> {
-    // Verify template exists
-    await this.findOne(templateId);
-    
-    // Check if assignment already exists
-    const existingAssignment = await this.templatesLocationsRepository.findOne({
-      where: { task_templates_id: templateId, id_location: locationId }
-    });
-    
-    if (existingAssignment) {
-      throw new NotFoundException('Template-ul este deja atribuit la această locație');
-    }
-    
-    const assignment = this.templatesLocationsRepository.create({
-      task_templates_id: templateId,
-      id_location: locationId,
-    });
-    
-    return await this.templatesLocationsRepository.save(assignment);
-  }
-
-  async findTemplateLocations(templateId: number): Promise<TemplatesLocations[]> {
-    await this.findOne(templateId);
-    return await this.templatesLocationsRepository.find({
-      where: { task_templates_id: templateId },
-      relations: ['taskTemplate', 'workLocation'],
-    });
-  }
-
-  async findLocationTemplates(locationId: number): Promise<TemplatesLocations[]> {
-    return await this.templatesLocationsRepository.find({
-      where: { id_location: locationId },
-      relations: ['taskTemplate', 'workLocation'],
-    });
-  }
-
-  async removeTemplateFromLocation(templateId: number, locationId: number): Promise<void> {
-    const assignment = await this.templatesLocationsRepository.findOne({
-      where: { task_templates_id: templateId, id_location: locationId }
-    });
-    
-    if (!assignment) {
-      throw new NotFoundException('Asocierea nu a fost găsită');
-    }
-    
-    await this.templatesLocationsRepository.remove(assignment);
-  }
 }

@@ -13,6 +13,9 @@ export class RecipePreparation {
   @Column({ name: 'produced_by', nullable: true })
   produced_by?: number;
 
+  @Column({ type: 'int', nullable: true })
+  location_id?: number;
+
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 

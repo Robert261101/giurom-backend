@@ -10,24 +10,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { Supplier } from './supplier.entity';
 
-// Local reference to WorkLocation from locations microservice
-@Entity('work_location')
-export class WorkLocation {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
-  company_id: number;
-
-  @Column({ type: 'varchar', length: 255, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
-  location_name: string;
-
-  @Column({ type: 'text', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
-  address: string;
-
-  @Column({ type: 'varchar', length: 100, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
-  city: string;
-}
+// Eliminat WorkLocation local pentru a evita FK către alt microserviciu
 
 @Entity('supplier_locations')
 export class SupplierLocations {
@@ -74,12 +57,4 @@ export class SupplierLocations {
   @ManyToOne(() => Supplier, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
-
-  @ApiProperty({
-    description: 'Locația asociată',
-    type: () => WorkLocation,
-  })
-  @ManyToOne(() => WorkLocation, { nullable: true })
-  @JoinColumn({ name: 'id_location' })
-  workLocation?: WorkLocation;
 }

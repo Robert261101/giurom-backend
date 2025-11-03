@@ -162,9 +162,31 @@ const microservices = {
     target: 'http://localhost:3008',
     changeOrigin: true,
     logLevel: 'debug',
-    pathRewrite: {
-      '^/tasks': ''
-    }
+    ws: true
+    // NU mai folosim pathRewrite - microserviciul expune deja rutele cu /tasks
+  },
+
+  // Templates Service (parte din veziv-tasks2)
+  '/templates': {
+    target: 'http://localhost:3008',
+    changeOrigin: true,
+    logLevel: 'debug',
+    pathRewrite: { '^/templates': '/tasks/templates' }
+    // Rewrites /templates -> /tasks/templates pentru veziv-tasks2
+  },
+
+  // Auth Service
+  '/auth': {
+    target: 'http://localhost:3021',
+    changeOrigin: true,
+    logLevel: 'debug'
+  },
+
+  // Users Service (part of auth)
+  '/users': {
+    target: 'http://localhost:3021',
+    changeOrigin: true,
+    logLevel: 'debug'
   }
 };
 
@@ -208,9 +230,9 @@ app.use('*', (req, res) => {
 
 // Start the gateway
 app.listen(PORT, () => {
-  console.log(`🚀 API Gateway is running on http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/health`);
-  console.log('🔀 Routing configuration:');
+  console.log(`ðŸš€ API Gateway is running on http://localhost:${PORT}`);
+  console.log(`ðŸ“‹ Health check: http://localhost:${PORT}/health`);
+  console.log('ðŸ”€ Routing configuration:');
   Object.keys(microservices).forEach(path => {
     console.log(`   ${path} -> ${microservices[path].target}`);
   });

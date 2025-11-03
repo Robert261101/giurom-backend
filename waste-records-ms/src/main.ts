@@ -4,7 +4,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const httpPort = parseInt(process.env.WASTE_HTTP_PORT || '3012', 10);
+  const httpPort = parseInt(process.env.WASTE_HTTP_PORT || '3014', 10);
   const config = new DocumentBuilder()
     .setTitle('Waste Records API')
     .setDescription('Waste records service endpoints')

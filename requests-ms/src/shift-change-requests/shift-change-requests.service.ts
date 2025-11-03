@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Repository, DeepPartial } from 'typeorm';
 import { ShiftChangeRequest, ShiftChangeStatus } from './entities/shift-change-request.entity';
-import { Employee } from '../employee/entities/employee.entity';
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
 import { FilterShiftChangeRequestsDto } from './dto/filter-shift-change-requests.dto';
@@ -17,8 +17,7 @@ export class ShiftChangeRequestsService {
   constructor(
     @InjectRepository(ShiftChangeRequest)
     private readonly shiftChangeRepo: Repository<ShiftChangeRequest>,
-    @InjectRepository(Employee)
-    private readonly employeeRepo: Repository<Employee>,
+    private readonly httpService: HttpService,
   ) {
     this.notificationsClient = ClientProxyFactory.create({
       transport: Transport.RMQ,
@@ -58,17 +57,33 @@ export class ShiftChangeRequestsService {
   async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
     this.logger.log(`Creating shift change request from employee ${dto.employee_id} to ${dto.replacement_id}`);
 
-    // Verifică dacă angajatul care cere schimbul există
-    const employee = await this.employeeRepo.findOne({ where: { id: dto.employee_id } });
-    if (!employee) {
-      this.logger.error(`Employee with ID ${dto.employee_id} not found`);
+    // Verifică dacă angajatul care cere schimbul există prin HTTP call
+    try {
+      await firstValueFrom(
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
+          headers: {
+            'x-internal-service': 'requests',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+    } catch (error) {
+      this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul care cere schimbul nu a fost găsit');
     }
 
-    // Verifică dacă angajatul înlocuitor există
-    const replacement = await this.employeeRepo.findOne({ where: { id: dto.replacement_id } });
-    if (!replacement) {
-      this.logger.error(`Replacement employee with ID ${dto.replacement_id} not found`);
+    // Verifică dacă angajatul înlocuitor există prin HTTP call
+    try {
+      await firstValueFrom(
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.replacement_id}`, {
+          headers: {
+            'x-internal-service': 'requests',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+    } catch (error) {
+      this.logger.error(`Replacement employee with ID ${dto.replacement_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul înlocuitor nu a fost găsit');
     }
 
@@ -150,12 +165,12 @@ export class ShiftChangeRequestsService {
     await this.sendShiftChangeNotification(
       'shift_change_request_created',
       'Cerere de schimb de tură nouă',
-      `A fost creată o nouă cerere de schimb de tură de către ${employee.first_name} ${employee.last_name}`,
+      'A fost creată o nouă cerere de schimb de tură',
       dto.employee_id,
       {
         requestId: savedRequest.id,
-        employeeName: `${employee.first_name} ${employee.last_name}`,
-        replacementName: `${replacement.first_name} ${replacement.last_name}`,
+        employeeId: dto.employee_id,
+        replacementId: dto.replacement_id,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
       }
@@ -168,10 +183,8 @@ export class ShiftChangeRequestsService {
   async findAll(filters: FilterShiftChangeRequestsDto, currentUserId?: number): Promise<ShiftChangeRequest[]> {
     this.logger.log(`Fetching shift change requests with filters: ${JSON.stringify(filters)}`);
 
-    const queryBuilder = this.shiftChangeRepo.createQueryBuilder('scr')
-      .leftJoinAndSelect('scr.employee', 'employee')
-      .leftJoinAndSelect('scr.replacement', 'replacement')
-      .leftJoinAndSelect('scr.reviewed_by', 'reviewer');
+    const queryBuilder = this.shiftChangeRepo.createQueryBuilder('scr');
+      // Employee relations removed - using HTTP calls to employees microservice
 
     // Filtrare pe status
     if (filters.status) {
@@ -231,7 +244,7 @@ export class ShiftChangeRequestsService {
   async findOne(id: number, currentUserId?: number): Promise<ShiftChangeRequest> {
     const shiftChangeRequest = await this.shiftChangeRepo.findOne({
       where: { id },
-      relations: ['employee', 'replacement', 'reviewed_by'],
+      // Employee relations removed - using HTTP calls to employees microservice
     });
 
     if (!shiftChangeRequest) {
@@ -259,10 +272,18 @@ export class ShiftChangeRequestsService {
 
     const shiftChangeRequest = await this.findOne(id);
 
-    // Verifică dacă reviewerul există
-    const reviewer = await this.employeeRepo.findOne({ where: { id: dto.reviewed_by_id } });
-    if (!reviewer) {
-      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found`);
+    // Verifică dacă reviewerul există prin HTTP call
+    try {
+      await firstValueFrom(
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
+          headers: {
+            'x-internal-service': 'requests',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+    } catch (error) {
+      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
@@ -300,23 +321,20 @@ export class ShiftChangeRequestsService {
     const updatedRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
 
     // Send notifications to both employees about the decision
-    const employee = await this.employeeRepo.findOne({ where: { id: shiftChangeRequest.employee_id } });
-    const replacement = await this.employeeRepo.findOne({ where: { id: shiftChangeRequest.replacement_id } });
-    
-    if (employee && replacement) {
+    try {
       if (dto.status === ShiftChangeStatus.APPROVED) {
         // Notify employee who requested the change
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
           'Cerere de schimb de tură aprobată',
-          `Cererea dumneavoastră de schimb de tură cu ${replacement.first_name} ${replacement.last_name} a fost aprobată`,
+          'Cererea dumneavoastră de schimb de tură a fost aprobată',
           shiftChangeRequest.employee_id,
           {
             requestId: updatedRequest.id,
-            replacementName: `${replacement.first_name} ${replacement.last_name}`,
+            replacementId: shiftChangeRequest.replacement_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
           }
         );
 
@@ -324,14 +342,14 @@ export class ShiftChangeRequestsService {
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
           'Cerere de schimb de tură aprobată',
-          `Cererea de schimb de tură cu ${employee.first_name} ${employee.last_name} a fost aprobată`,
+          'Cererea de schimb de tură a fost aprobată',
           shiftChangeRequest.replacement_id,
           {
             requestId: updatedRequest.id,
-            employeeName: `${employee.first_name} ${employee.last_name}`,
+            employeeId: shiftChangeRequest.employee_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
           }
         );
       } else if (dto.status === ShiftChangeStatus.REJECTED) {
@@ -339,14 +357,14 @@ export class ShiftChangeRequestsService {
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
           'Cerere de schimb de tură respinsă',
-          `Cererea dumneavoastră de schimb de tură cu ${replacement.first_name} ${replacement.last_name} a fost respinsă`,
+          'Cererea dumneavoastră de schimb de tură a fost respinsă',
           shiftChangeRequest.employee_id,
           {
             requestId: updatedRequest.id,
-            replacementName: `${replacement.first_name} ${replacement.last_name}`,
+            replacementId: shiftChangeRequest.replacement_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           }
         );
@@ -355,18 +373,20 @@ export class ShiftChangeRequestsService {
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
           'Cerere de schimb de tură respinsă',
-          `Cererea de schimb de tură cu ${employee.first_name} ${employee.last_name} a fost respinsă`,
+          'Cererea de schimb de tură a fost respinsă',
           shiftChangeRequest.replacement_id,
           {
             requestId: updatedRequest.id,
-            employeeName: `${employee.first_name} ${employee.last_name}`,
+            employeeId: shiftChangeRequest.employee_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerName: `${reviewer.first_name} ${reviewer.last_name}`,
+            reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           }
         );
       }
+    } catch (error) {
+      this.logger.warn(`Failed to send notification: ${error.message}`);
     }
 
     // Logare acțiune critică
@@ -477,7 +497,7 @@ export class ShiftChangeRequestsService {
         { employee_id: employeeId },
         { replacement_id: employeeId }
       ],
-      relations: ['employee', 'replacement', 'reviewed_by'],
+      // Employee relations removed - using HTTP calls to employees microservice
       order: { created_at: 'DESC' },
     });
   }

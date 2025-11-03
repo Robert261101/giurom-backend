@@ -199,9 +199,9 @@ export class AttendanceController {
     description: 'Lista prezențelor a fost returnată cu succes',
   })
   async findAllPresences(
-    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 10,
-    @Query('shift_id', new ParseIntPipe({ optional: true })) shift_id?: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('shift_id') shift_id?: string,
     @Query('status') status?: PresenceStatus,
     @Query('start_date') start_date?: string,
     @Query('end_date') end_date?: string,

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { EmployeeMicroController } from './employee.micro.controller';
@@ -32,6 +33,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         },
       },
     ]),
+    HttpModule,
     TypeOrmModule.forRoot({
       type: 'mysql',
       host: process.env.DB_HOST as string,
@@ -54,8 +56,8 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   controllers: [EmployeeMicroController, EmployeeHttpController],
   providers: [
     EmployeeService,
-    InternalServiceGuard, // Register the internal service guard
-    { provide: APP_GUARD, useClass: InternalServiceGuard }, // Apply InternalServiceGuard first
+    InternalServiceGuard,
+    { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

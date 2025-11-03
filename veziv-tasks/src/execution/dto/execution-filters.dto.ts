@@ -9,9 +9,7 @@ export class ExecutionFiltersDto {
   @IsOptional()
   employee_id?: number;
 
-  @IsBoolean()
-  @IsOptional()
-  is_verified_by_manager?: boolean;
+  // is_verified_by_manager eliminat - logica se face prin elemente
 
   @IsDateString()
   @IsOptional()
@@ -29,11 +27,5 @@ export class ExecutionFiltersDto {
   @IsOptional()
   completed_at_to?: string;
 
-  @IsDateString()
-  @IsOptional()
-  verification_date_from?: string;
-
-  @IsDateString()
-  @IsOptional()
-  verification_date_to?: string;
+  // verification_date eliminat - logica se face prin elemente
 } 

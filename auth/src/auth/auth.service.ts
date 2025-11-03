@@ -166,16 +166,15 @@ export class AuthService {
 
     // Dacă nu are 2FA activat, generează token-urile normal
     // Preia datele complete din microserviciul employees
-    let employeeData: { id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null = null;
+    let employeeData: any = null;
     if (isEmail) {
       employeeData = await this.usersService.findEmployeeByEmail(identifier);
     } else {
       employeeData = await this.usersService.findEmployeeByPhone(identifier);
     }
 
-    // Get user roles and permissions
-    const userRoles = await this.usersService.getUserRolesByEmployeeId(user.id_employee);
-    const userPermissions = await this.usersService.getUserPermissionsByEmployeeId(user.id_employee);
+    // Obține roles și permissions pentru utilizator (folosind user.id, nu user.id_employee)
+    const { roles, permissions } = await this.usersService.getUserRolesAndPermissions(user.id);
 
     const userDataForToken = {
       id: user.id_employee,
@@ -185,10 +184,10 @@ export class AuthService {
       phone: employeeData?.phone || '',
       profile_image: user.profile_image,
       birth_date: employeeData?.birth_date || '',
-      department_id: null, // Va fi preluat din employeeData dacă este necesar
-      work_location_id: null, // Va fi preluat din employeeData dacă este necesar
-      roles: userRoles.map(role => role.name), // Include user roles
-      permissions: userPermissions.map(permission => permission.name), // Include user permissions
+      department_id: employeeData?.department_default_id || null,
+      work_location_id: employeeData?.work_location_default_id || null,
+      roles: roles, // Include user roles (array de string-uri)
+      permissions: permissions, // Include user permissions (array de string-uri)
       is_2fa_active: user.is_2fa
     };
 
@@ -244,12 +243,11 @@ export class AuthService {
       
       // Preia datele complete din microserviciul employees
       this.logger.log(`🔍 Refresh token payload:`, payload);
-      const employeeData = await this.usersService.findEmployeeByEmail(payload.email) || 
+      const employeeData: any = await this.usersService.findEmployeeByEmail(payload.email) || 
                           (payload.phone ? await this.usersService.findEmployeeByPhone(payload.phone) : null);
 
-      // Get user roles and permissions
-      const userRoles = await this.usersService.getUserRolesByEmployeeId(user.id_employee);
-      const userPermissions = await this.usersService.getUserPermissionsByEmployeeId(user.id_employee);
+      // Obține roles și permissions pentru utilizator (folosind user.id, nu user.id_employee)
+      const { roles, permissions } = await this.usersService.getUserRolesAndPermissions(user.id);
 
       const jwtPayload = {
         sub: user.id_employee,
@@ -259,10 +257,10 @@ export class AuthService {
         phone: employeeData?.phone || '',
         profile_image: user.profile_image,
         birth_date: employeeData?.birth_date || '',
-        department_id: null, // Va fi preluat din employeeData dacă este necesar
-        work_location_id: null, // Va fi preluat din employeeData dacă este necesar
-        roles: userRoles.map(role => role.name), // Include user roles
-        permissions: userPermissions.map(permission => permission.name), // Include user permissions
+        department_id: employeeData?.department_default_id || null,
+        work_location_id: employeeData?.work_location_default_id || null,
+        roles: roles, // Include user roles (array de string-uri)
+        permissions: permissions, // Include user permissions (array de string-uri)
       };
       
       const accessToken = await this.jwtService.signAsync(jwtPayload);
