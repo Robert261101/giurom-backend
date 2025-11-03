@@ -1,7 +1,7 @@
 import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsNumber, IsBoolean, IsDateString, Min, Max, MaxLength, Validate } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { AssignedToType, AssignmentStatus, Priority } from '../entity/task-assignment.entity';
+import { AssignmentStatus, Priority } from '../entity/task-assignment.entity';
 import { TemplateExistsValidator } from '../validators/template-exists.validator';
 import { ElementsExistInTemplateValidator } from '../validators/elements-exist-in-template.validator';
 
@@ -42,6 +42,15 @@ export class UpdateElementDto {
   @Min(0)
   @Max(10)
   score?: number;
+
+  @ApiProperty({
+    description: 'Dacă elementul este vizibil pentru angajați în acest assignment (false = doar pentru manageri)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_visible_for_employee?: boolean;
 }
 
 
@@ -57,15 +66,7 @@ export class UpdateAssignmentDto {
   @Validate(TemplateExistsValidator)
   template_id?: number;
 
-  @ApiProperty({
-    description: 'Tipul de atribuire',
-    enum: AssignedToType,
-    example: AssignedToType.PERSON,
-    required: false
-  })
-  @IsOptional()
-  @IsEnum(AssignedToType)
-  assigned_to_type?: AssignedToType;
+  // assigned_to_type eliminat - toate task-urile sunt pentru persoane
 
   @ApiProperty({
     description: 'ID-ul persoanei/grupului căruia i se atribuie',
@@ -83,11 +84,6 @@ export class UpdateAssignmentDto {
     maximum: 10,
     required: false
   })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(10)
-  total_score?: number;
 
   @ApiProperty({
     description: 'Statusul assignment-ului',
@@ -128,6 +124,15 @@ export class UpdateAssignmentDto {
   due_date?: string;
 
   @ApiProperty({
+    description: 'Data și ora programată pentru execuție',
+    example: '2024-01-18T14:00:00Z',
+    required: false
+  })
+  @IsOptional()
+  @IsDateString()
+  scheduled_datetime?: string;
+
+  @ApiProperty({
     description: 'Data completării',
     example: '2024-01-18T15:30:00Z',
     required: false
@@ -154,6 +159,48 @@ export class UpdateAssignmentDto {
   @IsOptional()
   @IsBoolean()
   requires_manager_check?: boolean;
+
+  @ApiProperty({
+    description: 'ID-ul grupului de departament pentru taskurile create în masă',
+    example: 'dept_3_1757683436910_v15fgpspu',
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  department_group_id?: string;
+
+  @ApiProperty({
+    description: 'Dacă taskul este vizibil pentru angajați (false = doar pentru manageri)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_visible_for_employee?: boolean;
+
+  @ApiProperty({
+    description: 'Dacă taskul a fost amânat de angajat',
+    example: false,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  was_postponed?: boolean;
+
+  @ApiProperty({
+    description: 'Setările de recurență pentru task-uri repetitive',
+    example: {
+      enabled: true,
+      frequency: 'daily',
+      days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+      times: {'mon': '09:00', 'tue': '09:00'},
+      useSameTime: true
+    },
+    required: false
+  })
+  @IsOptional()
+  recurrence_settings?: any;
 
   @ApiProperty({
     description: 'Valorile pentru elemente (scoruri pentru scoring_boolean, grupuri pentru group, valori pentru recurrence, etc.)',

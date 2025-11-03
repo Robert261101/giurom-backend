@@ -2,7 +2,6 @@ import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsEnum, IsBo
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { ElementType } from '../entity/task-element.entity';
-import { TemplateType } from '../entity/task-template.entity';
 
 export class UpdateElementDto {
   @ApiProperty({
@@ -66,6 +65,16 @@ export class UpdateElementDto {
   sort_order: number;
 
   @ApiProperty({
+    description: 'Opțiuni pentru elementele select și radio',
+    example: ['Opțiunea 1', 'Opțiunea 2', 'Opțiunea 3'],
+    required: false
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
+
+  @ApiProperty({
     description: 'Opțiuni cu punctaj pentru elementele scoring_boolean',
     example: [
       { name: 'Opțiunea 1', points: 1 },
@@ -79,6 +88,16 @@ export class UpdateElementDto {
   scoring_options?: string;
 
   @ApiProperty({
+    description: 'Punctele fixe pentru elementele scoring_simple',
+    example: 10,
+    required: false
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  simple_score_points?: number;
+
+  @ApiProperty({
     description: 'Data și ora de finalizare pentru element',
     example: '2024-01-15T17:00:00Z',
     required: false
@@ -86,6 +105,15 @@ export class UpdateElementDto {
   @IsOptional()
   @IsDateString()
   finish_at?: string;
+
+  @ApiProperty({
+    description: 'Dacă elementul este vizibil pentru angajați (false = doar pentru manageri)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_visible_for_employee?: boolean;
 }
 
 export class UpdateTemplateDto {
@@ -99,15 +127,6 @@ export class UpdateTemplateDto {
   @MaxLength(255)
   template_name?: string;
 
-  @ApiProperty({
-    description: 'Tipul template-ului (employee sau manager)',
-    enum: TemplateType,
-    example: TemplateType.EMPLOYEE,
-    required: false
-  })
-  @IsOptional()
-  @IsEnum(TemplateType)
-  template_type?: TemplateType;
 
   @ApiProperty({
     description: 'Lista de elemente ale template-ului',
@@ -156,6 +175,14 @@ export class UpdateTemplateDto {
         sort_order: 5
       },
       {
+        element_type: ElementType.FINALIZED_IN,
+        label: 'Finalizat în (ore:minute)',
+        name: 'finalized_in',
+        placeholder: 'Introduceți durata în format HH:MM',
+        is_required: false,
+        sort_order: 6
+      },
+      {
         element_type: ElementType.VISIBLE_FROM,
         label: 'Vizibil din',
         name: 'visible_from',
@@ -180,12 +207,21 @@ export class UpdateTemplateDto {
         sort_order: 8
       },
       {
+        element_type: ElementType.SCORING_SIMPLE,
+        label: 'Finalizare completă',
+        name: 'completion_bonus',
+        placeholder: 'Bonus pentru finalizare completă',
+        is_required: false,
+        sort_order: 9,
+        simple_score_points: 5
+      },
+      {
         element_type: ElementType.ALLOW_POSTPONE,
         label: 'Permite amânarea',
         name: 'allow_postpone',
         placeholder: 'Permite amânarea sarcinii',
         is_required: false,
-        sort_order: 9
+        sort_order: 10
       },
       {
         element_type: ElementType.PHOTO,
@@ -193,7 +229,7 @@ export class UpdateTemplateDto {
         name: 'evidence_photos',
         placeholder: 'Adăugați poze de evidență',
         is_required: false,
-        sort_order: 10
+        sort_order: 11
       },
       {
         element_type: ElementType.TEXTAREA,
@@ -201,7 +237,7 @@ export class UpdateTemplateDto {
         name: 'observations',
         placeholder: 'Introduceți observații',
         is_required: false,
-        sort_order: 11
+        sort_order: 12
       }
     ]
   })

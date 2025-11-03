@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import { Supplier } from './entities/supplier.entity';
@@ -22,6 +24,8 @@ import * as path from 'path';
 
 @Injectable()
 export class SuppliersService {
+  private readonly logger = new Logger(SuppliersService.name);
+  private readonly locationsServiceUrl: string;
   constructor(
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(SupplierFolder) private readonly folderRepo: Repository<SupplierFolder>,
@@ -31,9 +35,13 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
-    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
     private readonly stockHttpService: StockHttpService,
-  ) {}
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+  ) {
+    this.locationsServiceUrl = this.configService.get<string>('LOCATIONS_HTTP_URL') || 'http://localhost:3005';
+  }
 
   private async sendSupplierNotification(
     type: string,
@@ -54,64 +62,8 @@ export class SuppliersService {
           priority: 'medium',
         })
       );
-    } catch (error) {
-      console.error('Failed to send supplier notification:', error);
-    }
-  }
-
-  private async sendOrderNotification(
-    type: string,
-    title: string,
-    description: string,
-    orderId: number,
-    supplierId: number,
-    metadata?: any
-  ): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
-          type,
-          title,
-          description,
-          entity_id: orderId,
-          entity_type: 'supplier_order',
-          metadata: {
-            ...metadata,
-            supplierId,
-          },
-          priority: 'medium',
-        })
-      );
-    } catch (error) {
-      console.error('Failed to send order notification:', error);
-    }
-  }
-
-  private async sendProductNotification(
-    type: string,
-    title: string,
-    description: string,
-    productId: number,
-    supplierId: number,
-    metadata?: any
-  ): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
-          type,
-          title,
-          description,
-          entity_id: productId,
-          entity_type: 'supplier_product',
-          metadata: {
-            ...metadata,
-            supplierId,
-          },
-          priority: 'low',
-        })
-      );
-    } catch (error) {
-      console.error('Failed to send product notification:', error);
+    } catch (error: any) {
+      this.logger.warn(`Failed to send supplier notification: ${error?.message || error}`);
     }
   }
 
@@ -132,15 +84,6 @@ export class SuppliersService {
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     await this.createSupplierFolders(savedSupplier);
-    
-    // Send notification for new supplier
-    await this.sendSupplierNotification(
-      'supplier_created',
-      'Furnizor nou adăugat',
-      `Furnizorul ${savedSupplier.supplier_name} a fost adăugat în sistem`,
-      savedSupplier.id,
-      { supplierName: savedSupplier.supplier_name }
-    );
     
     // Automatically assign supplier to location if location_id is provided
     if (location_id) {
@@ -186,6 +129,15 @@ export class SuppliersService {
         console.warn(`Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
       }
     }
+
+    // Send notification for new supplier
+    await this.sendSupplierNotification(
+      'supplier_created',
+      'Furnizor nou creat',
+      `A fost creat un nou furnizor: ${savedSupplier.supplier_name}`,
+      savedSupplier.id,
+      { supplierName: savedSupplier.supplier_name }
+    );
     
     return savedSupplier;
   }
@@ -302,7 +254,22 @@ export class SuppliersService {
     return { data: buffer.toString('base64'), mimeType, fileName: document.file_name, disposition };
   }
 
-  async findAll(): Promise<Supplier[]> {
+  async findAll(locationId?: number): Promise<Supplier[]> {
+    if (locationId !== undefined) {
+      console.log('🔍 [SuppliersService] Filtrăm suppliers după location_id:', locationId);
+      const queryBuilder = this.supplierRepo.createQueryBuilder('supplier')
+        .leftJoinAndSelect('supplier.folders', 'folders')
+        .leftJoinAndSelect('supplier.products', 'products')
+        .leftJoinAndSelect('supplier.orders', 'orders')
+        .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
+        .where('sl.id_location = :locationId', { locationId })
+        .orderBy('supplier.created_at', 'DESC');
+      
+      return await queryBuilder.getMany();
+    }
+    
+    // Fără filter, returnează toți supplierii (dar vezi comentariul de mai jos)
+    // NOTĂ: În producție, ai putea vrea să fie obligatoriu locationId pentru securitate
     return this.supplierRepo.find({ relations: ['folders', 'products', 'orders'], order: { created_at: 'DESC' } });
   }
 
@@ -325,12 +292,11 @@ export class SuppliersService {
         throw new BadRequestException('Furnizor duplicat');
       }
     }
-    
     const oldName = supplier.supplier_name;
     Object.assign(supplier, dto);
     const updatedSupplier = await this.supplierRepo.save(supplier);
-    
-    // Send notification for supplier update
+
+    // Send notification for updated supplier
     await this.sendSupplierNotification(
       'supplier_updated',
       'Furnizor modificat',
@@ -342,13 +308,23 @@ export class SuppliersService {
         updatedFields: Object.keys(dto)
       }
     );
-    
+
     return updatedSupplier;
   }
 
   async remove(id: number): Promise<void> {
     const supplier = await this.findOne(id);
+    const supplierName = supplier.supplier_name;
     await this.supplierRepo.remove(supplier);
+
+    // Send notification for deleted supplier
+    await this.sendSupplierNotification(
+      'supplier_deleted',
+      'Furnizor șters',
+      `Furnizorul ${supplierName} a fost șters`,
+      id,
+      { supplierName }
+    );
   }
 
   async addProduct(dto: CreateSupplierProductDto): Promise<SupplierProduct> {
@@ -357,22 +333,7 @@ export class SuppliersService {
     const existingProduct = await this.supplierProductRepo.findOne({ where: { supplier_id: dto.supplier_id, product_id: dto.product_id } });
     if (existingProduct) throw new BadRequestException('Produsul este deja asociat');
     const supplierProduct = this.supplierProductRepo.create(dto);
-    const savedProduct = await this.supplierProductRepo.save(supplierProduct);
-    
-    // Send notification for new product
-    await this.sendProductNotification(
-      'supplier_product_added',
-      'Produs adăugat la furnizor',
-      `Un nou produs a fost adăugat la furnizorul ${supplier.supplier_name}`,
-      savedProduct.id,
-      supplier.id,
-      { 
-        supplierName: supplier.supplier_name,
-        productId: dto.product_id
-      }
-    );
-    
-    return savedProduct;
+    return this.supplierProductRepo.save(supplierProduct);
   }
 
   async getSupplierProducts(supplierId: number): Promise<SupplierProduct[]> {
@@ -390,10 +351,26 @@ export class SuppliersService {
       status: dto.status || OrderStatus.DRAFT,
       notes: dto.notes,
       created_by_user_id: dto.created_by_user_id,
+      supplier_location_id: dto.supplier_location_id,
       total_amount: 0,
     };
     const order = this.orderRepo.create(orderData);
     const savedOrder = await this.orderRepo.save(order);
+    
+    console.log('📦 [SuppliersService] Comandă creată cu supplier_location_id:', dto.supplier_location_id);
+
+    // Send notification for new order
+    await this.sendSupplierNotification(
+      'supplier_order_created',
+      'Comandă furnizor nouă',
+      `A fost creată o comandă nouă pentru furnizorul ${supplier.supplier_name}`,
+      supplier.id,
+      { 
+        orderId: savedOrder.id,
+        supplierName: supplier.supplier_name,
+        orderDate: savedOrder.order_date.toISOString()
+      }
+    );
     let totalAmount = 0;
     for (const itemDto of dto.items) {
       const subtotal = itemDto.quantity * itemDto.price_per_unit;
@@ -410,21 +387,6 @@ export class SuppliersService {
     savedOrder.total_amount = totalAmount;
     await this.orderRepo.save(savedOrder);
     await this.generateOrderPDF(savedOrder, supplier);
-    
-    // Send notification for new order
-    await this.sendOrderNotification(
-      'supplier_order_created',
-      'Comandă nouă pentru furnizor',
-      `A fost creată o comandă nouă pentru furnizorul ${supplier.supplier_name}`,
-      savedOrder.id,
-      supplier.id,
-      { 
-        supplierName: supplier.supplier_name,
-        totalAmount: savedOrder.total_amount,
-        orderDate: savedOrder.order_date
-      }
-    );
-    
     return (await this.orderRepo.findOne({ where: { id: savedOrder.id }, relations: ['items', 'documents'] })) as SupplierOrder;
   }
 
@@ -442,9 +404,13 @@ export class SuppliersService {
   }
 
   async markOrderAsDelivered(orderId: number): Promise<SupplierOrder> {
-    const order = await this.orderRepo.findOne({ where: { id: orderId }, relations: ['items'] });
+    const order = await this.orderRepo.findOne({ where: { id: orderId }, relations: ['items', 'supplier'] });
     if (!order) throw new NotFoundException('Comanda nu a fost găsită');
     if (order.status === OrderStatus.DELIVERED) throw new BadRequestException('Comanda este deja livrată');
+
+    // Get supplier for notification
+    const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
+    if (!supplier) throw new NotFoundException('Furnizorul nu a fost găsit');
 
     // Create stock items for each order item using the HTTP service
     const stockItems: CreateStockItemDto[] = order.items?.map(item => ({
@@ -465,8 +431,22 @@ export class SuppliersService {
     }
 
     order.status = OrderStatus.DELIVERED;
-    await this.orderRepo.save(order);
-    return order;
+    const updatedOrder = await this.orderRepo.save(order);
+
+    // Send notification for order delivered
+    await this.sendSupplierNotification(
+      'supplier_order_delivered',
+      'Comandă furnizor livrată',
+      `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost livrată`,
+      supplier.id,
+      { 
+        orderId: updatedOrder.id,
+        supplierName: supplier.supplier_name,
+        orderDate: updatedOrder.order_date.toISOString()
+      }
+    );
+
+    return updatedOrder;
   }
 
   async updateOrderStatus(orderId: number, status: string): Promise<SupplierOrder> {
@@ -477,8 +457,16 @@ export class SuppliersService {
     return order;
   }
 
-  async getSupplierOrders(supplierId: number): Promise<SupplierOrder[]> {
-    return this.orderRepo.find({ where: { supplier_id: supplierId }, relations: ['items', 'documents'], order: { created_at: 'DESC' } });
+  async getSupplierOrders(supplierId: number, locationId?: number): Promise<SupplierOrder[]> {
+    const whereClause: any = { supplier_id: supplierId };
+    
+    // Filtrare obligatorie după location_id
+    if (locationId !== undefined) {
+      whereClause.supplier_location_id = locationId;
+      console.log('🔍 [SuppliersService] Filtrăm orders după supplier_location_id:', locationId);
+    }
+    
+    return this.orderRepo.find({ where: whereClause, relations: ['items', 'documents'], order: { created_at: 'DESC' } });
   }
 
   async updateSupplierProduct(productId: number, updateData: Partial<SupplierProduct>): Promise<SupplierProduct> {
@@ -564,19 +552,39 @@ export class SuppliersService {
     return await this.supplierLocationsRepo.save(assignment);
   }
 
-  async findSupplierLocations(supplierId: number): Promise<SupplierLocations[]> {
+  async findSupplierLocations(supplierId: number): Promise<any[]> {
     await this.findOne(supplierId);
-    return await this.supplierLocationsRepo.find({
+    const rows = await this.supplierLocationsRepo.find({
       where: { supplier_id: supplierId },
-      relations: ['supplier', 'workLocation'],
+      relations: ['supplier'],
     });
+    return await this.enrichWithLocations(rows);
   }
 
-  async findLocationSuppliers(locationId: number): Promise<SupplierLocations[]> {
-    return await this.supplierLocationsRepo.find({
+  async findLocationSuppliers(locationId: number): Promise<any[]> {
+    const rows = await this.supplierLocationsRepo.find({
       where: { id_location: locationId },
-      relations: ['supplier', 'workLocation'],
+      relations: ['supplier'],
     });
+    return await this.enrichWithLocations(rows);
+  }
+
+  private async fetchLocation(locationId: number): Promise<any | null> {
+    try {
+      const resp = await firstValueFrom(this.httpService.get(`${this.locationsServiceUrl}/work-locations/${locationId}`));
+      return resp.data;
+    } catch (error: any) {
+      this.logger.warn(`Nu am putut încărca locația ${locationId}: ${error?.message || error}`);
+      return null;
+    }
+  }
+
+  private async enrichWithLocations(rows: SupplierLocations[]): Promise<any[]> {
+    const results = await Promise.all(rows.map(async (row) => {
+      const location = await this.fetchLocation(row.id_location);
+      return { ...row, workLocation: location };
+    }));
+    return results;
   }
 
   async removeSupplierFromLocation(supplierId: number, locationId: number): Promise<void> {

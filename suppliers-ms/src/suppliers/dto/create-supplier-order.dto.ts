@@ -49,6 +49,11 @@ export class CreateSupplierOrderDto {
   @IsPositive()
   created_by_user_id: number;
 
+  @ApiProperty({ required: false, description: 'ID-ul locației pentru care se face comanda' })
+  @IsNumber()
+  @IsOptional()
+  supplier_location_id?: number;
+
   @ApiProperty({ type: [CreateSupplierOrderItemDto] })
   @IsArray()
   @ArrayMinSize(1)

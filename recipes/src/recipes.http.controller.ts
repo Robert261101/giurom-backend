@@ -32,12 +32,15 @@ export class RecipesHttpController {
     const limit = Number.parseInt(q.limit, 10);
     const maybeCid = q.category_id !== undefined ? Number(q.category_id) : undefined;
     const category_id = Number.isFinite(maybeCid as number) && (maybeCid as number) > 0 ? (maybeCid as number) : undefined;
+    const maybeLid = q.location_id !== undefined ? Number(q.location_id) : undefined;
+    const location_id = Number.isFinite(maybeLid as number) && (maybeLid as number) > 0 ? (maybeLid as number) : undefined;
     
     const result = await this.recipes.findAll({
       page: Number.isFinite(page) && page > 0 ? page : 1,
       limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
       search: q.search,
-      category_id
+      category_id,
+      location_id
     });
     
     // Return in the format expected by the frontend
@@ -120,7 +123,13 @@ export class RecipesHttpController {
   // Preparations
   @Get('recipe-preparations')
   @Permissions('recipes.read')
-  getPreparations(@Query('page') page = '1', @Query('limit') limit = '50') { return this.preps.findAll(Number(page), Number(limit)); }
+  getPreparations(
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+    @Query('location_id') locationId?: string
+  ) {
+    return this.preps.findAll(Number(page), Number(limit), locationId ? Number(locationId) : undefined);
+  }
   
   @Get('recipe-preparations/:id')
   @Permissions('recipes.read')

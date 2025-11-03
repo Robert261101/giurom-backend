@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtModule } from '@nestjs/jwt';
+import { HttpModule } from '@nestjs/axios';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ExecutionService } from './execution.service';
 import { ExecutionController } from './execution.controller';
 import { TaskExecution } from './entity/task-execution.entity';
@@ -20,7 +23,23 @@ import { ElementsExistInTemplateValidator } from './validators/elements-exist-in
       EmployeeDailyTaskPoints,
       TaskAssignment,
       TaskElement
-    ])
+    ]),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
+    JwtModule.register({
+      secret: 'your-secret-key',
+      signOptions: { expiresIn: '59m'},
+    }),
+    HttpModule
   ],
   controllers: [ExecutionController],
   providers: [

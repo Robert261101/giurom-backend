@@ -66,6 +66,7 @@ export class Employee {
   })
   phone: string;
 
+
   @ApiProperty({
     description: 'Numărul personal (CNP)',
     example: '1234567890123',
@@ -186,6 +187,7 @@ export class Employee {
     nullable: true,
   })
   contract_type: string | null;
+
 
   @ApiProperty({
     description: 'Indică dacă angajatul este activ',

@@ -44,15 +44,9 @@ enum ElementType {
   LABEL, NUMBER, TASK_NAME, RESPONSIBLE, PERSON,
   GROUP, WORK_LOCATION, ESTIMATED_DURATION,
   VISIBLE_FROM, RECURRENCE, SCORING_BOOLEAN,
-  ALLOW_POSTPONE, PHOTO, FINISH_AT
+  ALLOW_POSTPONE, PHOTO
 }
 ```
-
-**Elemente Speciale:**
-- **`SCORING_BOOLEAN`**: Checkbox-uri cu punctaj configurat prin `scoring_options`
-- **`FINISH_AT`**: Deadline pentru finalizarea task-ului (datetime)
-- **`PHOTO`**: Necesită capturi de imagine
-- **`ALLOW_POSTPONE`**: Permite amânarea task-ului
 
 #### Endpoints:
 - `POST /api/templates` - Creează template nou
@@ -103,19 +97,7 @@ enum Priority {
 
 #### Funcționalități:
 - Completarea task-urilor cu răspunsuri
-- **Sistem de punctaj automat și inteligent**:
-  - **Task finalizat în timp + toate checkbox-urile cu puncte bifate** → adaugă punctele normale
-  - **Task finalizat în timp + checkbox-uri cu puncte nebifate** → scade punctele din toate opțiunile posibile
-  - **Task finalizat după `finish_at`** → scade punctele din toate opțiunile posibile
-  - **Task nefinalizat la sfârșitul zilei** → scade automat punctele prin endpoint-ul `process-overdue-tasks`
-- **Elemente cu Deadline (`finish_at`)**:
-  - Permite setarea unei date și ore specifice pentru finalizarea task-ului
-  - Comparație automată între timpul de finalizare și deadline
-  - Penalizare automată pentru întârzieri
-- **Integrare cu punctajul zilnic**:
-  - Actualizare automată în `Employee_Daily_Points`
-  - Înregistrare în `Employee_Daily_Task_Points`
-  - Calculare automată a punctajului total zilnic
+- Sistem de scoring automat
 - Verificare manager (opțional)
 - Comentarii și feedback
 
@@ -126,13 +108,6 @@ enum Priority {
 - `PATCH /api/executions/:id` - Actualizează execuția
 - `POST /api/executions/:id/complete` - Completează execuția
 - `POST /api/executions/:id/verify` - Verifică execuția (manager)
-
-#### Endpoints Punctaj Zilnic:
-- `POST /api/executions/daily-points` - Creează punctaj zilnic
-- `GET /api/executions/daily-points/:employeeId/:workDate` - Punctaj zilnic specific
-- `POST /api/executions/daily-task-points` - Adaugă punctaj pentru task
-- `GET /api/executions/employee-points/:employeeId` - Punctaj pentru perioadă
-- `GET /api/executions/employee-total-points/:employeeId` - Punctaj total pentru perioadă
 
 ## 🔧 Configurare și Instalare
 
@@ -162,6 +137,7 @@ NODE_ENV=development
 ### Instalare și Rulare
 
 ```bash
+
 # Instalare dependențe
 npm install
 
@@ -182,18 +158,11 @@ npm run test:e2e
 ### Tabele Principale:
 
 1. **Task_Templates** - Șabloane de task-uri
-2. **Task_Elements** - Elemente din șabloane (inclusiv `finish_at` pentru deadline)
+2. **Task_Elements** - Elemente din șabloane
 3. **Task_Assignment** - Atribuiri de task-uri
-4. **Task_Assignment_Element** - Elemente personalizate pentru atribuiri (inclusiv `value` pentru deadline)
+4. **Task_Assignment_Element** - Elemente personalizate pentru atribuiri
 5. **Task_Execution** - Execuții de task-uri
 6. **Task_Execution_Answer** - Răspunsuri la execuții
-7. **Employee_Daily_Points** - Punctaj zilnic al angajaților
-8. **Employee_Daily_Task_Points** - Punctaj specific al task-urilor în cadrul zilei
-
-### Câmpuri Speciale:
-- **`Task_Elements.finish_at`**: Deadline pentru elemente de tip `FINISH_AT`
-- **`Task_Assignment_Element.value`**: Valoare personalizată pentru deadline (pentru elemente `FINISH_AT`)
-- **`Task_Execution.completed_at`**: Timpul real de finalizare pentru comparație cu deadline
 
 ### Relații:
 - Template → Elements (One-to-Many)
@@ -201,8 +170,6 @@ npm run test:e2e
 - Assignment → Assignment Elements (One-to-Many)
 - Assignment → Executions (One-to-Many)
 - Execution → Execution Answers (One-to-Many)
-- Employee Daily Points → Daily Task Points (One-to-Many)
-- Execution → Daily Task Points (One-to-Many)
 
 ## 🔍 Validatori și Interceptori
 
@@ -256,76 +223,27 @@ POST   /api/executions/:id/complete - Completează execuția
 POST   /api/executions/:id/verify   - Verifică execuția
 ```
 
-#### Punctaj Zilnic
-```
-POST   /api/executions/daily-points           - Creează punctaj zilnic
-GET    /api/executions/daily-points/:empId/:date - Punctaj zilnic specific
-POST   /api/executions/daily-task-points      - Adaugă punctaj pentru task
-GET    /api/executions/employee-points/:empId - Punctaj pentru perioadă
-GET    /api/executions/employee-total-points/:empId - Punctaj total
-POST   /api/executions/process-overdue-tasks  - Procesează task-uri întârziate
-```
-
 ## 🔄 Flux de Lucru
 
-### 1. Crearea unui Task cu Deadline
+### 1. Crearea unui Task
 1. **Creează Template** - Definește structura task-ului
-2. **Adaugă Elemente** - Specifică câmpurile necesare (inclusiv `FINISH_AT` pentru deadline)
-3. **Atribuie Task** - Asignează către angajat/grup cu deadline personalizat
-4. **Execută Task** - Angajatul completează task-ul înainte de deadline
+2. **Adaugă Elemente** - Specifică câmpurile necesare
+3. **Atribuie Task** - Asignează către angajat/grup
+4. **Execută Task** - Angajatul completează task-ul
 5. **Verifică** - Managerul verifică (opțional)
-6. **Calculare Punctaj** - Sistemul calculează automat punctajul bazat pe:
-   - Timpul de finalizare vs deadline
-   - Completarea elementelor cu puncte
-   - Actualizează punctajul zilnic
-
-### 2. Logica de Punctaj în Timp Real
-- **La finalizarea task-ului**: Calculare automată și actualizare punctaj zilnic
-- **La sfârșitul zilei**: Procesare task-uri nefinalizate prin `process-overdue-tasks`
-- **Raportare**: Acces la punctaj pentru perioade specifice
 
 ### 2. Tipuri de Task-uri
 - **Task-uri Simple**: Input, checkbox, select
 - **Task-uri Complexe**: Cu scoring, verificare manager
 - **Task-uri Recurring**: Cu programare automată
 - **Task-uri cu Foto**: Necesită capturi de imagine
-- **Task-uri cu Punctaj**: Contribuie la punctajul zilnic al angajatului
-- **Task-uri cu Deadline**: Cu data și ora de finalizare specificată (`finish_at`)
-- **Task-uri cu Penalizare**: Scădere automată de puncte pentru necompletare sau întârziere
 
 ## 🚀 Caracteristici Avansate
 
-### Sistem de Scoring și Punctaj
+### Sistem de Scoring
 - Scoring automat bazat pe răspunsuri
 - Configurare flexibilă per element
 - Calculare scor total
-- **Punctaj zilnic al angajaților**
-- **Punctaj specific per task**
-- **Calculare automată a punctajului total zilnic**
-- **Raportare punctaj pentru perioade specifice**
-
-### Logica de Punctaj Inteligentă
-1. **Task finalizat în timp + toate checkbox-urile cu puncte bifate**:
-   - ✅ Adaugă punctele normale din răspunsuri
-   - ✅ Contribuie pozitiv la punctajul zilnic
-
-2. **Task finalizat în timp + checkbox-uri cu puncte nebifate**:
-   - ❌ Scade punctele din toate opțiunile posibile
-   - ⚠️ Penalizare pentru necompletarea elementelor obligatorii
-
-3. **Task finalizat după deadline (`finish_at`)**:
-   - ❌ Scade punctele din toate opțiunile posibile
-   - ⏰ Penalizare pentru întârziere
-
-4. **Task nefinalizat la sfârșitul zilei**:
-   - ❌ Scade automat punctele prin `process-overdue-tasks`
-   - 📅 Penalizare pentru nefinalizare
-
-### Debug și Monitorizare
-- Logs detaliate pentru debugging punctaj
-- Afișare deadline vs timp finalizare
-- Numărătoare elemente cu puncte vs completate
-- Alertă pentru elemente necompletate
 
 ### Verificare Manager
 - Opțiune de verificare obligatorie
@@ -346,6 +264,7 @@ POST   /api/executions/process-overdue-tasks  - Procesează task-uri întârziat
 ## 🧪 Testare
 
 ```bash
+
 # Teste unitare
 npm run test
 

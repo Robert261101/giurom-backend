@@ -27,6 +27,9 @@ export class TaskAssignmentElement {
   @Column({ type: 'int', nullable: true })
   score: number;
 
+  @Column({ type: 'boolean', default: true })
+  is_visible_for_employee: boolean;
+
   @CreateDateColumn()
   created_at: Date;
 

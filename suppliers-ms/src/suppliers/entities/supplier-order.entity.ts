@@ -46,6 +46,9 @@ export class SupplierOrder {
   @Column()
   created_by_user_id: number;
 
+  @Column({ type: 'int', nullable: true })
+  supplier_location_id: number;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

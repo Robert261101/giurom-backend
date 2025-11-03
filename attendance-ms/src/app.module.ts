@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { Shift } from './entities/shift.entity';
 import { Presence } from './entities/presence.entity';
 import { PresenceInflexion } from './entities/presence-inflexion.entity';
@@ -17,6 +18,7 @@ import { AttendanceMicroController } from './attendance.micro.controller';
 @Module({
   imports: [
     AuthModule,
+    HttpModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ClientsModule.register([
       {

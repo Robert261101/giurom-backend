@@ -47,15 +47,26 @@ export class RecipePreparationsService {
     }
   }
 
-  async findAll(page = 1, limit = 50) {
-    const [rows] = await Promise.all([
-      this.prepRepo.find({
-        relations: ['recipe', 'recipe.category', 'labels'],
-        order: { created_at: 'DESC' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-    ]);
+  async findAll(page = 1, limit = 50, locationId?: number) {
+    const queryBuilder = this.prepRepo.createQueryBuilder('preparation')
+      .leftJoinAndSelect('preparation.recipe', 'recipe')
+      .leftJoinAndSelect('recipe.category', 'category')
+      .leftJoinAndSelect('preparation.labels', 'labels');
+    
+    // FILTRARE OBLIGATORIE - afișează DOAR preparations cu location_id setat
+    queryBuilder.andWhere('preparation.location_id IS NOT NULL');
+    
+    // Add location filter
+    if (locationId !== undefined) {
+      queryBuilder.andWhere('preparation.location_id = :locationId', { locationId });
+      console.log('🔍 [RecipePreparationsService] Filtrăm preparations după location_id:', locationId);
+    }
+    
+    const rows = await queryBuilder
+      .orderBy('preparation.created_at', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
     return rows;
   }
 
@@ -68,12 +79,13 @@ export class RecipePreparationsService {
     return p;
   }
 
-  async create(dto: { recipe_id: number; employee_id?: number; quantity: number; produced_at?: string }) {
+  async create(dto: { recipe_id: number; employee_id?: number; location_id?: number; quantity: number; produced_at?: string }) {
     const recipe = await this.recipeRepo.findOne({ where: { id: dto.recipe_id } });
     if (!recipe) throw new NotFoundException('Rețeta nu a fost găsită');
     const p = this.prepRepo.create({
       recipe_id: dto.recipe_id,
       produced_by: dto.employee_id,
+      location_id: dto.location_id,
       quantity: dto.quantity as any,
       produced_at: dto.produced_at ? (new Date(dto.produced_at) as any) : (new Date() as any),
       is_labeled: false,
@@ -98,7 +110,7 @@ export class RecipePreparationsService {
     try {
       const fullRecipe = await this.recipeRepo.findOne({
         where: { id: dto.recipe_id },
-        relations: ['recipe_products', 'recipe_products.product'],
+        relations: ['recipe_products'],
       });
       if (fullRecipe && Array.isArray(fullRecipe.recipe_products)) {
         // Compute scaling factor relative to recipe base quantity (in grams)
@@ -159,7 +171,7 @@ export class RecipePreparationsService {
   }
 
   // Composite: create preparation and return mock stock transactions
-  async prepareWithStock(dto: { recipe_id: number; quantity: number; employee_id?: number; produced_at?: string }) {
+  async prepareWithStock(dto: { recipe_id: number; quantity: number; employee_id?: number; location_id?: number; produced_at?: string }) {
     const preparation = await this.create(dto);
     // mock stock transactions result for UI (stock integration can be added later)
     const stockTransactions = [
@@ -176,5 +188,6 @@ export class RecipePreparationsService {
     return { preparation, stockTransactions };
   }
 }
+
 
 
