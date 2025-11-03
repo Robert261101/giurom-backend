@@ -500,7 +500,7 @@ export class NotificationsService {
       for (const userId of uniqueUserIds) {
         try {
           const userResponse = await firstValueFrom(
-            this.httpService.get(`${apiGatewayUrl}/users/employee/${userId}`)
+            this.httpService.get(`${apiGatewayUrl}/users/${userId}`)
           );
           
           // User data is also wrapped in a data object

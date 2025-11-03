@@ -11,6 +11,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { UsersService } from './users.service';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
@@ -23,7 +25,10 @@ import { UpdateUserDto } from './dto/update-user.dto';
 @ApiTags('users')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly httpService: HttpService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Creează un utilizator nou' })
@@ -429,5 +434,42 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
   async deleteUserRole(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.usersService.deleteUserRole(id);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Găsește un utilizator după ID' })
+  @ApiParam({ name: 'id', description: 'ID-ul utilizatorului' })
+  @ApiResponse({ status: 200, description: 'Utilizatorul găsit', type: User })
+  @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
+  async findOne(@Param('id', ParseIntPipe) id: number): Promise<any> {
+    const user = await this.usersService.findOne(id);
+    if (!user) {
+      throw new Error(`Utilizatorul cu ID ${id} nu a fost găsit`);
+    }
+    
+    // Fetch employee email
+    try {
+      const employeeResponse = await firstValueFrom(
+        this.httpService.get(`http://localhost:3012/employees/${user.id_employee}`, {
+          headers: {
+            'x-internal-service': 'auth',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      const employee = employeeResponse.data;
+      
+      return {
+        ...user,
+        email: employee.email || null
+      };
+    } catch (error) {
+      // Return user without email if employee fetch fails
+      console.warn(`Could not fetch employee ${user.id_employee} for user ${id}:`, error);
+      return {
+        ...user,
+        email: null
+      };
+    }
   }
 }

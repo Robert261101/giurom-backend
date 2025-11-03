@@ -135,8 +135,8 @@ export class LocationsService {
     // Send notification for updated location
     await this.sendLocationNotification(
       'location_updated',
-      'Locație modificată',
-      `Locația ${oldName} a fost modificată`,
+      'Locatie modificata',
+      `Locatia ${oldName} a fost modificata`,
       updatedLocation.id,
       { 
         oldName,
