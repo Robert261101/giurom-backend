@@ -320,8 +320,8 @@ export class SuppliersService {
     // Send notification for deleted supplier
     await this.sendSupplierNotification(
       'supplier_deleted',
-      'Furnizor șters',
-      `Furnizorul ${supplierName} a fost șters`,
+      'Furnizor sters',
+      `Furnizorul ${supplierName} a fost sters`,
       id,
       { supplierName }
     );
@@ -362,8 +362,8 @@ export class SuppliersService {
     // Send notification for new order
     await this.sendSupplierNotification(
       'supplier_order_created',
-      'Comandă furnizor nouă',
-      `A fost creată o comandă nouă pentru furnizorul ${supplier.supplier_name}`,
+      'Comanda furnizor noua',
+      `A fost creata o comanda noua pentru furnizorul ${supplier.supplier_name}`,
       supplier.id,
       { 
         orderId: savedOrder.id,
@@ -436,8 +436,8 @@ export class SuppliersService {
     // Send notification for order delivered
     await this.sendSupplierNotification(
       'supplier_order_delivered',
-      'Comandă furnizor livrată',
-      `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost livrată`,
+      'Comanda furnizor livrata',
+      `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost livrata`,
       supplier.id,
       { 
         orderId: updatedOrder.id,

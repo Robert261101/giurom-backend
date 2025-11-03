@@ -64,8 +64,8 @@ export class RecipesService {
     // Send notification for new recipe
     await this.sendRecipeNotification(
       'recipe_created',
-      'Rețetă nouă creată',
-      `A fost creată o nouă rețetă: ${savedRecipe.name}`,
+      'Reteta noua creata',
+      `A fost creata o noua reteta: ${savedRecipe.name}`,
       savedRecipe.id,
       { recipeName: savedRecipe.name }
     );
@@ -177,8 +177,8 @@ export class RecipesService {
     // Send notification for updated recipe
     await this.sendRecipeNotification(
       'recipe_updated',
-      'Rețetă modificată',
-      `Rețeta ${oldName} a fost modificată`,
+      'Reteta modificata',
+      `Reteta ${oldName} a fost modificata`,
       updatedRecipe.id,
       { 
         oldName,
@@ -198,8 +198,8 @@ export class RecipesService {
     // Send notification for deleted recipe
     await this.sendRecipeNotification(
       'recipe_deleted',
-      'Rețetă ștearsă',
-      `Rețeta ${recipeName} a fost ștearsă`,
+      'Reteta stearsa',
+      `Reteta ${recipeName} a fost stearsa`,
       id,
       { recipeName }
     );

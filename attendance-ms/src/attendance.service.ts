@@ -252,8 +252,8 @@ export class AttendanceService implements OnModuleInit {
     // Send notification that shift was deleted
     await this.sendShiftNotification(
       'shift_deleted',
-      'Schimb șters',
-      `Schimbul pentru data de ${shift.start_datetime.toLocaleDateString('ro-RO')} a fost șters`,
+      'Schimb sters',
+      `Schimbul pentru data de ${shift.start_datetime.toLocaleDateString('ro-RO')} a fost sters`,
       shift.employee_id,
       shift.id,
       {
@@ -473,7 +473,7 @@ export class AttendanceService implements OnModuleInit {
     // Send notification that presence was deleted
     await this.sendAttendanceNotification(
       'presence_deleted',
-      'Prezență ștearsă',
+      'Prezenta stearsa',
       `Prezența pentru data de ${presence.date.toLocaleDateString('ro-RO')} a fost ștearsă`,
       presence.shift.employee_id,
       {

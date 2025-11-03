@@ -105,7 +105,7 @@ export class CalendarService {
     await this.sendCalendarNotification(
       'calendar_event_created',
       'Eveniment nou creat',
-      `A fost creat un nou eveniment în calendar: ${savedEvent.title}`,
+      `A fost creat un nou eveniment in calendar: ${savedEvent.title}`,
       savedEvent.id,
       {
         eventId: savedEvent.id,

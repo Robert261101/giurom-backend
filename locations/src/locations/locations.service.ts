@@ -73,8 +73,8 @@ export class LocationsService {
     // Send notification for new location
     await this.sendLocationNotification(
       'location_created',
-      'Locație nouă adăugată',
-      `A fost adăugată o nouă locație: ${saved.location_name}`,
+      'Locatie noua adaugata',
+      `A fost adaugata o noua locatie: ${saved.location_name}`,
       saved.id,
       { locationName: saved.location_name }
     );
@@ -165,8 +165,8 @@ export class LocationsService {
     // Send notification for deleted location
     await this.sendLocationNotification(
       'location_deleted',
-      'Locație ștearsă',
-      `Locația ${locationName} a fost ștearsă (Departamente: ${departmentsCount}, Puncte: ${revenuePointsCount}, Angajați afectați)`,
+      'Locatie stearsa',
+      `Locatia ${locationName} a fost stearsa (Departamente: ${departmentsCount}, Puncte: ${revenuePointsCount}, Angajati afectati)`,
       id,
       { 
         locationName,
