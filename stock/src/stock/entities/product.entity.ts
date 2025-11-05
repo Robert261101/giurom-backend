@@ -32,6 +32,9 @@ export class Product {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  is_consumable: boolean;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

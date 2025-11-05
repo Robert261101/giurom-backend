@@ -7,6 +7,13 @@ export class PermissionsGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest();
+    
+    // If bypassAuth is set by InternalServiceGuard, allow the request
+    if (request.bypassAuth) {
+      return true;
+    }
+    
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -16,7 +23,6 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
     const user = request?.user;
     if (!user?.permissions) {
       throw new ForbiddenException('Fără permisiuni');

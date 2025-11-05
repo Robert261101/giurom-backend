@@ -37,6 +37,9 @@ export class Recipe {
   @Column({ type: 'varchar', length: 500, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   video_link: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  is_consumable: boolean;
+
   @ManyToOne(() => RecipeCategory, (category) => category.recipes, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'category_id' })
   category: RecipeCategory;

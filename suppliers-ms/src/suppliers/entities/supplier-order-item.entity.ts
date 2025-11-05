@@ -29,6 +29,9 @@ export class SupplierOrderItem {
   @Column({ type: 'decimal', precision: 12, scale: 2 })
   subtotal: number;
 
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  total: number;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

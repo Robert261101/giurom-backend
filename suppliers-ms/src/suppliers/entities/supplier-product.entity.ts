@@ -6,6 +6,8 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  BeforeInsert,
+  BeforeUpdate,
 } from 'typeorm';
 import { Supplier } from './supplier.entity';
 
@@ -32,6 +34,12 @@ export class SupplierProduct {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   price_per_unit: number;
 
+  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, default: 0 })
+  vat: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  final_price: number;
+
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
@@ -44,6 +52,15 @@ export class SupplierProduct {
   @ManyToOne(() => Supplier, (supplier) => supplier.products, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  calculateFinalPrice() {
+    const price = Number(this.price_per_unit) || 0;
+    const vatPercent = Number(this.vat) || 0;
+    const vatAmount = (price * vatPercent) / 100;
+    this.final_price = price + vatAmount;
+  }
 }
 
 
