@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
 import { StockHealthController } from './stock/stock.health.controller';
@@ -59,6 +60,8 @@ import { CategoryService } from './stock/category.service';
   providers: [
     StockService,
     CategoryService,
+    InternalServiceGuard,
+    { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

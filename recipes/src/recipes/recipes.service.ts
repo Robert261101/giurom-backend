@@ -2,8 +2,8 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
-import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { ConfigService } from '@nestjs/config';
+import { lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
@@ -19,6 +19,8 @@ import { ProductRef } from '../external/product-ref.entity';
 
 @Injectable()
 export class RecipesService {
+  private readonly stockServiceUrl: string;
+
   constructor(
     @InjectRepository(Recipe)
     private recipesRepository: Repository<Recipe>,
@@ -28,49 +30,16 @@ export class RecipesService {
     private recipeProductsRepository: Repository<RecipeProduct>,
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
-    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
-  ) {}
-
-  private async sendRecipeNotification(
-    type: string,
-    title: string,
-    description: string,
-    recipeId: number,
-    metadata?: any
-  ): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
-          type,
-          title,
-          description,
-          entity_id: recipeId,
-          entity_type: 'recipe',
-          metadata,
-          priority: 'medium',
-        })
-      );
-    } catch (error) {
-      console.error('Failed to send recipe notification:', error);
-    }
+    private readonly configService: ConfigService,
+  ) {
+    this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
   }
 
   // ==================== RECIPES METHODS ====================
 
   async create(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
     const recipe = this.recipesRepository.create(createRecipeDto);
-    const savedRecipe = await this.recipesRepository.save(recipe);
-    
-    // Send notification for new recipe
-    await this.sendRecipeNotification(
-      'recipe_created',
-      'Rețetă nouă creată',
-      `A fost creată o nouă rețetă: ${savedRecipe.name}`,
-      savedRecipe.id,
-      { recipeName: savedRecipe.name }
-    );
-    
-    return savedRecipe;
+    return await this.recipesRepository.save(recipe);
   }
 
   async findAll(params: { 
@@ -120,8 +89,13 @@ export class RecipesService {
         for (const recipeProduct of recipe.recipe_products) {
           if (recipeProduct.product_id) {
             try {
-              const response = await firstValueFrom(
-                this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+              const response = await lastValueFrom(
+                this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
+                  headers: {
+                    'x-internal-service': 'recipes',
+                    'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                  }
+                })
               );
               recipeProduct.product = response.data;
             } catch (error) {
@@ -153,8 +127,13 @@ export class RecipesService {
       for (const recipeProduct of recipe.recipe_products) {
         if (recipeProduct.product_id) {
           try {
-            const response = await firstValueFrom(
-              this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+            const response = await lastValueFrom(
+              this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
+                headers: {
+                  'x-internal-service': 'recipes',
+                  'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                }
+              })
             );
             recipeProduct.product = response.data;
           } catch (error) {
@@ -170,39 +149,13 @@ export class RecipesService {
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
     const recipe = await this.findOne(id);
-    const oldName = recipe.name;
     Object.assign(recipe, updateRecipeDto);
-    const updatedRecipe = await this.recipesRepository.save(recipe);
-    
-    // Send notification for updated recipe
-    await this.sendRecipeNotification(
-      'recipe_updated',
-      'Rețetă modificată',
-      `Rețeta ${oldName} a fost modificată`,
-      updatedRecipe.id,
-      { 
-        oldName,
-        newName: updatedRecipe.name,
-        updatedFields: Object.keys(updateRecipeDto)
-      }
-    );
-    
-    return updatedRecipe;
+    return await this.recipesRepository.save(recipe);
   }
 
   async remove(id: number): Promise<void> {
     const recipe = await this.findOne(id);
-    const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
-    
-    // Send notification for deleted recipe
-    await this.sendRecipeNotification(
-      'recipe_deleted',
-      'Rețetă ștearsă',
-      `Rețeta ${recipeName} a fost ștearsă`,
-      id,
-      { recipeName }
-    );
   }
 
   // ==================== CATEGORIES METHODS ====================
@@ -276,10 +229,24 @@ export class RecipesService {
     
     // Verify product exists via HTTP call
     try {
-      await firstValueFrom(
-        this.httpService.get(`http://localhost:3000/api/stock/products/${createRecipeProductDto.product_id}`)
+      const productUrl = `${this.stockServiceUrl}/stock/products/${createRecipeProductDto.product_id}`;
+      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const headers = {
+        'x-internal-service': 'recipes',
+        'x-service-secret': serviceSecret
+      };
+      
+      console.log(`🔍 [RecipesService] Verifying product ${createRecipeProductDto.product_id} at: ${productUrl}`);
+      console.log(`🔑 [RecipesService] Using service secret: ${serviceSecret.substring(0, 5)}...`);
+      console.log(`📤 [RecipesService] Headers:`, headers);
+      
+      const response = await lastValueFrom(
+        this.httpService.get(productUrl, { headers })
       );
-    } catch (error) {
+      console.log(`✅ [RecipesService] Product ${createRecipeProductDto.product_id} verified:`, response.data);
+    } catch (error: any) {
+      console.error(`❌ [RecipesService] Error verifying product ${createRecipeProductDto.product_id}:`, error?.response?.data || error?.message);
+      console.error(`❌ [RecipesService] Full error:`, error?.response?.status, error?.response?.statusText);
       throw new BadRequestException(`Product with ID ${createRecipeProductDto.product_id} not found`);
     }
     
@@ -306,8 +273,13 @@ export class RecipesService {
     for (const recipeProduct of recipeProducts) {
       if (recipeProduct.product_id) {
         try {
-          const response = await firstValueFrom(
-            this.httpService.get(`http://localhost:3000/api/stock/products/${recipeProduct.product_id}`)
+          const response = await lastValueFrom(
+            this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
+              headers: {
+                'x-internal-service': 'recipes',
+                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+              }
+            })
           );
           recipeProduct.product = response.data;
         } catch (error) {
@@ -333,8 +305,13 @@ export class RecipesService {
     // If product_id is being updated, verify the new product exists
     if (updateRecipeProductDto.product_id && updateRecipeProductDto.product_id !== recipeProduct.product_id) {
       try {
-        await firstValueFrom(
-          this.httpService.get(`http://localhost:3000/api/stock/products/${updateRecipeProductDto.product_id}`)
+        await lastValueFrom(
+          this.httpService.get(`${this.stockServiceUrl}/stock/products/${updateRecipeProductDto.product_id}`, {
+            headers: {
+              'x-internal-service': 'recipes',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            }
+          })
         );
       } catch (error) {
         throw new BadRequestException(`Product with ID ${updateRecipeProductDto.product_id} not found`);
