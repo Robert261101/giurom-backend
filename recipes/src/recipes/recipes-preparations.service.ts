@@ -100,7 +100,7 @@ export class RecipePreparationsService {
     await this.sendPreparationNotification(
       'recipe_preparation_created',
       'Preparat realizat',
-      `A fost realizat un nou preparat pentru rețeta: ${recipe.name}`,
+      `A fost realizat un nou preparat pentru reteta: ${recipe.name}`,
       saved.id,
       recipe.id,
       { 

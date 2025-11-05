@@ -135,8 +135,8 @@ export class LeaveRequestsService implements OnModuleInit {
     // Send notification to admins/managers about new leave request
     await this.sendLeaveNotification(
       'leave_request_created',
-      'Cerere de concediu nouă',
-      `A fost creată o nouă cerere de ${dto.leave_type}`,
+      'Cerere de concediu noua',
+      `A fost creata o noua cerere de ${dto.leave_type}`,
       dto.employee_id,
       {
         requestId: savedRequest.id,
@@ -294,8 +294,8 @@ export class LeaveRequestsService implements OnModuleInit {
       if (dto.status === LeaveStatus.APPROVED) {
         await this.sendLeaveNotification(
           'leave_request_approved',
-          'Cerere de concediu aprobată',
-          `Cererea dumneavoastră de ${leaveRequest.leave_type} a fost aprobată`,
+          'Cerere de concediu aprobata',
+          `Cererea dumneavoastra de ${leaveRequest.leave_type} a fost aprobata`,
           leaveRequest.employee_id,
           {
             requestId: updatedRequest.id,
@@ -308,8 +308,8 @@ export class LeaveRequestsService implements OnModuleInit {
       } else if (dto.status === LeaveStatus.REJECTED) {
         await this.sendLeaveNotification(
           'leave_request_rejected',
-          'Cerere de concediu respinsă',
-          `Cererea dumneavoastră de ${leaveRequest.leave_type} a fost respinsă`,
+          'Cerere de concediu respinsa',
+          `Cererea dumneavoastra de ${leaveRequest.leave_type} a fost respinsa`,
           leaveRequest.employee_id,
           {
             requestId: updatedRequest.id,
