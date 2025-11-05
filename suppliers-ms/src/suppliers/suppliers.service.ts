@@ -371,20 +371,45 @@ export class SuppliersService {
         orderDate: savedOrder.order_date.toISOString()
       }
     );
-    let totalAmount = 0;
+    let totalAmountWithoutVat = 0;
+    let totalAmountWithVat = 0;
     for (const itemDto of dto.items) {
       const subtotal = itemDto.quantity * itemDto.price_per_unit;
-      totalAmount += subtotal;
+      totalAmountWithoutVat += subtotal;
+      
+      // Obține TVA-ul din produsul furnizorului
+      let vat = 0;
+      try {
+        const supplierProduct = await this.supplierProductRepo.findOne({ 
+          where: { 
+            supplier_id: dto.supplier_id, 
+            product_id: itemDto.product_id 
+          } 
+        });
+        if (supplierProduct && supplierProduct.vat) {
+          vat = Number(supplierProduct.vat) || 0;
+        }
+      } catch (err) {
+        console.warn(`Could not fetch VAT for product ${itemDto.product_id}:`, err);
+      }
+      
+      // Calculează total cu TVA
+      const vatAmount = (subtotal * vat) / 100;
+      const total = subtotal + vatAmount;
+      totalAmountWithVat += total;
+      
       const orderItem = this.orderItemRepo.create({
         order_id: savedOrder.id,
         product_id: itemDto.product_id,
         quantity: itemDto.quantity,
         price_per_unit: itemDto.price_per_unit,
         subtotal,
+        total,
       });
       await this.orderItemRepo.save(orderItem);
     }
-    savedOrder.total_amount = totalAmount;
+    savedOrder.total_amount = totalAmountWithoutVat;
+    savedOrder.total_amount_with_vat = totalAmountWithVat;
     await this.orderRepo.save(savedOrder);
     await this.generateOrderPDF(savedOrder, supplier);
     return (await this.orderRepo.findOne({ where: { id: savedOrder.id }, relations: ['items', 'documents'] })) as SupplierOrder;

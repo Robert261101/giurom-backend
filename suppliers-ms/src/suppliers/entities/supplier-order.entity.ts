@@ -40,6 +40,9 @@ export class SupplierOrder {
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
   total_amount: number;
 
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  total_amount_with_vat: number;
+
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   notes?: string;
 

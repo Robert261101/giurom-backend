@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsPositive, Length, Min, Max, IsOptional, IsUrl } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsPositive, Length, Min, Max, IsOptional, IsUrl, IsBoolean } from 'class-validator';
 
 export class CreateRecipeDto {
   @ApiProperty()
@@ -46,4 +46,14 @@ export class CreateRecipeDto {
   @IsOptional()
   @IsUrl()
   video_link?: string;
+
+  @ApiProperty({
+    description: 'Dacă rețeta este consumabilă (preparatele create pot fi consumate)',
+    example: false,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_consumable?: boolean;
 }
