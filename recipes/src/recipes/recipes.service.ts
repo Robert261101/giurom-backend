@@ -3,7 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { lastValueFrom } from 'rxjs';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom, lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
@@ -31,15 +32,51 @@ export class RecipesService {
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
+  }
+
+  private async sendRecipeNotification(
+    type: string,
+    title: string,
+    description: string,
+    recipeId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: recipeId,
+          entity_type: 'recipe',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send recipe notification:', error);
+    }
   }
 
   // ==================== RECIPES METHODS ====================
 
   async create(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
     const recipe = this.recipesRepository.create(createRecipeDto);
-    return await this.recipesRepository.save(recipe);
+    const savedRecipe = await this.recipesRepository.save(recipe);
+    
+    // Send notification for new recipe
+    await this.sendRecipeNotification(
+      'recipe_created',
+      'Reteta noua creata',
+      `A fost creata o noua reteta: ${savedRecipe.name}`,
+      savedRecipe.id,
+      { recipeName: savedRecipe.name }
+    );
+    
+    return savedRecipe;
   }
 
   async findAll(params: { 
@@ -149,13 +186,39 @@ export class RecipesService {
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
     const recipe = await this.findOne(id);
+    const oldName = recipe.name;
     Object.assign(recipe, updateRecipeDto);
-    return await this.recipesRepository.save(recipe);
+    const updatedRecipe = await this.recipesRepository.save(recipe);
+    
+    // Send notification for updated recipe
+    await this.sendRecipeNotification(
+      'recipe_updated',
+      'Reteta modificata',
+      `Reteta ${oldName} a fost modificata`,
+      updatedRecipe.id,
+      { 
+        oldName,
+        newName: updatedRecipe.name,
+        updatedFields: Object.keys(updateRecipeDto)
+      }
+    );
+    
+    return updatedRecipe;
   }
 
   async remove(id: number): Promise<void> {
     const recipe = await this.findOne(id);
+    const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
+    
+    // Send notification for deleted recipe
+    await this.sendRecipeNotification(
+      'recipe_deleted',
+      'Reteta stearsa',
+      `Reteta ${recipeName} a fost stearsa`,
+      id,
+      { recipeName }
+    );
   }
 
   // ==================== CATEGORIES METHODS ====================
