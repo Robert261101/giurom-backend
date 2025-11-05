@@ -1,23 +1,26 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
-import axios from 'axios';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { firstValueFrom, lastValueFrom } from 'rxjs';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from './entities/recipe.entity';
-import { StockRef, StockStatusRef } from '../external/stock-ref.entity';
-import { StockTransactionRef, TransactionTypeRef } from '../external/stock-transaction-ref.entity';
 
 @Injectable()
 export class RecipePreparationsService {
+  private readonly stockServiceUrl: string;
+
   constructor(
     @InjectRepository(RecipePreparation) private readonly prepRepo: Repository<RecipePreparation>,
     @InjectRepository(Recipe) private readonly recipeRepo: Repository<Recipe>,
-    @InjectRepository(StockRef) private readonly stockRepo: Repository<StockRef>,
-    @InjectRepository(StockTransactionRef) private readonly txRepo: Repository<StockTransactionRef>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
-  ) {}
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+  ) {
+    this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
+  }
 
   private async sendPreparationNotification(
     type: string,
@@ -106,7 +109,7 @@ export class RecipePreparationsService {
       }
     );
 
-    // After saving, consume stock FIFO by expiration for each ingredient
+    // After saving, consume stock FIFO by expiration for each ingredient via stock service
     try {
       const fullRecipe = await this.recipeRepo.findOne({
         where: { id: dto.recipe_id },
@@ -116,43 +119,50 @@ export class RecipePreparationsService {
         // Compute scaling factor relative to recipe base quantity (in grams)
         const baseQty = Number(fullRecipe.quantity) || 1;
         const factor = Number(dto.quantity) / baseQty;
+        
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const headers = {
+          'x-internal-service': 'recipes',
+          'x-service-secret': serviceSecret
+        };
+        
         for (const rp of fullRecipe.recipe_products) {
           const neededTotal = Number(rp.quantity) * factor; // grams
           if (!rp.product_id || !Number.isFinite(neededTotal) || neededTotal <= 0) continue;
-          let remaining = neededTotal;
-          const stocks = await this.stockRepo.find({
-            where: { product_id: rp.product_id, status: StockStatusRef.VALID, quantity: MoreThan(0) },
-            order: { expiration_date: 'ASC', entry_date: 'ASC' } as any,
-          });
-          const totalAvailable = stocks.reduce((sum, s) => sum + Number(s.quantity), 0);
-          if (totalAvailable < neededTotal) {
-            throw new Error(`Cantitate insuficientă în stoc pentru produs ${rp.product_id}. Disponibil ${totalAvailable}, necesar ${neededTotal}`);
-          }
-          for (const s of stocks) {
-            if (remaining <= 0) break;
-            const available = Number(s.quantity);
-            const toConsume = Math.min(available, remaining);
-            // create transaction
-            const tx = this.txRepo.create({
-              stock_id: s.id,
-              type: TransactionTypeRef.EXIT,
-              quantity: toConsume as any,
-              location: 'production',
-              target: `recipe-preparation:${saved.id}`,
-              timestamp: new Date() as any,
-            });
-            await this.txRepo.save(tx);
-            // update stock
-            s.quantity = (available - toConsume) as any;
-            s.last_update = new Date() as any;
-            await this.stockRepo.save(s);
-            remaining -= toConsume;
+          
+          console.log(`🔍 [RecipePreparationsService] Consuming ${neededTotal} units of product ${rp.product_id} for preparation ${saved.id}`);
+          
+          try {
+            // Use stock service consume endpoint which handles FIFO by expiration
+            await lastValueFrom(
+              this.httpService.post(
+                `${this.stockServiceUrl}/stock/consume`,
+                {
+                  product_id: rp.product_id,
+                  quantity: neededTotal,
+                  target: `recipe-preparation:${saved.id}`
+                },
+                { headers }
+              )
+            );
+            console.log(`✅ [RecipePreparationsService] Successfully consumed ${neededTotal} units of product ${rp.product_id}`);
+          } catch (error: any) {
+            console.error(`❌ [RecipePreparationsService] Error consuming product ${rp.product_id}:`, error?.response?.data || error?.message);
+            
+            // Extract error message from stock service response
+            const errorMessage = error?.response?.data?.message || error?.message || 'Eroare necunoscută la consumarea stocului';
+            throw new BadRequestException(`Cantitate insuficientă în stoc pentru produs ${rp.product_id}. ${errorMessage}`);
           }
         }
       }
     } catch (e) {
       // rollback preparation if stock consumption fails
-      try { await this.prepRepo.remove(saved); } catch {}
+      console.error(`❌ [RecipePreparationsService] Rolling back preparation ${saved.id} due to stock consumption error`);
+      try { 
+        await this.prepRepo.remove(saved); 
+      } catch (rollbackError) {
+        console.error(`❌ [RecipePreparationsService] Error during rollback:`, rollbackError);
+      }
       throw e;
     }
 
