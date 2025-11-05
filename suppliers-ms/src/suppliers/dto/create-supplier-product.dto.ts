@@ -35,6 +35,15 @@ export class CreateSupplierProductDto {
   price_per_unit: number;
 
   @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  vat?: number;
+
+  @ApiProperty({ required: false, readOnly: true, description: 'Calculat automat: price_per_unit + (price_per_unit * vat / 100)' })
+  final_price?: number;
+
+  @ApiProperty({ required: false })
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;

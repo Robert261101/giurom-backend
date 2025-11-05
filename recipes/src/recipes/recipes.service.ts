@@ -3,7 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { lastValueFrom } from 'rxjs';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom, lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
@@ -31,8 +32,33 @@ export class RecipesService {
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
+  }
+
+  private async sendRecipeNotification(
+    type: string,
+    title: string,
+    description: string,
+    recipeId: number,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
+          type,
+          title,
+          description,
+          entity_id: recipeId,
+          entity_type: 'recipe',
+          metadata,
+          priority: 'medium',
+        })
+      );
+    } catch (error) {
+      console.error('Failed to send recipe notification:', error);
+    }
   }
 
   // ==================== RECIPES METHODS ====================
@@ -49,7 +75,8 @@ export class RecipesService {
       savedRecipe.id,
       { recipeName: savedRecipe.name }
     );
-    return await this.recipesRepository.save(recipe);
+    
+    return savedRecipe;
   }
 
   async findAll(params: { 
@@ -159,6 +186,7 @@ export class RecipesService {
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
     const recipe = await this.findOne(id);
+    const oldName = recipe.name;
     Object.assign(recipe, updateRecipeDto);
     const updatedRecipe = await this.recipesRepository.save(recipe);
     
@@ -174,11 +202,13 @@ export class RecipesService {
         updatedFields: Object.keys(updateRecipeDto)
       }
     );
-    return await this.recipesRepository.save(recipe);
+    
+    return updatedRecipe;
   }
 
   async remove(id: number): Promise<void> {
     const recipe = await this.findOne(id);
+    const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
     
     // Send notification for deleted recipe

@@ -92,6 +92,7 @@ export class RecipePreparationsService {
       quantity: dto.quantity as any,
       produced_at: dto.produced_at ? (new Date(dto.produced_at) as any) : (new Date() as any),
       is_labeled: false,
+      is_consumable: recipe.is_consumable || false,
     } as any);
     const saved: RecipePreparation = (await this.prepRepo.save(p as any)) as RecipePreparation;
 
