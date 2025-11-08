@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
 import { WasteRecord } from './entities/waste-record.entity';
 
 export interface CreateWasteRecordDto {
@@ -15,7 +16,10 @@ export interface UpdateWasteRecordDto extends Partial<CreateWasteRecordDto> {}
 
 @Injectable()
 export class WasteRecordsService {
-  constructor(@InjectRepository(WasteRecord) private readonly repo: Repository<WasteRecord>) {}
+  constructor(
+    @InjectRepository(WasteRecord) private readonly repo: Repository<WasteRecord>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+  ) {}
 
   async create(dto: CreateWasteRecordDto) {
     const entity = this.repo.create({
@@ -25,7 +29,21 @@ export class WasteRecordsService {
       unit: dto.unit,
       reason: dto.reason ?? null,
     } as any);
-    return this.repo.save(entity);
+    const saved = await this.repo.save(entity);
+    
+    // Send notification
+    try {
+      this.notificationsClient.emit({ cmd: 'waste-records.notification' }, {
+        type: 'waste_record_created',
+        title: 'Înregistrare deșeu nouă',
+        message: `S-a înregistrat un deșeu: ${dto.quantity} ${dto.unit}${dto.reason ? ` - ${dto.reason}` : ''}`,
+        data: { wasteRecordId: saved.id, ...dto }
+      });
+    } catch (error) {
+      console.error('Failed to send waste record notification:', error);
+    }
+    
+    return saved;
   }
 
   async findAll() {

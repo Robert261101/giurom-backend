@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
 import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
@@ -9,6 +10,17 @@ import { EmployeeModule } from './employee/employee.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_RMQ',
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
+          queueOptions: { durable: false },
+        },
+      },
+    ]),
     TypeOrmModule.forRoot({
       type: 'mysql',
       host: process.env.DB_HOST as string,

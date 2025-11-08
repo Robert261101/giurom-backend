@@ -114,6 +114,18 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: 'waste-records.notification' })
+  async handleWasteRecordsNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onWasteRecordsNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'company.notification' })
+  async handleCompanyNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onCompanyNotification(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: 'notifications.health' })
   health() {
     return { ok: true };

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
 import { Company } from './entity/company.entity';
 import { CompanyDocument } from './entity/company-document.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -16,6 +17,7 @@ export class CompanyService {
   constructor(
     @InjectRepository(Company) private readonly companyRepository: Repository<Company>,
     @InjectRepository(CompanyDocument) private readonly companyDocumentRepository: Repository<CompanyDocument>,
+    @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
   // Get the root directory for company files (corrected path to match project structure)
@@ -31,7 +33,24 @@ export class CompanyService {
     const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
     if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     const company = this.companyRepository.create(dto);
-    return await this.companyRepository.save(company);
+    const saved = await this.companyRepository.save(company);
+    
+    // Send notification
+    try {
+      this.notificationsClient.emit({ cmd: 'company.notification' }, {
+        type: 'company_created',
+        title: 'Companie nouă înregistrată',
+        message: `S-a înregistrat compania: ${dto.name} (CUI: ${dto.cui})`,
+        entity_id: saved.id,
+        entity_type: 'company',
+        priority: 'medium',
+        data: { companyId: saved.id, ...dto }
+      });
+    } catch (error) {
+      console.error('Failed to send company notification:', error);
+    }
+    
+    return saved;
   }
 
   async createCompanyWithDocuments(dto: CreateCompanyWithDocumentsDto): Promise<Company> {

@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
+import { Permissions } from './permissions/permissions.decorator';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
 import { LocationsService } from './locations/locations.service';
 import { CreateWorkLocationDto } from './locations/dto/create-work-location.dto';
@@ -10,13 +12,16 @@ import { CreateWorkLocationFileDto } from './locations/dto/create-work-location-
 import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 
 @Controller('locations')
+@UseGuards(PermissionsGuard)
 export class LocationsHttpController {
 	constructor(private readonly service: LocationsService) {}
 
 	@Post()
+	@Permissions('locations.create')
 	create(@Body() dto: CreateWorkLocationDto) { return this.service.createWorkLocation(dto); }
 
 	@Get()
+	@Permissions('locations.read')
 	findAll(
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
@@ -28,25 +33,32 @@ export class LocationsHttpController {
 	}
 
 	@Get('statistics')
+	@Permissions('locations.read')
 	stats() { return this.service.getLocationStatistics(); }
 
 	@Get(':id')
+	@Permissions('locations.read')
 	findOne(@Param('id') id: string) { return this.service.findWorkLocationById(parseInt(id, 10)); }
 
 	@Get('company/:companyId')
+	@Permissions('locations.read')
 	findByCompany(@Param('companyId') companyId: string) { return this.service.findWorkLocationsByCompany(parseInt(companyId, 10)); }
 
 	@Patch(':id')
+	@Permissions('locations.update')
 	update(@Param('id') id: string, @Body() dto: UpdateWorkLocationDto) { return this.service.updateWorkLocation(parseInt(id, 10), dto); }
 
 	@Delete(':id')
+	@Permissions('locations.delete')
 	remove(@Param('id') id: string) { return this.service.removeWorkLocation(parseInt(id, 10)); }
 
 	// Assignments
 	@Post('assignments')
+	@Permissions('locations.create')
 	createAssignment(@Body() dto: CreateTaskTemplateAssignmentDto) { return this.service.createTaskTemplateAssignment(dto); }
 
 	@Get('assignments')
+	@Permissions('locations.read')
 	findAllAssignments(
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
