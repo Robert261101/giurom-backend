@@ -25,6 +25,12 @@ export class CreateCompanyDocumentDto {
   @Length(5, 500)
   location_path: string;
 
+  @ApiProperty({ description: 'Folderul în care este stocat documentul', example: 'Contracte', required: false })
+  @IsString()
+  @IsOptional()
+  @Length(1, 100)
+  folder?: string;
+
   @ApiProperty({ description: 'Data încărcării', example: '2023-01-15' })
   @IsDateString()
   @IsNotEmpty()
@@ -35,4 +41,14 @@ export class CreateCompanyDocumentDto {
   @IsOptional()
   @Length(0, 1000)
   notes?: string;
-} 
+
+  @ApiProperty({ description: 'Conținutul fișierului în format base64', example: 'data:application/pdf;base64,JVBERi0...', required: false })
+  @IsString()
+  @IsOptional()
+  file_content?: string;
+
+  @ApiProperty({ description: 'Tipul MIME al fișierului', example: 'application/pdf', required: false })
+  @IsString()
+  @IsOptional()
+  mime_type?: string;
+}

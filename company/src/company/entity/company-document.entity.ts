@@ -18,6 +18,9 @@ export class CompanyDocument {
   @Column({ type: 'text' })
   location_path: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  folder: string | null;
+
   @Column({ type: 'date' })
   upload_date: Date;
 
@@ -27,4 +30,4 @@ export class CompanyDocument {
   @ManyToOne(() => Company, (company) => company.documents, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'company_id' })
   company: Company;
-} 
+}

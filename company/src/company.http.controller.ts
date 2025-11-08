@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe } from '@nestjs/common';
+import { Response } from 'express';
 import { CompanyService } from './company/company.service';
 import { CreateCompanyDto } from './company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
@@ -38,23 +39,97 @@ export class CompanyHttpController {
 
 	// Documents
 	@Get(':companyId/documents')
-	getDocs(@Param('companyId') companyId: string) { return this.service.findCompanyDocuments(parseInt(companyId, 10)); }
+	getDocs(@Param('companyId') companyId: string) { 
+		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId}`);
+		return this.service.findCompanyDocuments(parseInt(companyId, 10)); 
+	}
 
-	@Get('documents/:documentId')
-	getDoc(@Param('documentId') documentId: string) { return this.service.findDocumentById(parseInt(documentId, 10)); }
+	@Get(':companyId/documents/folders')
+	getCompanyFolders(@Param('companyId') companyId: string) {
+		console.log(`[COMPANY CONTROLLER] Getting folders for company ${companyId}`);
+		return this.service.getCompanyFolders(parseInt(companyId, 10));
+	}
+
+	@Get(':companyId/documents/folder/:folder')
+	getDocsByFolder(@Param('companyId') companyId: string, @Param('folder') folder: string) {
+		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId} in folder ${folder}`);
+		return this.service.findCompanyDocumentsByFolder(parseInt(companyId, 10), folder);
+	}
+
+	@Get('documents/:documentId/info')
+	getDoc(@Param('documentId') documentId: string) { 
+		console.log(`[COMPANY CONTROLLER] Getting document info for ID ${documentId}`);
+		return this.service.findDocumentById(parseInt(documentId, 10)); 
+	}
 
 	@Post(':companyId/documents')
-	createDoc(@Param('companyId') companyId: string, @Body() dto: Omit<CreateCompanyDocumentDto, 'company_id'>) {
+	createDoc(@Param('companyId') companyId: string, @Body() dto: CreateCompanyDocumentDto & { file_content?: string }) {
+		console.log(`[COMPANY CONTROLLER] Creating document for company ${companyId}`);
 		return this.service.createCompanyDocument({ ...(dto as any), company_id: parseInt(companyId, 10) });
 	}
 
 	@Patch('documents/:documentId')
 	updateDoc(@Param('documentId') documentId: string, @Body() dto: UpdateCompanyDocumentDto) {
+		console.log(`[COMPANY CONTROLLER] Updating document ${documentId}`);
 		return this.service.updateCompanyDocument(parseInt(documentId, 10), dto);
 	}
 
 	@Delete('documents/:documentId')
-	removeDoc(@Param('documentId') documentId: string) { return this.service.removeCompanyDocument(parseInt(documentId, 10)); }
+	removeDoc(@Param('documentId') documentId: string) { 
+		console.log(`[COMPANY CONTROLLER] Deleting document ${documentId}`);
+		return this.service.removeCompanyDocument(parseInt(documentId, 10)); 
+	}
+
+	// Serve company file (download or inline based on query)
+	@Get('documents/:fileId')
+	async getCompanyFile(
+		@Param('fileId', ParseIntPipe) fileId: number,
+		@Query('download') download: string,
+		@Res() res: Response,
+	) {
+		try {
+			console.log(`[COMPANY CONTROLLER] Serving company file ${fileId}, download: ${download}`);
+			const forceDownload = download === 'true';
+			const served = await this.service.serveCompanyFile(fileId, forceDownload);
+			const buffer = Buffer.from(served.data, 'base64');
+			console.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} with type ${served.mimeType}`);
+			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+			res.setHeader(
+				'Content-Disposition',
+				`${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
+			);
+			res.setHeader('Content-Length', buffer.length.toString());
+			return res.send(buffer);
+		} catch (error) {
+			console.error(`[COMPANY CONTROLLER] Error serving company file ${fileId}:`, error);
+			if (error instanceof Error && error.message.includes('nu a fost găsit')) {
+				return res.status(404).json({ error: 'File not found' });
+			}
+			return res.status(500).json({ error: 'Internal server error' });
+		}
+	}
+
+	// Force inline view
+	@Get('documents/:fileId/view')
+	async viewCompanyFile(
+		@Param('fileId', ParseIntPipe) fileId: number,
+		@Res() res: Response,
+	) {
+		try {
+			console.log(`[COMPANY CONTROLLER] Viewing company file ${fileId} inline`);
+			const served = await this.service.serveCompanyFile(fileId, false);
+			const buffer = Buffer.from(served.data, 'base64');
+			console.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} for inline view with type ${served.mimeType}`);
+			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+			res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
+			res.setHeader('Content-Length', buffer.length.toString());
+			return res.send(buffer);
+		} catch (error) {
+			console.error(`[COMPANY CONTROLLER] Error viewing company file ${fileId}:`, error);
+			if (error instanceof Error && error.message.includes('nu a fost găsit')) {
+				return res.status(404).json({ error: 'File not found' });
+			}
+			return res.status(500).json({ error: 'Internal server error' });
+		}
+	}
 }
-
-
