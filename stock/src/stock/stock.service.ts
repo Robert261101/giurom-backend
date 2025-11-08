@@ -8,6 +8,7 @@ import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
 import { WasteRecord } from './entities/waste-record.entity';
+import { ConsumptionRecord } from './entities/consumption-record.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateStockDto } from './dto/create-stock.dto';
@@ -16,6 +17,8 @@ import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { UpdateStockTransactionDto } from './dto/update-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { CreateConsumptionRecordDto } from './dto/create-consumption-record.dto';
+import { UpdateConsumptionRecordDto } from './dto/update-consumption-record.dto';
 import { AssignCategoryDto } from './dto/assign-category.dto';
 import { Category } from './entities/category.entity';
 
@@ -26,6 +29,7 @@ export class StockService {
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
     @InjectRepository(WasteRecord) private readonly wasteRecordRepo: Repository<WasteRecord>,
+    @InjectRepository(ConsumptionRecord) private readonly consumptionRecordRepo: Repository<ConsumptionRecord>,
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
@@ -126,7 +130,7 @@ export class StockService {
     await this.stockRepo.remove(stock);
   }
 
-  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation'): Promise<void> {
+  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation', employeeId?: number, locationId?: number): Promise<void> {
     let remaining = quantity;
     const stocks = await this.stockRepo.find({
       where: { product_id: productId, status: StockStatus.VALID, quantity: MoreThan(0) },
@@ -141,6 +145,10 @@ export class StockService {
         `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`,
       );
     }
+
+    // Get product info for consumption record
+    const product = await this.findProduct(productId);
+    
     for (const stock of stocks) {
       if (remaining <= 0) break;
       const availableInStock = Number(stock.quantity);
@@ -156,6 +164,21 @@ export class StockService {
       throw new BadRequestException(
         `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`,
       );
+    }
+
+    // Create consumption record
+    if (employeeId && locationId) {
+      const consumptionRecord = this.consumptionRecordRepo.create({
+        product_id: productId,
+        employee_id: employeeId,
+        quantity,
+        unit: product.unit,
+        location_id: locationId,
+        consumed_at: new Date(),
+        reason: `Consum pentru ${target}`,
+        product,
+      });
+      await this.consumptionRecordRepo.save(consumptionRecord);
     }
   }
 
@@ -380,6 +403,224 @@ export class StockService {
     );
     
     return savedWasteRecord;
+  }
+
+  // === CONSUMPTION RECORDS ===
+
+  async createConsumptionRecord(dto: CreateConsumptionRecordDto): Promise<ConsumptionRecord> {
+    // Verify product exists if product_id is provided
+    let product = null;
+    if (dto.product_id) {
+      product = await this.findProduct(dto.product_id);
+    }
+    
+    const consumptionRecord = this.consumptionRecordRepo.create({
+      ...dto,
+      consumed_at: new Date(dto.consumed_at),
+      ...(dto.created_at && { created_at: new Date(dto.created_at) }),
+      ...(dto.updated_at && { updated_at: new Date(dto.updated_at) }),
+      product,
+    });
+    
+    return await this.consumptionRecordRepo.save(consumptionRecord);
+  }
+
+  async findConsumptionRecord(id: number): Promise<ConsumptionRecord> {
+    const consumptionRecord = await this.consumptionRecordRepo.findOne({ 
+      where: { id }, 
+      relations: ['product'] 
+    });
+    if (!consumptionRecord) throw new NotFoundException('Înregistrarea de consum nu a fost găsită');
+    return consumptionRecord;
+  }
+
+  async updateConsumptionRecord(id: number, dto: UpdateConsumptionRecordDto): Promise<ConsumptionRecord> {
+    const consumptionRecord = await this.findConsumptionRecord(id);
+    
+    // If product_id is being updated, verify new product exists
+    if (dto.product_id && dto.product_id !== consumptionRecord.product_id) {
+      await this.findProduct(dto.product_id);
+    }
+    
+    Object.assign(consumptionRecord, dto);
+    if (dto.consumed_at) {
+      consumptionRecord.consumed_at = new Date(dto.consumed_at);
+    }
+    if (dto.created_at) {
+      consumptionRecord.created_at = new Date(dto.created_at);
+    }
+    if (dto.updated_at) {
+      consumptionRecord.updated_at = new Date(dto.updated_at);
+    }
+    
+    return await this.consumptionRecordRepo.save(consumptionRecord);
+  }
+
+  async deleteConsumptionRecord(id: number): Promise<void> {
+    const consumptionRecord = await this.findConsumptionRecord(id);
+    await this.consumptionRecordRepo.remove(consumptionRecord);
+  }
+
+  async findAllConsumptionRecords(filters?: {
+    product_id?: number;
+    location_id?: number;
+    employee_id?: number;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<ConsumptionRecord[]> {
+    const queryBuilder = this.consumptionRecordRepo.createQueryBuilder('consumption')
+      .leftJoinAndSelect('consumption.product', 'product')
+      .orderBy('consumption.consumed_at', 'DESC');
+
+    if (filters?.product_id) {
+      queryBuilder.andWhere('consumption.product_id = :productId', { productId: filters.product_id });
+    }
+
+    if (filters?.location_id) {
+      queryBuilder.andWhere('consumption.location_id = :locationId', { locationId: filters.location_id });
+    }
+
+    if (filters?.employee_id) {
+      queryBuilder.andWhere('consumption.employee_id = :employeeId', { employeeId: filters.employee_id });
+    }
+
+    if (filters?.start_date) {
+      queryBuilder.andWhere('consumption.consumed_at >= :startDate', { startDate: filters.start_date });
+    }
+
+    if (filters?.end_date) {
+      queryBuilder.andWhere('consumption.consumed_at <= :endDate', { endDate: filters.end_date });
+    }
+
+    return await queryBuilder.getMany();
+  }
+
+  async getConsumptionStats(filters?: {
+    product_id?: number;
+    location_id?: number;
+    employee_id?: number;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<{
+    totalConsumed: number;
+    byProduct: Array<{ product_id: number; product_name: string; total_quantity: number; unit: string }>;
+    byLocation: Array<{ location_id: number; total_quantity: number }>;
+    byEmployee: Array<{ employee_id: number; total_quantity: number }>;
+  }> {
+    const queryBuilder = this.consumptionRecordRepo.createQueryBuilder('consumption')
+      .leftJoin('consumption.product', 'product');
+
+    // Apply filters
+    if (filters?.product_id) {
+      queryBuilder.andWhere('consumption.product_id = :productId', { productId: filters.product_id });
+    }
+
+    if (filters?.location_id) {
+      queryBuilder.andWhere('consumption.location_id = :locationId', { locationId: filters.location_id });
+    }
+
+    if (filters?.employee_id) {
+      queryBuilder.andWhere('consumption.employee_id = :employeeId', { employeeId: filters.employee_id });
+    }
+
+    if (filters?.start_date) {
+      queryBuilder.andWhere('consumption.consumed_at >= :startDate', { startDate: filters.start_date });
+    }
+
+    if (filters?.end_date) {
+      queryBuilder.andWhere('consumption.consumed_at <= :endDate', { endDate: filters.end_date });
+    }
+
+    // Total consumed
+    const totalResult = await queryBuilder
+      .select('SUM(consumption.quantity)', 'total')
+      .getRawOne();
+    
+    const totalConsumed = parseFloat(totalResult?.total || '0');
+
+    // By product
+    const byProduct = await queryBuilder
+      .select([
+        'consumption.product_id as product_id',
+        'product.name as product_name',
+        'SUM(consumption.quantity) as total_quantity',
+        'product.unit as unit'
+      ])
+      .groupBy('consumption.product_id, product.name, product.unit')
+      .getRawMany();
+
+    // By location
+    const byLocation = await queryBuilder
+      .select([
+        'consumption.location_id as location_id',
+        'SUM(consumption.quantity) as total_quantity'
+      ])
+      .groupBy('consumption.location_id')
+      .getRawMany();
+
+    // By employee
+    const byEmployee = await queryBuilder
+      .select([
+        'consumption.employee_id as employee_id',
+        'SUM(consumption.quantity) as total_quantity'
+      ])
+      .where('consumption.employee_id IS NOT NULL')
+      .groupBy('consumption.employee_id')
+      .getRawMany();
+
+    return {
+      totalConsumed,
+      byProduct: byProduct.map(item => ({
+        product_id: parseInt(item.product_id),
+        product_name: item.product_name || 'Unknown',
+        total_quantity: parseFloat(item.total_quantity),
+        unit: item.unit || ''
+      })),
+      byLocation: byLocation.map(item => ({
+        location_id: parseInt(item.location_id),
+        total_quantity: parseFloat(item.total_quantity)
+      })),
+      byEmployee: byEmployee.map(item => ({
+        employee_id: parseInt(item.employee_id),
+        total_quantity: parseFloat(item.total_quantity)
+      }))
+    };
+  }
+
+  async consumeForRecipePreparation(payload: {
+    recipe_preparation_id: number;
+    ingredients: Array<{ product_id: number; quantity: number }>;
+    employee_id: number;
+    location_id: number;
+  }): Promise<void> {
+    const { recipe_preparation_id, ingredients, employee_id, location_id } = payload;
+
+    // Process each ingredient
+    for (const ingredient of ingredients) {
+      // First consume the product from stock
+      await this.consumeProduct(
+        ingredient.product_id,
+        ingredient.quantity,
+        'recipe-preparation',
+        employee_id,
+        location_id
+      );
+
+      // Create consumption record for recipe preparation
+      const product = await this.findProduct(ingredient.product_id);
+      const consumptionRecord = this.consumptionRecordRepo.create({
+        recipe_preparation_id,
+        product_id: ingredient.product_id,
+        employee_id,
+        quantity: ingredient.quantity,
+        unit: product.unit,
+        location_id,
+        consumed_at: new Date(),
+        reason: `Consum pentru prepararea rețetei ${recipe_preparation_id}`,
+        product,
+      });
+      await this.consumptionRecordRepo.save(consumptionRecord);
+    }
   }
 
 }

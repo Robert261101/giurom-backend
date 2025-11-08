@@ -8,6 +8,8 @@ import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { CreateConsumptionRecordDto } from './dto/create-consumption-record.dto';
+import { UpdateConsumptionRecordDto } from './dto/update-consumption-record.dto';
 import { AssignCategoryDto } from './dto/assign-category.dto';
 
 @Controller('stock')
@@ -34,8 +36,8 @@ export class StockHttpController {
 
 	// Consume product (FIFO by expiration)
 	@Post('consume') @Permissions('stock.update')
-	consume(@Body() dto: { product_id: number; quantity: number; target?: string }) {
-		return this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target);
+	consume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number }) {
+		return this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target, dto.employee_id, dto.location_id);
 	}
 
 	// === WASTE RECORDS ===
@@ -81,6 +83,73 @@ export class StockHttpController {
   @Post('trigger-low-stock-check') @Permissions('stock.update')
   triggerLowStockCheck() { 
     return this.service.checkLowStockProducts(); 
+  }
+
+  // === CONSUMPTION RECORDS ===
+  @Post('consumption-records') @Permissions('stock.create')
+  createConsumptionRecord(@Body() dto: CreateConsumptionRecordDto) { 
+    return this.service.createConsumptionRecord(dto); 
+  }
+
+  @Get('consumption-records') @Permissions('stock.read')
+  getConsumptionRecords(
+    @Query('product_id') productId?: string,
+    @Query('location_id') locationId?: string,
+    @Query('employee_id') employeeId?: string,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string
+  ) { 
+    const filters = {
+      ...(productId && { product_id: Number(productId) }),
+      ...(locationId && { location_id: Number(locationId) }),
+      ...(employeeId && { employee_id: Number(employeeId) }),
+      ...(startDate && { start_date: startDate }),
+      ...(endDate && { end_date: endDate })
+    };
+    return this.service.findAllConsumptionRecords(Object.keys(filters).length > 0 ? filters : undefined); 
+  }
+
+  @Get('consumption-records/:id') @Permissions('stock.read')
+  getConsumptionRecord(@Param('id') id: string) { 
+    return this.service.findConsumptionRecord(Number(id)); 
+  }
+
+  @Patch('consumption-records/:id') @Permissions('stock.update')
+  updateConsumptionRecord(@Param('id') id: string, @Body() dto: UpdateConsumptionRecordDto) { 
+    return this.service.updateConsumptionRecord(Number(id), dto); 
+  }
+
+  @Delete('consumption-records/:id') @Permissions('stock.delete')
+  deleteConsumptionRecord(@Param('id') id: string) { 
+    return this.service.deleteConsumptionRecord(Number(id)); 
+  }
+
+  @Get('consumption-records/stats') @Permissions('stock.read')
+  getConsumptionStats(
+    @Query('product_id') productId?: string,
+    @Query('location_id') locationId?: string,
+    @Query('employee_id') employeeId?: string,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string
+  ) { 
+    const filters = {
+      ...(productId && { product_id: Number(productId) }),
+      ...(locationId && { location_id: Number(locationId) }),
+      ...(employeeId && { employee_id: Number(employeeId) }),
+      ...(startDate && { start_date: startDate }),
+      ...(endDate && { end_date: endDate })
+    };
+    return this.service.getConsumptionStats(Object.keys(filters).length > 0 ? filters : undefined); 
+  }
+
+  @Post('consume-for-recipe') @Permissions('stock.update')
+  consumeForRecipe(@Body() payload: { 
+    recipe_preparation_id: number; 
+    ingredients: Array<{ product_id: number; quantity: number }>; 
+    employee_id: number; 
+    location_id: number 
+  }) {
+    return this.service.consumeForRecipePreparation(payload);
   }
 }
 
