@@ -29,8 +29,8 @@ export class ConsumptionRecord {
   @Column({ type: 'varchar', length: 50, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   unit: string;
 
-  @Column()
-  location_id: number;
+  @Column({ nullable: true })
+  location_id?: number;
 
   @Column({ type: 'datetime' })
   consumed_at: Date;

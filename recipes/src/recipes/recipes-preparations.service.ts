@@ -56,13 +56,14 @@ export class RecipePreparationsService {
       .leftJoinAndSelect('recipe.category', 'category')
       .leftJoinAndSelect('preparation.labels', 'labels');
     
-    // FILTRARE OBLIGATORIE - afișează DOAR preparations cu location_id setat
-    queryBuilder.andWhere('preparation.location_id IS NOT NULL');
-    
-    // Add location filter
+    // Add location filter - if locationId is provided, filter by it
+    // if not provided, still filter out preparations without location_id
     if (locationId !== undefined) {
       queryBuilder.andWhere('preparation.location_id = :locationId', { locationId });
       console.log('🔍 [RecipePreparationsService] Filtrăm preparations după location_id:', locationId);
+    } else {
+      // FILTRARE OBLIGATORIE - afișează DOAR preparations cu location_id setat
+      queryBuilder.andWhere('preparation.location_id IS NOT NULL');
     }
     
     const rows = await queryBuilder

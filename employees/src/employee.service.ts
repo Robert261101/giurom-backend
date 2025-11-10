@@ -182,8 +182,12 @@ export class EmployeeService {
 
     // Filtrare după locația din employees_locations
     if (location_id) {
-      console.log('🔍 [EMPLOYEES] Applying location filter:', location_id);
-      queryBuilder.andWhere('employeeLocations.idLocation = :location_id', { location_id });
+      console.log('🔍 [EMPLOYEES] Applying location filter for location_id:', location_id);
+      // Check both employee_locations table and work_location_default_id field
+      queryBuilder.andWhere(
+        '(employeeLocations.idLocation = :location_id OR employee.work_location_default_id = :location_id)',
+        { location_id }
+      );
     }
 
     // Filtrare după numele departamentului - temporar dezactivată (tabela worklocation_departments nu există)
