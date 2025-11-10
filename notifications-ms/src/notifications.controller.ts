@@ -1,19 +1,24 @@
-import { Controller, Get, Post, Patch, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query, UseGuards } from '@nestjs/common';
 import { Ctx, MessagePattern, Payload, RmqContext } from '@nestjs/microservices';
 import { NotificationsService } from './notifications.service';
+import { Permissions } from './permissions/permissions.decorator';
+import { PermissionsGuard } from './permissions/permissions.guard';
 
 @Controller('notifications')
+@UseGuards(PermissionsGuard)
 export class NotificationsController {
   constructor(private readonly service: NotificationsService) {}
 
   // HTTP endpoints for frontend
   @Get('unread-count')
+  @Permissions('notifications.read')
   getUnreadCountHttp() {
     return this.service.getUnreadCount();
   }
 
   // List notifications
   @Get()
+  @Permissions('notifications.read')
   findAll(@Query('userId') _userId?: string) {
     // userId is currently ignored in this minimal implementation
     return this.service.findAll();
@@ -21,18 +26,21 @@ export class NotificationsController {
 
   // Mark one as read
   @Patch(':id/read')
+  @Permissions('notifications.update')
   markAsRead(@Param('id') id: string) {
     return this.service.markAsRead(Number(id));
   }
 
   // Mark all as read
   @Patch('mark-all-read')
+  @Permissions('notifications.update')
   markAllAsRead() {
     return this.service.markAllAsRead();
   }
 
   // Trigger expiring labels check (demo/seed)
   @Post('check-expiring-labels')
+  @Permissions('notifications.create')
   checkExpiringLabels() {
     return this.service.seedExpiringLabel();
   }
@@ -56,7 +64,9 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'suppliers.notification' })
   async handleSupplierNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received supplier notification message:`, JSON.stringify(data, null, 2));
     await this.service.onSupplierNotification(data);
+    console.log(`✅ [NOTIFICATIONS CONTROLLER] Supplier notification processed successfully`);
     return true;
   }
 
@@ -74,7 +84,9 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'locations.notification' })
   async handleLocationNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received location notification message:`, data);
     await this.service.onLocationNotification(data);
+    console.log(`✅ [NOTIFICATIONS CONTROLLER] Location notification processed successfully`);
     return true;
   }
 
@@ -122,7 +134,9 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'company.notification' })
   async handleCompanyNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received company notification message:`, JSON.stringify(data, null, 2));
     await this.service.onCompanyNotification(data);
+    console.log(`✅ [NOTIFICATIONS CONTROLLER] Company notification processed successfully`);
     return true;
   }
 

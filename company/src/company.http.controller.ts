@@ -15,84 +15,84 @@ export class CompanyHttpController {
 	constructor(private readonly service: CompanyService) {}
 
 	@Post()
-	@Permissions('company.create')
+	@Permissions('companies.create')
 	create(@Body() dto: CreateCompanyDto) { return this.service.createCompany(dto); }
 
 	@Post('with-documents')
-	@Permissions('company.create')
+	@Permissions('companies.create')
 	createWithDocs(@Body() dto: CreateCompanyWithDocumentsDto) { return this.service.createCompanyWithDocuments(dto); }
 
 	@Get()
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	findAll(@Query('page') page = '1', @Query('limit') limit = '10', @Query('search') search?: string, @Query('status') status?: string) {
 		return this.service.findAllCompanies(parseInt(page, 10), parseInt(limit, 10), search, status);
 	}
 
 	@Get('statistics')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	stats() { return this.service.getCompanyStatistics(); }
 
 	@Get(':id')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	findOne(@Param('id') id: string) { return this.service.findCompanyById(parseInt(id, 10)); }
 
 	@Get('cui/:cui')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	findByCui(@Param('cui') cui: string) { return this.service.findCompanyByCui(cui); }
 
 	@Patch(':id')
-	@Permissions('company.update')
+	@Permissions('companies.update')
 	update(@Param('id') id: string, @Body() dto: UpdateCompanyDto) { return this.service.updateCompany(parseInt(id, 10), dto); }
 
 	@Delete(':id')
-	@Permissions('company.delete')
+	@Permissions('companies.delete')
 	remove(@Param('id') id: string) { return this.service.removeCompany(parseInt(id, 10)); }
 
 	// Documents
 	@Get(':companyId/documents')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	getDocs(@Param('companyId') companyId: string) { 
 		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId}`);
 		return this.service.findCompanyDocuments(parseInt(companyId, 10)); 
 	}
 
 	@Get(':companyId/documents/folders')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	getCompanyFolders(@Param('companyId') companyId: string) {
 		console.log(`[COMPANY CONTROLLER] Getting folders for company ${companyId}`);
 		return this.service.getCompanyFolders(parseInt(companyId, 10));
 	}
 
 	@Get(':companyId/documents/folder/:folder')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	getDocsByFolder(@Param('companyId') companyId: string, @Param('folder') folder: string) {
 		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId} in folder ${folder}`);
 		return this.service.findCompanyDocumentsByFolder(parseInt(companyId, 10), folder);
 	}
 
 	@Get('documents/:documentId/info')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	getDoc(@Param('documentId') documentId: string) { 
 		console.log(`[COMPANY CONTROLLER] Getting document info for ID ${documentId}`);
 		return this.service.findDocumentById(parseInt(documentId, 10)); 
 	}
 
 	@Post(':companyId/documents')
-	@Permissions('company.create')
+	@Permissions('companies.create')
 	createDoc(@Param('companyId') companyId: string, @Body() dto: CreateCompanyDocumentDto & { file_content?: string }) {
 		console.log(`[COMPANY CONTROLLER] Creating document for company ${companyId}`);
 		return this.service.createCompanyDocument({ ...(dto as any), company_id: parseInt(companyId, 10) });
 	}
 
 	@Patch('documents/:documentId')
-	@Permissions('company.update')
+	@Permissions('companies.update')
 	updateDoc(@Param('documentId') documentId: string, @Body() dto: UpdateCompanyDocumentDto) {
 		console.log(`[COMPANY CONTROLLER] Updating document ${documentId}`);
 		return this.service.updateCompanyDocument(parseInt(documentId, 10), dto);
 	}
 
 	@Delete('documents/:documentId')
-	@Permissions('company.delete')
+	@Permissions('companies.delete')
 	removeDoc(@Param('documentId') documentId: string) { 
 		console.log(`[COMPANY CONTROLLER] Deleting document ${documentId}`);
 		return this.service.removeCompanyDocument(parseInt(documentId, 10)); 
@@ -100,7 +100,7 @@ export class CompanyHttpController {
 
 	// Serve company file (download or inline based on query)
 	@Get('documents/:fileId')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	async getCompanyFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Query('download') download: string,
@@ -130,7 +130,7 @@ export class CompanyHttpController {
 
 	// Force inline view
 	@Get('documents/:fileId/view')
-	@Permissions('company.read')
+	@Permissions('companies.read')
 	async viewCompanyFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Res() res: Response,

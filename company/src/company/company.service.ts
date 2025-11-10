@@ -37,17 +37,26 @@ export class CompanyService {
     
     // Send notification
     try {
-      this.notificationsClient.emit({ cmd: 'company.notification' }, {
+      console.log(`🔍 [COMPANY SERVICE] Attempting to send company notification for company ID: ${saved.id}`);
+      console.log(`📝 Notification details - Name: ${dto.company_name}, CUI: ${dto.cui}`);
+      
+      const notificationData = {
         type: 'company_created',
-        title: 'Companie nouă înregistrată',
-        message: `S-a înregistrat compania: ${dto.name} (CUI: ${dto.cui})`,
+        title: 'Companie noua inregistrata',
+        description: `S-a inregistrat compania: ${dto.company_name} (CUI: ${dto.cui})`,
         entity_id: saved.id,
         entity_type: 'company',
         priority: 'medium',
-        data: { companyId: saved.id, ...dto }
-      });
+        metadata: { companyId: saved.id, ...dto }
+      };
+      
+      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      
+      this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
+      
+      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for company ${saved.id}`);
     } catch (error) {
-      console.error('Failed to send company notification:', error);
+      console.error('❌ [COMPANY SERVICE] Failed to send company notification:', error);
     }
     
     return saved;
@@ -148,18 +157,76 @@ export class CompanyService {
   }
 
   async updateCompany(id: number, dto: UpdateCompanyDto): Promise<Company> {
+    console.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
+    
     const company = await this.findCompanyById(id);
     if (dto.cui && dto.cui !== company.cui) {
       const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
       if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     }
     Object.assign(company, dto);
-    return await this.companyRepository.save(company);
+    const updatedCompany = await this.companyRepository.save(company);
+    
+    // Send notification for updated company
+    try {
+      console.log(`🔔 [COMPANY SERVICE] Sending notification for updated company ${updatedCompany.id}`);
+      
+      const notificationData = {
+        type: 'company_updated',
+        title: 'Companie modificata',
+        description: `Compania ${company.company_name} a fost modificata`,
+        entity_id: updatedCompany.id,
+        entity_type: 'company',
+        priority: 'medium',
+        metadata: { 
+          companyId: updatedCompany.id,
+          oldName: company.company_name,
+          newName: updatedCompany.company_name,
+          updatedFields: Object.keys(dto)
+        }
+      };
+      
+      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      
+      this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
+      
+      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for updated company ${updatedCompany.id}`);
+    } catch (error) {
+      console.error('❌ [COMPANY SERVICE] Failed to send company update notification:', error);
+    }
+    
+    return updatedCompany;
   }
 
   async removeCompany(id: number): Promise<void> {
+    console.log(`🔍 [COMPANY SERVICE] Removing company ${id}`);
+    
     const company = await this.findCompanyById(id);
+    const companyName = company.company_name;
     await this.companyRepository.remove(company);
+    
+    // Send notification for deleted company
+    try {
+      console.log(`🔔 [COMPANY SERVICE] Sending notification for deleted company ${id}`);
+      
+      const notificationData = {
+        type: 'company_deleted',
+        title: 'Companie stearsa',
+        description: `Compania ${companyName} a fost stearsa`,
+        entity_id: id,
+        entity_type: 'company',
+        priority: 'medium',
+        metadata: { companyId: id, companyName }
+      };
+      
+      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      
+      this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
+      
+      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for deleted company ${id}`);
+    } catch (error) {
+      console.error('❌ [COMPANY SERVICE] Failed to send company delete notification:', error);
+    }
   }
 
   async createCompanyDocument(dto: CreateCompanyDocumentDto & { file_content?: string }): Promise<CompanyDocument> {
