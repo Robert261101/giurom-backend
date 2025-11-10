@@ -57,7 +57,7 @@ export class NotificationsService {
     // Create a persistent notification for expiring label
     const saved = await this.create({
       type: 'label_expiring',
-      title: 'Etichetă aproape de expirare',
+      title: 'Eticheta aproape de expirare',
       description: `Eticheta ${event.labelCode} va expira la ${new Date(event.expiresAt).toLocaleString('ro-RO')}`,
       entity_id: event.labelId,
       entity_type: 'recipe_label',

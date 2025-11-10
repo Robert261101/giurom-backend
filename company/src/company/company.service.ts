@@ -42,8 +42,8 @@ export class CompanyService {
       
       const notificationData = {
         type: 'company_created',
-        title: 'Companie nouă înregistrată',
-        description: `S-a înregistrat compania: ${dto.company_name} (CUI: ${dto.cui})`,
+        title: 'Companie noua inregistrata',
+        description: `S-a inregistrat compania: ${dto.company_name} (CUI: ${dto.cui})`,
         entity_id: saved.id,
         entity_type: 'company',
         priority: 'medium',
@@ -173,8 +173,8 @@ export class CompanyService {
       
       const notificationData = {
         type: 'company_updated',
-        title: 'Companie modificată',
-        description: `Compania ${company.company_name} a fost modificată`,
+        title: 'Companie modificata',
+        description: `Compania ${company.company_name} a fost modificata`,
         entity_id: updatedCompany.id,
         entity_type: 'company',
         priority: 'medium',
@@ -211,8 +211,8 @@ export class CompanyService {
       
       const notificationData = {
         type: 'company_deleted',
-        title: 'Companie ștearsă',
-        description: `Compania ${companyName} a fost ștearsă`,
+        title: 'Companie stearsa',
+        description: `Compania ${companyName} a fost stearsa`,
         entity_id: id,
         entity_type: 'company',
         priority: 'medium',

@@ -517,7 +517,7 @@ export class EmployeeService {
     await this.sendEmployeeNotification(
       'employee_updated',
       'Angajat modificat',
-      `Au fost modificate informațiile angajatului: ${updatedEmployee.first_name} ${updatedEmployee.last_name}`,
+      `Au fost modificate informatiile angajatului: ${updatedEmployee.first_name} ${updatedEmployee.last_name}`,
       {
         employeeId: updatedEmployee.id,
         firstName: updatedEmployee.first_name,
@@ -589,8 +589,8 @@ export class EmployeeService {
     // 7. Send notification that employee was deleted
     await this.sendEmployeeNotification(
       'employee_deleted',
-      'Angajat șters',
-      `Angajatul ${employee.first_name} ${employee.last_name} a fost șters din sistem`,
+      'Angajat sters',
+      `Angajatul ${employee.first_name} ${employee.last_name} a fost sters din sistem`,
       {
         employeeId: employee.id,
         firstName: employee.first_name,

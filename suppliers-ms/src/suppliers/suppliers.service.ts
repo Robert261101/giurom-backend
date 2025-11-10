@@ -375,8 +375,8 @@ export class SuppliersService {
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new product ${savedProduct.id}`);
     await this.sendSupplierNotification(
       'supplier_product_added',
-      'Produs adăugat furnizor',
-      `A fost adăugat un produs la furnizorul ${supplier.supplier_name}`,
+      'Produs adaugat furnizor',
+      `A fost adaugat un produs la furnizorul ${supplier.supplier_name}`,
       supplier.id,
       { 
         productId: savedProduct.id,
