@@ -7,7 +7,14 @@ const PORT = process.env.PORT || 3002;
 
 // Enable CORS
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001'],
+  origin: [
+    'http://localhost:3000', 
+    'http://localhost:3001',
+    'https://giurom.bitap.ro',
+    'http://giurom.bitap.ro',
+    // Permite toate domeniile Vercel
+    /^https:\/\/.*\.vercel\.app$/
+  ],
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   credentials: true,
 }));
@@ -190,11 +197,13 @@ const microservices = {
   }
 };
 
+const wsProxies = [];
+
 // Create proxy middlewares for each microservice
 Object.keys(microservices).forEach(path => {
   const config = microservices[path];
-  
-  app.use(path, createProxyMiddleware({
+
+  const proxyMiddleware = createProxyMiddleware({
     target: config.target,
     changeOrigin: config.changeOrigin,
     logLevel: config.logLevel,
@@ -208,14 +217,26 @@ Object.keys(microservices).forEach(path => {
     },
     onError: (err, req, res) => {
       console.error(`[${new Date().toISOString()}] Proxy error for ${req.method} ${req.originalUrl}:`, err.message);
-      res.status(502).json({
-        error: 'Bad Gateway',
-        message: 'Microservice unavailable',
-        service: config.target,
-        timestamp: new Date().toISOString()
-      });
+      const isWebSocket = req.headers?.upgrade === 'websocket';
+
+      if (!isWebSocket && res && typeof res.writeHead === 'function') {
+        res.status(502).json({
+          error: 'Bad Gateway',
+          message: 'Microservice unavailable',
+          service: config.target,
+          timestamp: new Date().toISOString()
+        });
+      } else if (res && typeof res.destroy === 'function') {
+        res.destroy();
+      }
     }
-  }));
+  });
+
+  app.use(path, proxyMiddleware);
+
+  if (config.ws) {
+    wsProxies.push({ path, proxy: proxyMiddleware, config });
+  }
 });
 
 // Fallback for unknown routes
@@ -229,11 +250,24 @@ app.use('*', (req, res) => {
 });
 
 // Start the gateway
-app.listen(PORT, () => {
-  console.log(`ðŸš€ API Gateway is running on http://localhost:${PORT}`);
-  console.log(`ðŸ“‹ Health check: http://localhost:${PORT}/health`);
-  console.log('ðŸ”€ Routing configuration:');
+const server = app.listen(PORT, () => {
+  console.log(`🚀 API Gateway is running on http://localhost:${PORT}`);
+  console.log(`📋 Health check: http://localhost:${PORT}/health`);
+  console.log('🔀 Routing configuration:');
   Object.keys(microservices).forEach(path => {
     console.log(`   ${path} -> ${microservices[path].target}`);
   });
+});
+
+server.on('upgrade', (req, socket, head) => {
+  const pathname = req.url.split('?')[0];
+  const matchedProxy = wsProxies.find(({ path }) => pathname.startsWith(path));
+
+  if (matchedProxy) {
+    console.log(`[${new Date().toISOString()}] Upgrading WS ${pathname} -> ${matchedProxy.config.target}`);
+    matchedProxy.proxy.upgrade(req, socket, head);
+  } else {
+    console.warn(`[${new Date().toISOString()}] WS upgrade fără proxy configurat pentru ${pathname}`);
+    socket.destroy();
+  }
 });

@@ -314,34 +314,33 @@ export class AttendanceService implements OnModuleInit {
     if (check_in) {
       const checkInTime = new Date(check_in);
       const shiftStartTime = new Date(shift.start_datetime);
-      
-      // Extrag doar ora din shift (ignorăm data)
+
+      // Extrag doar ora din shift (ignorăm data pentru pontajul curent)
       const shiftStartHour = shiftStartTime.getHours();
       const shiftStartMinute = shiftStartTime.getMinutes();
-      
-      // Creez ora de început pentru ziua curentă
-      const today = new Date(date);
-      const todayShiftStart = new Date(today);
+
+      // Creez ora de început pentru ziua curentă (din pontaj)
+      const presenceDate = new Date(date);
+      const todayShiftStart = new Date(presenceDate);
       todayShiftStart.setHours(shiftStartHour, shiftStartMinute, 0, 0);
-      
-      // Ora maximă permisă (ora de început + 15 minute)
-      const maxAllowedTime = new Date(todayShiftStart.getTime() + 15 * 60 * 1000);
-      
+
+      // Pragul minim: cel puțin o oră înainte de începutul programului
+      const minimumLeadTimeMs = 60 * 60 * 1000; // 60 minute
+      const diffMs = todayShiftStart.getTime() - checkInTime.getTime();
+
       console.log(`🕐 Check-in time: ${checkInTime.toISOString()}`);
-      console.log(`🕐 Shift start time: ${todayShiftStart.toISOString()}`);
-      console.log(`🕐 Max allowed time: ${maxAllowedTime.toISOString()}`);
-      console.log(`🕐 Shift original: ${shiftStartTime.toISOString()}`);
-      console.log(`🕐 Shift hour: ${shiftStartHour}, minute: ${shiftStartMinute}`);
-      
-      // Dacă s-a făcut check-in înainte de ora de început + 15 minute
-      if (checkInTime <= maxAllowedTime) {
+      console.log(`🕐 Shift start time (pontaj): ${todayShiftStart.toISOString()}`);
+      console.log(`🕐 Diferență (ms) față de start: ${diffMs}`);
+      console.log(`🕐 Prag necesar (ms): ${minimumLeadTimeMs}`);
+
+      if (diffMs >= minimumLeadTimeMs) {
         await this.addEmployeePoints(
           shift.employee_id, 
           5, 
-          `Punctualitate - început program la timp (${checkInTime.toLocaleTimeString('ro-RO')})`
+          `Punctualitate - început program cu cel puțin o oră înainte (${checkInTime.toLocaleTimeString('ro-RO')})`
         );
       } else {
-        console.log(`⏰ Check-in tardiv pentru angajat ${shift.employee_id} - nu se acordă puncte`);
+        console.log(`⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte - nu se acordă puncte`);
       }
     }
     
