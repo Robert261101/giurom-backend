@@ -8,9 +8,15 @@ import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationEntity } from './notification.entity';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     HttpModule,
     // Database connection for persistent notifications storage
@@ -39,6 +45,13 @@ import { NotificationEntity } from './notification.entity';
     ]),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService, NotificationsGateway],
+  providers: [
+    NotificationsService, 
+    NotificationsGateway,
+    InternalServiceGuard,
+    { provide: APP_GUARD, useClass: InternalServiceGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}

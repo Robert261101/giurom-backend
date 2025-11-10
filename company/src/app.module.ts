@@ -8,9 +8,15 @@ import { CompanyDocument } from './company/entity/company-document.entity';
 import { CompanyService } from './company/company.service';
 import { CompanyMicroController } from './company.micro.controller';
 import { CompanyHttpController } from './company.http.controller';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './permissions/permissions.guard';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Module({
   imports: [
+    AuthModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ClientsModule.register([
       {
@@ -51,6 +57,12 @@ import { CompanyHttpController } from './company.http.controller';
     TypeOrmModule.forFeature([Company, CompanyDocument]),
   ],
   controllers: [CompanyMicroController, CompanyHttpController],
-  providers: [CompanyService],
+  providers: [
+    CompanyService,
+    InternalServiceGuard,
+    { provide: APP_GUARD, useClass: InternalServiceGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}

@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Headers,
   UseGuards,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -32,6 +33,8 @@ import { LeaveRequest } from './entities/leave-request.entity';
 @ApiBearerAuth()
 @UseGuards(PermissionsGuard)
 export class LeaveRequestsController {
+  private readonly logger = new Logger(LeaveRequestsController.name);
+
   constructor(private readonly leaveRequestsService: LeaveRequestsService) {}
 
   // POST /leave-requests – creare cerere (status implicit pending)
@@ -60,6 +63,7 @@ export class LeaveRequestsController {
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<LeaveRequest> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Create leave request called by user: ${userId}`);
     return this.leaveRequestsService.create(createLeaveRequestDto, userId);
   }
 
@@ -77,6 +81,7 @@ export class LeaveRequestsController {
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<LeaveRequest[]> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Find all leave requests called by user: ${userId} with filters: ${JSON.stringify(filters)}`);
     return this.leaveRequestsService.findAll(filters, userId);
   }
 
@@ -91,6 +96,7 @@ export class LeaveRequestsController {
   })
   findPending(@Headers('x-user-id') currentUserId?: string): Promise<LeaveRequest[]> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Find pending leave requests called by user: ${userId}`);
     return this.leaveRequestsService.findPending(userId);
   }
 
@@ -117,6 +123,7 @@ export class LeaveRequestsController {
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<LeaveRequest> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Find one leave request ${id} called by user: ${userId}`);
     return this.leaveRequestsService.findOne(id, userId);
   }
 
@@ -148,6 +155,7 @@ export class LeaveRequestsController {
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<LeaveRequest> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Update status for leave request ${id} called by user: ${userId}`);
     return this.leaveRequestsService.updateStatus(id, updateStatusDto, userId);
   }
 
@@ -177,6 +185,7 @@ export class LeaveRequestsController {
     @Headers('x-user-id') currentUserId?: string,
   ): Promise<void> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
+    this.logger.log(`Delete leave request ${id} called by user: ${userId}`);
     return this.leaveRequestsService.remove(id, userId);
   }
 
@@ -193,6 +202,7 @@ export class LeaveRequestsController {
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Query('year') year?: number,
   ): Promise<any> {
+    this.logger.log(`Get employee stats for employee ${employeeId} called`);
     return this.leaveRequestsService.getEmployeeStats(employeeId, year);
   }
 }

@@ -202,6 +202,20 @@ Object.keys(microservices).forEach(path => {
     ws: config.ws,
     onProxyReq: (proxyReq, req, res) => {
       console.log(`[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`);
+      
+      // Forward authorization headers
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
+      
+      // Forward internal service headers for microservice-to-microservice communication
+      if (req.headers['x-internal-service']) {
+        proxyReq.setHeader('x-internal-service', req.headers['x-internal-service']);
+      }
+      
+      if (req.headers['x-service-secret']) {
+        proxyReq.setHeader('x-service-secret', req.headers['x-service-secret']);
+      }
     },
     onProxyRes: (proxyRes, req, res) => {
       console.log(`[${new Date().toISOString()}] Response ${proxyRes.statusCode} for ${req.method} ${req.originalUrl}`);

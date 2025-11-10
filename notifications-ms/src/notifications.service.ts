@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThanOrEqual } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { NotificationsGateway } from './notifications.gateway';
@@ -39,11 +39,21 @@ export class NotificationsService {
   }
 
   async onExpiringLabel(event: { labelId: number; labelCode: string; preparationId: number; expiresAt: string }) {
-    // Avoid duplicate notifications for same label if one already exists
-    const existing = await this.repo.findOne({ where: { entity_id: event.labelId, entity_type: 'recipe_label', type: 'label_expiring' } as any });
+    // For expiring labels, apply time-based deduplication (5 minutes)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const existing = await this.repo.findOne({ 
+      where: { 
+        entity_id: event.labelId, 
+        entity_type: 'recipe_label', 
+        type: 'label_expiring',
+        created_at: MoreThanOrEqual(fiveMinutesAgo) as any
+      } as any 
+    });
+    
     if (existing) {
       return existing;
     }
+    
     // Create a persistent notification for expiring label
     const saved = await this.create({
       type: 'label_expiring',
@@ -69,14 +79,28 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.entity_id, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
+    // For update-type notifications, apply time-based deduplication (5 minutes)
+    let existing: NotificationEntity | null = null;
+    if (event.type.includes('updated') || event.type.includes('modified')) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type,
+          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
+        } as any 
+      });
+    } else {
+      // For non-update notifications, check for any existing duplicate
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type 
+        } as any 
+      });
+    }
     
     if (existing) {
       return existing;
@@ -114,14 +138,28 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.entity_id, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
+    // For update-type notifications, apply time-based deduplication (5 minutes)
+    let existing: NotificationEntity | null = null;
+    if (event.type.includes('updated') || event.type.includes('modified')) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type,
+          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
+        } as any 
+      });
+    } else {
+      // For non-update notifications, check for any existing duplicate
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type 
+        } as any 
+      });
+    }
     
     if (existing) {
       return existing;
@@ -159,21 +197,39 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.entity_id, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
+    console.log(`🔍 [NOTIFICATIONS SERVICE] Received location notification - Type: ${event.type}, Location ID: ${event.entity_id}`);
+    
+    // For update-type notifications, apply time-based deduplication (5 minutes)
+    let existing: NotificationEntity | null = null;
+    if (event.type.includes('updated') || event.type.includes('modified')) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type,
+          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
+        } as any 
+      });
+    } else {
+      // For non-update notifications, check for any existing duplicate
+      existing = await this.repo.findOne({ 
+        where: { 
+          entity_id: event.entity_id, 
+          entity_type: event.entity_type, 
+          type: event.type 
+        } as any 
+      });
+    }
     
     if (existing) {
+      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate notification ignored - Type: ${event.type}, Location ID: ${event.entity_id}`);
       return existing;
     }
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
@@ -192,6 +248,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for location event`);
     return notifications;
   }
 
@@ -204,25 +261,20 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.entity_id, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received supplier notification:`, JSON.stringify(event, null, 2));
     
-    if (existing) {
-      return existing;
-    }
+    // Always create notifications for supplier events - remove duplicate detection for now
+    // This ensures that all supplier operations generate notifications
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for supplier notification`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
     for (const user of managerAndAdminUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -237,6 +289,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for supplier event`);
     return notifications;
   }
 
@@ -249,16 +302,21 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received leave notification event:`, JSON.stringify(event, null, 2));
+    
     // Avoid duplicate notifications for the same entity if one already exists
+    // Use the requestId from metadata if available, otherwise fall back to user_id
+    const entityId = event.metadata?.requestId || event.user_id;
     const existing = await this.repo.findOne({ 
       where: { 
-        entity_id: event.user_id, 
+        entity_id: entityId, 
         entity_type: event.entity_type, 
         type: event.type 
       } as any 
     });
     
     if (existing) {
+      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate leave notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -267,22 +325,28 @@ export class NotificationsService {
     let targetUsers = [];
     
     if (event.type === 'leave_request_created') {
+      console.log(`👥 [NOTIFICATIONS SERVICE] Leave request created - sending to managers and admins`);
       // Send to managers and admins
       targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
     } else {
+      console.log(`👤 [NOTIFICATIONS SERVICE] Leave request ${event.type} - sending to employee ${event.user_id}`);
       // Send to the specific employee
       targetUsers = [{ id: event.user_id }];
     }
     
+    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(targetUsers, null, 2));
+    
     // Create notifications for target users
     const notifications = [];
     for (const user of targetUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
         description: event.description,
         user_id: user.id,
-        entity_id: event.user_id,
+        entity_id: entityId,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
@@ -291,6 +355,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for leave event`);
     return notifications;
   }
 
@@ -303,16 +368,21 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received shift change notification event:`, JSON.stringify(event, null, 2));
+    
     // Avoid duplicate notifications for the same entity if one already exists
+    // Use the requestId from metadata if available, otherwise fall back to user_id
+    const entityId = event.metadata?.requestId || event.user_id;
     const existing = await this.repo.findOne({ 
       where: { 
-        entity_id: event.user_id, 
+        entity_id: entityId, 
         entity_type: event.entity_type, 
         type: event.type 
       } as any 
     });
     
     if (existing) {
+      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate shift change notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -321,22 +391,28 @@ export class NotificationsService {
     let targetUsers = [];
     
     if (event.type === 'shift_change_request_created') {
+      console.log(`👥 [NOTIFICATIONS SERVICE] Shift change request created - sending to managers and admins`);
       // Send to managers and admins
       targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
     } else {
+      console.log(`👤 [NOTIFICATIONS SERVICE] Shift change request ${event.type} - sending to employee ${event.user_id}`);
       // Send to the specific employee
       targetUsers = [{ id: event.user_id }];
     }
     
+    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(targetUsers, null, 2));
+    
     // Create notifications for target users
     const notifications = [];
     for (const user of targetUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
         description: event.description,
         user_id: user.id,
-        entity_id: event.user_id,
+        entity_id: entityId,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
@@ -345,6 +421,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for shift change event`);
     return notifications;
   }
 
@@ -357,16 +434,21 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received attendance notification event:`, JSON.stringify(event, null, 2));
+    
     // Avoid duplicate notifications for the same entity if one already exists
+    // Use the attendanceId from metadata if available, otherwise fall back to user_id
+    const entityId = event.metadata?.attendanceId || event.user_id;
     const existing = await this.repo.findOne({ 
       where: { 
-        entity_id: event.user_id, 
+        entity_id: entityId, 
         entity_type: event.entity_type, 
         type: event.type 
       } as any 
     });
     
     if (existing) {
+      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate attendance notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -381,15 +463,19 @@ export class NotificationsService {
       index === self.findIndex(u => u.id === user.id)
     );
     
+    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(uniqueTargetUsers, null, 2));
+    
     // Create notifications for target users
     const notifications = [];
     for (const user of uniqueTargetUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
         description: event.description,
         user_id: user.id,
-        entity_id: event.user_id,
+        entity_id: entityId,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
@@ -398,6 +484,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for attendance event`);
     return notifications;
   }
 
@@ -411,6 +498,8 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received shift notification event:`, JSON.stringify(event, null, 2));
+    
     // Avoid duplicate notifications for the same entity if one already exists
     const existing = await this.repo.findOne({ 
       where: { 
@@ -421,6 +510,7 @@ export class NotificationsService {
     });
     
     if (existing) {
+      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate shift notification ignored - Type: ${event.type}, Entity ID: ${event.entity_id}`);
       return existing;
     }
     
@@ -435,9 +525,13 @@ export class NotificationsService {
       index === self.findIndex(u => u.id === user.id)
     );
     
+    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(uniqueTargetUsers, null, 2));
+    
     // Create notifications for target users
     const notifications = [];
     for (const user of uniqueTargetUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -452,46 +546,64 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for shift event`);
     return notifications;
   }
 
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Fetching users with roles: ${roleNames.join(', ')}`);
+      
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      console.log(`📡 [NOTIFICATIONS SERVICE] Using API Gateway URL: ${apiGatewayUrl}`);
       
       // First get all roles
+      console.log(`📥 [NOTIFICATIONS SERVICE] Fetching all roles from ${apiGatewayUrl}/users/roles`);
       const rolesResponse = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/users/roles`)
       );
+      console.log(`✅ [NOTIFICATIONS SERVICE] Roles response received`);
       
       // Filter roles by names - the response is wrapped in a data object
       const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : rolesResponse.data.data || [];
+      console.log(`📋 [NOTIFICATIONS SERVICE] All roles data:`, JSON.stringify(rolesData, null, 2));
+      
       const targetRoles = rolesData.filter((role: any) => 
         roleNames.includes(role.name)
       );
+      console.log(`🎯 [NOTIFICATIONS SERVICE] Target roles found:`, JSON.stringify(targetRoles, null, 2));
       
       if (targetRoles.length === 0) {
+        console.log(`⚠️ [NOTIFICATIONS SERVICE] No target roles found`);
         return [];
       }
       
       // Get all user roles
+      console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user roles from ${apiGatewayUrl}/users/user-roles`);
       const userRolesResponse = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/users/user-roles`)
       );
+      console.log(`✅ [NOTIFICATIONS SERVICE] User roles response received`);
       
       // User roles data is also wrapped in a data object
       const userRolesData = Array.isArray(userRolesResponse.data) ? userRolesResponse.data : userRolesResponse.data.data || [];
+      console.log(`📋 [NOTIFICATIONS SERVICE] User roles data length: ${userRolesData.length}`);
       
       // Find user IDs that have the target roles
       const targetRoleIds = targetRoles.map((role: any) => role.id);
+      console.log(`🎯 [NOTIFICATIONS SERVICE] Target role IDs:`, targetRoleIds);
+      
       const targetUserIds = userRolesData
         .filter((userRole: any) => targetRoleIds.includes(userRole.roleId))
         .map((userRole: any) => userRole.userId);
+      console.log(`👥 [NOTIFICATIONS SERVICE] Target user IDs:`, targetUserIds);
       
       // Get unique user IDs
       const uniqueUserIds = [...new Set(targetUserIds)];
+      console.log(`🔢 [NOTIFICATIONS SERVICE] Unique user IDs:`, uniqueUserIds);
       
       if (uniqueUserIds.length === 0) {
+        console.log(`⚠️ [NOTIFICATIONS SERVICE] No users found with target roles`);
         return [];
       }
       
@@ -499,12 +611,15 @@ export class NotificationsService {
       const users = [];
       for (const userId of uniqueUserIds) {
         try {
+          console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user details for user ID: ${userId}`);
           const userResponse = await firstValueFrom(
             this.httpService.get(`${apiGatewayUrl}/users/${userId}`)
           );
+          console.log(`✅ [NOTIFICATIONS SERVICE] User response received for user ID: ${userId}`);
           
           // User data is also wrapped in a data object
           const userData = userResponse.data.data || userResponse.data;
+          console.log(`👤 [NOTIFICATIONS SERVICE] User data for user ID ${userId}:`, JSON.stringify(userData, null, 2));
           
           // Get user roles
           const userRoles = userRolesData
@@ -515,6 +630,8 @@ export class NotificationsService {
             })
             .filter(Boolean);
           
+          console.log(`🏷️ [NOTIFICATIONS SERVICE] Roles for user ID ${userId}:`, userRoles);
+          
           users.push({
             id: userData.id,
             email: userData.email,
@@ -522,13 +639,14 @@ export class NotificationsService {
           });
         } catch (error) {
           // Skip users that can't be fetched
-          console.warn(`Could not fetch user with ID ${userId}:`, error);
+          console.warn(`⚠️ [NOTIFICATIONS SERVICE] Could not fetch user with ID ${userId}:`, error);
         }
       }
       
+      console.log(`✅ [NOTIFICATIONS SERVICE] Found ${users.length} users with target roles`);
       return users;
     } catch (error) {
-      console.error('Error fetching users with roles:', error);
+      console.error('❌ [NOTIFICATIONS SERVICE] Error fetching users with roles:', error);
       // Return empty array if there's an error
       return [];
     }
@@ -587,7 +705,7 @@ export class NotificationsService {
   }
 
   async create(notification: Partial<NotificationEntity>) {
-    console.log('Creating notification with data:', notification);
+    console.log('📥 [NOTIFICATIONS SERVICE] Creating notification with data:', JSON.stringify(notification, null, 2));
     
     const entity = this.repo.create({
       type: notification.type || 'general',
@@ -603,11 +721,15 @@ export class NotificationsService {
       priority: (notification.priority as any) || 'low',
     } as any);
     
-    console.log('Entity to be saved:', entity);
+    console.log('📝 [NOTIFICATIONS SERVICE] Entity to be saved:', JSON.stringify(entity, null, 2));
     
     const saved = await this.repo.save(entity);
+    console.log('✅ [NOTIFICATIONS SERVICE] Notification saved with ID:', (saved as any).id);
+    
     const count = await this.repo.count({ where: { status: 'unread' } as any });
+    console.log('🔄 [NOTIFICATIONS SERVICE] Emitting unread count:', count);
     this.gateway.emitUnreadCount(count);
+    
     return saved;
   }
 
@@ -738,6 +860,8 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
+    console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
+    
     // Avoid duplicate notifications for the same entity if one already exists
     if (event.entity_id) {
       const existing = await this.repo.findOne({ 
@@ -749,16 +873,20 @@ export class NotificationsService {
       });
       
       if (existing) {
+        console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate company notification ignored - Type: ${event.type}, Company ID: ${event.entity_id}`);
         return existing;
       }
     }
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for company notification`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
     for (const user of managerAndAdminUsers) {
+      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -773,6 +901,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
+    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for company event`);
     return notifications;
   }
 }
