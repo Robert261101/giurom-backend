@@ -4,8 +4,17 @@ import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({ 
   namespace: '/tasks',  // Namespace pentru Socket.IO - trebuie să corespundă cu ruta din API Gateway
+  path: '/tasks/socket.io',
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001", "https://giurom.bitap.ro", "http://giurom.bitap.ro"],
+    origin: [
+      "http://localhost:3000", 
+      "http://localhost:3001", 
+      "https://giurom.bitap.ro", 
+      "http://giurom.bitap.ro",
+      // Permite toate domeniile Vercel (pattern pentru subdomenii)
+      /^https:\/\/.*\.vercel\.app$/,
+      /^https:\/\/.*\.vercel\.app\/.*$/
+    ],
     methods: ["GET", "POST"],
     credentials: true
   }
