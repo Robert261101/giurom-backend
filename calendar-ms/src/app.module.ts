@@ -7,12 +7,15 @@ import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule } from './entities/recurrence-rule.entity';
 import { ShiftChangeRequests } from './entities/shift-change-requests.entity';
 import { LeaveRequest } from './entities/leave-request.entity';
+import { EventCategory } from './entities/event-category.entity';
 import { CalendarService } from './calendar.service';
+import { EventCategoryService } from './event-category.service';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { CalendarController } from './calendar.controller';
+import { EventCategoryController } from './event-category.controller';
 import { CalendarMicroController } from './calendar.micro.controller';
 
 @Module({
@@ -42,19 +45,21 @@ import { CalendarMicroController } from './calendar.micro.controller';
         RecurrenceRule,
         ShiftChangeRequests,
         LeaveRequest,
+        EventCategory,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
-    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, ShiftChangeRequests, LeaveRequest]),
+    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, ShiftChangeRequests, LeaveRequest, EventCategory]),
   ],
-  controllers: [CalendarController, CalendarMicroController],
+  controllers: [CalendarController, EventCategoryController, CalendarMicroController],
   providers: [
     CalendarService,
+    EventCategoryService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
-  exports: [CalendarService, TypeOrmModule],
+  exports: [CalendarService, EventCategoryService, TypeOrmModule],
 })
 export class AppModule {}

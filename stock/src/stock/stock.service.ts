@@ -291,7 +291,7 @@ export class StockService {
           // Send notification for expiring product
           await this.sendStockNotification(
             'stock_expiring_soon',
-            'Produs care expiră în 7 zile',
+            'Produs care expira in 7 zile',
             `Produsul ${stock.product?.name} va expira la ${expirationDate.toLocaleDateString('ro-RO')}`,
             stock.product_id,
             {
@@ -330,7 +330,7 @@ export class StockService {
           await this.sendStockNotification(
             'stock_low_quantity',
             'Stoc minim atins',
-            `Produsul ${product.name} are doar ${quantity} unități rămase în stoc`,
+            `Produsul ${product.name} are doar ${quantity} unitati ramase in stoc`,
             product.id,
             {
               productName: product.name,
@@ -368,7 +368,7 @@ export class StockService {
     await this.sendStockNotification(
       'stock_wasted',
       'Produs aruncat',
-      `Produsul ${product.name} a fost înregistrat ca deșeu (cantitate: ${dto.quantity} ${dto.unit})`,
+      `Produsul ${product.name} a fost inregistrat ca deseu (cantitate: ${dto.quantity} ${dto.unit})`,
       product.id,
       {
         productName: product.name,

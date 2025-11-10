@@ -4,8 +4,11 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
+import { EventCategory } from './event-category.entity';
 
 @Entity('calendar_event')
 export class CalendarEvent {
@@ -38,6 +41,14 @@ export class CalendarEvent {
     collation: 'utf8mb4_unicode_ci' 
   })
   category: string;
+
+  // Relationship with EventCategory
+  @ManyToOne(() => EventCategory, { eager: true, nullable: true })
+  @JoinColumn({ name: 'category_id' })
+  categoryEntity?: EventCategory;
+
+  @Column({ name: 'category_id', nullable: true })
+  category_id?: number;
 
   @ApiProperty({ 
     description: 'Data și ora de început', 

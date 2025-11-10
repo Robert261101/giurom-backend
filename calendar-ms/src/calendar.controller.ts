@@ -27,6 +27,7 @@ import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
 import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule } from './entities/recurrence-rule.entity';
+import { EventCategory } from './entities/event-category.entity';
 
 @ApiTags('calendar')
 @Controller('calendar')
@@ -135,6 +136,19 @@ export class CalendarController {
   ): Promise<CalendarEvent[]> {
     const userId = currentUserId ? parseInt(currentUserId) : undefined;
     return this.calendarService.findEvents(filters, userId);
+  }
+
+  // GET /calendar/categories – obținere toate categoriile
+  @Get('categories')
+  @Permissions('calendar.read')
+  @ApiOperation({ summary: 'Obține toate categoriile de evenimente' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista categoriilor de evenimente',
+    type: [EventCategory],
+  })
+  findEventCategories(): Promise<EventCategory[]> {
+    return this.calendarService.getEventCategories();
   }
 
   // GET /calendar/events/:id – obținere eveniment specific

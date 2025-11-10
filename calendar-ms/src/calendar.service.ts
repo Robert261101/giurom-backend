@@ -5,10 +5,12 @@ import { firstValueFrom } from 'rxjs';
 import { Repository, Between, Like } from 'typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule, RecurrenceFrequency } from './entities/recurrence-rule.entity';
+import { EventCategory } from './entities/event-category.entity';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateRecurrenceRuleDto } from './dto/create-recurrence-rule.dto';
 import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
+import { EventCategoryService } from './event-category.service';
 
 @Injectable()
 export class CalendarService {
@@ -18,6 +20,7 @@ export class CalendarService {
     @InjectRepository(RecurrenceRule)
     private readonly recurrenceRepo: Repository<RecurrenceRule>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly eventCategoryService: EventCategoryService,
   ) {}
 
   private async sendCalendarNotification(
@@ -105,7 +108,7 @@ export class CalendarService {
     await this.sendCalendarNotification(
       'calendar_event_created',
       'Eveniment nou creat',
-      `A fost creat un nou eveniment în calendar: ${savedEvent.title}`,
+      `A fost creat un nou eveniment in calendar: ${savedEvent.title}`,
       savedEvent.id,
       {
         eventId: savedEvent.id,
@@ -340,5 +343,10 @@ export class CalendarService {
     }
 
     return nextDate;
+  }
+
+  // Get all event categories
+  async getEventCategories(): Promise<EventCategory[]> {
+    return this.eventCategoryService.findAll();
   }
 }

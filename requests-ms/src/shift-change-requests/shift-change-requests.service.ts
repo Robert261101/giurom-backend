@@ -164,8 +164,8 @@ export class ShiftChangeRequestsService {
     // Send notification to admins/managers about new shift change request
     await this.sendShiftChangeNotification(
       'shift_change_request_created',
-      'Cerere de schimb de tură nouă',
-      'A fost creată o nouă cerere de schimb de tură',
+      'Cerere de schimb de tura noua',
+      'A fost creata o noua cerere de schimb de tura',
       dto.employee_id,
       {
         requestId: savedRequest.id,
@@ -326,8 +326,8 @@ export class ShiftChangeRequestsService {
         // Notify employee who requested the change
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
-          'Cerere de schimb de tură aprobată',
-          'Cererea dumneavoastră de schimb de tură a fost aprobată',
+          'Cerere de schimb de tura aprobata',
+          'Cererea dumneavoastra de schimb de tura a fost aprobata',
           shiftChangeRequest.employee_id,
           {
             requestId: updatedRequest.id,
@@ -341,8 +341,8 @@ export class ShiftChangeRequestsService {
         // Notify replacement employee
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
-          'Cerere de schimb de tură aprobată',
-          'Cererea de schimb de tură a fost aprobată',
+          'Cerere de schimb de tura aprobata',
+          'Cererea de schimb de tura a fost aprobata',
           shiftChangeRequest.replacement_id,
           {
             requestId: updatedRequest.id,
@@ -356,8 +356,8 @@ export class ShiftChangeRequestsService {
         // Notify employee who requested the change
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
-          'Cerere de schimb de tură respinsă',
-          'Cererea dumneavoastră de schimb de tură a fost respinsă',
+          'Cerere de schimb de tura respinsa',
+          'Cererea dumneavoastra de schimb de tura a fost respinsa',
           shiftChangeRequest.employee_id,
           {
             requestId: updatedRequest.id,
@@ -372,8 +372,8 @@ export class ShiftChangeRequestsService {
         // Notify replacement employee
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
-          'Cerere de schimb de tură respinsă',
-          'Cererea de schimb de tură a fost respinsă',
+          'Cerere de schimb de tura respinsa',
+          'Cererea de schimb de tura a fost respinsa',
           shiftChangeRequest.replacement_id,
           {
             requestId: updatedRequest.id,

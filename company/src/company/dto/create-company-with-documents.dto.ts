@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsArray, ValidateNested, IsNumber } from 'class-validator';
+import { IsString, IsOptional, IsArray, ValidateNested, IsNumber, Length } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateCompanyDto } from './create-company.dto';
 
@@ -23,6 +23,12 @@ export class CreateCompanyDocumentUploadDto {
   @IsString()
   @IsOptional()
   document_type?: string;
+
+  @ApiProperty({ description: 'Folderul în care este stocat documentul', example: 'Contracte', required: false })
+  @IsString()
+  @IsOptional()
+  @Length(1, 100)
+  folder?: string;
 
   @ApiProperty({ description: 'Nota pentru document', example: 'Document original scanat', required: false })
   @IsString()
@@ -48,6 +54,11 @@ export class CreateCompanyDocumentUploadDto {
   @IsNumber()
   @IsOptional()
   size?: number;
+
+  @ApiProperty({ description: 'Calea către document', example: '/uploads/documents/2023/12/certificat_1.pdf' })
+  @IsString()
+  @IsOptional()
+  location_path?: string;
 }
 
 export class CreateCompanyWithDocumentsDto extends CreateCompanyDto {
@@ -57,4 +68,4 @@ export class CreateCompanyWithDocumentsDto extends CreateCompanyDto {
   @Type(() => CreateCompanyDocumentUploadDto)
   @IsOptional()
   documents?: CreateCompanyDocumentUploadDto[];
-} 
+}
