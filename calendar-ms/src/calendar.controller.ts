@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   HttpStatus,
   Headers,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,6 +29,7 @@ import { FilterCalendarEventsDto } from './dto/filter-calendar-events.dto';
 import { CalendarEvent } from './entities/calendar-event.entity';
 import { RecurrenceRule } from './entities/recurrence-rule.entity';
 import { EventCategory } from './entities/event-category.entity';
+import { Request } from 'express';
 
 @ApiTags('calendar')
 @Controller('calendar')
@@ -147,7 +149,9 @@ export class CalendarController {
     description: 'Lista categoriilor de evenimente',
     type: [EventCategory],
   })
-  findEventCategories(): Promise<EventCategory[]> {
+  findEventCategories(@Req() request: Request): Promise<EventCategory[]> {
+    console.log('🔍 CalendarController.findEventCategories called');
+    console.log('🔍 Request user:', request['user']);
     return this.calendarService.getEventCategories();
   }
 

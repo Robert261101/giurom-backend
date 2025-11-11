@@ -42,4 +42,3 @@ export class InternalServiceGuard implements CanActivate {
     this.logger.log('No internal service headers found, allowing other guards to handle request');
     return true;
   }
-}
