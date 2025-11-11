@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
+import { Permissions } from './permissions/permissions.decorator';
+import { PermissionsGuard } from './permissions/permissions.guard';
 import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
 import { LocationsService } from './locations/locations.service';
 import { CreateWorkLocationDto } from './locations/dto/create-work-location.dto';
@@ -10,13 +12,16 @@ import { CreateWorkLocationFileDto } from './locations/dto/create-work-location-
 import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 
 @Controller('locations')
+@UseGuards(PermissionsGuard)
 export class LocationsHttpController {
 	constructor(private readonly service: LocationsService) {}
 
 	@Post()
+	@Permissions('locations.create')
 	create(@Body() dto: CreateWorkLocationDto) { return this.service.createWorkLocation(dto); }
 
 	@Get()
+	@Permissions('locations.read')
 	findAll(
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
@@ -28,25 +33,32 @@ export class LocationsHttpController {
 	}
 
 	@Get('statistics')
+	@Permissions('locations.read')
 	stats() { return this.service.getLocationStatistics(); }
 
 	@Get(':id')
+	@Permissions('locations.read')
 	findOne(@Param('id') id: string) { return this.service.findWorkLocationById(parseInt(id, 10)); }
 
 	@Get('company/:companyId')
+	@Permissions('locations.read')
 	findByCompany(@Param('companyId') companyId: string) { return this.service.findWorkLocationsByCompany(parseInt(companyId, 10)); }
 
 	@Patch(':id')
+	@Permissions('locations.update')
 	update(@Param('id') id: string, @Body() dto: UpdateWorkLocationDto) { return this.service.updateWorkLocation(parseInt(id, 10), dto); }
 
 	@Delete(':id')
+	@Permissions('locations.delete')
 	remove(@Param('id') id: string) { return this.service.removeWorkLocation(parseInt(id, 10)); }
 
 	// Assignments
 	@Post('assignments')
+	@Permissions('locations.create')
 	createAssignment(@Body() dto: CreateTaskTemplateAssignmentDto) { return this.service.createTaskTemplateAssignment(dto); }
 
 	@Get('assignments')
+	@Permissions('locations.read')
 	findAllAssignments(
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
@@ -64,16 +76,20 @@ export class LocationsHttpController {
 	}
 
 	@Get('assignments/:id')
+	@Permissions('locations.read')
 	findAssignment(@Param('id') id: string) { return this.service.findTaskTemplateAssignmentById(parseInt(id, 10)); }
 
 	@Get(':locationId/assignments')
+	@Permissions('locations.read')
 	findAssignmentsByLocation(@Param('locationId') locationId: string) { return this.service.findTaskTemplateAssignmentsByLocation(parseInt(locationId, 10)); }
 
 	// Departments
 	@Get(':locationId/departments')
+	@Permissions('locations.read')
 	findDepartmentsByLocation(@Param('locationId') locationId: string) { return this.service.findDepartmentsByLocation(parseInt(locationId, 10)); }
 
 	@Post(':locationId/departments')
+	@Permissions('locations.create')
 	createDepartment(@Param('locationId') locationId: string, @Body() body: Omit<CreateWorkLocationDepartmentsDto, 'work_location_id'> & { work_location_id?: number }) {
 		return this.service.createDepartment({
 			work_location_id: body.work_location_id ?? parseInt(locationId, 10),
@@ -84,9 +100,11 @@ export class LocationsHttpController {
 	}
 
 	@Get('departments/:departmentId/positions')
+	@Permissions('locations.read')
 	findPositions(@Param('departmentId') departmentId: string) { return this.service.findPositionsByDepartment(parseInt(departmentId, 10)); }
 
 	@Post('departments/:departmentId/positions')
+	@Permissions('locations.create')
 	createPosition(@Param('departmentId') departmentId: string, @Body() body: { name: string; code: string; description?: string }) {
 		return this.service.createDepartmentPosition({ department_id: parseInt(departmentId, 10), name: body.name, code: body.code, description: body.description });
 	}
@@ -105,31 +123,37 @@ export class LocationsHttpController {
 
 	// Revenue points endpoints
 	@Post(':id/revenue-intervals')
+	@Permissions('locations.create')
 	setIntervals(@Param('id') id: string, @Body() body: { intervals: Array<{ min: number; max?: number | null; points: number }> }) {
 		return this.service.setRevenueIntervals(parseInt(id, 10), body.intervals || []);
 	}
 
 	@Get(':id/revenue-intervals')
+	@Permissions('locations.read')
 	getIntervals(@Param('id') id: string) {
 		return this.service.getRevenueIntervals(parseInt(id, 10));
 	}
 
 	@Patch(':id/manager-percent')
+	@Permissions('locations.update')
 	setManagerPercent(@Param('id') id: string, @Body() body: { manager_percent: number; fallback_revenue_per_point?: number }) {
 		return this.service.setManagerPercent(parseInt(id, 10), body.manager_percent, body.fallback_revenue_per_point);
 	}
 
 	@Get(':id/manager-config')
+	@Permissions('locations.read')
 	getManagerConfig(@Param('id') id: string) {
 		return this.service.getManagerConfig(parseInt(id, 10));
 	}
 
 	@Post(':id/revenue')
+	@Permissions('locations.create')
 	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string }) {
 		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url);
 	}
 
 	@Get(':id/revenue')
+	@Permissions('locations.read')
 	listRevenue(
 		@Param('id') id: string,
 		@Query('startDate') startDate?: string,
@@ -141,16 +165,19 @@ export class LocationsHttpController {
 	}
 
 	@Get(':id/manager-points')
+	@Permissions('locations.read')
 	managerPoints(@Param('id') id: string, @Query('date') date: string) {
 		return this.service.getManagerPointsForDate(parseInt(id, 10), date);
 	}
 
 	@Delete('revenue/:revenueId')
+	@Permissions('locations.delete')
 	deleteRevenue(@Param('revenueId') revenueId: string) {
 		return this.service.deleteRevenue(parseInt(revenueId, 10));
 	}
 
 	@Patch('revenue/:revenueId')
+	@Permissions('locations.update')
 	updateRevenue(@Param('revenueId') revenueId: string, @Body() body: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }) {
 		return this.service.updateRevenue(parseInt(revenueId, 10), body);
 	}
@@ -159,6 +186,7 @@ export class LocationsHttpController {
 
 	// List location files by location ID
 	@Get(':locationId/files')
+	@Permissions('locations.read')
 	async getLocationFiles(
 		@Param('locationId', ParseIntPipe) locationId: number,
 	) {
@@ -167,6 +195,7 @@ export class LocationsHttpController {
 
 	// Serve location file (download or inline based on query)
 	@Get('file/:fileId')
+	@Permissions('locations.read')
 	async getLocationFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Query('download') download: string,
@@ -186,6 +215,7 @@ export class LocationsHttpController {
 
 	// Force inline view
 	@Get('file/:fileId/view')
+	@Permissions('locations.read')
 	async viewLocationFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Res() res: Response,
@@ -208,6 +238,7 @@ export class LocationsHttpController {
 
 	// Create location file (metadata or with base64 content)
 	@Post(':locationId/files')
+	@Permissions('locations.create')
 	async addLocationFile(
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number },

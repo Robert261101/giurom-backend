@@ -398,7 +398,10 @@ export class EmployeeHttpController {
   async getLocationEmployees(
     @Param('locationId', ParseIntPipe) locationId: number,
   ): Promise<EmployeeLocation[]> {
-    return this.employeeService.findLocationEmployees(locationId);
+    console.log('🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:', locationId);
+    const result = await this.employeeService.findLocationEmployees(locationId);
+    console.log('🔍 [EMPLOYEES CONTROLLER] Angajați returnați:', result.length);
+    return result;
   }
 
   @Get('location/:locationId')

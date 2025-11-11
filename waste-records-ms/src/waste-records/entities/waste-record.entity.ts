@@ -9,6 +9,9 @@ export class WasteRecord {
   @Column({ type: 'int', nullable: true })
   product_id: number | null;
 
+  @Column({ type: 'int', nullable: true })
+  location_id: number | null;
+
   @Index()
   @Column({ type: 'int', nullable: true })
   recipe_id: number | null;
@@ -28,5 +31,3 @@ export class WasteRecord {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at: Date;
 }
-
-

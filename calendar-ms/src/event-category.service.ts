@@ -20,9 +20,12 @@ export class EventCategoryService {
 
   // Get all event categories
   async findAll(): Promise<EventCategory[]> {
-    return this.categoryRepo.find({
+    console.log('🔍 EventCategoryService.findAll called');
+    const categories = await this.categoryRepo.find({
       order: { name: 'ASC' },
     });
+    console.log('✅ EventCategoryService.findAll returning:', categories);
+    return categories;
   }
 
   // Get event category by ID
