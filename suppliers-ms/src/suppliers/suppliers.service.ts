@@ -51,19 +51,28 @@ export class SuppliersService {
     metadata?: any
   ): Promise<void> {
     try {
+      this.logger.log(`🔍 [SUPPLIERS SERVICE] Attempting to send notification - Type: ${type}, Supplier ID: ${supplierId}`);
+      this.logger.log(`📝 Notification details - Title: ${title}, Description: ${description}`);
+      
+      const notificationData = {
+        type,
+        title,
+        description,
+        entity_id: supplierId,
+        entity_type: 'supplier',
+        metadata,
+        priority: 'medium',
+      };
+      
+      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, {
-          type,
-          title,
-          description,
-          entity_id: supplierId,
-          entity_type: 'supplier',
-          metadata,
-          priority: 'medium',
-        })
+        this.notificationsClient.emit({ cmd: 'suppliers.notification' }, notificationData)
       );
+      
+      this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully sent notification for supplier ${supplierId}`);
     } catch (error: any) {
-      this.logger.warn(`Failed to send supplier notification: ${error?.message || error}`);
+      this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to send supplier notification: ${error?.message || error}`, error?.stack);
     }
   }
 
@@ -99,6 +108,8 @@ export class SuppliersService {
   }
 
   async createWithDocuments(dto: CreateSupplierWithDocumentsDto): Promise<Supplier> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating supplier with documents: ${JSON.stringify(dto, null, 2)}`);
+    
     const existingSupplier = await this.supplierRepo.findOne({
       where: [
         { registration_number: dto.registration_number },
@@ -106,6 +117,7 @@ export class SuppliersService {
       ],
     });
     if (existingSupplier) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Duplicate supplier detected: ${dto.registration_number} or ${dto.vat_number}`);
       throw new BadRequestException('Furnizor duplicat (registration_number sau vat_number)');
     }
     
@@ -118,19 +130,23 @@ export class SuppliersService {
     
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier saved with ID: ${savedSupplier.id}`);
+    
     await this.createSupplierFoldersWithCustomName(savedSupplier, dto.folderName, dto.documents);
     
     // Automatically assign supplier to location if location_id is provided
     if (location_id) {
       try {
+        this.logger.log(`📍 [SUPPLIERS SERVICE] Assigning supplier ${savedSupplier.id} to location ${location_id}`);
         await this.assignSupplierToLocation(savedSupplier.id, location_id);
       } catch (error: any) {
         // Log the error but don't fail the supplier creation
-        console.warn(`Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
       }
     }
 
     // Send notification for new supplier
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new supplier ${savedSupplier.id}`);
     await this.sendSupplierNotification(
       'supplier_created',
       'Furnizor nou creat',
@@ -280,6 +296,8 @@ export class SuppliersService {
   }
 
   async update(id: number, dto: UpdateSupplierDto): Promise<Supplier> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier ${id} with data: ${JSON.stringify(dto, null, 2)}`);
+    
     const supplier = await this.findOne(id);
     if (dto.registration_number || dto.vat_number) {
       const existingSupplier = await this.supplierRepo.findOne({
@@ -289,14 +307,17 @@ export class SuppliersService {
         ],
       });
       if (existingSupplier && existingSupplier.id !== id) {
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Duplicate supplier detected during update: ${dto.registration_number} or ${dto.vat_number}`);
         throw new BadRequestException('Furnizor duplicat');
       }
     }
     const oldName = supplier.supplier_name;
     Object.assign(supplier, dto);
     const updatedSupplier = await this.supplierRepo.save(supplier);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier ${id} updated successfully`);
 
     // Send notification for updated supplier
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for updated supplier ${updatedSupplier.id}`);
     await this.sendSupplierNotification(
       'supplier_updated',
       'Furnizor modificat',
@@ -313,11 +334,15 @@ export class SuppliersService {
   }
 
   async remove(id: number): Promise<void> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier ${id}`);
+    
     const supplier = await this.findOne(id);
     const supplierName = supplier.supplier_name;
     await this.supplierRepo.remove(supplier);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier ${id} removed successfully`);
 
     // Send notification for deleted supplier
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for deleted supplier ${id}`);
     await this.sendSupplierNotification(
       'supplier_deleted',
       'Furnizor sters',
@@ -328,12 +353,39 @@ export class SuppliersService {
   }
 
   async addProduct(dto: CreateSupplierProductDto): Promise<SupplierProduct> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Adding product to supplier with data: ${JSON.stringify(dto, null, 2)}`);
+    
     const supplier = await this.supplierRepo.findOne({ where: { id: dto.supplier_id } });
-    if (!supplier) throw new NotFoundException('Furnizorul nu a fost găsit');
+    if (!supplier) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier not found for product addition: ${dto.supplier_id}`);
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+    
     const existingProduct = await this.supplierProductRepo.findOne({ where: { supplier_id: dto.supplier_id, product_id: dto.product_id } });
-    if (existingProduct) throw new BadRequestException('Produsul este deja asociat');
+    if (existingProduct) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Product already associated with supplier: ${dto.product_id}`);
+      throw new BadRequestException('Produsul este deja asociat');
+    }
+    
     const supplierProduct = this.supplierProductRepo.create(dto);
-    return this.supplierProductRepo.save(supplierProduct);
+    const savedProduct = await this.supplierProductRepo.save(supplierProduct);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
+    
+    // Send notification for new product
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new product ${savedProduct.id}`);
+    await this.sendSupplierNotification(
+      'supplier_product_added',
+      'Produs adaugat furnizor',
+      `A fost adaugat un produs la furnizorul ${supplier.supplier_name}`,
+      supplier.id,
+      { 
+        productId: savedProduct.id,
+        supplierName: supplier.supplier_name,
+        productData: dto
+      }
+    );
+    
+    return savedProduct;
   }
 
   async getSupplierProducts(supplierId: number): Promise<SupplierProduct[]> {
@@ -341,8 +393,14 @@ export class SuppliersService {
   }
 
   async createOrder(dto: CreateSupplierOrderDto): Promise<SupplierOrder> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating order with data: ${JSON.stringify(dto, null, 2)}`);
+    
     const supplier = await this.supplierRepo.findOne({ where: { id: dto.supplier_id } });
-    if (!supplier) throw new NotFoundException('Furnizorul nu a fost găsit');
+    if (!supplier) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier not found for order creation: ${dto.supplier_id}`);
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+    
     // Creează comanda
     const orderData = {
       supplier_id: dto.supplier_id,
@@ -357,9 +415,10 @@ export class SuppliersService {
     const order = this.orderRepo.create(orderData);
     const savedOrder = await this.orderRepo.save(order);
     
-    console.log('📦 [SuppliersService] Comandă creată cu supplier_location_id:', dto.supplier_location_id);
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Order created with supplier_location_id: ${dto.supplier_location_id}`);
 
     // Send notification for new order
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new order ${savedOrder.id}`);
     await this.sendSupplierNotification(
       'supplier_order_created',
       'Comanda furnizor noua',
@@ -371,6 +430,7 @@ export class SuppliersService {
         orderDate: savedOrder.order_date.toISOString()
       }
     );
+    
     let totalAmountWithoutVat = 0;
     let totalAmountWithVat = 0;
     for (const itemDto of dto.items) {
@@ -390,7 +450,7 @@ export class SuppliersService {
           vat = Number(supplierProduct.vat) || 0;
         }
       } catch (err) {
-        console.warn(`Could not fetch VAT for product ${itemDto.product_id}:`, err);
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Could not fetch VAT for product ${itemDto.product_id}:`, err);
       }
       
       // Calculează total cu TVA
@@ -429,13 +489,24 @@ export class SuppliersService {
   }
 
   async markOrderAsDelivered(orderId: number): Promise<SupplierOrder> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Marking order ${orderId} as delivered`);
+    
     const order = await this.orderRepo.findOne({ where: { id: orderId }, relations: ['items', 'supplier'] });
-    if (!order) throw new NotFoundException('Comanda nu a fost găsită');
-    if (order.status === OrderStatus.DELIVERED) throw new BadRequestException('Comanda este deja livrată');
+    if (!order) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order not found: ${orderId}`);
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order already delivered: ${orderId}`);
+      throw new BadRequestException('Comanda este deja livrată');
+    }
 
     // Get supplier for notification
     const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
-    if (!supplier) throw new NotFoundException('Furnizorul nu a fost găsit');
+    if (!supplier) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier not found for order delivery: ${order.supplier_id}`);
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
 
     // Create stock items for each order item using the HTTP service
     const stockItems: CreateStockItemDto[] = order.items?.map(item => ({
@@ -451,7 +522,7 @@ export class SuppliersService {
       const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
       
       if (createdStockItems.length !== stockItems.length) {
-        console.warn(`Only ${createdStockItems.length} out of ${stockItems.length} stock items were created successfully`);
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Only ${createdStockItems.length} out of ${stockItems.length} stock items were created successfully`);
       }
     }
 
@@ -459,6 +530,7 @@ export class SuppliersService {
     const updatedOrder = await this.orderRepo.save(order);
 
     // Send notification for order delivered
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for delivered order ${updatedOrder.id}`);
     await this.sendSupplierNotification(
       'supplier_order_delivered',
       'Comanda furnizor livrata',

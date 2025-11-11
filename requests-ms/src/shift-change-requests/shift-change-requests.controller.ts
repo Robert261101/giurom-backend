@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   HttpStatus,
   Headers,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,6 +19,8 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Permissions } from '../permissions/permissions.decorator';
+import { PermissionsGuard } from '../permissions/permissions.guard';
 import { ShiftChangeRequestsService } from './shift-change-requests.service';
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
@@ -27,11 +30,13 @@ import { ShiftChangeRequest } from './entities/shift-change-request.entity';
 @ApiTags('shift-change-requests')
 @Controller('shift-change-requests')
 @ApiBearerAuth()
+@UseGuards(PermissionsGuard)
 export class ShiftChangeRequestsController {
   constructor(private readonly shiftChangeRequestsService: ShiftChangeRequestsService) {}
 
   // POST /shift-change-requests – creare cerere (implicit status pending)
   @Post()
+  @Permissions('shift-change-requests.create')
   @ApiOperation({ summary: 'Creează o cerere de schimb de tură cu status pending' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -60,6 +65,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests – listare cereri cu filtrare opțională
   @Get()
+  @Permissions('shift-change-requests.read')
   @ApiOperation({ summary: 'Obține cereri de schimb de tură cu filtrare opțională' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -76,6 +82,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests/pending – listare cereri în așteptare
   @Get('pending')
+  @Permissions('shift-change-requests.read')
   @ApiOperation({ summary: 'Obține toate cererile de schimb de tură în așteptare' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -89,6 +96,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests/:id – obținere cerere specifică
   @Get(':id')
+  @Permissions('shift-change-requests.read')
   @ApiOperation({ summary: 'Obține detaliile unei cereri de schimb de tură specifice' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({
@@ -114,6 +122,7 @@ export class ShiftChangeRequestsController {
 
   // PATCH /shift-change-requests/:id – modificare status, aprobare/respingere
   @Patch(':id')
+  @Permissions('shift-change-requests.update')
   @ApiOperation({ summary: 'Modifică statusul unei cereri de schimb de tură (aprobare/respingere)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({
@@ -144,6 +153,7 @@ export class ShiftChangeRequestsController {
 
   // DELETE /shift-change-requests/:id – ștergere cerere
   @Delete(':id')
+  @Permissions('shift-change-requests.delete')
   @ApiOperation({ summary: 'Șterge o cerere de schimb de tură (doar dacă este pending)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({
@@ -172,6 +182,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests/employee/:employeeId/stats – statistici angajat
   @Get('employee/:employeeId/stats')
+  @Permissions('shift-change-requests.read')
   @ApiOperation({ summary: 'Obține statisticile de schimb de tură pentru un angajat' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({
@@ -187,6 +198,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests/employee/:employeeId – cereri pentru un angajat
   @Get('employee/:employeeId')
+  @Permissions('shift-change-requests.read')
   @ApiOperation({ summary: 'Obține cererile de schimb de tură pentru un angajat (ca requester sau replacement)' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({

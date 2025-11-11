@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
-import { Repository, MoreThanOrEqual, LessThan, In } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThan, In, Brackets } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Employee } from './entities/employee.entity';
@@ -160,76 +160,167 @@ export class EmployeeService {
       page, limit, is_active, department, contract_type, work_location_id, location_id, department_name
     });
 
-    const queryBuilder = this.employeeRepository.createQueryBuilder('employee')
-      .leftJoinAndSelect('employee.employeeLocations', 'employeeLocations');
-
-    // Aplică filtrele
-    if (is_active !== undefined) {
-      queryBuilder.andWhere('employee.is_active = :is_active', { is_active });
-    }
-
-    if (department) {
-      queryBuilder.andWhere('employee.department_default_id = :department', { department });
-    }
-
-    if (contract_type) {
-      queryBuilder.andWhere('employee.contract_type = :contract_type', { contract_type });
-    }
-
-    if (work_location_id) {
-      queryBuilder.andWhere('employee.work_location_default_id = :work_location_id', { work_location_id });
-    }
-
-    // Filtrare după locația din employees_locations
+    // For location filtering, we need to check both EmployeeLocation assignments and work_location_default_id
     if (location_id) {
-      console.log('🔍 [EMPLOYEES] Applying location filter:', location_id);
-      queryBuilder.andWhere('employeeLocations.idLocation = :location_id', { location_id });
-    }
-
-    // Filtrare după numele departamentului - temporar dezactivată (tabela worklocation_departments nu există)
-    if (department_name) {
-      console.log('🔍 [EMPLOYEES] Department name filter requested but not available:', department_name);
-      // TODO: Implementează filtrarea după numele departamentului când tabela worklocation_departments va fi disponibilă
-    }
-
-    // Calculează offset-ul pentru paginare
-    const offset = (page - 1) * limit;
-
-    // Execută query-ul cu paginare
-    const [employees, total] = await queryBuilder
-      .orderBy('employee.created_at', 'DESC')
-      .take(limit)
-      .skip(offset)
-      .getManyAndCount();
-
-    console.log('🔍 [EMPLOYEES] Query result:', {
-      totalEmployees: total,
-      returnedEmployees: employees.length,
-      employees: employees.map(emp => ({
-        id: emp.id,
-        name: `${emp.first_name} ${emp.last_name}`,
-        employeeLocations: emp.employeeLocations?.map(el => el.idLocation) || []
-      }))
-    });
-
-    // Log detaliat pentru debugging
-    if (location_id) {
-      console.log('🔍 [EMPLOYEES] Angajații din locația ' + location_id + ':');
-      employees.forEach((emp, index) => {
-        console.log(`  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map(el => el.idLocation).join(', ') || 'none'})`);
+      // First, let's check if there are any EmployeeLocation records for this location
+      const locationAssignments = await this.employeeLocationRepository.find({
+        where: { idLocation: location_id }
       });
-      if (employees.length === 0) {
-        console.log('  ❌ Nu s-au găsit angajați în locația ' + location_id);
+      console.log('🔍 [EMPLOYEES] Found EmployeeLocation assignments for location ' + location_id + ':', locationAssignments.length);
+      if (locationAssignments.length > 0) {
+        console.log('🔍 [EMPLOYEES] First 3 assignments:', locationAssignments.slice(0, 3).map(a => ({
+          id: a.id,
+          employeeId: a.employeeId,
+          locationId: a.idLocation
+        })));
       }
+      
+      // Also check if there are employees with work_location_default_id = location_id
+      const employeesWithDefaultLocation = await this.employeeRepository.find({
+        where: { work_location_default_id: location_id }
+      });
+      console.log('🔍 [EMPLOYEES] Found employees with work_location_default_id = ' + location_id + ':', employeesWithDefaultLocation.length);
+      if (employeesWithDefaultLocation.length > 0) {
+        console.log('🔍 [EMPLOYEES] First 3 employees with default location:', employeesWithDefaultLocation.slice(0, 3).map(e => ({
+          id: e.id,
+          name: `${e.first_name} ${e.last_name}`,
+          work_location_default_id: e.work_location_default_id
+        })));
+      }
+
+      // Create a query that checks both EmployeeLocation assignments and work_location_default_id
+      const queryBuilder = this.employeeRepository.createQueryBuilder('employee')
+        .leftJoinAndSelect('employee.employeeLocations', 'employeeLocations')
+        .andWhere(
+          new Brackets(qb => {
+            qb.where('employeeLocations.idLocation = :location_id', { location_id })
+              .orWhere('employee.work_location_default_id = :location_id', { location_id });
+          })
+        );
+
+      // Apply other filters
+      if (is_active !== undefined) {
+        queryBuilder.andWhere('employee.is_active = :is_active', { is_active });
+      }
+
+      if (department) {
+        queryBuilder.andWhere('employee.department_default_id = :department', { department });
+      }
+
+      if (contract_type) {
+        queryBuilder.andWhere('employee.contract_type = :contract_type', { contract_type });
+      }
+
+      if (work_location_id) {
+        queryBuilder.andWhere('employee.work_location_default_id = :work_location_id', { work_location_id });
+      }
+
+      // Calculează offset-ul pentru paginare
+      const offset = (page - 1) * limit;
+
+      // Execută query-ul cu paginare
+      const [employees, total] = await queryBuilder
+        .orderBy('employee.created_at', 'DESC')
+        .take(limit)
+        .skip(offset)
+        .getManyAndCount();
+
+      console.log('🔍 [EMPLOYEES] Query result:', {
+        totalEmployees: total,
+        returnedEmployees: employees.length,
+        employees: employees.map(emp => ({
+          id: emp.id,
+          name: `${emp.first_name} ${emp.last_name}`,
+          employeeLocations: emp.employeeLocations?.map(el => el.idLocation) || [],
+          work_location_default_id: emp.work_location_default_id
+        }))
+      });
+
+      // Log detaliat pentru debugging
+      if (location_id) {
+        console.log('🔍 [EMPLOYEES] Angajații din locația ' + location_id + ':');
+        employees.forEach((emp, index) => {
+          console.log(`  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map(el => el.idLocation).join(', ') || 'none'}, Default Location: ${emp.work_location_default_id || 'none'})`);
+        });
+        if (employees.length === 0) {
+          console.log('  ❌ Nu s-au găsit angajați în locația ' + location_id);
+        }
+      }
+
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        employees,
+        total,
+        totalPages,
+      };
+    } else {
+      // Original query for non-location filtering
+      const queryBuilder = this.employeeRepository.createQueryBuilder('employee')
+        .leftJoinAndSelect('employee.employeeLocations', 'employeeLocations');
+
+      // Aplică filtrele
+      if (is_active !== undefined) {
+        queryBuilder.andWhere('employee.is_active = :is_active', { is_active });
+      }
+
+      if (department) {
+        queryBuilder.andWhere('employee.department_default_id = :department', { department });
+      }
+
+      if (contract_type) {
+        queryBuilder.andWhere('employee.contract_type = :contract_type', { contract_type });
+      }
+
+      if (work_location_id) {
+        queryBuilder.andWhere('employee.work_location_default_id = :work_location_id', { work_location_id });
+      }
+
+      // Filtrare după numele departamentului - temporar dezactivată (tabela worklocation_departments nu există)
+      if (department_name) {
+        console.log('🔍 [EMPLOYEES] Department name filter requested but not available:', department_name);
+        // TODO: Implementează filtrarea după numele departamentului când tabela worklocation_departments va fi disponibilă
+      }
+
+      // Calculează offset-ul pentru paginare
+      const offset = (page - 1) * limit;
+
+      // Execută query-ul cu paginare
+      const [employees, total] = await queryBuilder
+        .orderBy('employee.created_at', 'DESC')
+        .take(limit)
+        .skip(offset)
+        .getManyAndCount();
+
+      console.log('🔍 [EMPLOYEES] Query result:', {
+        totalEmployees: total,
+        returnedEmployees: employees.length,
+        employees: employees.map(emp => ({
+          id: emp.id,
+          name: `${emp.first_name} ${emp.last_name}`,
+          employeeLocations: emp.employeeLocations?.map(el => el.idLocation) || []
+        }))
+      });
+
+      // Log detaliat pentru debugging
+      if (location_id) {
+        console.log('🔍 [EMPLOYEES] Angajații din locația ' + location_id + ':');
+        employees.forEach((emp, index) => {
+          console.log(`  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map(el => el.idLocation).join(', ') || 'none'})`);
+        });
+        if (employees.length === 0) {
+          console.log('  ❌ Nu s-au găsit angajați în locația ' + location_id);
+        }
+      }
+
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        employees,
+        total,
+        totalPages,
+      };
     }
-
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      employees,
-      total,
-      totalPages,
-    };
   }
 
   // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
@@ -426,7 +517,7 @@ export class EmployeeService {
     await this.sendEmployeeNotification(
       'employee_updated',
       'Angajat modificat',
-      `Au fost modificate informațiile angajatului: ${updatedEmployee.first_name} ${updatedEmployee.last_name}`,
+      `Au fost modificate informatiile angajatului: ${updatedEmployee.first_name} ${updatedEmployee.last_name}`,
       {
         employeeId: updatedEmployee.id,
         firstName: updatedEmployee.first_name,
@@ -498,8 +589,8 @@ export class EmployeeService {
     // 7. Send notification that employee was deleted
     await this.sendEmployeeNotification(
       'employee_deleted',
-      'Angajat șters',
-      `Angajatul ${employee.first_name} ${employee.last_name} a fost șters din sistem`,
+      'Angajat sters',
+      `Angajatul ${employee.first_name} ${employee.last_name} a fost sters din sistem`,
       {
         employeeId: employee.id,
         firstName: employee.first_name,
@@ -1240,11 +1331,21 @@ export class EmployeeService {
   }
 
   async findLocationEmployees(id_location: number): Promise<EmployeeLocation[]> {
-    return await this.employeeLocationRepository.find({
+    console.log('🔍 [EMPLOYEES SERVICE] Căutare angajați pentru locația:', id_location);
+    const result = await this.employeeLocationRepository.find({
       where: { idLocation: id_location },
       relations: ['employee'],
       order: { createdAt: 'DESC' },
     });
+    console.log('🔍 [EMPLOYEES SERVICE] Găsiți angajați:', result.length, 'pentru locația:', id_location);
+    if (result.length > 0) {
+      console.log('🔍 [EMPLOYEES SERVICE] Primii 3 angajați găsiți:', result.slice(0, 3).map(el => ({
+        id: el.employee?.id,
+        name: el.employee ? `${el.employee.first_name} ${el.employee.last_name}` : 'N/A',
+        locationId: el.idLocation
+      })));
+    }
+    return result;
   }
 
   async removeEmployeeFromLocation(employee_id: number, id_location: number): Promise<{ message: string }> {

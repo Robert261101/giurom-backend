@@ -1,16 +1,20 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { Response } from 'express';
+import { Permissions } from '../permissions/permissions.decorator';
+import { PermissionsGuard } from '../permissions/permissions.guard';
 
 @ApiTags('suppliers')
 @Controller('suppliers')
+@UseGuards(PermissionsGuard)
 export class SuppliersHttpController {
 	constructor(private readonly service: SuppliersService) {}
 
 	@Get()
+	@Permissions('suppliers.read')
 	getSuppliers(
 		@Query('page') _page?: string, 
 		@Query('limit') _limit?: string, 
@@ -23,46 +27,84 @@ export class SuppliersHttpController {
 	}
 
 	@Post()
+	@Permissions('suppliers.create')
 	create(@Body() dto: CreateSupplierDto) { return this.service.create(dto); }
 
 	@Post('with-documents')
+	@Permissions('suppliers.create')
 	createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) { return this.service.createWithDocuments(dto); }
 
 	@Get(':id')
+	@Permissions('suppliers.read')
 	findOne(@Param('id') id: string) { return this.service.findOne(Number(id)); }
 
 	@Patch(':id')
+	@Permissions('suppliers.update')
 	update(@Param('id') id: string, @Body() dto: any) { return this.service.update(Number(id), dto); }
 
 	@Delete(':id')
+	@Permissions('suppliers.delete')
 	remove(@Param('id') id: string) { return this.service.remove(Number(id)); }
 
 	// Products
-	@Get(':supplierId/products') getProducts(@Param('supplierId') supplierId: string) { return this.service.getSupplierProducts(Number(supplierId)); }
-	@Post('products') addProduct(@Body() dto: any) { return this.service.addProduct(dto); }
-	@Patch('products/:productId') updateProduct(@Param('productId') productId: string, @Body() dto: any) { return this.service.updateSupplierProduct(Number(productId), dto); }
-	@Delete('products/:productId') removeProduct(@Param('productId') productId: string) { return this.service.removeSupplierProduct(Number(productId)); }
+	@Get(':supplierId/products') 
+	@Permissions('suppliers.read')
+	getProducts(@Param('supplierId') supplierId: string) { return this.service.getSupplierProducts(Number(supplierId)); }
+	
+	@Post('products') 
+	@Permissions('suppliers.create')
+	addProduct(@Body() dto: any) { return this.service.addProduct(dto); }
+	
+	@Patch('products/:productId') 
+	@Permissions('suppliers.update')
+	updateProduct(@Param('productId') productId: string, @Body() dto: any) { return this.service.updateSupplierProduct(Number(productId), dto); }
+	
+	@Delete('products/:productId') 
+	@Permissions('suppliers.delete')
+	removeProduct(@Param('productId') productId: string) { return this.service.removeSupplierProduct(Number(productId)); }
 
 	// Orders
-	@Get(':supplierId/orders') getOrders(
+	@Get(':supplierId/orders') 
+	@Permissions('suppliers.read')
+	getOrders(
 		@Param('supplierId') supplierId: string,
 		@Query('location_id') location_id?: string
 	) { 
 		const locationId = location_id ? parseInt(location_id, 10) : undefined;
 		return this.service.getSupplierOrders(Number(supplierId), locationId); 
 	}
-	@Post('orders') createOrder(@Body() dto: any) { return this.service.createOrder(dto); }
-	@Patch('orders/:orderId/deliver') deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
-	@Patch('orders/:orderId/status') updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }
-	@Get(':supplierId/orders/:orderId/email-link') emailLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { emailLink: this.service.generateEmailLink(Number(supplierId), Number(orderId)) }; }
-	@Get(':supplierId/orders/:orderId/whatsapp-link') whatsappLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { whatsappLink: this.service.generateWhatsAppLink(Number(supplierId), Number(orderId)) }; }
+	
+	@Post('orders') 
+	@Permissions('suppliers.create')
+	createOrder(@Body() dto: any) { return this.service.createOrder(dto); }
+	
+	@Patch('orders/:orderId/deliver') 
+	@Permissions('suppliers.update')
+	deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
+	
+	@Patch('orders/:orderId/status') 
+	@Permissions('suppliers.update')
+	updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }
+	@Get(':supplierId/orders/:orderId/email-link') 
+	@Permissions('suppliers.read')
+	emailLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { emailLink: this.service.generateEmailLink(Number(supplierId), Number(orderId)) }; }
+	
+	@Get(':supplierId/orders/:orderId/whatsapp-link') 
+	@Permissions('suppliers.read')
+	whatsappLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { whatsappLink: this.service.generateWhatsAppLink(Number(supplierId), Number(orderId)) }; }
 
 	// Documents
-	@Post(':supplierId/documents') addDocument(@Param('supplierId') supplierId: string, @Body() body: any) { return this.service.addDocument(Number(supplierId), body); }
-	@Delete('documents/:documentId') removeDocument(@Param('documentId') documentId: string) { return this.service.removeDocument(Number(documentId)); }
+	@Post(':supplierId/documents') 
+	@Permissions('suppliers.create')
+	addDocument(@Param('supplierId') supplierId: string, @Body() body: any) { return this.service.addDocument(Number(supplierId), body); }
+	
+	@Delete('documents/:documentId') 
+	@Permissions('suppliers.delete')
+	removeDocument(@Param('documentId') documentId: string) { return this.service.removeDocument(Number(documentId)); }
 
 	// Serve supplier document (download or inline)
 	@Get('file/:fileId')
+	@Permissions('suppliers.read')
 	async getSupplierFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Query('download') download: string,
@@ -81,6 +123,7 @@ export class SuppliersHttpController {
 	}
 
 	@Get('file/:fileId/view')
+	@Permissions('suppliers.read')
 	async viewSupplierFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Res() res: Response,
@@ -95,6 +138,7 @@ export class SuppliersHttpController {
 
 	// === SUPPLIER LOCATIONS ENDPOINTS ===
 	@Post(':supplierId/locations/:locationId')
+	@Permissions('suppliers.create')
 	@ApiOperation({ summary: 'Atribuie un furnizor la o locație' })
 	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
 	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
@@ -107,6 +151,7 @@ export class SuppliersHttpController {
 	}
 
 	@Get(':supplierId/locations')
+	@Permissions('suppliers.read')
 	@ApiOperation({ summary: 'Listă locațiile unui furnizor' })
 	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
 	@ApiResponse({ status: 200, description: 'Lista locațiilor furnizorului' })
@@ -115,6 +160,7 @@ export class SuppliersHttpController {
 	}
 
 	@Get('locations/:locationId/suppliers')
+	@Permissions('suppliers.read')
 	@ApiOperation({ summary: 'Listă furnizorii unei locații' })
 	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
 	@ApiResponse({ status: 200, description: 'Lista furnizorilor locației' })
@@ -123,6 +169,7 @@ export class SuppliersHttpController {
 	}
 
 	@Delete(':supplierId/locations/:locationId')
+	@Permissions('suppliers.delete')
 	@ApiOperation({ summary: 'Îndepărtează un furnizor dintr-o locație' })
 	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
 	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
