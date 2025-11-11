@@ -48,6 +48,7 @@ export class LocationsService {
     metadata?: any
   ): Promise<void> {
     try {
+      console.log(`🔍 [LOCATIONS SERVICE] Sending notification - Type: ${type}, Location ID: ${locationId}`);
       await firstValueFrom(
         this.notificationsClient.emit({ cmd: 'locations.notification' }, {
           type,
@@ -59,6 +60,7 @@ export class LocationsService {
           priority: 'medium',
         })
       );
+      console.log(`✅ [LOCATIONS SERVICE] Notification sent successfully - Type: ${type}, Location ID: ${locationId}`);
     } catch (error) {
       console.error('Failed to send location notification:', error);
     }
