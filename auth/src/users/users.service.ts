@@ -339,7 +339,7 @@ export class UsersService {
   /**
    * Găsește un angajat după email din microserviciul employees
    */
-  async findEmployeeByEmail(email: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null> {
+  async findEmployeeByEmail(email: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
     try {
       // Add internal service authentication header
       const response = await firstValueFrom(
@@ -350,7 +350,13 @@ export class UsersService {
           }
         })
       );
-      return response.data;
+      const data = response.data;
+      // Ensure the response includes the required fields, defaulting to null if missing
+      return {
+        ...data,
+        department_default_id: data?.department_default_id ?? null,
+        work_location_default_id: data?.work_location_default_id ?? null,
+      };
     } catch (error) {
       console.error('Eroare la găsirea angajatului după email:', error);
       return null;
@@ -360,7 +366,7 @@ export class UsersService {
   /**
    * Găsește un angajat după telefon din microserviciul employees
    */
-  async findEmployeeByPhone(phone: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null } | null> {
+  async findEmployeeByPhone(phone: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
     try {
       // Add internal service authentication header
       const response = await firstValueFrom(
@@ -371,7 +377,13 @@ export class UsersService {
           }
         })
       );
-      return response.data;
+      const data = response.data;
+      // Ensure the response includes the required fields, defaulting to null if missing
+      return {
+        ...data,
+        department_default_id: data?.department_default_id ?? null,
+        work_location_default_id: data?.work_location_default_id ?? null,
+      };
     } catch (error) {
       console.error('Eroare la găsirea angajatului după telefon:', error);
       return null;
@@ -425,6 +437,12 @@ export class UsersService {
 
   async getAllRolePermissions(): Promise<RolePermission[]> {
     return await this.rolePermissionRepository.find();
+  }
+
+  async getRolePermissionsByRoleId(roleId: number): Promise<RolePermission[]> {
+    return await this.rolePermissionRepository.find({ 
+      where: { roleId } 
+    });
   }
 
   async getRolePermissionById(id: number): Promise<RolePermission> {

@@ -98,25 +98,25 @@ export class LocationsService {
     
     // Dacă are permisiunea locations.read, returnează toate locațiile
     if (hasLocationReadPermission) {
-      const qb = this.workLocationRepository
-        .createQueryBuilder('location')
-        .leftJoinAndSelect('location.task_templates', 'task_templates');
-      if (companyId) qb.where('location.company_id = :companyId', { companyId });
-      if (city) qb.andWhere('location.city = :city', { city });
-      if (search)
-        qb.andWhere(
-          'location.location_name LIKE :search OR location.address LIKE :search',
-          { search: `%${search}%` },
-        );
-      const offset = (page - 1) * limit;
-      const [locations, total] = await qb
-        .orderBy('location.created_at', 'DESC')
-        .skip(offset)
-        .take(limit)
-        .getManyAndCount();
-      return { locations, total, totalPages: Math.ceil(total / limit) };
-    }
-    
+    const qb = this.workLocationRepository
+      .createQueryBuilder('location')
+      .leftJoinAndSelect('location.task_templates', 'task_templates');
+    if (companyId) qb.where('location.company_id = :companyId', { companyId });
+    if (city) qb.andWhere('location.city = :city', { city });
+    if (search)
+      qb.andWhere(
+        'location.location_name LIKE :search OR location.address LIKE :search',
+        { search: `%${search}%` },
+      );
+    const offset = (page - 1) * limit;
+    const [locations, total] = await qb
+      .orderBy('location.created_at', 'DESC')
+      .skip(offset)
+      .take(limit)
+      .getManyAndCount();
+    return { locations, total, totalPages: Math.ceil(total / limit) };
+  }
+
     // Dacă nu are permisiunea, returnează doar locațiile din employees_locations
     const employeeId = user?.id || user?.employee_id || user?.userId;
     if (!employeeId) {
