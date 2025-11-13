@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
-import { PermissionsGuard } from './permissions/permissions.guard';
 import { CompanyService } from './company/company.service';
 import { CreateCompanyDto } from './company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
@@ -10,7 +9,6 @@ import { CreateCompanyDocumentDto } from './company/dto/create-company-document.
 import { UpdateCompanyDocumentDto } from './company/dto/update-company-document.dto';
 
 @Controller('companies')
-@UseGuards(PermissionsGuard)
 export class CompanyHttpController {
 	constructor(private readonly service: CompanyService) {}
 

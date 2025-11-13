@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
@@ -28,17 +28,35 @@ export class LocationsHttpController {
 		@Query('companyId') companyId?: string,
 		@Query('city') city?: string,
 		@Query('search') search?: string,
+		@Request() req?: any,
 	) {
-		return this.service.findAllWorkLocations(parseInt(page, 10), parseInt(limit, 10), companyId ? parseInt(companyId, 10) : undefined, city, search);
+		const user = req?.user;
+		return this.service.findAllWorkLocations(
+			parseInt(page, 10), 
+			parseInt(limit, 10), 
+			companyId ? parseInt(companyId, 10) : undefined, 
+			city, 
+			search,
+			user
+		);
 	}
 
 	@Get('statistics')
 	@Permissions('locations.read')
 	stats() { return this.service.getLocationStatistics(); }
 
+	@Get('my/companies')
+	findMyCompanies(@Request() req?: any) {
+		const user = req?.user;
+		return this.service.getEmployeeCompanies(user);
+	}
+
 	@Get(':id')
 	@Permissions('locations.read')
-	findOne(@Param('id') id: string) { return this.service.findWorkLocationById(parseInt(id, 10)); }
+	findOne(@Param('id') id: string, @Request() req?: any) { 
+		const user = req?.user;
+		return this.service.findWorkLocationById(parseInt(id, 10), user);
+	}
 
 	@Get('company/:companyId')
 	@Permissions('locations.read')
