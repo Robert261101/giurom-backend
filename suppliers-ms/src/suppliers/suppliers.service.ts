@@ -173,22 +173,46 @@ export class SuppliersService {
     const repoRoot = this.getRepoRoot();
     const filesDir = path.join(repoRoot, 'files');
     const suppliersDir = path.join(filesDir, 'suppliers');
-    const supplierDir = path.join(suppliersDir, supplier.id.toString(), supplierNameSimplified);
+    const supplierDir = path.join(suppliersDir, supplierNameSimplified);
     const dataDir = path.join(supplierDir, 'data');
     const ordersDir = path.join(supplierDir, 'orders');
 
-    if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true });
-    if (!fs.existsSync(suppliersDir)) fs.mkdirSync(suppliersDir, { recursive: true });
-    if (!fs.existsSync(supplierDir)) fs.mkdirSync(supplierDir, { recursive: true });
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    if (!fs.existsSync(ordersDir)) fs.mkdirSync(ordersDir, { recursive: true });
+    this.logger.log(`📁 Creating supplier folders for: ${supplier.supplier_name} (${supplierNameSimplified})`);
+    this.logger.log(`📁 Files directory: ${filesDir}`);
+    this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
+    this.logger.log(`📁 Supplier directory: ${supplierDir}`);
 
-    const basePath = `/files/suppliers/${supplier.id}/${supplierNameSimplified}`;
+    if (!fs.existsSync(filesDir)) {
+      this.logger.log(`📁 Creating files directory: ${filesDir}`);
+      fs.mkdirSync(filesDir, { recursive: true });
+    }
+    if (!fs.existsSync(suppliersDir)) {
+      this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
+      fs.mkdirSync(suppliersDir, { recursive: true });
+    }
+    if (!fs.existsSync(supplierDir)) {
+      this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
+      fs.mkdirSync(supplierDir, { recursive: true });
+    }
+    if (!fs.existsSync(dataDir)) {
+      this.logger.log(`📁 Creating data directory: ${dataDir}`);
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    if (!fs.existsSync(ordersDir)) {
+      this.logger.log(`📁 Creating orders directory: ${ordersDir}`);
+      fs.mkdirSync(ordersDir, { recursive: true });
+    }
+
+    const basePath = `/files/suppliers/${supplierNameSimplified}`;
+    this.logger.log(`📁 Base path for database records: ${basePath}`);
+    
     const folders = [
       { supplier_id: supplier.id, description: 'Folder pentru documente și contracte', folder_path: `${basePath}/data/` },
       { supplier_id: supplier.id, description: 'Folder pentru comenzi și PDF-uri generate', folder_path: `${basePath}/orders/` },
     ];
+    
     for (const folderData of folders) {
+      this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
       const folder = this.folderRepo.create(folderData);
       await this.folderRepo.save(folder);
     }
@@ -199,17 +223,39 @@ export class SuppliersService {
     const repoRoot = this.getRepoRoot();
     const filesDir = path.join(repoRoot, 'files');
     const suppliersDir = path.join(filesDir, 'suppliers');
-    const supplierDir = path.join(suppliersDir, supplier.id.toString(), supplierNameSimplified);
+    const supplierDir = path.join(suppliersDir, supplierNameSimplified);
     const dataDir = path.join(supplierDir, 'data');
     const ordersDir = path.join(supplierDir, 'orders');
 
-    if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true });
-    if (!fs.existsSync(suppliersDir)) fs.mkdirSync(suppliersDir, { recursive: true });
-    if (!fs.existsSync(supplierDir)) fs.mkdirSync(supplierDir, { recursive: true });
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    if (!fs.existsSync(ordersDir)) fs.mkdirSync(ordersDir, { recursive: true });
+    this.logger.log(`📁 Creating supplier folders with custom name for: ${supplier.supplier_name} (${supplierNameSimplified})`);
+    this.logger.log(`📁 Files directory: ${filesDir}`);
+    this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
+    this.logger.log(`📁 Supplier directory: ${supplierDir}`);
 
-    const basePath = `/files/suppliers/${supplier.id}/${supplierNameSimplified}`;
+    if (!fs.existsSync(filesDir)) {
+      this.logger.log(`📁 Creating files directory: ${filesDir}`);
+      fs.mkdirSync(filesDir, { recursive: true });
+    }
+    if (!fs.existsSync(suppliersDir)) {
+      this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
+      fs.mkdirSync(suppliersDir, { recursive: true });
+    }
+    if (!fs.existsSync(supplierDir)) {
+      this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
+      fs.mkdirSync(supplierDir, { recursive: true });
+    }
+    if (!fs.existsSync(dataDir)) {
+      this.logger.log(`📁 Creating data directory: ${dataDir}`);
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    if (!fs.existsSync(ordersDir)) {
+      this.logger.log(`📁 Creating orders directory: ${ordersDir}`);
+      fs.mkdirSync(ordersDir, { recursive: true });
+    }
+
+    const basePath = `/files/suppliers/${supplierNameSimplified}`;
+    this.logger.log(`📁 Base path for database records: ${basePath}`);
+    
     const documentFolderName = customFolderName || 'Folder pentru documente și contracte';
     const folders = [
       { supplier_id: supplier.id, description: documentFolderName, folder_path: `${basePath}/data/` },
@@ -218,6 +264,7 @@ export class SuppliersService {
 
     const savedFolders: SupplierFolder[] = [];
     for (const folderData of folders) {
+      this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
       const folder = this.folderRepo.create(folderData);
       const savedFolder = await this.folderRepo.save(folder);
       savedFolders.push(savedFolder);
@@ -248,7 +295,9 @@ export class SuppliersService {
           };
           const document = this.supplierDocumentRepo.create(documentData);
           await this.supplierDocumentRepo.save(document);
-        } catch {}
+        } catch (error) {
+          this.logger.error(`❌ Error creating document: ${error}`);
+        }
       }
     }
   }
@@ -259,14 +308,51 @@ export class SuppliersService {
 
   async serveDocument(fileId: number, forceDownload: boolean): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
     const document = await this.supplierDocumentRepo.findOne({ where: { id: fileId } });
-    if (!document) throw new NotFoundException('Documentul nu a fost găsit');
+    if (!document) {
+      this.logger.warn(`Document with ID ${fileId} not found in database`);
+      throw new NotFoundException('Documentul nu a fost găsit');
+    }
+    
+    this.logger.log(`📄 Serving document ID: ${fileId}, Name: ${document.file_name}, Path: ${document.file_path}`);
+    
+    // Handle both old and new path structures
+    let filePathToUse = document.file_path;
+    this.logger.log(`📄 Original file path: ${document.file_path}`);
+    
+    if (document.file_path.includes('/suppliers/')) {
+      // Extract supplier ID and name from the path
+      const pathParts = document.file_path.split('/');
+      const suppliersIndex = pathParts.indexOf('suppliers');
+      if (suppliersIndex !== -1 && pathParts.length > suppliersIndex + 2) {
+        // Check if the path follows the old structure (with ID)
+        const possibleId = pathParts[suppliersIndex + 1];
+        if (!isNaN(Number(possibleId))) {
+          // This is the old structure with ID, we need to remove the ID part
+          const supplierName = pathParts[suppliersIndex + 2];
+          filePathToUse = `/files/suppliers/${supplierName}/${pathParts.slice(suppliersIndex + 3).join('/')}`;
+          this.logger.log(`📄 Converting old path structure to new: ${filePathToUse}`);
+        }
+      }
+    }
+    
     const repoRoot = this.getRepoRoot();
-    const absolutePath = path.join(repoRoot, document.file_path.startsWith('/files') ? document.file_path : `/files${document.file_path}`);
+    const absolutePath = path.join(repoRoot, filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`);
+    this.logger.log(`📄 Absolute file path: ${absolutePath}`);
+    
+    if (!fs.existsSync(absolutePath)) {
+      this.logger.error(`❌ File not found on disk: ${absolutePath}`);
+      this.logger.error(`📄 Database path was: ${document.file_path}`);
+      this.logger.error(`📄 Computed path was: ${filePathToUse}`);
+      throw new NotFoundException('Fișierul nu a fost găsit pe disk');
+    }
+    
     const buffer = fs.readFileSync(absolutePath);
     const fileExt = document.file_name.split('.').pop()?.toLowerCase() || '';
     const mimeMap: Record<string, string> = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain' };
     const mimeType = mimeMap[fileExt] || 'application/octet-stream';
     const disposition: 'inline' | 'attachment' = forceDownload ? 'attachment' : 'inline';
+    
+    this.logger.log(`✅ Successfully read file: ${document.file_name} (${buffer.length} bytes)`);
     return { data: buffer.toString('base64'), mimeType, fileName: document.file_name, disposition };
   }
 
@@ -338,6 +424,35 @@ export class SuppliersService {
     
     const supplier = await this.findOne(id);
     const supplierName = supplier.supplier_name;
+    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+    
+    // Remove physical files from file system (both old and new structures)
+    const repoRoot = this.getRepoRoot();
+    const filesDir = path.join(repoRoot, 'files');
+    const suppliersDir = path.join(filesDir, 'suppliers');
+    
+    // Try to remove the new structure (name-based)
+    const supplierDirNew = path.join(suppliersDir, supplierNameSimplified);
+    if (fs.existsSync(supplierDirNew)) {
+      try {
+        fs.rmSync(supplierDirNew, { recursive: true, force: true });
+        this.logger.log(`✅ Deleted supplier files directory (new structure): ${supplierDirNew}`);
+      } catch (error) {
+        this.logger.error(`Failed to delete supplier files directory (new structure): ${supplierDirNew}`, error);
+      }
+    }
+    
+    // Try to remove the old structure (ID-based)
+    const supplierDirOld = path.join(suppliersDir, id.toString(), supplierNameSimplified);
+    if (fs.existsSync(supplierDirOld)) {
+      try {
+        fs.rmSync(supplierDirOld, { recursive: true, force: true });
+        this.logger.log(`✅ Deleted supplier files directory (old structure): ${supplierDirOld}`);
+      } catch (error) {
+        this.logger.error(`Failed to delete supplier files directory (old structure): ${supplierDirOld}`, error);
+      }
+    }
+    
     await this.supplierRepo.remove(supplier);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier ${id} removed successfully`);
 
@@ -478,7 +593,7 @@ export class SuppliersService {
   private async generateOrderPDF(order: SupplierOrder, supplier: Supplier): Promise<void> {
     const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
     const fileName = `comanda_${order.id}_${supplierNameSimplified}.pdf`;
-    const filePath = `/files/suppliers/${supplier.id}/${supplierNameSimplified}/orders/${fileName}`;
+    const filePath = `/files/suppliers/${supplierNameSimplified}/orders/${fileName}`;
     const document = this.orderDocumentRepo.create({
       order_id: order.id,
       document_type: 'order_pdf',
@@ -583,25 +698,60 @@ export class SuppliersService {
     supplierId: number,
     documentData: { fileName: string; folderId: number; notes?: string; content?: string; file_content?: string },
   ) {
-    await this.findOne(supplierId);
+    const supplier = await this.findOne(supplierId);
     const folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
     if (!folder) throw new NotFoundException('Folderul nu a fost găsit');
+    
+    // Get the supplier name simplified
+    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+    
     // Save physical file if content provided
     const base64 = documentData.content || documentData.file_content;
     if (base64) {
       const repoRoot = this.getRepoRoot();
-      const absoluteDir = path.join(repoRoot, folder.folder_path);
+      
+      // Handle both old and new folder path structures
+      let folderPathToUse = folder.folder_path;
+      
+      // Check if the folder path follows the old structure (with ID)
+      if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
+        // This is the old structure with ID, we need to convert it to the new structure
+        folderPathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
+      } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
+        // This is already the new structure, use it as is
+        folderPathToUse = folder.folder_path;
+      }
+      
+      const absoluteDir = path.join(repoRoot, folderPathToUse);
       const absolutePath = path.join(absoluteDir, documentData.fileName);
-      if (!fs.existsSync(absoluteDir)) fs.mkdirSync(absoluteDir, { recursive: true });
+      
+      // Ensure directory exists
+      if (!fs.existsSync(absoluteDir)) {
+        fs.mkdirSync(absoluteDir, { recursive: true });
+      }
+      
       const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
       const buffer = Buffer.from(base64Data, 'base64');
       fs.writeFileSync(absolutePath, buffer);
     }
+    
+    // Handle both old and new file path structures for the document record
+    let filePathToUse = folder.folder_path;
+    
+    // Check if the folder path follows the old structure (with ID)
+    if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
+      // This is the old structure with ID, we need to convert it to the new structure
+      filePathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
+    } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
+      // This is already the new structure, use it as is
+      filePathToUse = folder.folder_path;
+    }
+    
     const document = this.supplierDocumentRepo.create({
       folder_id: documentData.folderId,
       document_type: DocumentType.OTHER,
       file_name: documentData.fileName,
-      file_path: `${folder.folder_path}${documentData.fileName}`,
+      file_path: `${filePathToUse}${documentData.fileName}`,
       notes: documentData.notes,
     });
     return this.supplierDocumentRepo.save(document);
@@ -609,8 +759,50 @@ export class SuppliersService {
 
   async removeDocument(documentId: number): Promise<void> {
     const document = await this.supplierDocumentRepo.findOne({ where: { id: documentId } });
-    if (!document) throw new NotFoundException('Documentul nu a fost găsit');
+    if (!document) {
+      this.logger.warn(`Document with ID ${documentId} not found in database`);
+      throw new NotFoundException('Documentul nu a fost găsit');
+    }
+    
+    // Remove physical file if it exists
+    try {
+      const repoRoot = this.getRepoRoot();
+      
+      // Handle both old and new path structures
+      let filePathToUse = document.file_path;
+      this.logger.log(`📄 Removing document ID: ${documentId}, Name: ${document.file_name}, Path: ${document.file_path}`);
+      
+      if (document.file_path.includes('/suppliers/')) {
+        // Extract supplier ID and name from the path
+        const pathParts = document.file_path.split('/');
+        const suppliersIndex = pathParts.indexOf('suppliers');
+        if (suppliersIndex !== -1 && pathParts.length > suppliersIndex + 2) {
+          // Check if the path follows the old structure (with ID)
+          const possibleId = pathParts[suppliersIndex + 1];
+          if (!isNaN(Number(possibleId))) {
+            // This is the old structure with ID, we need to remove the ID part
+            const supplierName = pathParts[suppliersIndex + 2];
+            filePathToUse = `/files/suppliers/${supplierName}/${pathParts.slice(suppliersIndex + 3).join('/')}`;
+            this.logger.log(`📄 Converting old path structure to new for removal: ${filePathToUse}`);
+          }
+        }
+      }
+      
+      const absolutePath = path.join(repoRoot, filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`);
+      this.logger.log(`📄 Absolute file path for removal: ${absolutePath}`);
+      
+      if (fs.existsSync(absolutePath)) {
+        fs.unlinkSync(absolutePath);
+        this.logger.log(`✅ Deleted physical file: ${absolutePath}`);
+      } else {
+        this.logger.warn(`⚠️ Physical file not found for removal: ${absolutePath}`);
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to delete physical file for document ${documentId}:`, error);
+    }
+    
     await this.supplierDocumentRepo.remove(document);
+    this.logger.log(`✅ Removed document record from database: ${documentId}`);
   }
 
   // Utility link generators used by micro controller

@@ -46,6 +46,11 @@ export class EmployeeService {
     return path.join(repoRoot, 'files', 'employees');
   }
 
+  private simplifyEmployeeName(firstName: string, lastName: string): string {
+    const fullName = `${firstName} ${lastName}`;
+    return fullName.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').substring(0, 50);
+  }
+
   private async sendEmployeeNotification(
     type: string,
     title: string,
@@ -326,7 +331,7 @@ export class EmployeeService {
   // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
   async findAllByCompany(companyId: number): Promise<Employee[]> {
     // 1) Preia toate locațiile companiei din microserviciul locations
-    const baseUrl = process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
+    const baseUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
     let locationIds: number[] = [];
     try {
       const resp = await axios.get(`${baseUrl}/locations`, {
@@ -571,14 +576,29 @@ export class EmployeeService {
       console.error(`Failed to delete employee location assignments for employee ${id}:`, error);
     }
 
-    // 5. Delete physical files from file system
-    const employeeFilesDir = path.join(this.getEmployeesFilesRootDir(), id.toString());
-    if (fs.existsSync(employeeFilesDir)) {
+    // 5. Delete physical files from file system (both old and new structures)
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+    const baseDir = this.getEmployeesFilesRootDir();
+    
+    // Try to remove the new structure (name-based)
+    const employeeFilesDirNew = path.join(baseDir, employeeName);
+    if (fs.existsSync(employeeFilesDirNew)) {
       try {
-        fs.rmSync(employeeFilesDir, { recursive: true, force: true });
-        console.log(`✅ Deleted employee files directory: ${employeeFilesDir}`);
+        fs.rmSync(employeeFilesDirNew, { recursive: true, force: true });
+        console.log(`✅ Deleted employee files directory (new structure): ${employeeFilesDirNew}`);
       } catch (error) {
-        console.error(`Failed to delete employee files directory: ${employeeFilesDir}`, error);
+        console.error(`Failed to delete employee files directory (new structure): ${employeeFilesDirNew}`, error);
+      }
+    }
+    
+    // Try to remove the old structure (ID-based) for backward compatibility
+    const employeeFilesDirOld = path.join(baseDir, id.toString());
+    if (fs.existsSync(employeeFilesDirOld)) {
+      try {
+        fs.rmSync(employeeFilesDirOld, { recursive: true, force: true });
+        console.log(`✅ Deleted employee files directory (old structure): ${employeeFilesDirOld}`);
+      } catch (error) {
+        console.error(`Failed to delete employee files directory (old structure): ${employeeFilesDirOld}`, error);
       }
     }
 
@@ -707,10 +727,10 @@ export class EmployeeService {
     const updatedFileLink = createFileDto.file_link.replace(createFileDto.file_name, uniqueFileName);
 
     // Create the directory if it doesn't exist
-    const employeeId = createFileDto.employee_id?.toString() || 'unknown';
-    console.log(`📁 Creating directory for employee ID: ${employeeId}`);
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+    console.log(`📁 Creating directory for employee: ${employeeName}`);
     const baseDir = this.getEmployeesFilesRootDir();
-    const fileDir = path.join(baseDir, employeeId);
+    const fileDir = path.join(baseDir, employeeName);
     if (!fs.existsSync(fileDir)) {
       fs.mkdirSync(fileDir, { recursive: true });
     }
@@ -818,9 +838,27 @@ export class EmployeeService {
       file_link: file.file_link
     });
     
+    const employee = await this.employeeRepository.findOne({
+      where: { id: file.employee_id }
+    });
+    
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${file.employee_id} nu a fost găsit`);
+    }
+    
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
     const baseDir = this.getEmployeesFilesRootDir();
-    const filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
-    console.log(`📁 Serving file from: ${filePath}`);
+    
+    // Try the new structure first (name-based)
+    let filePath = path.join(baseDir, employeeName, file.file_name);
+    console.log(`📁 Trying new structure path: ${filePath}`);
+    
+    // If not found, try the old structure (ID-based) for backward compatibility
+    if (!fs.existsSync(filePath)) {
+      console.log(`📁 File not found at new path, trying old structure`);
+      filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
+      console.log(`📁 Trying old structure path: ${filePath}`);
+    }
     
     if (!fs.existsSync(filePath)) {
       console.error(`❌ File not found on disk: ${filePath}`);

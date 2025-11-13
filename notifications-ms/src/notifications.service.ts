@@ -33,7 +33,16 @@ export class NotificationsService {
   }> = [];
   private nextId = 1;
 
-  async getUnreadCount() {
+  async getUnreadCount(userId?: number) {
+    if (userId) {
+      const count = await this.repo.count({ 
+        where: { 
+          status: 'unread',
+          user_id: userId 
+        } as any 
+      });
+      return { count };
+    }
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     return { count };
   }
@@ -700,7 +709,13 @@ export class NotificationsService {
   }
 
   // --- Minimal HTTP helpers to satisfy frontend ---
-  async findAll() {
+  async findAll(userId?: number) {
+    if (userId) {
+      return this.repo.find({ 
+        where: { user_id: userId } as any,
+        order: { created_at: 'DESC' } as any 
+      });
+    }
     return this.repo.find({ order: { created_at: 'DESC' } as any });
   }
 
@@ -740,7 +755,22 @@ export class NotificationsService {
     return { id };
   }
 
-  async markAllAsRead() {
+  async markAllAsRead(userId?: number) {
+    if (userId) {
+      await this.repo.createQueryBuilder()
+        .update(NotificationEntity)
+        .set({ status: 'read' } as any)
+        .where("status = 'unread' AND user_id = :userId", { userId })
+        .execute();
+      const count = await this.repo.count({ 
+        where: { 
+          status: 'unread',
+          user_id: userId 
+        } as any 
+      });
+      this.gateway.emitUnreadCount(count);
+      return { message: 'All notifications marked as read' };
+    }
     await this.repo.createQueryBuilder().update(NotificationEntity).set({ status: 'read' } as any).where("status = 'unread'").execute();
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);
@@ -862,21 +892,8 @@ export class NotificationsService {
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
     
-    // Avoid duplicate notifications for the same entity if one already exists
-    if (event.entity_id) {
-      const existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type 
-        } as any 
-      });
-      
-      if (existing) {
-        console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate company notification ignored - Type: ${event.type}, Company ID: ${event.entity_id}`);
-        return existing;
-      }
-    }
+    // Always create notifications for company events - remove duplicate detection for now
+    // This ensures that all company operations generate notifications
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
