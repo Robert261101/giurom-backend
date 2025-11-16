@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject, Logger } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -24,6 +26,8 @@ import { Category } from './entities/category.entity';
 
 @Injectable()
 export class StockService {
+  private readonly logger = new Logger(StockService.name);
+  
   constructor(
     @InjectRepository(Product) private readonly productRepo: Repository<Product>,
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
@@ -32,6 +36,8 @@ export class StockService {
     @InjectRepository(ConsumptionRecord) private readonly consumptionRecordRepo: Repository<ConsumptionRecord>,
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly httpService?: HttpService,
+    private readonly configService?: ConfigService,
   ) {}
 
   private async sendStockNotification(
@@ -93,18 +99,15 @@ export class StockService {
     const product = await this.findProduct(dto.product_id);
     console.log(`📦 [StockService] Found product ${product.id} (${product.name})`);
     
-    // Idempotency: if supplier_order_item_id provided, avoid duplicates
-    if (dto.supplier_order_item_id) {
-      const existing = await this.stockRepo.findOne({ where: { supplier_order_item_id: dto.supplier_order_item_id } });
-      if (existing) {
-        console.log(`↩️ [StockService] Returning existing stock for supplier_order_item_id: ${dto.supplier_order_item_id}`);
-        return existing;
-      }
-    }
+    // NOTĂ: Am eliminat idempotency pentru supplier_order_item_id
+    // De ce? Pentru a permite recepții parțiale - fiecare recepție parțială trebuie să 
+    // creeze un stock item SEPARAT cu entry_date diferit, astfel încât să vedem în rapoarte
+    // recepțiile separate pe zile diferite. Fiecare recepție parțială creează un stock item nou
+    // pentru a păstra istoricul precis al recepțiilor.
     
     const stock = this.stockRepo.create({ ...dto, product, status: StockStatus.VALID });
     const savedStock = await this.stockRepo.save(stock);
-    console.log(`✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}`);
+    console.log(`✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ''}`);
     return savedStock;
   }
 
@@ -609,7 +612,7 @@ export class StockService {
     employee_id?: number;
     start_date?: string;
     end_date?: string;
-  }): Promise<ConsumptionRecord[]> {
+  }): Promise<any[]> {
     const queryBuilder = this.consumptionRecordRepo.createQueryBuilder('consumption')
       .leftJoinAndSelect('consumption.product', 'product')
       .orderBy('consumption.consumed_at', 'DESC');
@@ -634,7 +637,67 @@ export class StockService {
       queryBuilder.andWhere('consumption.consumed_at <= :endDate', { endDate: filters.end_date });
     }
 
-    return await queryBuilder.getMany();
+    const records = await queryBuilder.getMany();
+
+    // Obține numele angajaților din employees service
+    const employeeIds = [...new Set(records.map(r => r.employee_id).filter((id): id is number => id !== null && id !== undefined))];
+    const employeesMap = new Map<number, any>();
+    
+    // Obține informații despre angajați din employees service (comunicare internă directă)
+    // Pentru comunicare internă pe server, folosim localhost (microserviciile rulează pe același server)
+    // Employees service rulează pe portul 3012 (conform API Gateway)
+    if (employeeIds.length > 0 && this.httpService) {
+      let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
+      // Dacă EMPLOYEES_HTTP_URL conține "bitap.ro" sau IP extern, folosim localhost pentru comunicare internă
+      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+        // Pentru comunicare internă, înlocuim URL-ul extern cu localhost
+        // Folosim portul 3012 (employees service) sau portul din URL dacă e specificat
+        const portMatch = employeesServiceUrl.match(/:(\d+)/);
+        const port = portMatch ? portMatch[1] : '3012';
+        employeesServiceUrl = `http://localhost:${port}`;
+        this.logger?.log(`🔧 [STOCK SERVICE] Converted external URL to internal: ${employeesServiceUrl}`);
+      }
+      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-internal-service': 'stock',
+        'x-service-secret': serviceSecret
+      };
+      
+      for (const employeeId of employeeIds) {
+        try {
+          const employeeResponse: any = await firstValueFrom(
+            this.httpService!.get(`${employeesServiceUrl}/employees/${employeeId}`, { headers })
+          );
+          // HttpService din NestJS returnează datele în employeeResponse.data
+          const employeeData = employeeResponse?.data?.data || employeeResponse?.data || employeeResponse;
+          if (employeeData) {
+            employeesMap.set(employeeId, employeeData);
+          }
+        } catch (error: any) {
+          // 404 means employee doesn't exist - this is not critical, just log as warning
+          if (error?.response?.status === 404) {
+            this.logger?.warn(`⚠️ [STOCK SERVICE] Employee with ID ${employeeId} not found in employees service. This is normal if the employee was deleted or the ID is invalid.`);
+          } else {
+            this.logger?.warn(`⚠️ [STOCK SERVICE] Could not fetch employee ${employeeId} from ${employeesServiceUrl}/employees/${employeeId}:`, error?.message);
+          }
+          // Don't add to employeesMap if not found - will display "Angajat ID: X" in frontend
+        }
+      }
+    }
+
+    // Adaugă numele angajatului la fiecare înregistrare
+    return records.map(record => {
+      const employee = employeesMap.get(record.employee_id!);
+      const employeeName = employee 
+        ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.email || `Angajat ID: ${record.employee_id}`
+        : record.employee_id ? `Angajat ID: ${record.employee_id}` : null;
+      
+      return {
+        ...record,
+        employee_name: employeeName
+      };
+    });
   }
 
   async getConsumptionStats(filters?: {

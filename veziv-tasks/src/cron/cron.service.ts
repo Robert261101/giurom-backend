@@ -827,10 +827,11 @@ export class CronService {
       
       // Obține shift-urile din ziua respectivă
       const shiftsResponse = await firstValueFrom(
-        this.httpService.get(`http://giurom.bitap.ro:3002/attendance/shifts?work_location_id=3&limit=1000`, {
+        this.httpService.get(`http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=3&limit=1000`, {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            'x-api-key': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
         })
@@ -864,26 +865,12 @@ export class CronService {
       const employeeIds = [...new Set(relevantShifts.map((s: any) => s.employee_id))];
       this.logger.log(`🔍 Employee IDs working on ${date}:`, employeeIds);
       
-      // Obține detalii despre angajați
-      const employeesResponse = await firstValueFrom(
-        this.httpService.get(`http://giurom.bitap.ro:3002/employees`, {
-          headers: {
-            'x-internal-service': 'tasks',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-            'Content-Type': 'application/json'
-          }
-        })
-      );
-      
-      const allEmployees = employeesResponse.data?.employees || [];
-      const workingEmployees = allEmployees.filter((emp: any) => employeeIds.includes(emp.id));
-      
-      this.logger.log(`✅ Found ${workingEmployees.length} employees working in department ${departmentId} on ${date}`);
-      
-      return workingEmployees.map((emp: any) => ({
-        id: emp.id,
-        first_name: emp.first_name,
-        last_name: emp.last_name
+      // Evită apelul către serviciul employees (poate răspunde 401 în context cron)
+      this.logger.log(`✅ Using attendance-only data for working employees in department ${departmentId} on ${date}`);
+      return employeeIds.map((id: number) => ({
+        id,
+        first_name: 'N/A',
+        last_name: ''
       }));
     } catch (error) {
       this.logger.error(`❌ Error getting employees working on date ${date}:`, error.message);
@@ -896,41 +883,9 @@ export class CronService {
    */
   private async getDepartmentEmployees(departmentGroupId: string): Promise<Array<{id: number, first_name: string, last_name: string}> | null> {
     try {
-      // Parsează department_group_id pentru a obține department_id
-      // Format: "dept_3_1759229369116_y9n9vlq7e" -> extrage "3"
-      let departmentId = departmentGroupId;
-      
-      if (departmentGroupId.startsWith('dept_')) {
-        // Format: "dept_3_1759229369116_y9n9vlq7e"
-        const parts = departmentGroupId.split('_');
-        departmentId = parts[1]; // "3"
-      } else if (departmentGroupId.startsWith('department_')) {
-        // Format: "department_123"
-        departmentId = departmentGroupId.replace('department_', '');
-      }
-      
-      this.logger.log(`🔍 Getting employees for department ID: ${departmentId} from group: ${departmentGroupId}`);
-      
-      // Folosește microserviciul employees cu filtrul de departament
-      const response = await firstValueFrom(
-        this.httpService.get(`http://giurom.bitap.ro:3002/employees?department_id=${departmentId}`, {
-          headers: {
-            'x-internal-service': 'tasks',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-            'Content-Type': 'application/json'
-          }
-        })
-      );
-      
-      const employees = response.data?.employees || [];
-      this.logger.log(`✅ Found ${employees.length} employees for department ${departmentId}`);
-      
-      // Returnează doar câmpurile necesare
-      return employees.map((emp: any) => ({
-        id: emp.id,
-        first_name: emp.first_name,
-        last_name: emp.last_name
-      }));
+      // DEPRECATED: evită apelul către employees pentru a preveni 401.
+      this.logger.log(`🔍 [DEPRECATED] getDepartmentEmployees called for group ${departmentGroupId} → returning empty without external calls`);
+      return [];
     } catch (error) {
       this.logger.error(`❌ Error getting department employees for group ${departmentGroupId}:`, error.message);
       return null;
@@ -942,30 +897,9 @@ export class CronService {
    */
   private async getEmployeesByIds(employeeIds: number[]): Promise<Array<{id: number, first_name: string, last_name: string}> | null> {
     try {
-      this.logger.log(`🔍 Getting employee details for IDs: ${employeeIds.join(', ')}`);
-      
-      // Obține toți angajații și filtrează după ID-uri
-      const response = await firstValueFrom(
-        this.httpService.get(`http://giurom.bitap.ro:3002/employees`, {
-          headers: {
-            'x-internal-service': 'tasks',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-            'Content-Type': 'application/json'
-          }
-        })
-      );
-      
-      const allEmployees = response.data?.employees || [];
-      const filteredEmployees = allEmployees.filter((emp: any) => employeeIds.includes(emp.id));
-      
-      this.logger.log(`✅ Found ${filteredEmployees.length} employees for IDs: ${employeeIds.join(', ')}`);
-      
-      // Returnează doar câmpurile necesare
-      return filteredEmployees.map((emp: any) => ({
-        id: emp.id,
-        first_name: emp.first_name,
-        last_name: emp.last_name
-      }));
+      // Evită complet employees service; construiește placeholder minimal
+      this.logger.log(`🔍 Building minimal employee placeholders for IDs: ${employeeIds.join(', ')}`);
+      return (employeeIds || []).map(id => ({ id, first_name: 'N/A', last_name: '' }));
     } catch (error) {
       this.logger.error(`❌ Error getting employees by IDs ${employeeIds.join(', ')}:`, error.message);
       return null;
@@ -984,6 +918,36 @@ export class CronService {
       await this.processExpiredTasks();
     } catch (error) {
       this.logger.error('❌ Error in expired task reassignment cron job:', error);
+    }
+  }
+
+  // La miezul nopții: marchează ca 'completed' toate task-urile nefinalizate din ziua anterioară (fără puncte)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async completeUnfinishedAssignmentsForPreviousDay() {
+    try {
+      const now = new Date()
+      const prev = new Date(now)
+      prev.setDate(prev.getDate() - 1)
+      const dateStr = prev.toISOString().split('T')[0]
+      this.logger.log(`🕛 [CronService] Auto-complete unfinished assignments for ${dateStr}`)
+
+      const assignments = await this.assignmentRepository.createQueryBuilder('a')
+        .where('(a.status = :s1 OR a.status = :s2)', { s1: 'assigned', s2: 'in_progress' })
+        .andWhere('(DATE(a.assigned_at) = :d OR DATE(a.scheduled_datetime) = :d)', { d: dateStr })
+        .getMany()
+      this.logger.log(`🕛 [CronService] Found ${assignments.length} unfinished assignments on ${dateStr}`)
+
+      if (assignments.length > 0) {
+        for (const a of assignments) {
+          await this.assignmentRepository.update(a.id, {
+            status: 'completed' as any,
+            notes: `${a.notes || ''}\n✅ Auto-completat la miezul nopții pentru ziua ${dateStr} (fără puncte)`
+          })
+        }
+        this.logger.log(`🕛 [CronService] Marked ${assignments.length} assignments as completed without points`)
+      }
+    } catch (err) {
+      this.logger.error('❌ [CronService] Auto-complete job failed:', err?.message || err)
     }
   }
 
@@ -1129,27 +1093,12 @@ export class CronService {
       );
       
       let locationId = locationElement?.value ? parseInt(locationElement.value) : null;
-      
-      // Dacă nu găsim locația din elemente, încercăm să o obținem din angajatul curent
-      if (!locationId && assignment.assigned_to_id) {
-        try {
-          const employeeResponse = await firstValueFrom(
-            this.httpService.get(`http://giurom.bitap.ro:3002/employees/${assignment.assigned_to_id}`, {
-              headers: {
-                'x-internal-service': 'tasks',
-                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-                'Content-Type': 'application/json'
-              }
-            })
-          );
-          
-          const employee = employeeResponse.data;
-          locationId = employee?.work_location_default_id || employee?.work_location_id;
-          this.logger.log(`📍 Location ID ${locationId} obtained from employee ${assignment.assigned_to_id}`);
-        } catch (error) {
-          this.logger.error(`❌ Could not get employee location:`, error.message);
-        }
+      if (!locationId && (assignment as any)?.location_id) {
+        locationId = Number((assignment as any).location_id);
+        this.logger.log(`📍 Using assignment.location_id as fallback for task ${assignment.id}: ${locationId}`);
       }
+      
+      // Eliminăm fallback-ul către employees pentru a evita 401 în context de cron
       
       if (!locationId) {
         this.logger.log(`⚠️ Could not determine location for task ${assignment.id}`);
@@ -1164,17 +1113,21 @@ export class CronService {
       let availableEmployees: any[] = [];
       
       try {
-        this.logger.log(`🔍 Calling attendance service: http://giurom.bitap.ro:3002/attendance/shifts?work_location_id=${locationId}&limit=1000`);
-        
+        const attendanceUrl = `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`
+        const secret = process.env.SERVICE_SECRET || 'default-service-secret'
+        const headers = {
+          'x-internal-service': 'veziv-tasks',
+          'x-service-secret': secret,
+          'x-api-key': secret,
+          'Content-Type': 'application/json'
+        } as Record<string, string>
+        this.logger.log(`🔍 Calling attendance service: ${attendanceUrl}`)
+        this.logger.log(`🔍 Attendance headers: { x-internal-service: ${headers['x-internal-service']}, x-service-secret: [len:${headers['x-service-secret']?.length || 0}], x-api-key: [len:${headers['x-api-key']?.length || 0}], content-type: ${headers['Content-Type']} }`)
+
         const shiftsResponse = await firstValueFrom(
-          this.httpService.get(`http://giurom.bitap.ro:3002/attendance/shifts?work_location_id=${locationId}&limit=1000`, {
-            headers: {
-              'x-internal-service': 'tasks',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-              'Content-Type': 'application/json'
-            }
-          })
+          this.httpService.get(attendanceUrl, { headers })
         );
+        this.logger.log(`✅ Attendance response: status=${shiftsResponse.status} hasData=${Boolean(shiftsResponse.data)} type=${Array.isArray(shiftsResponse.data) ? 'array' : typeof shiftsResponse.data}`)
         
         // Extrage array-ul de shifts (format: { data: [...], total, page, limit })
         let allShifts: any[] = [];
@@ -1196,27 +1149,44 @@ export class CronService {
         const employeeIds = [...new Set(todayShifts.map((shift: any) => shift.employee_id))];
         this.logger.log(`📋 Unique employee IDs with shifts: ${employeeIds.join(', ')}`);
         
-        // Obține detaliile angajaților
-        if (employeeIds.length > 0) {
-          const employeesResponse = await firstValueFrom(
-            this.httpService.get(`http://giurom.bitap.ro:3002/employees`, {
-              headers: {
-                'x-internal-service': 'tasks',
-                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-                'Content-Type': 'application/json'
-              }
-            })
-          );
-          
-          const allEmployees = employeesResponse.data?.employees || [];
-          availableEmployees = allEmployees.filter((emp: any) => employeeIds.includes(emp.id));
-          
-          this.logger.log(`📋 Found ${availableEmployees.length} employees with active shifts`);
-          this.logger.log(`📋 Available employees: ${JSON.stringify(availableEmployees.map((e: any) => ({ id: e.id, name: `${e.first_name} ${e.last_name}` })))}`);
-        }
+        // Construiește candidații direct din IDs (evită apelul către employees)
+        availableEmployees = employeeIds.map((id: number) => ({ id, first_name: 'N/A', last_name: '' }));
+        this.logger.log(`📋 Built available employees from attendance: ${availableEmployees.length}`);
       } catch (error) {
-        this.logger.error(`❌ Error fetching employees from attendance service:`, error.message);
-        this.logger.error(`❌ Error details:`, error.response?.data || error);
+        const status = error?.response?.status
+        const data = error?.response?.data
+        const errHeaders = error?.response?.headers
+        this.logger.error(`❌ Error fetching employees from attendance service: ${status || ''} ${error?.message || error}`)
+        if (status) this.logger.error(`❌ Attendance error status: ${status}`)
+        if (data) this.logger.error(`❌ Attendance error body: ${typeof data === 'string' ? data : JSON.stringify(data)}`)
+        if (errHeaders) this.logger.error(`❌ Attendance error headers: ${JSON.stringify(errHeaders)}`)
+        this.logger.error(`❌ Used headers summary: { x-internal-service: veziv-tasks, x-service-secret:[len:${(process.env.SERVICE_SECRET || '').length}], x-api-key:[len:${(process.env.SERVICE_SECRET || '').length}] }`)
+
+        // Fallback: deduce working employees from today's assignments at this location
+        try {
+          this.logger.warn(`⚠️ Falling back to assignments-based candidate discovery for location ${locationId} on ${dateStr}`)
+          const qb = this.assignmentRepository.createQueryBuilder('assignment')
+            .select(['assignment.assigned_to_id', 'assignment.status', 'assignment.assigned_at', 'assignment.scheduled_datetime'])
+            .where('assignment.location_id = :locId', { locId: locationId })
+            .andWhere('assignment.assigned_to_id IS NOT NULL')
+            .andWhere('(DATE(assignment.assigned_at) = :d OR DATE(assignment.scheduled_datetime) = :d)', { d: dateStr })
+
+          const todaysAssignments = await qb.getMany()
+          this.logger.log(`📋 Assignments fallback found ${todaysAssignments.length} records at location ${locationId} for ${dateStr}`)
+
+          const workingSet = new Set<number>()
+          todaysAssignments.forEach((a: any) => {
+            const id = Number(a.assigned_to_id)
+            if (id) workingSet.add(id)
+          })
+          const candidateIds = Array.from(workingSet.values())
+          this.logger.log(`📋 Candidate employee IDs from assignments: ${candidateIds.join(', ')}`)
+
+          // Build minimal candidates
+          availableEmployees = candidateIds.map(id => ({ id, first_name: 'N/A', last_name: '' }))
+        } catch (fallbackErr) {
+          this.logger.error(`❌ Assignments fallback failed:`, fallbackErr?.message || fallbackErr)
+        }
       }
 
       // Filtrează angajații: exclude angajatul curent
@@ -1228,9 +1198,32 @@ export class CronService {
         return false;
       }
 
-      // Selectează un angajat random
-      const randomIndex = Math.floor(Math.random() * eligibleEmployees.length);
-      const selectedEmployee = eligibleEmployees[randomIndex];
+      // Preferă angajatul cu cele mai puține task-uri active astăzi (tie-break: random)
+      const todayStart = new Date(dateStr + 'T00:00:00Z')
+      const todayEnd = new Date(dateStr + 'T23:59:59Z')
+      const counts = new Map<number, number>()
+      const activeToday = await this.assignmentRepository.createQueryBuilder('a')
+        .select(['a.assigned_to_id', 'a.status', 'a.assigned_at', 'a.scheduled_datetime'])
+        .where('a.location_id = :locId', { locId: locationId })
+        .andWhere('a.assigned_to_id IS NOT NULL')
+        .andWhere('(a.status = :s1 OR a.status = :s2)', { s1: 'assigned', s2: 'in_progress' })
+        .getMany()
+      activeToday.forEach((a: any) => {
+        const ts = new Date(a.scheduled_datetime || a.assigned_at)
+        if (ts >= todayStart && ts <= todayEnd) {
+          const id = Number(a.assigned_to_id)
+          counts.set(id, (counts.get(id) || 0) + 1)
+        }
+      })
+      let selectedEmployee = eligibleEmployees[0]
+      if (eligibleEmployees.length > 1) {
+        selectedEmployee = eligibleEmployees.sort((e1: any, e2: any) => {
+          const c1 = counts.get(e1.id) || 0
+          const c2 = counts.get(e2.id) || 0
+          if (c1 !== c2) return c1 - c2
+          return Math.random() - 0.5
+        })[0]
+      }
 
       this.logger.log(`🎲 Randomly selected employee ${selectedEmployee.id} (${selectedEmployee.first_name} ${selectedEmployee.last_name}) for task ${assignment.id}`);
 

@@ -15,6 +15,9 @@ export class RecipeLabel {
   @Column({ type: 'varchar', length: 500 })
   label_file_path: string;
 
+  @Column({ type: 'int', nullable: true })
+  generated_by_employee_id?: number;
+
   @CreateDateColumn({ type: 'datetime' })
   generated_at: Date;
 

@@ -62,7 +62,7 @@ export class AssignmentService {
       const response = await firstValueFrom(
         this.httpService.get(`http://giurom.bitap.ro:3002/employees/${employeeId}`, {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
@@ -74,7 +74,30 @@ export class AssignmentService {
         last_name: employee.last_name || ''
       };
     } catch (error) {
-      console.error(`❌ [AssignmentService] Eroare la obținerea informațiilor despre angajatul ${employeeId}:`, error.message);
+      // Retry against possible internal port if gateway rejects with 401
+      const status = error?.response?.status;
+      if (status === 401) {
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(`http://giurom.bitap.ro:3012/employees/${employeeId}`, {
+              headers: {
+                'x-internal-service': 'veziv-tasks',
+                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+                'Content-Type': 'application/json'
+              }
+            })
+          );
+          const employee = response.data;
+          return {
+            first_name: employee.first_name || '',
+            last_name: employee.last_name || ''
+          };
+        } catch (e2) {
+          console.warn(`⚠️ [AssignmentService] employees retry failed for ${employeeId}:`, e2?.message || e2);
+          return null;
+        }
+      }
+      console.warn(`⚠️ [AssignmentService] getEmployeeInfo failed for ${employeeId}:`, error?.message || error);
       return null;
     }
   }
@@ -87,7 +110,7 @@ export class AssignmentService {
       const response = await firstValueFrom(
         this.httpService.get(`http://giurom.bitap.ro:3002/locations/work-location-departments/${departmentId}`, {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
@@ -123,6 +146,11 @@ export class AssignmentService {
   }
 
   async create(createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
+    
+    // Validare obligatorie: location_id
+    if (!createAssignmentDto.location_id || isNaN(Number(createAssignmentDto.location_id))) {
+      throw new Error('location_id este obligatoriu și trebuie să fie numeric');
+    }
     
     // Calculează due_date corect bazat pe scheduled_datetime + finalized_in + allow_postpone
     let finalDueDate = new Date(createAssignmentDto.due_date);
@@ -358,6 +386,7 @@ export class AssignmentService {
       // assigned_to_type eliminat - toate task-urile sunt pentru persoane
       assigned_to_id: createAssignmentDto.assigned_to_id,
       created_by_employee_id: createAssignmentDto.created_by_employee_id,
+      location_id: Number(createAssignmentDto.location_id),
       status: status,
       priority: createAssignmentDto.priority,
       assigned_at: new Date(createAssignmentDto.assigned_at),
@@ -599,7 +628,14 @@ export class AssignmentService {
 
   // ===== METODA CU PERMISIUNI PENTRU GET ASSIGNMENTS =====
 
-  async findAllWithPermissions(user: any, locationId?: number): Promise<TaskAssignment[]> {
+  async findAllWithPermissions(user: any, locationId?: number, startDate?: Date, endDate?: Date): Promise<TaskAssignment[]> {
+    console.log('🔍 [assignment.service] findAllWithPermissions params:', {
+      userId: user?.sub,
+      perms: user?.permissions,
+      locationId,
+      startDate: startDate?.toISOString?.(),
+      endDate: endDate?.toISOString?.()
+    });
     
     const query = this.assignmentRepository
       .createQueryBuilder('assignment')
@@ -644,13 +680,14 @@ export class AssignmentService {
       
       // Dacă are și assignment.create (este manager), poate vedea sarcinile invizibile
       if (user?.permissions?.includes('assignment.create')) {
-        // Filtrează sarcinile active și finalizate doar pe ziua curentă pentru manageri
-        const today = new Date();
-        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        
+        // Manager: fără filtru implicit pe ziua curentă — aplică interval doar dacă e trimis
+        if (startDate && endDate) {
+          const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+          const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+        }
         const result = await query
-          .where(
+          .andWhere(
             '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
             { 
               assignedStatus: 'assigned', 
@@ -659,15 +696,8 @@ export class AssignmentService {
               scheduledStatus: 'scheduled'
             }
           )
-          .andWhere(
-            '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-            { 
-              scheduledStatus: 'scheduled',
-              startOfDay: startOfDay,
-              endOfDay: endOfDay
-            }
-          )
           .getMany();
+        console.log('🔍 [assignment.service] read_all+create result count:', result.length);
         // Adaugă informații despre persoane și departamente
         const enrichedResults = await Promise.all(
           result.map(assignment => this.enrichAssignmentWithDetails(assignment))
@@ -675,13 +705,14 @@ export class AssignmentService {
         return enrichedResults;
       } else {
         // Dacă nu este manager, filtrează doar sarcinile vizibile
-        // Filtrează sarcinile active și finalizate doar pe ziua curentă
-        const today = new Date();
-        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        
+        // Fără filtru implicit pe zi – aplică interval doar dacă e trimis
+        if (startDate && endDate) {
+          const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+          const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+        }
         const result = await query
-          .where('assignment.is_visible_for_employee = :visible', { visible: true })
+          .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
           .andWhere(
             '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
             { 
@@ -691,15 +722,8 @@ export class AssignmentService {
               scheduledStatus: 'scheduled'
             }
           )
-          .andWhere(
-            '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-            { 
-              scheduledStatus: 'scheduled',
-              startOfDay: startOfDay,
-              endOfDay: endOfDay
-            }
-          )
           .getMany();
+        console.log('🔍 [assignment.service] read_all (non-manager) result count:', result.length);
         // Adaugă informații despre persoane și departamente
         const enrichedResults = await Promise.all(
           result.map(assignment => this.enrichAssignmentWithDetails(assignment))
@@ -720,9 +744,9 @@ export class AssignmentService {
         
         // Apelează microserviciul attendance pentru a obține shift-ul angajatului astăzi
         const shiftsResponse = await firstValueFrom(
-          this.httpService.get(`http://giurom.bitap.ro:3002/attendance/shifts?work_location_id=${user.work_location_id || 3}&limit=1000`, {
+          this.httpService.get(`http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${user.work_location_id || 3}&limit=1000`, {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
@@ -769,7 +793,7 @@ export class AssignmentService {
           const employeeResponse = await firstValueFrom(
             this.httpService.get(`http://giurom.bitap.ro:3012/employees/${user.sub}`, {
               headers: {
-                'x-internal-service': 'tasks',
+                'x-internal-service': 'veziv-tasks',
                 'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
                 'Content-Type': 'application/json'
               }
@@ -789,11 +813,6 @@ export class AssignmentService {
       }
       
       
-      // Filtrează sarcinile active și finalizate doar pe ziua curentă
-      const today = new Date();
-      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-      
       const queryBuilder = query
         .where('assignment.is_visible_for_employee = :visible', { visible: true })
         .andWhere(
@@ -805,14 +824,17 @@ export class AssignmentService {
             scheduledStatus: 'scheduled'
           }
         )
-        .andWhere(
-          '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-          { 
-            scheduledStatus: 'scheduled',
-            startOfDay: startOfDay,
-            endOfDay: endOfDay
-          }
-        );
+      
+      // Aplică intervalul DOAR dacă este furnizat
+      if (startDate && endDate) {
+        const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+        const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+        queryBuilder.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+      }
+      // Aplică filtru pe locație dacă e furnizat
+      if (locationId !== undefined) {
+        queryBuilder.andWhere('assignment.location_id = :ownLoc', { ownLoc: locationId });
+      }
       
       // Adaugă condiția pentru assigned_to_id SAU task-uri FCFS din departamentul user-ului SAU task-uri FCFS de persoane
       if (userDepartmentId) {
@@ -837,6 +859,7 @@ export class AssignmentService {
       }
       
       const result = await queryBuilder.getMany();
+      console.log('🔍 [assignment.service] read_own result count:', result.length, 'applied locationId:', locationId);
       
       if (result.length > 0) {
         console.log('🔍 [assignment.service] Primul assignment din rezultat:', {
@@ -860,7 +883,7 @@ export class AssignmentService {
         const employeeResponse = await firstValueFrom(
           this.httpService.get(`http://giurom.bitap.ro:3002/employees/${user.sub}`, {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
@@ -870,10 +893,7 @@ export class AssignmentService {
         
         if (employee?.work_location_default_id) {
           // Filtrează assignments-urile care au template-uri disponibile în locația utilizatorului
-          // Filtrează sarcinile active și finalizate doar pe ziua curentă
-          const today = new Date();
-          const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-          const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+          // Fără filtrare implicită pe ziua curentă
           
           // Aplică filtrul după location_id dacă este furnizat
           if (locationId !== undefined) {
@@ -883,9 +903,9 @@ export class AssignmentService {
           // Filtrare OBLIGATORIE - afișează DOAR task-urile cu location_id setat
           query.andWhere('assignment.location_id IS NOT NULL');
           
-          const locationResult = await query
+          const qb = query
             .leftJoin('template.templateLocations', 'templateLocation')
-            .where('templateLocation.idLocation = :locationId', { locationId: employee.work_location_default_id })
+            .where('templateLocation.idLocation = :locationId', { locationId: (locationId !== undefined ? locationId : employee.work_location_default_id) })
             .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
             .andWhere(
               '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
@@ -895,16 +915,18 @@ export class AssignmentService {
                 waitingResponseStatus: 'waiting_response',
                 scheduledStatus: 'scheduled'
               }
-            )
-            .andWhere(
-              '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-              { 
-                scheduledStatus: 'scheduled',
-                startOfDay: startOfDay,
-                endOfDay: endOfDay
-              }
-            )
-            .getMany();
+            );
+          if (startDate && endDate) {
+            const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+            const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+            qb.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+          }
+          // Filtru explicit pe assignment.location_id dacă e trimis
+          if (locationId !== undefined) {
+            qb.andWhere('assignment.location_id = :filterLoc', { filterLoc: locationId });
+          }
+          const locationResult = await qb.getMany();
+          console.log('🔍 [assignment.service] read_location result count:', locationResult.length, 'applied locationId:', (locationId !== undefined ? locationId : employee.work_location_default_id));
           
           // Adaugă informații despre persoane și departamente
           const enrichedLocationResults = await Promise.all(
@@ -928,7 +950,7 @@ export class AssignmentService {
         const employeeResponse = await firstValueFrom(
           this.httpService.get(`http://giurom.bitap.ro:3002/employees/${user.sub}`, {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
@@ -941,7 +963,7 @@ export class AssignmentService {
           const locationResponse = await firstValueFrom(
             this.httpService.get(`http://giurom.bitap.ro:3002/locations/${employee.work_location_default_id}`, {
               headers: {
-                'x-internal-service': 'tasks',
+                'x-internal-service': 'veziv-tasks',
                 'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
                 'Content-Type': 'application/json'
               }
@@ -954,7 +976,7 @@ export class AssignmentService {
             const companyLocationsResponse = await firstValueFrom(
               this.httpService.get(`http://giurom.bitap.ro:3002/locations?company_id=${location.company_id}`, {
                 headers: {
-                  'x-internal-service': 'tasks',
+                  'x-internal-service': 'veziv-tasks',
                   'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
                   'Content-Type': 'application/json'
                 }
@@ -965,11 +987,7 @@ export class AssignmentService {
             
             if (locationIds.length > 0) {
               // Filtrează assignments-urile care au template-uri disponibile în locațiile companiei
-              // Filtrează sarcinile active și finalizate doar pe ziua curentă
-              const today = new Date();
-              const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-              const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-              
+              // Returnează toate sarcinile (fără restricție implicită pe ziua curentă)
               query
                 .leftJoin('template.templateLocations', 'templateLocation')
                 .where('templateLocation.idLocation IN (:...locationIds)', { locationIds })
@@ -982,25 +1000,24 @@ export class AssignmentService {
                     waitingResponseStatus: 'waiting_response',
                     scheduledStatus: 'scheduled'
                   }
-                )
-                .andWhere(
-                  '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-                  { 
-                    scheduledStatus: 'scheduled',
-                    startOfDay: startOfDay,
-                    endOfDay: endOfDay
-                  }
                 );
 
               // Aplică filtrul după location_id dacă este furnizat
               if (locationId !== undefined) {
                 query.andWhere('assignment.location_id = :queryLocationId', { queryLocationId: locationId });
               }
+              // Aplică intervalul de date doar dacă este furnizat
+              if (startDate && endDate) {
+                const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+                const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+                query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+              }
               
               // Filtrare OBLIGATORIE - afișează DOAR task-urile cu location_id setat
               query.andWhere('assignment.location_id IS NOT NULL');
               
               const companyLocationResult = await query.getMany();
+              console.log('🔍 [assignment.service] read_company result count:', companyLocationResult.length, 'filter locationId:', locationId, 'company locations count:', locationIds.length);
               
               // Adaugă informații despre persoane și departamente
               const enrichedCompanyResults = await Promise.all(
@@ -1024,11 +1041,15 @@ export class AssignmentService {
       
       // Dacă are și assignment.create (este manager), poate vedea sarcinile invizibile
       if (user?.permissions?.includes('assignment.create')) {
-        // Filtrează sarcinile active și finalizate doar pe ziua curentă pentru manageri
-        const today = new Date();
-        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        
+        // Manager: fără filtru implicit pe ziua curentă — returnăm toate sarcinile
+        if (locationId !== undefined) {
+          query.andWhere('assignment.location_id = :locId', { locId: locationId });
+        }
+        if (startDate && endDate) {
+          const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+          const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+        }
         const result = await query
           .where(
             '(assignment.status = :assignedStatus OR assignment.status = :completedStatus OR assignment.status = :waitingResponseStatus OR assignment.status = :scheduledStatus)',
@@ -1039,14 +1060,6 @@ export class AssignmentService {
               scheduledStatus: 'scheduled'
             }
           )
-          .andWhere(
-            '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-            { 
-              scheduledStatus: 'scheduled',
-              startOfDay: startOfDay,
-              endOfDay: endOfDay
-            }
-          )
           .getMany();
         // Adaugă informații despre persoane și departamente
       const enrichedResults = await Promise.all(
@@ -1055,11 +1068,15 @@ export class AssignmentService {
       return enrichedResults;
       } else {
         // Dacă nu este manager, filtrează doar sarcinile vizibile
-        // Filtrează sarcinile active și finalizate doar pe ziua curentă
-        const today = new Date();
-        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        
+        // Fără filtru implicit pe ziua curentă — returnăm toate sarcinile vizibile
+        if (locationId !== undefined) {
+          query.andWhere('assignment.location_id = :locId', { locId: locationId });
+        }
+        if (startDate && endDate) {
+          const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
+          const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+        }
         const result = await query
           .where('assignment.is_visible_for_employee = :visible', { visible: true })
           .andWhere(
@@ -1069,14 +1086,6 @@ export class AssignmentService {
               completedStatus: 'completed',
               waitingResponseStatus: 'waiting_response',
               scheduledStatus: 'scheduled'
-            }
-          )
-          .andWhere(
-            '(assignment.status = :scheduledStatus OR (assignment.assigned_at >= :startOfDay AND assignment.assigned_at <= :endOfDay))',
-            { 
-              scheduledStatus: 'scheduled',
-              startOfDay: startOfDay,
-              endOfDay: endOfDay
             }
           )
           .getMany();

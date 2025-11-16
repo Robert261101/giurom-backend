@@ -11,6 +11,7 @@ export interface CreateStockItemDto {
   entry_date: string;
   status: string;
   expiration_date?: string;
+  location_id?: number;
 }
 
 export interface StockResponse {
@@ -30,12 +31,14 @@ export interface StockResponse {
 export class StockHttpService {
   private readonly logger = new Logger(StockHttpService.name);
   private readonly stockServiceUrl: string;
+  private readonly serviceSecret: string;
 
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
+    this.serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
   }
 
   /**
@@ -46,7 +49,16 @@ export class StockHttpService {
       this.logger.log(`Creating stock item for product ${dto.product_id} with quantity ${dto.quantity}`);
       
       const response = await firstValueFrom(
-        this.httpService.post<StockResponse>(`${this.stockServiceUrl}/stock/items`, dto)
+        this.httpService.post<StockResponse>(
+          `${this.stockServiceUrl}/stock/items`, 
+          dto,
+          {
+            headers: {
+              'x-internal-service': 'suppliers-ms',
+              'x-service-secret': this.serviceSecret,
+            },
+          }
+        )
       );
 
       this.logger.log(`Successfully created stock item with ID: ${response.data.id}`);
@@ -67,15 +79,21 @@ export class StockHttpService {
    * Creates multiple stock items in batch
    */
   async createStockItems(items: CreateStockItemDto[]): Promise<StockResponse[]> {
+    this.logger.log(`📦 [StockHttpService] Creating ${items.length} stock items in batch`);
     const results: StockResponse[] = [];
     
     for (const item of items) {
+      this.logger.log(`📦 [StockHttpService] Processing stock item: product_id=${item.product_id}, quantity=${item.quantity}, price=${item.price}`);
       const result = await this.createStockItem(item);
       if (result) {
+        this.logger.log(`✅ [StockHttpService] Successfully created stock item with ID: ${result.id}`);
         results.push(result);
+      } else {
+        this.logger.error(`❌ [StockHttpService] Failed to create stock item for product_id=${item.product_id}, quantity=${item.quantity}`);
       }
     }
     
+    this.logger.log(`📦 [StockHttpService] Created ${results.length} out of ${items.length} stock items`);
     return results;
   }
 
@@ -85,7 +103,15 @@ export class StockHttpService {
   async healthCheck(): Promise<boolean> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`${this.stockServiceUrl}/stock/items`)
+        this.httpService.get(
+          `${this.stockServiceUrl}/stock/items`,
+          {
+            headers: {
+              'x-internal-service': 'suppliers-ms',
+              'x-service-secret': this.serviceSecret,
+            },
+          }
+        )
       );
       
       return response.status === 200;

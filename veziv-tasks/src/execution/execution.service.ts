@@ -997,6 +997,47 @@ export class ExecutionService {
     return { points: totalPoints, isOverdue };
   }
 
+  // ===== AGREGAȚI PUNCTE PE LOCAȚIE/ANGAJAT ÎNTR-UN INTERVAL =====
+  async calculateTotalPointsForLocation(locationId: number, startDate?: string, endDate?: string): Promise<number> {
+    const qb = this.employeeDailyTaskPointsRepository
+      .createQueryBuilder('taskPoints')
+      .innerJoin('taskPoints.task_execution', 'exec')
+      .select('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total')
+      .where('exec.location_id = :locId', { locId: locationId })
+      .andWhere('exec.completed_at IS NOT NULL');
+    
+    if (startDate && endDate) {
+      const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
+      const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+      qb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+    }
+    
+    const res = await qb.getRawOne<{ total: string }>();
+    return parseFloat(res?.total || '0') || 0;
+  }
+  
+  async calculatePointsByEmployeeForLocation(locationId: number, startDate?: string, endDate?: string): Promise<Array<{ employee_id: number; total_points: number }>> {
+    const qb = this.employeeDailyTaskPointsRepository
+      .createQueryBuilder('taskPoints')
+      .innerJoin('taskPoints.task_execution', 'exec')
+      .select('exec.employee_id', 'employee_id')
+      .addSelect('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total_points')
+      .where('exec.location_id = :locId', { locId: locationId })
+      .andWhere('exec.completed_at IS NOT NULL')
+      .groupBy('exec.employee_id');
+    
+    if (startDate && endDate) {
+      const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
+      const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+      qb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+    }
+    
+    const rows = await qb.getRawMany<{ employee_id: string; total_points: string }>();
+    return rows.map(r => ({
+      employee_id: Number(r.employee_id),
+      total_points: parseFloat(r.total_points || '0') || 0
+    }));
+  }
   // ===== METODĂ PENTRU CALCULAREA PUNCTELOR MANAGERULUI =====
   private async handleManagerPoints(execution: TaskExecution, assignment: TaskAssignment, employeePoints: number, workDate: Date): Promise<void> {
     try {
@@ -1015,7 +1056,7 @@ export class ExecutionService {
         try {
           const employeeResponse = await this.httpService.axiosRef.get(`http://giurom.bitap.ro:3002/employees/${assignment.assigned_to_id}`, {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
@@ -1036,7 +1077,7 @@ export class ExecutionService {
         `http://giurom.bitap.ro:3002/locations/${locationId}/manager-config`,
         {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
@@ -1060,7 +1101,7 @@ export class ExecutionService {
           `http://giurom.bitap.ro:3002/employees?work_location_id=${locationId}&is_active=true`,
           {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
@@ -1080,7 +1121,7 @@ export class ExecutionService {
             `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
             {
               headers: {
-                'x-internal-service': 'tasks',
+                'x-internal-service': 'veziv-tasks',
                 'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
                 'Content-Type': 'application/json'
               }
@@ -1124,7 +1165,7 @@ export class ExecutionService {
                 `http://giurom.bitap.ro:3002/locations/${locationId}/departments`,
                 {
                   headers: {
-                    'x-internal-service': 'tasks',
+                    'x-internal-service': 'veziv-tasks',
                     'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
                     'Content-Type': 'application/json'
                   }
@@ -1241,7 +1282,7 @@ export class ExecutionService {
         `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
         {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
@@ -1271,7 +1312,7 @@ export class ExecutionService {
           `http://giurom.bitap.ro:3016/attendance/presences?shift_id=${shift.id}&limit=1000`,
           {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }

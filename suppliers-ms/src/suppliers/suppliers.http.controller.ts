@@ -82,6 +82,47 @@ export class SuppliersHttpController {
 	@Permissions('suppliers.update')
 	deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
 	
+	@Post('orders/partial-reception')
+	@Permissions('suppliers.update')
+	partialReception(@Body() dto: any) { return this.service.markOrderAsPartiallyReceived(dto); }
+	
+	@Get('orders/reception-report')
+	@Permissions('suppliers.read')
+	@ApiOperation({ summary: 'Raport recepții și returnări pe perioadă' })
+	getReceptionReport(
+		@Query('start_date') startDate: string,
+		@Query('end_date') endDate: string
+	) { 
+		if (!startDate || !endDate) {
+			throw new Error('start_date și end_date sunt obligatorii');
+		}
+		return this.service.getReceptionReport(startDate, endDate); 
+	}
+	
+	@Get('orders/reception-report/events')
+	@Permissions('suppliers.read')
+	@ApiOperation({ summary: 'Evenimente individuale de recepție/returnare pe perioadă (cronologic)' })
+	getReceptionEvents(
+		@Query('start_date') startDate: string,
+		@Query('end_date') endDate: string,
+		@Query('order_id') orderId?: string,
+		@Query('order_item_id') orderItemId?: string,
+		@Query('product_id') productId?: string,
+		@Query('user_id') userId?: string,
+	) {
+		if (!startDate || !endDate) {
+			throw new Error('start_date și end_date sunt obligatorii');
+		}
+		return this.service.getReceptionEvents(
+			startDate,
+			endDate,
+			orderId ? Number(orderId) : undefined,
+			orderItemId ? Number(orderItemId) : undefined,
+			productId ? Number(productId) : undefined,
+			userId ? Number(userId) : undefined,
+		);
+	}
+	
 	@Patch('orders/:orderId/status') 
 	@Permissions('suppliers.update')
 	updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }
@@ -181,5 +222,4 @@ export class SuppliersHttpController {
 		return this.service.removeSupplierFromLocation(Number(supplierId), Number(locationId));
 	}
 }
-
 

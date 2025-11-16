@@ -1,9 +1,13 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Request, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Permissions } from './permissions/permissions.decorator';
-import { RecipesService } from './recipes/recipes.service';
+import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
 import { RecipePreparationsService } from './recipes/recipes-preparations.service';
 import { RecipesLabelsService } from './recipes/recipes-labels.service';
+import { RecipesPrinterService } from './recipes/recipes-printer.service';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { firstValueFrom } from 'rxjs';
 import { CreateRecipeDto } from './recipes/dto/create-recipe.dto';
 import { UpdateRecipeDto } from './recipes/dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './recipes/dto/create-recipe-category.dto';
@@ -18,10 +22,13 @@ import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
 @Controller()
 export class RecipesHttpController {
   constructor(
-    private readonly recipes: RecipesService,
+    private readonly recipes: RecipeService,
     private readonly media: RecipeMediaService,
     private readonly preps: RecipePreparationsService,
     private readonly labels: RecipesLabelsService,
+    private readonly printer: RecipesPrinterService,
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
   ) {}
 
   // Recipes
@@ -168,9 +175,120 @@ export class RecipesHttpController {
   
   @Post('recipe-labels')
   @Permissions('recipes.create')
-  labelsCreate(@Body() dto: CreateRecipeLabelDto) { return this.labels.create(dto); }
+  labelsCreate(@Body() dto: CreateRecipeLabelDto, @Request() req: any) { 
+    return this.labels.create(dto, req.user); 
+  }
   
   @Delete('recipe-labels/:id')
   @Permissions('recipes.delete')
   labelsRemove(@Param('id') id: string) { return this.labels.remove(Number(id)); }
+  
+  // Print label
+  @Post('recipe-labels/:id/print')
+  @Permissions('recipes.create')
+  async printLabel(
+    @Param('id') id: string,
+    @Body() body: { copies?: number }
+  ) {
+    const label = await this.labels.findOne(Number(id));
+    if (!label) {
+      throw new NotFoundException('Eticheta nu a fost găsită');
+    }
+    
+    // Obține preparatul pentru a extrage datele necesare
+    const prep = await this.preps.findOne(label.recipe_preparation_id);
+    if (!prep) {
+      throw new NotFoundException('Preparatul nu a fost găsit');
+    }
+    
+    const recipe = prep.recipe;
+    const copies = body.copies || 1;
+    
+    // Calculează data expirării din produced_at + expiration_hours
+    const baseDate = prep.produced_at || label.generated_at;
+    const expirationHours = recipe?.expiration_hours || 48;
+    const expirationDate = new Date(new Date(baseDate).getTime() + expirationHours * 60 * 60 * 1000);
+    
+    // Obține numele angajatului (generated_by_employee_id sau produced_by)
+    let generatedBy = 'Necunoscut';
+    const employeeId = label.generated_by_employee_id || prep.produced_by;
+    
+    if (employeeId) {
+      try {
+        const employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const headers = {
+          'Content-Type': 'application/json',
+          'x-internal-service': 'recipes',
+          'x-service-secret': serviceSecret
+        };
+        
+        const employeeResponse: any = await firstValueFrom(
+          this.httpService.get(`${employeesServiceUrl}/employees/${employeeId}`, { headers })
+        );
+        const employeeData = employeeResponse?.data?.data || employeeResponse?.data || employeeResponse;
+        
+        if (employeeData) {
+          // Formatează numele angajatului
+          if (employeeData.name) {
+            generatedBy = employeeData.name;
+          } else if (employeeData.first_name && employeeData.last_name) {
+            generatedBy = `${employeeData.first_name} ${employeeData.last_name}`;
+          } else {
+            generatedBy = `Angajat ID: ${employeeId}`;
+          }
+        }
+      } catch (error: any) {
+        // Dacă nu putem obține numele, folosim ID-ul
+        if (error?.response?.status !== 404) {
+          console.warn(`⚠️ [RECIPES CONTROLLER] Could not fetch employee ${employeeId}:`, error?.message);
+        }
+        generatedBy = `Angajat ID: ${employeeId}`;
+      }
+    }
+    
+    // Formatează datele pentru printare
+    const printData = {
+      codEticheta: label.label_code,
+      preparatNume: recipe?.name ? `${recipe.name} - ${prep.quantity || 0}g` : 'Preparat necunoscut',
+      retetaNume: recipe?.name || 'Rețetă necunoscută',
+      dataCrearii: prep.produced_at?.toISOString() || label.generated_at.toISOString(),
+      dataExpirarii: expirationDate.toISOString(),
+      generataDe: generatedBy,
+    };
+    
+    try {
+      await this.printer.printLabel(printData, copies);
+      return { success: true, message: `Eticheta a fost trimisă la imprimantă (${copies} copie/copii)` };
+    } catch (error) {
+      // Re-throw eroarea pentru ca NestJS să o gestioneze corect
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Eroare necunoscută la printare'
+      );
+    }
+  }
+  
+  // Test printer connection
+  @Post('recipe-labels/test-printer')
+  @Permissions('recipes.read')
+  async testPrinter() {
+    const isConnected = await this.printer.testConnection();
+    
+    if (!isConnected) {
+      // Încearcă să găsească portul corect
+      const foundPort = await this.printer.findPrinterPort();
+      if (foundPort) {
+        return {
+          success: false,
+          message: `Portul configurat nu funcționează, dar am găsit portul ${foundPort} care este deschis. Actualizează PRINTER_PORT=${foundPort} în variabilele de mediu.`,
+          foundPort: foundPort
+        };
+      }
+    }
+    
+    return { 
+      success: isConnected, 
+      message: isConnected ? 'Conexiunea la imprimantă este funcțională' : 'Nu s-a putut conecta la imprimantă. Verifică IP-ul și portul.' 
+    };
+  }
 }

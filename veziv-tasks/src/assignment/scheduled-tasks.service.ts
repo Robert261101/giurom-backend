@@ -441,6 +441,7 @@ export class ScheduledTasksService {
       
       const createAssignmentDto: CreateAssignmentDto = {
         template_id: parentTask.template_id,
+        location_id: parentTask.location_id,
       // assigned_to_type eliminat - toate task-urile sunt pentru persoane
         assigned_to_id: parentTask.assigned_to_id,
         created_by_employee_id: parentTask.created_by_employee_id,
@@ -522,6 +523,7 @@ export class ScheduledTasksService {
           
           const createAssignmentDto: CreateAssignmentDto = {
             template_id: parentTask.template_id,
+            location_id: parentTask.location_id,
             assigned_to_id: singleEmployee.id, // ✅ Atribuire directă
             created_by_employee_id: parentTask.created_by_employee_id,
             status: AssignmentStatus.ASSIGNED,
@@ -552,6 +554,7 @@ export class ScheduledTasksService {
           
           const createAssignmentDto: CreateAssignmentDto = {
             template_id: parentTask.template_id,
+            location_id: parentTask.location_id,
             assigned_to_id: undefined, // undefined pentru FCFS - taskul nu e atribuit încă
             created_by_employee_id: parentTask.created_by_employee_id,
             status: AssignmentStatus.ASSIGNED,
@@ -584,6 +587,7 @@ export class ScheduledTasksService {
         for (const employee of departmentEmployees) {
           const createAssignmentDto: CreateAssignmentDto = {
             template_id: parentTask.template_id,
+            location_id: parentTask.location_id,
             assigned_to_id: employee.id,
             created_by_employee_id: parentTask.created_by_employee_id,
             status: AssignmentStatus.ASSIGNED,
@@ -629,8 +633,9 @@ export class ScheduledTasksService {
       const employeesResponse = await firstValueFrom(
         this.httpService.get(`http://giurom.bitap.ro:3002/employees?department_id=${departmentId}&is_active=true`, {
           headers: {
-            'x-internal-service': 'tasks',
+            'x-internal-service': 'veziv-tasks',
             'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            'x-api-key': process.env.SERVICE_SECRET || 'default-service-secret',
             'Content-Type': 'application/json'
           }
         })
@@ -656,10 +661,11 @@ export class ScheduledTasksService {
         // Obține toate shift-urile pentru data respectivă din attendance-ms
         console.log(`🔍 [RECURENTA] Obțin shift-urile pentru ${targetDateStr} de la attendance-ms`);
         const shiftsResponse = await firstValueFrom(
-          this.httpService.get(`http://giurom.bitap.ro:3002/attendance/shifts?work_location_id=3&limit=1000`, {
+          this.httpService.get(`http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=3&limit=1000`, {
             headers: {
-              'x-internal-service': 'tasks',
+              'x-internal-service': 'veziv-tasks',
               'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'x-api-key': process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json'
             }
           })

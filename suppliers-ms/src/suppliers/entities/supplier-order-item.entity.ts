@@ -32,6 +32,21 @@ export class SupplierOrderItem {
   @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
   total: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  received_quantity: number;
+
+  @Column({ type: 'datetime', nullable: true })
+  reception_date?: Date;
+
+  @Column({ nullable: true })
+  reception_user_id?: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  returned_quantity: number;
+
+  @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  return_reason?: string;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

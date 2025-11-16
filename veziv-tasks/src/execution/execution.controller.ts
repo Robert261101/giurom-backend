@@ -336,4 +336,56 @@ export class ExecutionController {
   processOverdueTasks(@Body() body: { date: string }): Promise<{ processedTasks: number; totalPointsDeducted: number }> {
     return this.executionService.processOverdueTasks(body.date);
   }
+
+  // ===== AGREGAȚI PUNCTE PE LOCAȚIE/ANGAJAT ÎNTR-UN INTERVAL =====
+  @Get('location-total-points')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
+  @ApiOperation({ summary: 'Puncte totale pe locație într-un interval' })
+  @ApiResponse({ status: 200, description: 'Total puncte', schema: { type: 'number' } })
+  getLocationTotalPoints(
+    @Query('location_id') location_id?: string,
+    @Query('locationId') locationId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ): Promise<number> {
+    const rawLocation = (location_id ?? locationId ?? '').toString();
+    const locId = parseInt(rawLocation, 10);
+    if (isNaN(locId)) {
+      throw new (require('@nestjs/common').BadRequestException)('location_id este obligatoriu și trebuie să fie numeric');
+    }
+    return this.executionService.calculateTotalPointsForLocation(locId, startDate, endDate);
+  }
+
+  @Get('location-employee-points')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
+  @ApiOperation({ summary: 'Puncte pe angajat pentru o locație într-un interval' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Lista cu punctele per angajat',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          employee_id: { type: 'number' },
+          total_points: { type: 'number' }
+        }
+      }
+    } 
+  })
+  getLocationEmployeePoints(
+    @Query('location_id') location_id?: string,
+    @Query('locationId') locationId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ): Promise<Array<{ employee_id: number; total_points: number }>> {
+    const rawLocation = (location_id ?? locationId ?? '').toString();
+    const locId = parseInt(rawLocation, 10);
+    if (isNaN(locId)) {
+      throw new (require('@nestjs/common').BadRequestException)('location_id este obligatoriu și trebuie să fie numeric');
+    }
+    return this.executionService.calculatePointsByEmployeeForLocation(locId, startDate, endDate);
+  }
 } 

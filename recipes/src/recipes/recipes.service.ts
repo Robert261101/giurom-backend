@@ -19,7 +19,7 @@ import { RecipeMediaService } from './recipes-media.service';
 import { ProductRef } from '../external/product-ref.entity';
 
 @Injectable()
-export class RecipesService {
+export class RecipeService {
   private readonly stockServiceUrl: string;
 
   constructor(

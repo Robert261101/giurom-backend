@@ -48,6 +48,13 @@ export class CreateElementDto {
 
 export class CreateAssignmentDto {
   @ApiProperty({
+    description: 'ID-ul locației unde se află task-ul',
+    example: 3
+  })
+  @IsNumber()
+  @IsNotEmpty()
+  location_id: number;
+  @ApiProperty({
     description: 'ID-ul template-ului',
     example: 1
   })
