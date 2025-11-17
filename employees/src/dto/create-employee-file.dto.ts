@@ -6,6 +6,7 @@ import {
   IsOptional,
   Length,
   Matches,
+  IsDateString,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
@@ -36,7 +37,7 @@ export class CreateEmployeeFileDto {
     description: 'Tipul fișierului',
     example: 'CV',
     maxLength: 100,
-    enum: ['CV', 'Contract', 'Act_Identitate', 'Diploma', 'Certificat', 'Poza', 'Document_Medical', 'Altele'],
+    enum: ['CV', 'Contract', 'Act_Identitate', 'Diploma', 'Certificat', 'Poza', 'Document_Medical', 'Altele', 'profile_picture'],
   })
   @IsString({ message: 'Tipul fișierului trebuie să fie un string' })
   @IsNotEmpty({ message: 'Tipul fișierului este obligatoriu' })
@@ -55,6 +56,15 @@ export class CreateEmployeeFileDto {
     message: 'Link-ul trebuie să înceapă cu /storage/, /files/, http://, https:// sau \\\\server\\'
   })
   file_link: string;
+
+  @ApiProperty({
+    description: 'Data expirării documentului (opțional)',
+    example: '2024-12-31T23:59:59Z',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Data expirării trebuie să fie în format ISO 8601' })
+  expire_date?: string;
 
   @ApiProperty({
     description: 'Conținutul fișierului în format base64 (opțional)',

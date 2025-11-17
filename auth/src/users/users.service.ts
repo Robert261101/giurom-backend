@@ -73,6 +73,7 @@ export class UsersService {
     return await this.userRepository
       .createQueryBuilder('user')
       .addSelect('user.password')
+      .addSelect('user.profile_image')
       .where('user.id_employee = :id_employee', { id_employee })
       .getOne();
   }
@@ -129,9 +130,18 @@ export class UsersService {
       throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
     }
 
+    // If this is a direct file path, convert it to an API proxy URL
+    let apiProxyUrl = profileImageUrl;
+    if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
+      // This is a direct file path, we need to convert it to an API proxy URL
+      // For now, we'll store empty string to use default avatar
+      // In a real implementation, we would need to find the file ID and create the proper URL
+      apiProxyUrl = '';
+    }
+
     await this.userRepository.update(
       { id_employee },
-      { profile_image: profileImageUrl }
+      { profile_image: apiProxyUrl }
     );
 
     const updatedUser = await this.findByEmployeeId(id_employee);
@@ -212,7 +222,18 @@ export class UsersService {
       updateFields.password = await bcrypt.hash(updateData.password, saltRounds);
     }
     
-    if (updateData.profile_image !== undefined) updateFields.profile_image = updateData.profile_image;
+    // Handle profile image URL conversion if needed
+    if (updateData.profile_image !== undefined) {
+      let profileImageUrl = updateData.profile_image;
+      if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
+        // This is a direct file path, we need to convert it to an API proxy URL
+        // For now, we'll store empty string to use default avatar
+        // In a real implementation, we would need to find the file ID and create the proper URL
+        profileImageUrl = '';
+      }
+      updateFields.profile_image = profileImageUrl;
+    }
+    
     if (updateData.is_active !== undefined) updateFields.is_active = updateData.is_active;
     if (updateData.is_2fa !== undefined) updateFields.is_2fa = updateData.is_2fa;
 

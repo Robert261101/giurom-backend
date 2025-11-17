@@ -45,7 +45,8 @@ export class LocationsService {
     title: string,
     description: string,
     locationId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       console.log(`🔍 [LOCATIONS SERVICE] Sending notification - Type: ${type}, Location ID: ${locationId}`);
@@ -58,6 +59,7 @@ export class LocationsService {
           entity_type: 'location',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
       console.log(`✅ [LOCATIONS SERVICE] Notification sent successfully - Type: ${type}, Location ID: ${locationId}`);
@@ -78,7 +80,8 @@ export class LocationsService {
       'Locatie noua adaugata',
       `A fost adaugata o noua locatie: ${saved.location_name}`,
       saved.id,
-      { locationName: saved.location_name }
+      { locationName: saved.location_name },
+      `/locatii/${saved.id}`  // Add target_url
     );
     
     return saved;
@@ -144,7 +147,8 @@ export class LocationsService {
         oldName,
         newName: updatedLocation.location_name,
         updatedFields: Object.keys(dto)
-      }
+      },
+      `/locatii/${updatedLocation.id}`  // Add target_url
     );
     
     return updatedLocation;
@@ -174,7 +178,8 @@ export class LocationsService {
         locationName,
         departmentsCount,
         revenuePointsCount
-      }
+      },
+      `/locatii/${id}`  // Add target_url
     );
     
     await this.workLocationRepository.remove(workLocation as WorkLocation);
@@ -460,7 +465,7 @@ export class LocationsService {
   // ==================== LOCATION FILES METHODS ====================
 
   // Creează un nou fișier pentru locație
-  async createFile(createFileDto: CreateWorkLocationFileDto): Promise<WorkLocationFiles> {
+  async createFile(createFileDto: CreateWorkLocationFileDto & { expire_date?: string }): Promise<WorkLocationFiles> {
     console.log('📥 Received createFileDto:', {
       work_location_id: createFileDto.work_location_id,
       file_name: createFileDto.file_name,
@@ -534,7 +539,8 @@ export class LocationsService {
     const file = this.filesRepository.create({
       ...createFileDto,
       file_name: uniqueFileName,
-      file_link: updatedFileLink
+      file_link: updatedFileLink,
+      expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null
     });
 
     const savedFile = await this.filesRepository.save(file);
@@ -656,5 +662,39 @@ export class LocationsService {
     return {
       message: `Fișierul "${file.file_name}" al locației ${file.workLocation.location_name} a fost șters cu succes`,
     };
+  }
+
+  // Find files expiring on a specific date
+  async findExpiringFiles(targetDate: string): Promise<WorkLocationFiles[]> {
+    console.log(`[LOCATIONS SERVICE] Finding files expiring on ${targetDate}`);
+    // Format the date to match the database format (YYYY-MM-DD)
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('DATE(file.expire_date) = :targetDate', { targetDate })
+      .leftJoinAndSelect('file.workLocation', 'location')
+      .getMany();
+    
+    console.log(`[LOCATIONS SERVICE] Found ${files.length} files expiring on ${targetDate}`);
+    return files;
+  }
+
+  // Find files that have already expired
+  async findExpiredFiles(): Promise<WorkLocationFiles[]> {
+    console.log(`[LOCATIONS SERVICE] Finding expired files`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('file.expire_date < :today', { today })
+      .andWhere('file.expire_date IS NOT NULL')
+      .leftJoinAndSelect('file.workLocation', 'location')
+      .getMany();
+    
+    console.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
+    return files;
   }
 } 

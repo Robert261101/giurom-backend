@@ -257,7 +257,7 @@ export class LocationsHttpController {
 	@Post(':locationId/documents-with-content')
 	async addLocationDocumentWithContent(
 		@Param('locationId', ParseIntPipe) locationId: number,
-		@Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string }> },
+		@Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; expire_date?: string }> },
 	) {
 		if (!body?.documents || body.documents.length === 0) {
 			return { message: 'No documents provided' };
@@ -271,6 +271,7 @@ export class LocationsHttpController {
 			file_type: first.document_type || first.type || 'Altele',
 			file_link,
 			file_content: first.content,
+			expire_date: first.expire_date,
 		} as CreateWorkLocationFileDto);
 	}
 
@@ -280,5 +281,21 @@ export class LocationsHttpController {
 		@Param('fileId', ParseIntPipe) fileId: number,
 	) {
 		return this.service.removeFile(fileId);
+	}
+
+	// Get files expiring on a specific date
+	@Get('files/expiring/:targetDate')
+	@Permissions('locations.read')
+	getExpiringFiles(@Param('targetDate') targetDate: string) {
+		console.log(`[LOCATIONS CONTROLLER] Getting files expiring on ${targetDate}`);
+		return this.service.findExpiringFiles(targetDate);
+	}
+
+	// Get files that have already expired
+	@Get('files/expired')
+	@Permissions('locations.read')
+	getExpiredFiles() {
+		console.log(`[LOCATIONS CONTROLLER] Getting expired files`);
+		return this.service.findExpiredFiles();
 	}
 }

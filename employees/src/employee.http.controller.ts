@@ -325,21 +325,33 @@ export class EmployeeHttpController {
   @Permissions('employees.create')
   async addEmployeeDocumentWithContent(
     @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string }> },
+    @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; expire_date?: string }> },
   ) {
     if (!body?.documents || body.documents.length === 0) {
       return { message: 'No documents provided' };
     }
     const first = body.documents[0];
     const fileName = first.fileName || first.name || 'document.bin';
-    // Build default link into repo files folder
-    const file_link = `/files/employees/${employeeId}/${fileName}`;
+    
+    // Get employee to construct proper file link
+    const employee = await this.employeeService.findOne(employeeId);
+    const employeeName = this.employeeService['simplifyEmployeeName'](employee.first_name, employee.last_name);
+    
+    // Check if this is a profile picture
+    const isProfilePicture = (first.document_type || first.type) === 'profile_picture';
+    
+    // Build correct file link path
+    const fileLinkPath = isProfilePicture
+      ? `/files/employees/${employeeName}/profile_picture/${fileName}`
+      : `/files/employees/${employeeName}/${fileName}`;
+      
     return this.employeeService.createFile({
       employee_id: employeeId,
       file_name: fileName,
       file_type: first.document_type || first.type || 'Altele',
-      file_link,
+      file_link: fileLinkPath,
       file_content: first.content,
+      expire_date: first.expire_date,
     } as CreateEmployeeFileDto);
   }
 
@@ -443,5 +455,26 @@ export class EmployeeHttpController {
   @ApiResponse({ status: 200, description: 'Lista angajaților companiei' })
   async getEmployeesByCompany(@Param('companyId', ParseIntPipe) companyId: number) {
     return this.employeeService.findAllByCompany(companyId);
+  }
+
+  // Get files expiring on a specific date
+  @Get('files/expiring/:targetDate')
+  @Permissions('employees.read')
+  @ApiOperation({ summary: 'Obține fișierele angajaților care expiră la o anumită dată' })
+  @ApiParam({ name: 'targetDate', description: 'Data la care expiră fișierele (format: YYYY-MM-DD)' })
+  @ApiResponse({ status: 200, description: 'Lista fișierelor care expiră la data specificată' })
+  async getExpiringFiles(@Param('targetDate') targetDate: string) {
+    console.log(`[EMPLOYEES CONTROLLER] Getting files expiring on ${targetDate}`);
+    return this.employeeService.findExpiringFiles(targetDate);
+  }
+
+  // Get files that have already expired
+  @Get('files/expired')
+  @Permissions('employees.read')
+  @ApiOperation({ summary: 'Obține fișierele angajaților care au expirat deja' })
+  @ApiResponse({ status: 200, description: 'Lista fișierelor care au expirat deja' })
+  async getExpiredFiles() {
+    console.log(`[EMPLOYEES CONTROLLER] Getting expired files`);
+    return this.employeeService.findExpiredFiles();
   }
 }

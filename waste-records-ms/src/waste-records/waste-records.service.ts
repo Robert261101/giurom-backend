@@ -33,11 +33,18 @@ export class WasteRecordsService {
     
     // Send notification
     try {
+      // Ensure we're working with a single entity, not an array
+      const savedEntity = Array.isArray(saved) ? saved[0] : saved;
+      
       this.notificationsClient.emit({ cmd: 'waste-records.notification' }, {
         type: 'waste_record_created',
-        title: 'Înregistrare deșeu nouă',
-        message: `S-a înregistrat un deșeu: ${dto.quantity} ${dto.unit}${dto.reason ? ` - ${dto.reason}` : ''}`,
-        data: { wasteRecordId: saved.id, ...dto }
+        title: 'Inregistrare deseu noua',
+        description: `S-a inregistrat un deseu: ${dto.quantity} ${dto.unit}${dto.reason ? ` - ${dto.reason}` : ''}`,
+        entity_id: savedEntity.id,
+        entity_type: 'waste_record',
+        metadata: { wasteRecordId: savedEntity.id, ...dto },
+        priority: 'medium',
+        target_url: `/stoc`, // Add target_url
       });
     } catch (error) {
       console.error('Failed to send waste record notification:', error);
@@ -68,5 +75,3 @@ export class WasteRecordsService {
     return { id };
   }
 }
-
-

@@ -42,7 +42,8 @@ export class RecipesService {
     title: string,
     description: string,
     recipeId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -54,6 +55,7 @@ export class RecipesService {
           entity_type: 'recipe',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -73,7 +75,8 @@ export class RecipesService {
       'Reteta noua creata',
       `A fost creata o noua reteta: ${savedRecipe.name}`,
       savedRecipe.id,
-      { recipeName: savedRecipe.name }
+      { recipeName: savedRecipe.name },
+      `/retetar/${savedRecipe.id}`  // Add target_url
     );
     
     return savedRecipe;
@@ -200,7 +203,8 @@ export class RecipesService {
         oldName,
         newName: updatedRecipe.name,
         updatedFields: Object.keys(updateRecipeDto)
-      }
+      },
+      `/retetar/${updatedRecipe.id}`  // Add target_url
     );
     
     return updatedRecipe;
@@ -217,7 +221,8 @@ export class RecipesService {
       'Reteta stearsa',
       `Reteta ${recipeName} a fost stearsa`,
       id,
-      { recipeName }
+      { recipeName },
+      `/retetar/${id}`  // Add target_url
     );
   }
 

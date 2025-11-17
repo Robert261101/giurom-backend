@@ -48,7 +48,8 @@ export class SuppliersService {
     title: string,
     description: string,
     supplierId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       this.logger.log(`🔍 [SUPPLIERS SERVICE] Attempting to send notification - Type: ${type}, Supplier ID: ${supplierId}`);
@@ -62,6 +63,7 @@ export class SuppliersService {
         entity_type: 'supplier',
         metadata,
         priority: 'medium',
+        target_url,  // Add target_url to notification data
       };
       
       this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
@@ -152,7 +154,8 @@ export class SuppliersService {
       'Furnizor nou creat',
       `A fost creat un nou furnizor: ${savedSupplier.supplier_name}`,
       savedSupplier.id,
-      { supplierName: savedSupplier.supplier_name }
+      { supplierName: savedSupplier.supplier_name },
+      `/furnizori/${savedSupplier.id}`  // Add target_url
     );
     
     return savedSupplier;
@@ -413,7 +416,8 @@ export class SuppliersService {
         oldName,
         newName: updatedSupplier.supplier_name,
         updatedFields: Object.keys(dto)
-      }
+      },
+      `/furnizori/${updatedSupplier.id}`  // Add target_url
     );
 
     return updatedSupplier;
@@ -497,7 +501,8 @@ export class SuppliersService {
         productId: savedProduct.id,
         supplierName: supplier.supplier_name,
         productData: dto
-      }
+      },
+      `/furnizori/${supplier.id}`  // Add target_url
     );
     
     return savedProduct;
@@ -543,7 +548,8 @@ export class SuppliersService {
         orderId: savedOrder.id,
         supplierName: supplier.supplier_name,
         orderDate: savedOrder.order_date.toISOString()
-      }
+      },
+      `/furnizori/${supplier.id}`  // Add target_url
     );
     
     let totalAmountWithoutVat = 0;
@@ -655,7 +661,8 @@ export class SuppliersService {
         orderId: updatedOrder.id,
         supplierName: supplier.supplier_name,
         orderDate: updatedOrder.order_date.toISOString()
-      }
+      },
+      `/furnizori/${supplier.id}`  // Add target_url
     );
 
     return updatedOrder;
@@ -696,7 +703,7 @@ export class SuppliersService {
 
   async addDocument(
     supplierId: number,
-    documentData: { fileName: string; folderId: number; notes?: string; content?: string; file_content?: string },
+    documentData: { fileName: string; folderId: number; notes?: string; content?: string; file_content?: string; expire_date?: string },
   ) {
     const supplier = await this.findOne(supplierId);
     const folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
@@ -752,6 +759,7 @@ export class SuppliersService {
       document_type: DocumentType.OTHER,
       file_name: documentData.fileName,
       file_path: `${filePathToUse}${documentData.fileName}`,
+      expire_date: documentData.expire_date ? new Date(documentData.expire_date) : null,
       notes: documentData.notes,
     });
     return this.supplierDocumentRepo.save(document);
@@ -886,6 +894,42 @@ export class SuppliersService {
     }
     
     await this.supplierLocationsRepo.remove(assignment);
+  }
+
+  // Find documents expiring on a specific date
+  async findExpiringDocuments(targetDate: string): Promise<SupplierDocument[]> {
+    this.logger.log(`[SUPPLIERS SERVICE] Finding documents expiring on ${targetDate}`);
+    // Format the date to match the database format (YYYY-MM-DD)
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(0, 0, 0, 0);
+    
+    const documents = await this.supplierDocumentRepo
+      .createQueryBuilder('document')
+      .where('DATE(document.expire_date) = :targetDate', { targetDate })
+      .leftJoinAndSelect('document.folder', 'folder')
+      .leftJoinAndSelect('folder.supplier', 'supplier')
+      .getMany();
+    
+    this.logger.log(`[SUPPLIERS SERVICE] Found ${documents.length} documents expiring on ${targetDate}`);
+    return documents;
+  }
+
+  // Find documents that have already expired
+  async findExpiredDocuments(): Promise<SupplierDocument[]> {
+    this.logger.log(`[SUPPLIERS SERVICE] Finding expired documents`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const documents = await this.supplierDocumentRepo
+      .createQueryBuilder('document')
+      .where('document.expire_date < :today', { today })
+      .andWhere('document.expire_date IS NOT NULL')
+      .leftJoinAndSelect('document.folder', 'folder')
+      .leftJoinAndSelect('folder.supplier', 'supplier')
+      .getMany();
+    
+    this.logger.log(`[SUPPLIERS SERVICE] Found ${documents.length} expired documents`);
+    return documents;
   }
 }
 

@@ -47,6 +47,7 @@ export class CompanyService {
         entity_id: saved.id,
         entity_type: 'company',
         priority: 'medium',
+        target_url: `/firme/${saved.id}`, // Add target_url
         metadata: { companyId: saved.id, ...dto }
       };
       
@@ -178,6 +179,7 @@ export class CompanyService {
         entity_id: updatedCompany.id,
         entity_type: 'company',
         priority: 'medium',
+        target_url: `/firme/${updatedCompany.id}`, // Add target_url
         metadata: { 
           companyId: updatedCompany.id,
           oldName: company.company_name,
@@ -216,6 +218,7 @@ export class CompanyService {
         entity_id: id,
         entity_type: 'company',
         priority: 'medium',
+        target_url: `/firme/${id}`, // Add target_url
         metadata: { companyId: id, companyName }
       };
       
@@ -229,7 +232,7 @@ export class CompanyService {
     }
   }
 
-  async createCompanyDocument(dto: CreateCompanyDocumentDto & { file_content?: string }): Promise<CompanyDocument> {
+  async createCompanyDocument(dto: CreateCompanyDocumentDto & { file_content?: string; expire_date?: string }): Promise<CompanyDocument> {
     const company = await this.findCompanyById(dto.company_id);
     
     // Create directory for company if it doesn't exist
@@ -279,7 +282,8 @@ export class CompanyService {
 
     const documentData = {
       ...dto,
-      location_path: locationPath
+      location_path: locationPath,
+      expire_date: dto.expire_date ? new Date(dto.expire_date) : null
     };
 
     const document = this.companyDocumentRepository.create(documentData);
@@ -399,5 +403,39 @@ export class CompanyService {
     const inactive = await this.companyRepository.count({ where: { status: 'inactiv' } });
     const vat_payers = await this.companyRepository.count({ where: { vat_payer: true } });
     return { total, active, inactive, vat_payers };
+  }
+
+  // Find documents expiring on a specific date
+  async findExpiringDocuments(targetDate: string): Promise<CompanyDocument[]> {
+    console.log(`[COMPANY SERVICE] Finding documents expiring on ${targetDate}`);
+    // Format the date to match the database format (YYYY-MM-DD)
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(0, 0, 0, 0);
+    
+    const documents = await this.companyDocumentRepository
+      .createQueryBuilder('document')
+      .where('DATE(document.expire_date) = :targetDate', { targetDate })
+      .leftJoinAndSelect('document.company', 'company')
+      .getMany();
+    
+    console.log(`[COMPANY SERVICE] Found ${documents.length} documents expiring on ${targetDate}`);
+    return documents;
+  }
+
+  // Find documents that have already expired
+  async findExpiredDocuments(): Promise<CompanyDocument[]> {
+    console.log(`[COMPANY SERVICE] Finding expired documents`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const documents = await this.companyDocumentRepository
+      .createQueryBuilder('document')
+      .where('document.expire_date < :today', { today })
+      .andWhere('document.expire_date IS NOT NULL')
+      .leftJoinAndSelect('document.company', 'company')
+      .getMany();
+    
+    console.log(`[COMPANY SERVICE] Found ${documents.length} expired documents`);
+    return documents;
   }
 }

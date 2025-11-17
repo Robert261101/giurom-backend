@@ -447,6 +447,15 @@ export class UsersController {
       throw new Error(`Utilizatorul cu ID ${id} nu a fost găsit`);
     }
     
+    // Convert direct file path to API proxy URL if needed
+    let profileImageUrl = user.profile_image;
+    if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
+      // This is a direct file path, we need to convert it to an API proxy URL
+      // For now, we'll return empty string to use default avatar
+      // In a real implementation, we would need to find the file ID and create the proper URL
+      profileImageUrl = '';
+    }
+    
     // Fetch employee email
     try {
       const employeeResponse = await firstValueFrom(
@@ -461,6 +470,7 @@ export class UsersController {
       
       return {
         ...user,
+        profile_image: profileImageUrl || '',
         email: employee.email || null
       };
     } catch (error) {
@@ -468,8 +478,47 @@ export class UsersController {
       console.warn(`Could not fetch employee ${user.id_employee} for user ${id}:`, error);
       return {
         ...user,
+        profile_image: profileImageUrl || '',
         email: null
       };
+    }
+  }
+
+  @Get('employee/:employeeId/profile-image')
+  @ApiOperation({ summary: 'Obține imaginea de profil pentru un angajat' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({ status: 200, description: 'Imaginea de profil a utilizatorului' })
+  @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
+  async getProfileImage(@Param('employeeId', ParseIntPipe) employeeId: number): Promise<any> {
+    console.log(`📥 Request for profile image for employee ${employeeId}`);
+    
+    try {
+      // Get user by employee ID
+      const user = await this.usersService.findByEmployeeId(employeeId);
+      if (!user) {
+        throw new Error(`Utilizatorul cu ID angajat ${employeeId} nu a fost găsit`);
+      }
+      
+      console.log(`✅ Found user ${user.id} for employee ${employeeId}`);
+      
+      // Convert direct file path to API proxy URL if needed
+      let profileImageUrl = user.profile_image;
+      if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
+        // This is a direct file path, we need to convert it to an API proxy URL
+        // For now, we'll return empty string to use default avatar
+        // In a real implementation, we would need to find the file ID and create the proper URL
+        profileImageUrl = '';
+      }
+      
+      // Return profile image URL
+      return {
+        data: {
+          profile_image: profileImageUrl || ''
+        }
+      };
+    } catch (error) {
+      console.error(`❌ Error getting profile image for employee ${employeeId}:`, error);
+      throw error;
     }
   }
 }

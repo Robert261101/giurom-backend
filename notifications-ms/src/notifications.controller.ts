@@ -51,6 +51,14 @@ export class NotificationsController {
     return this.service.seedExpiringLabel();
   }
 
+  // Trigger file expiration check
+  @Post('trigger-file-expiration-check')
+  @Permissions('notifications.create')
+  async triggerFileExpirationCheck() {
+    await this.service.checkExpiringFiles();
+    return { message: 'File expiration check triggered successfully' };
+  }
+
   @Get('health')
   healthHttp() {
     return { status: 'ok', service: 'notifications-ms', timestamp: new Date().toISOString() };

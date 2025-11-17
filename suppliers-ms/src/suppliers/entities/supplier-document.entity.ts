@@ -34,6 +34,9 @@ export class SupplierDocument {
   @Column({ type: 'varchar', length: 500 })
   file_path: string;
 
+  @Column({ type: 'datetime', nullable: true, default: null })
+  expire_date: Date | null;
+
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   notes?: string;
 
