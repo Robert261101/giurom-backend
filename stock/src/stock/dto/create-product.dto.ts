@@ -29,6 +29,11 @@ export class CreateProductDto {
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_consumable?: boolean;
 }
 
 

@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject, Logger } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -8,6 +10,7 @@ import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
 import { WasteRecord } from './entities/waste-record.entity';
+import { ConsumptionRecord } from './entities/consumption-record.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateStockDto } from './dto/create-stock.dto';
@@ -16,18 +19,25 @@ import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { UpdateStockTransactionDto } from './dto/update-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { CreateConsumptionRecordDto } from './dto/create-consumption-record.dto';
+import { UpdateConsumptionRecordDto } from './dto/update-consumption-record.dto';
 import { AssignCategoryDto } from './dto/assign-category.dto';
 import { Category } from './entities/category.entity';
 
 @Injectable()
 export class StockService {
+  private readonly logger = new Logger(StockService.name);
+  
   constructor(
     @InjectRepository(Product) private readonly productRepo: Repository<Product>,
     @InjectRepository(Stock) private readonly stockRepo: Repository<Stock>,
     @InjectRepository(StockTransaction) private readonly txRepo: Repository<StockTransaction>,
     @InjectRepository(WasteRecord) private readonly wasteRecordRepo: Repository<WasteRecord>,
+    @InjectRepository(ConsumptionRecord) private readonly consumptionRecordRepo: Repository<ConsumptionRecord>,
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly httpService?: HttpService,
+    private readonly configService?: ConfigService,
   ) {}
 
   private async sendStockNotification(
@@ -87,28 +97,35 @@ export class StockService {
   }
 
   async createStock(dto: CreateStockDto): Promise<Stock> {
+    console.log(`🔍 [StockService] Creating stock for product_id: ${dto.product_id}, quantity: ${dto.quantity}`);
     const product = await this.findProduct(dto.product_id);
-    // Idempotency: if supplier_order_item_id provided, avoid duplicates
-    if (dto.supplier_order_item_id) {
-      const existing = await this.stockRepo.findOne({ where: { supplier_order_item_id: dto.supplier_order_item_id } });
-      if (existing) {
-        return existing;
-      }
-    }
-    const stock = this.stockRepo.create({ ...dto, product });
-    return await this.stockRepo.save(stock);
+    console.log(`📦 [StockService] Found product ${product.id} (${product.name})`);
+    
+    // NOTĂ: Am eliminat idempotency pentru supplier_order_item_id
+    // De ce? Pentru a permite recepții parțiale - fiecare recepție parțială trebuie să 
+    // creeze un stock item SEPARAT cu entry_date diferit, astfel încât să vedem în rapoarte
+    // recepțiile separate pe zile diferite. Fiecare recepție parțială creează un stock item nou
+    // pentru a păstra istoricul precis al recepțiilor.
+    
+    const stock = this.stockRepo.create({ ...dto, product, status: StockStatus.VALID });
+    const savedStock = await this.stockRepo.save(stock);
+    console.log(`✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ''}`);
+    return savedStock;
   }
 
   async findAllStocks(locationId?: number): Promise<Stock[]> {
+    console.log(`🔍 [StockService] Finding all stocks, locationId: ${locationId}`);
     const queryBuilder = this.stockRepo.createQueryBuilder('stock')
       .leftJoinAndSelect('stock.product', 'product');
     
     if (locationId !== undefined) {
       queryBuilder.where('stock.location_id = :locationId', { locationId });
-      console.log('🔍 [StockService] Filtrăm stock-urile după location_id:', locationId);
+      console.log('🔍 [StockService] Filtering stocks by location_id:', locationId);
     }
     
-    return await queryBuilder.getMany();
+    const stocks = await queryBuilder.getMany();
+    console.log(`📦 [StockService] Found ${stocks.length} stock items`);
+    return stocks;
   }
 
   async findStock(id: number): Promise<Stock> {
@@ -128,58 +145,209 @@ export class StockService {
     await this.stockRepo.remove(stock);
   }
 
-  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation'): Promise<void> {
-    let remaining = quantity;
-    const stocks = await this.stockRepo.find({
-      where: { product_id: productId, status: StockStatus.VALID, quantity: MoreThan(0) },
-      order: { expiration_date: 'ASC', entry_date: 'ASC' },
-    });
-    if (stocks.length === 0) {
-      throw new BadRequestException(`Nu există stoc valid pentru produsul ${productId}`);
-    }
-    const totalAvailable = stocks.reduce((sum, stock) => sum + Number(stock.quantity), 0);
-    if (totalAvailable < quantity) {
-      throw new BadRequestException(
-        `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`,
-      );
-    }
-    for (const stock of stocks) {
-      if (remaining <= 0) break;
-      const availableInStock = Number(stock.quantity);
-      const toConsume = Math.min(availableInStock, remaining);
-      const tx = this.txRepo.create({ stock: stock, stock_id: stock.id, type: TransactionType.EXIT, quantity: toConsume, location: 'production', target });
-      await this.txRepo.save(tx);
-      stock.quantity = availableInStock - toConsume;
-      stock.last_update = new Date();
-      await this.stockRepo.save(stock);
-      remaining -= toConsume;
-    }
-    if (remaining > 0) {
-      throw new BadRequestException(
-        `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`,
-      );
+  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation', employeeId?: number, locationId?: number): Promise<void> {
+    console.log(`🔍 [StockService] Starting consumeProduct for productId: ${productId}, quantity: ${quantity}, target: ${target}, employeeId: ${employeeId}, locationId: ${locationId}`);
+    
+    // Use explicit transaction handling
+    const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    
+    try {
+      console.log(`🔄 [StockService] Starting database transaction for consumeProduct`);
+      
+      let remaining = quantity;
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+      const txRepo = queryRunner.manager.getRepository(StockTransaction);
+      const consumptionRecordRepo = queryRunner.manager.getRepository(ConsumptionRecord);
+      
+      const stocks = await stockRepo.find({
+        where: { product_id: productId, status: StockStatus.VALID, quantity: MoreThan(0) },
+        order: { expiration_date: 'ASC', entry_date: 'ASC' },
+      });
+      
+      console.log(`📦 [StockService] Found ${stocks.length} stock entries for product ${productId}`);
+      console.log(`📦 [StockService] Stock entries:`, stocks.map(s => ({ id: s.id, quantity: s.quantity, status: s.status })));
+      
+      if (stocks.length === 0) {
+        console.error(`❌ [StockService] No valid stock found for product ${productId}`);
+        throw new BadRequestException(`Nu există stoc valid pentru produsul ${productId}`);
+      }
+      
+      const totalAvailable = stocks.reduce((sum, stock) => sum + Number(stock.quantity), 0);
+      console.log(`📊 [StockService] Total available quantity for product ${productId}: ${totalAvailable}`);
+      
+      if (totalAvailable < quantity) {
+        console.error(`❌ [StockService] Insufficient stock for product ${productId}. Available: ${totalAvailable}, Requested: ${quantity}`);
+        throw new BadRequestException(
+          `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`,
+        );
+      }
+
+      // Get product info for consumption record
+      const productRepo = queryRunner.manager.getRepository(Product);
+      const product = await productRepo.findOne({ where: { id: productId } });
+      if (!product) {
+        console.error(`❌ [StockService] Product ${productId} not found`);
+        throw new NotFoundException(`Produsul cu ID ${productId} nu a fost găsit`);
+      }
+      
+      console.log(`📋 [StockService] Processing consumption for product ${productId} (${product.name})`);
+      
+      for (const stock of stocks) {
+        if (remaining <= 0) break;
+        const availableInStock = Number(stock.quantity);
+        const toConsume = Math.min(availableInStock, remaining);
+        
+        console.log(`🔄 [StockService] Processing stock ID ${stock.id}, available: ${availableInStock}, to consume: ${toConsume}, remaining: ${remaining}`);
+        
+        const tx = txRepo.create({ stock: stock, stock_id: stock.id, type: TransactionType.EXIT, quantity: toConsume, location: 'production', target });
+        await txRepo.save(tx);
+        console.log(`💾 [StockService] Saved transaction for stock ID ${stock.id}`);
+        
+        stock.quantity = availableInStock - toConsume;
+        stock.last_update = new Date();
+        
+        console.log(`📉 [StockService] Updated stock ID ${stock.id}, new quantity: ${stock.quantity}`);
+        
+        // Update stock status if quantity is zero or below minimum
+        if (stock.quantity <= 0) {
+          stock.status = StockStatus.EXPIRED;
+          console.log(`⚠️ [StockService] Stock ID ${stock.id} is now EXPIRED (quantity: ${stock.quantity})`);
+        } else if (product.min_stock_level && stock.quantity < product.min_stock_level) {
+          stock.status = StockStatus.BELOW_MINIMUM;
+          console.log(`⚠️ [StockService] Stock ID ${stock.id} is BELOW_MINIMUM (quantity: ${stock.quantity}, min: ${product.min_stock_level})`);
+        }
+        
+        await stockRepo.save(stock);
+        console.log(`💾 [StockService] Saved updated stock ID ${stock.id}`);
+        
+        remaining -= toConsume;
+        console.log(`🔄 [StockService] Remaining to consume: ${remaining}`);
+      }
+      
+      if (remaining > 0) {
+        console.error(`❌ [StockService] Error in consumption logic for product ${productId}. Remaining: ${remaining}`);
+        throw new BadRequestException(
+          `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`,
+        );
+      }
+
+      // Create consumption record
+      console.log(`📝 [StockService] Creating consumption record for product ${productId}`);
+      const consumptionRecord = consumptionRecordRepo.create({
+        product_id: productId,
+        employee_id: employeeId,
+        quantity,
+        unit: product.unit,
+        location_id: locationId,
+        consumed_at: new Date(),
+        reason: `Consum pentru ${target}`,
+        product,
+      });
+      await consumptionRecordRepo.save(consumptionRecord);
+      console.log(`✅ [StockService] Saved consumption record ID ${consumptionRecord.id}`);
+      
+      // Commit transaction
+      await queryRunner.commitTransaction();
+      console.log(`✅ [StockService] Completed consumeProduct for productId: ${productId}, quantity: ${quantity}`);
+    } catch (error) {
+      // Rollback transaction in case of error
+      await queryRunner.rollbackTransaction();
+      console.error(`❌ [StockService] Error in consumeProduct for productId: ${productId}`, error);
+      throw error;
+    } finally {
+      // Release query runner
+      await queryRunner.release();
     }
   }
 
   async createTransaction(dto: CreateStockTransactionDto): Promise<StockTransaction> {
-    const stock = await this.findStock(dto.stock_id);
-    // Idempotency: avoid duplicate transactions for the same stock_id + type + target
-    if (dto.target) {
-      const existingTx = await this.txRepo.findOne({ where: { stock_id: stock.id, type: dto.type as any, target: dto.target } as any });
-      if (existingTx) {
-        return existingTx;
+    console.log(`🔍 [StockService] Starting createTransaction for stock_id: ${dto.stock_id}, type: ${dto.type}, quantity: ${dto.quantity}`);
+    
+    // Use explicit transaction handling
+    const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    
+    try {
+      console.log(`🔄 [StockService] Starting database transaction for createTransaction`);
+      
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+      const txRepo = queryRunner.manager.getRepository(StockTransaction);
+      
+      const stock = await stockRepo.findOne({ where: { id: dto.stock_id }, relations: ['product', 'transactions'] });
+      if (!stock) {
+        console.error(`❌ [StockService] Stock ${dto.stock_id} not found`);
+        throw new NotFoundException('Stocul nu a fost găsit');
       }
+      
+      console.log(`📦 [StockService] Found stock ID ${dto.stock_id} for product ${stock.product_id} (${stock.product?.name}), current quantity: ${stock.quantity}`);
+      
+      // Idempotency: avoid duplicate transactions for the same stock_id + type + target
+      if (dto.target) {
+        const existingTx = await txRepo.findOne({ where: { stock_id: stock.id, type: dto.type as any, target: dto.target } as any });
+        if (existingTx) {
+          console.log(`↩️ [StockService] Returning existing transaction for stock_id: ${dto.stock_id}, type: ${dto.type}, target: ${dto.target}`);
+          await queryRunner.commitTransaction();
+          return existingTx;
+        }
+      }
+      
+      const oldQuantity = stock.quantity;
+      
+      if (dto.type === TransactionType.ENTRY) {
+        stock.quantity += dto.quantity;
+        console.log(`📈 [StockService] ENTRY transaction: ${oldQuantity} + ${dto.quantity} = ${stock.quantity}`);
+      } else {
+        if (stock.quantity < dto.quantity) {
+          console.error(`❌ [StockService] Insufficient stock for stock_id: ${dto.stock_id}. Available: ${stock.quantity}, Requested: ${dto.quantity}`);
+          throw new BadRequestException('Cantitate insuficientă în stoc');
+        }
+        stock.quantity -= dto.quantity;
+        console.log(`📉 [StockService] EXIT transaction: ${oldQuantity} - ${dto.quantity} = ${stock.quantity}`);
+      }
+      stock.last_update = new Date();
+      
+      // Update stock status if quantity is zero or below minimum
+      console.log(`🔄 [StockService] Checking stock status for stock ID ${stock.id}, quantity: ${stock.quantity}`);
+      if (stock.quantity <= 0) {
+        stock.status = StockStatus.EXPIRED;
+        console.log(`⚠️ [StockService] Stock ID ${stock.id} is now EXPIRED (quantity: ${stock.quantity})`);
+      } else {
+        // Get the product to check min_stock_level
+        const productRepo = queryRunner.manager.getRepository(Product);
+        const product = await productRepo.findOne({ where: { id: stock.product_id } });
+        if (product && product.min_stock_level && stock.quantity < product.min_stock_level) {
+          stock.status = StockStatus.BELOW_MINIMUM;
+          console.log(`⚠️ [StockService] Stock ID ${stock.id} is BELOW_MINIMUM (quantity: ${stock.quantity}, min: ${product.min_stock_level})`);
+        } else if (stock.status !== StockStatus.EXPIRED) {
+          // Only set to VALID if it's not already expired
+          stock.status = StockStatus.VALID;
+          console.log(`✅ [StockService] Stock ID ${stock.id} is now VALID (quantity: ${stock.quantity})`);
+        }
+      }
+      
+      await stockRepo.save(stock);
+      console.log(`💾 [StockService] Saved updated stock ID ${stock.id}`);
+      
+      const tx = txRepo.create({ ...dto, stock });
+      const savedTx = await txRepo.save(tx);
+      console.log(`💾 [StockService] Saved transaction ID ${savedTx.id}`);
+      
+      // Commit transaction
+      await queryRunner.commitTransaction();
+      console.log(`✅ [StockService] Completed createTransaction for stock_id: ${dto.stock_id}`);
+      return savedTx;
+    } catch (error) {
+      // Rollback transaction in case of error
+      await queryRunner.rollbackTransaction();
+      console.error(`❌ [StockService] Error in createTransaction for stock_id: ${dto.stock_id}`, error);
+      throw error;
+    } finally {
+      // Release query runner
+      await queryRunner.release();
     }
-    if (dto.type === TransactionType.ENTRY) {
-      stock.quantity += dto.quantity;
-    } else {
-      if (stock.quantity < dto.quantity) throw new BadRequestException('Cantitate insuficientă în stoc');
-      stock.quantity -= dto.quantity;
-    }
-    stock.last_update = new Date();
-    await this.stockRepo.save(stock);
-    const tx = this.txRepo.create({ ...dto, stock });
-    return await this.txRepo.save(tx);
   }
 
   async findAllTransactions(): Promise<StockTransaction[]> {
@@ -385,6 +553,284 @@ export class StockService {
     );
     
     return savedWasteRecord;
+  }
+
+  // === CONSUMPTION RECORDS ===
+
+  async createConsumptionRecord(dto: CreateConsumptionRecordDto): Promise<ConsumptionRecord> {
+    // Verify product exists if product_id is provided
+    let product: Product | null = null;
+    if (dto.product_id) {
+      product = await this.findProduct(dto.product_id);
+    }
+    
+    const consumptionRecord = this.consumptionRecordRepo.create({
+      ...dto,
+      consumed_at: new Date(dto.consumed_at),
+      ...(dto.created_at && { created_at: new Date(dto.created_at) }),
+      ...(dto.updated_at && { updated_at: new Date(dto.updated_at) }),
+      product: product ?? undefined,
+    });
+    
+    return await this.consumptionRecordRepo.save(consumptionRecord);
+  }
+
+  async findConsumptionRecord(id: number): Promise<ConsumptionRecord> {
+    const consumptionRecord = await this.consumptionRecordRepo.findOne({ 
+      where: { id }, 
+      relations: ['product'] 
+    });
+    if (!consumptionRecord) throw new NotFoundException('Înregistrarea de consum nu a fost găsită');
+    return consumptionRecord;
+  }
+
+  async updateConsumptionRecord(id: number, dto: UpdateConsumptionRecordDto): Promise<ConsumptionRecord> {
+    const consumptionRecord = await this.findConsumptionRecord(id);
+    
+    // If product_id is being updated, verify new product exists
+    if (dto.product_id && dto.product_id !== consumptionRecord.product_id) {
+      await this.findProduct(dto.product_id);
+    }
+    
+    Object.assign(consumptionRecord, dto);
+    if (dto.consumed_at) {
+      consumptionRecord.consumed_at = new Date(dto.consumed_at);
+    }
+    if (dto.created_at) {
+      consumptionRecord.created_at = new Date(dto.created_at);
+    }
+    if (dto.updated_at) {
+      consumptionRecord.updated_at = new Date(dto.updated_at);
+    }
+    
+    return await this.consumptionRecordRepo.save(consumptionRecord);
+  }
+
+  async deleteConsumptionRecord(id: number): Promise<void> {
+    const consumptionRecord = await this.findConsumptionRecord(id);
+    await this.consumptionRecordRepo.remove(consumptionRecord);
+  }
+
+  async findAllConsumptionRecords(filters?: {
+    product_id?: number;
+    location_id?: number;
+    employee_id?: number;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<any[]> {
+    const queryBuilder = this.consumptionRecordRepo.createQueryBuilder('consumption')
+      .leftJoinAndSelect('consumption.product', 'product')
+      .orderBy('consumption.consumed_at', 'DESC');
+
+    if (filters?.product_id) {
+      queryBuilder.andWhere('consumption.product_id = :productId', { productId: filters.product_id });
+    }
+
+    if (filters?.location_id) {
+      queryBuilder.andWhere('consumption.location_id = :locationId', { locationId: filters.location_id });
+    }
+
+    if (filters?.employee_id) {
+      queryBuilder.andWhere('consumption.employee_id = :employeeId', { employeeId: filters.employee_id });
+    }
+
+    if (filters?.start_date) {
+      queryBuilder.andWhere('consumption.consumed_at >= :startDate', { startDate: filters.start_date });
+    }
+
+    if (filters?.end_date) {
+      queryBuilder.andWhere('consumption.consumed_at <= :endDate', { endDate: filters.end_date });
+    }
+
+    const records = await queryBuilder.getMany();
+
+    // Obține numele angajaților din employees service
+    const employeeIds = [...new Set(records.map(r => r.employee_id).filter((id): id is number => id !== null && id !== undefined))];
+    const employeesMap = new Map<number, any>();
+    
+    // Obține informații despre angajați din employees service (comunicare internă directă)
+    // Pentru comunicare internă pe server, folosim localhost (microserviciile rulează pe același server)
+    // Employees service rulează pe portul 3012 (conform API Gateway)
+    if (employeeIds.length > 0 && this.httpService) {
+      let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
+      // Dacă EMPLOYEES_HTTP_URL conține "bitap.ro" sau IP extern, folosim localhost pentru comunicare internă
+      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+        // Pentru comunicare internă, înlocuim URL-ul extern cu localhost
+        // Folosim portul 3012 (employees service) sau portul din URL dacă e specificat
+        const portMatch = employeesServiceUrl.match(/:(\d+)/);
+        const port = portMatch ? portMatch[1] : '3012';
+        employeesServiceUrl = `http://localhost:${port}`;
+        this.logger?.log(`🔧 [STOCK SERVICE] Converted external URL to internal: ${employeesServiceUrl}`);
+      }
+      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-internal-service': 'stock',
+        'x-service-secret': serviceSecret
+      };
+      
+      for (const employeeId of employeeIds) {
+        try {
+          const employeeResponse: any = await firstValueFrom(
+            this.httpService!.get(`${employeesServiceUrl}/employees/${employeeId}`, { headers })
+          );
+          // HttpService din NestJS returnează datele în employeeResponse.data
+          const employeeData = employeeResponse?.data?.data || employeeResponse?.data || employeeResponse;
+          if (employeeData) {
+            employeesMap.set(employeeId, employeeData);
+          }
+        } catch (error: any) {
+          // 404 means employee doesn't exist - this is not critical, just log as warning
+          if (error?.response?.status === 404) {
+            this.logger?.warn(`⚠️ [STOCK SERVICE] Employee with ID ${employeeId} not found in employees service. This is normal if the employee was deleted or the ID is invalid.`);
+          } else {
+            this.logger?.warn(`⚠️ [STOCK SERVICE] Could not fetch employee ${employeeId} from ${employeesServiceUrl}/employees/${employeeId}:`, error?.message);
+          }
+          // Don't add to employeesMap if not found - will display "Angajat ID: X" in frontend
+        }
+      }
+    }
+
+    // Adaugă numele angajatului la fiecare înregistrare
+    return records.map(record => {
+      const employee = employeesMap.get(record.employee_id!);
+      const employeeName = employee 
+        ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.email || `Angajat ID: ${record.employee_id}`
+        : record.employee_id ? `Angajat ID: ${record.employee_id}` : null;
+      
+      return {
+        ...record,
+        employee_name: employeeName
+      };
+    });
+  }
+
+  async getConsumptionStats(filters?: {
+    product_id?: number;
+    location_id?: number;
+    employee_id?: number;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<{
+    totalConsumed: number;
+    byProduct: Array<{ product_id: number; product_name: string; total_quantity: number; unit: string }>;
+    byLocation: Array<{ location_id: number; total_quantity: number }>;
+    byEmployee: Array<{ employee_id: number; total_quantity: number }>;
+  }> {
+    const queryBuilder = this.consumptionRecordRepo.createQueryBuilder('consumption')
+      .leftJoin('consumption.product', 'product');
+
+    // Apply filters
+    if (filters?.product_id) {
+      queryBuilder.andWhere('consumption.product_id = :productId', { productId: filters.product_id });
+    }
+
+    if (filters?.location_id) {
+      queryBuilder.andWhere('consumption.location_id = :locationId', { locationId: filters.location_id });
+    }
+
+    if (filters?.employee_id) {
+      queryBuilder.andWhere('consumption.employee_id = :employeeId', { employeeId: filters.employee_id });
+    }
+
+    if (filters?.start_date) {
+      queryBuilder.andWhere('consumption.consumed_at >= :startDate', { startDate: filters.start_date });
+    }
+
+    if (filters?.end_date) {
+      queryBuilder.andWhere('consumption.consumed_at <= :endDate', { endDate: filters.end_date });
+    }
+
+    // Total consumed
+    const totalResult = await queryBuilder
+      .select('SUM(consumption.quantity)', 'total')
+      .getRawOne();
+    
+    const totalConsumed = parseFloat(totalResult?.total || '0');
+
+    // By product
+    const byProduct = await queryBuilder
+      .select([
+        'consumption.product_id as product_id',
+        'product.name as product_name',
+        'SUM(consumption.quantity) as total_quantity',
+        'product.unit as unit'
+      ])
+      .groupBy('consumption.product_id, product.name, product.unit')
+      .getRawMany();
+
+    // By location
+    const byLocation = await queryBuilder
+      .select([
+        'consumption.location_id as location_id',
+        'SUM(consumption.quantity) as total_quantity'
+      ])
+      .groupBy('consumption.location_id')
+      .getRawMany();
+
+    // By employee
+    const byEmployee = await queryBuilder
+      .select([
+        'consumption.employee_id as employee_id',
+        'SUM(consumption.quantity) as total_quantity'
+      ])
+      .where('consumption.employee_id IS NOT NULL')
+      .groupBy('consumption.employee_id')
+      .getRawMany();
+
+    return {
+      totalConsumed,
+      byProduct: byProduct.map(item => ({
+        product_id: parseInt(item.product_id),
+        product_name: item.product_name || 'Unknown',
+        total_quantity: parseFloat(item.total_quantity),
+        unit: item.unit || ''
+      })),
+      byLocation: byLocation.map(item => ({
+        location_id: parseInt(item.location_id),
+        total_quantity: parseFloat(item.total_quantity)
+      })),
+      byEmployee: byEmployee.map(item => ({
+        employee_id: parseInt(item.employee_id),
+        total_quantity: parseFloat(item.total_quantity)
+      }))
+    };
+  }
+
+  async consumeForRecipePreparation(payload: {
+    recipe_preparation_id: number;
+    ingredients: Array<{ product_id: number; quantity: number }>;
+    employee_id: number;
+    location_id: number;
+  }): Promise<void> {
+    const { recipe_preparation_id, ingredients, employee_id, location_id } = payload;
+
+    // Process each ingredient
+    for (const ingredient of ingredients) {
+      // First consume the product from stock
+      await this.consumeProduct(
+        ingredient.product_id,
+        ingredient.quantity,
+        'recipe-preparation',
+        employee_id,
+        location_id
+      );
+
+      // Create consumption record for recipe preparation
+      const product = await this.findProduct(ingredient.product_id);
+      const consumptionRecord = this.consumptionRecordRepo.create({
+        recipe_preparation_id,
+        product_id: ingredient.product_id,
+        employee_id,
+        quantity: ingredient.quantity,
+        unit: product.unit,
+        location_id,
+        consumed_at: new Date(),
+        reason: `Consum pentru prepararea rețetei ${recipe_preparation_id}`,
+        product,
+      });
+      await this.consumptionRecordRepo.save(consumptionRecord);
+    }
   }
 
 }

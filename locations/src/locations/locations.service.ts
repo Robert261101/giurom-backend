@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, Repository } from 'typeorm';
+import { DeepPartial, Repository, DataSource, In } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import * as path from 'path';
 import * as fs from 'fs';
+import axios from 'axios';
 import { WorkLocation } from '../locations/entity/work-location.entity';
 import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
 import { WorkLocationDepartments } from '../locations/entity/work-location-departments.entity';
@@ -31,6 +32,7 @@ export class LocationsService {
     @InjectRepository(WorkLocationManagerConfig) private readonly managerConfigRepository: Repository<WorkLocationManagerConfig>,
     @InjectRepository(WorkLocationFiles) private readonly filesRepository: Repository<WorkLocationFiles>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    @Inject(DataSource) private readonly dataSource: DataSource,
   ) {}
 
   private getLocationsFilesRootDir(): string {
@@ -93,7 +95,12 @@ export class LocationsService {
     companyId?: number,
     city?: string,
     search?: string,
+    user?: any,
   ): Promise<{ locations: WorkLocation[]; total: number; totalPages: number }> {
+    const hasLocationReadPermission = user?.permissions?.includes('locations.read');
+    
+    // Dacă are permisiunea locations.read, returnează toate locațiile
+    if (hasLocationReadPermission) {
     const qb = this.workLocationRepository
       .createQueryBuilder('location')
       .leftJoinAndSelect('location.task_templates', 'task_templates');
@@ -113,13 +120,334 @@ export class LocationsService {
     return { locations, total, totalPages: Math.ceil(total / limit) };
   }
 
-  async findWorkLocationById(id: number): Promise<WorkLocation> {
+    // Dacă nu are permisiunea, returnează doar locațiile din employees_locations
+    const employeeId = user?.id || user?.employee_id || user?.userId;
+    if (!employeeId) {
+      return { locations: [], total: 0, totalPages: 0 };
+    }
+    
+    // Log pentru debugging - verifică ce câmpuri sunt disponibile în JWT
+    console.log(`🔍 [findAllWorkLocations] Employee ID: ${employeeId}, JWT fields:`, {
+      work_location_id: user?.work_location_id,
+      work_location_default_id: user?.work_location_default_id,
+      hasPermissions: !!user?.permissions,
+    });
+    
+    // Obține locațiile angajatului din employees_locations
+    let employeeLocationIds: number[] = [];
+    try {
+      const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+      const response = await axios.get(`${employeesUrl}/employees/${employeeId}/locations`, {
+        headers: {
+          'x-internal-service': 'locations',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        },
+        timeout: 3000,
+      });
+      
+      const employeeLocations = Array.isArray(response.data) ? response.data : [];
+      employeeLocationIds = employeeLocations.map((el: any) => {
+        return el.idLocation || el.id_location || el.locationId || el.location_id;
+      }).filter((id: any) => id != null).map((id: any) => parseInt(id, 10)).filter((id: number) => !isNaN(id));
+      
+      // Adaugă și work_location_id sau work_location_default_id dacă există
+      const workLocationId = user.work_location_id || user.work_location_default_id;
+      if (workLocationId) {
+        const workLocId = parseInt(String(workLocationId), 10);
+        if (!isNaN(workLocId)) {
+          employeeLocationIds.push(workLocId);
+        }
+      }
+      
+      // Elimină duplicatele
+      employeeLocationIds = [...new Set(employeeLocationIds)];
+    } catch (error: any) {
+      // Nu mai logăm eroarea - avem fallback la query direct la DB
+      // Dacă microserviciul employees nu este accesibil, încercăm să folosim work_location_id sau work_location_default_id din JWT
+      if (error.code !== 'ECONNREFUSED' && error.code !== 'ETIMEDOUT') {
+        // Logăm doar erorile care nu sunt de conexiune
+        console.error(`Failed to fetch employee locations: ${error.message}`);
+      }
+      const workLocationId = user.work_location_id || user.work_location_default_id;
+      if (workLocationId) {
+        const workLocId = parseInt(String(workLocationId), 10);
+        if (!isNaN(workLocId)) {
+          employeeLocationIds = [workLocId];
+          console.warn(`⚠️ Employees microservice not accessible, using work_location_id from JWT: ${workLocId}`);
+        }
+      }
+      
+      if (employeeLocationIds.length === 0) {
+        // Dacă nici work_location_id nu există, încercăm să interogăm direct baza de date employees_locations
+        // NOTĂ: Aceasta presupune că ambele microservicii folosesc aceeași bază de date sau că locations poate accesa employees DB
+        try {
+          // Încearcă să interogeze tabelul employees_locations din baza de date employees
+          // Folosim numele complet al bazei de date în query
+          const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+          const result = await this.dataSource.query(
+            `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
+            [employeeId]
+          );
+          if (result && result.length > 0) {
+            employeeLocationIds = result.map((row: any) => row.id_location || row.idLocation)
+              .filter((id: any) => id != null)
+              .map((id: any) => parseInt(id, 10))
+              .filter((id: number) => !isNaN(id));
+            console.log(`✅ Found ${employeeLocationIds.length} locations in employees_locations via direct DB query (employee ${employeeId}): [${employeeLocationIds.join(', ')}]`);
+          } else {
+            console.warn(`⚠️ No locations found in employees_locations for employee ${employeeId}`);
+            return { locations: [], total: 0, totalPages: 0 };
+          }
+        } catch (dbError: any) {
+          // Dacă tabelul nu există în această bază de date, înseamnă că este în altă bază de date
+          // SOLUȚIE TEMPORARĂ: Permitem accesul la toate locațiile pentru utilizatorii autentificați
+          // când microserviciul employees nu este accesibil
+          // NOTĂ: Aceasta este o soluție temporară - în producție, microserviciul employees trebuie să fie accesibil
+          console.error(`❌ Failed to query employees_locations directly: ${dbError.message}`);
+          console.warn(`⚠️ Cannot access employees_locations - allowing access to all locations for authenticated user (temporary solution)`);
+          
+          // Returnăm toate locațiile (fără filtrare) când microserviciul employees nu este accesibil
+          // Aceasta este o soluție temporară până când microserviciul employees devine accesibil
+          const qb = this.workLocationRepository
+            .createQueryBuilder('location')
+            .leftJoinAndSelect('location.task_templates', 'task_templates');
+          if (companyId) qb.where('location.company_id = :companyId', { companyId });
+          if (city) qb.andWhere('location.city = :city', { city });
+          if (search)
+            qb.andWhere(
+              'location.location_name LIKE :search OR location.address LIKE :search',
+              { search: `%${search}%` },
+            );
+          const offset = (page - 1) * limit;
+          const [locations, total] = await qb
+            .orderBy('location.created_at', 'DESC')
+            .skip(offset)
+            .take(limit)
+            .getManyAndCount();
+          return { locations, total, totalPages: Math.ceil(total / limit) };
+        }
+      }
+    }
+    
+    if (employeeLocationIds.length === 0) {
+      return { locations: [], total: 0, totalPages: 0 };
+    }
+    
+    // Filtrează locațiile după ID-urile din employees_locations
+    const qb = this.workLocationRepository
+      .createQueryBuilder('location')
+      .leftJoinAndSelect('location.task_templates', 'task_templates')
+      .where('location.id IN (:...locationIds)', { locationIds: employeeLocationIds });
+    
+    if (companyId) qb.andWhere('location.company_id = :companyId', { companyId });
+    if (city) qb.andWhere('location.city = :city', { city });
+    if (search)
+      qb.andWhere(
+        'location.location_name LIKE :search OR location.address LIKE :search',
+        { search: `%${search}%` },
+      );
+    
+    const offset = (page - 1) * limit;
+    const [locations, total] = await qb
+      .orderBy('location.created_at', 'DESC')
+      .skip(offset)
+      .take(limit)
+      .getManyAndCount();
+    
+    return { locations, total, totalPages: Math.ceil(total / limit) };
+  }
+
+  // Obține companiile asociate cu locațiile angajatului
+  async getEmployeeCompanies(user?: any): Promise<Array<{ id: number; company_name: string }>> {
+    const employeeId = user?.id || user?.employee_id || user?.userId;
+    if (!employeeId) {
+      return [];
+    }
+
+    // Obține locațiile angajatului
+    let employeeLocationIds: number[] = [];
+    try {
+      const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+      const response = await axios.get(`${employeesUrl}/employees/${employeeId}/locations`, {
+        headers: {
+          'x-internal-service': 'locations',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        },
+        timeout: 3000,
+      });
+      
+      const employeeLocations = Array.isArray(response.data) ? response.data : [];
+      employeeLocationIds = employeeLocations.map((el: any) => {
+        return el.idLocation || el.id_location || el.locationId || el.location_id;
+      }).filter((id: any) => id != null).map((id: any) => parseInt(id, 10)).filter((id: number) => !isNaN(id));
+      
+      const workLocationId = user.work_location_id || user.work_location_default_id;
+      if (workLocationId) {
+        const workLocId = parseInt(String(workLocationId), 10);
+        if (!isNaN(workLocId)) {
+          employeeLocationIds.push(workLocId);
+        }
+      }
+      
+      employeeLocationIds = [...new Set(employeeLocationIds)];
+    } catch (error: any) {
+      // Fallback la query direct la DB
+      const workLocationId = user.work_location_id || user.work_location_default_id;
+      if (workLocationId) {
+        employeeLocationIds = [workLocationId];
+      } else {
+        try {
+          const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+          const result = await this.dataSource.query(
+            `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
+            [employeeId]
+          );
+          if (result && result.length > 0) {
+            employeeLocationIds = result.map((row: any) => row.id_location || row.idLocation)
+              .filter((id: any) => id != null)
+              .map((id: any) => parseInt(id, 10))
+              .filter((id: number) => !isNaN(id));
+          }
+        } catch (dbError: any) {
+          // Dacă nu putem obține locațiile, returnăm lista goală
+          return [];
+        }
+      }
+    }
+
+    if (employeeLocationIds.length === 0) {
+      return [];
+    }
+
+    // Obține company_id-urile din locații
+    const locations = await this.workLocationRepository.find({
+      where: { id: In(employeeLocationIds) },
+      select: ['id', 'company_id'],
+    });
+
+    const companyIds = [...new Set(locations.map(loc => loc.company_id).filter(id => id != null))];
+    
+    if (companyIds.length === 0) {
+      return [];
+    }
+
+    // Obține numele companiilor din companies microservice
+    const companies: Array<{ id: number; company_name: string }> = [];
+    const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://giurom.bitap.ro:3003';
+    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    
+    for (const companyId of companyIds) {
+      try {
+        const requestHeaders = {
+          'x-internal-service': 'locations',
+          'x-service-secret': serviceSecret,
+          'Content-Type': 'application/json',
+        };
+        console.log(`🔍 [getEmployeeCompanies] Requesting company ${companyId} from ${companiesUrl}/companies/${companyId} with headers:`, requestHeaders);
+        const response = await axios.get(`${companiesUrl}/companies/${companyId}`, {
+          headers: requestHeaders,
+          timeout: 3000,
+        });
+        
+        if (response.data && response.data.company_name) {
+          companies.push({
+            id: companyId,
+            company_name: response.data.company_name,
+          });
+        }
+      } catch (error: any) {
+        // Dacă nu putem obține numele companiei, continuăm cu următoarea
+        console.warn(`⚠️ Nu am putut obține numele companiei ${companyId}: ${error.message}`);
+      }
+    }
+
+    return companies;
+  }
+
+  async findWorkLocationById(id: number, user?: any): Promise<WorkLocation> {
     const workLocation = await this.workLocationRepository.findOne({
       where: { id },
       relations: ['task_templates'],
     });
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
+    
+    // Dacă utilizatorul nu are permisiunea locations.read, verifică dacă locația este în lista sa
+    const hasLocationReadPermission = user?.permissions?.includes('locations.read');
+    if (!hasLocationReadPermission && user) {
+      const employeeId = user.id || user.employee_id || user.userId;
+      const userWorkLocationId = user.work_location_id;
+      
+      // Verificare 1: Dacă work_location_id se potrivește
+      if (userWorkLocationId && userWorkLocationId === id) {
+        return workLocation;
+      }
+      
+      // Verificare 2: Verifică în employees_locations
+      if (employeeId) {
+        try {
+          const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+          const response = await axios.get(`${employeesUrl}/employees/${employeeId}/locations`, {
+            headers: {
+              'x-internal-service': 'locations',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'Content-Type': 'application/json',
+            },
+            timeout: 3000,
+          });
+          
+          const employeeLocations = Array.isArray(response.data) ? response.data : [];
+          const hasAccess = employeeLocations.some((el: any) => {
+            const elLocationId = el.idLocation || el.id_location || el.locationId || el.location_id;
+            return elLocationId === id || String(elLocationId) === String(id);
+          });
+          
+          if (hasAccess) {
+            return workLocation;
+          }
+        } catch (error: any) {
+          // Dacă microserviciul nu este accesibil, încercăm query direct la baza de date
+          if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+            try {
+              // Verifică work_location_id sau work_location_default_id din JWT
+              const workLocationId = user.work_location_id || user.work_location_default_id;
+              if (workLocationId && workLocationId === id) {
+                return workLocation;
+              }
+              
+              // Încearcă query direct la baza de date employees
+              const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+              const result = await this.dataSource.query(
+                `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ? AND id_location = ?`,
+                [employeeId, id]
+              );
+              
+              if (result && result.length > 0) {
+                console.log(`✅ Found location ${id} in employees_locations via direct DB query for employee ${employeeId}`);
+                return workLocation;
+              }
+              
+              // Dacă nu găsește, aruncă eroare de permisiuni
+              throw new ForbiddenException('Nu ai acces la această locație');
+            } catch (dbError: any) {
+              console.error(`❌ Failed to query employees_locations directly: ${dbError.message}`);
+              // Dacă query-ul direct eșuează, verifică doar work_location_id
+              const workLocationId = user.work_location_id || user.work_location_default_id;
+              if (workLocationId && workLocationId === id) {
+                return workLocation;
+              }
+              throw new ForbiddenException('Nu ai acces la această locație');
+            }
+          }
+        }
+      }
+      
+      // Dacă nu are acces, aruncă eroare
+      throw new ForbiddenException('Nu ai acces la această locație');
+    }
+    
     return workLocation;
   }
 

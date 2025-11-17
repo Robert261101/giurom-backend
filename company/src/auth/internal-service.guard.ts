@@ -10,11 +10,13 @@ export class InternalServiceGuard implements CanActivate {
   ): boolean | Promise<boolean> | Observable<boolean> {
     const request = context.switchToHttp().getRequest();
     
-    // Check for internal service headers
-    const internalService = request.headers['x-internal-service'];
-    const serviceSecret = request.headers['x-service-secret'];
+    // Check for internal service headers (try both lowercase and original case)
+    const internalService = request.headers['x-internal-service'] || request.headers['X-Internal-Service'];
+    const serviceSecret = request.headers['x-service-secret'] || request.headers['X-Service-Secret'];
     
-    this.logger.log(`Internal service headers - Service: ${internalService}, Secret present: ${!!serviceSecret}`);
+    // Debug: log all headers that start with 'x-'
+    const xHeaders = Object.keys(request.headers || {}).filter(key => key.toLowerCase().startsWith('x-'));
+    this.logger.log(`Internal service headers - Service: ${internalService}, Secret present: ${!!serviceSecret}, All x- headers: ${JSON.stringify(xHeaders)}`);
     
     // If internal service headers are present, validate them
     if (internalService && serviceSecret) {
@@ -29,7 +31,7 @@ export class InternalServiceGuard implements CanActivate {
         request.internalService = internalService;
         // Bypass all other guards by adding a special flag
         request.bypassAuth = true;
-        this.logger.log(`Internal service request allowed for service: ${internalService}`);
+        this.logger.log(`✅ Internal service request allowed for service: ${internalService} - bypassAuth set to: ${request.bypassAuth}`);
         return true;
       } else {
         this.logger.warn(`Invalid service secret provided for service: ${internalService}`);

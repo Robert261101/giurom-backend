@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { HttpModule } from '@nestjs/axios';
-import { ClientsModule, Transport } from '@nestjs/microservices';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AssignmentService } from './assignment.service';
 import { AssignmentController } from './assignment.controller';
 import { ScheduledTasksService } from './scheduled-tasks.service';
@@ -22,17 +22,7 @@ import { TaskGateway } from '../websocket/task.gateway';
       TaskElement
     ]),
     HttpModule,
-    ClientsModule.register([
-      {
-        name: 'NOTIFICATIONS_RMQ',
-        transport: Transport.RMQ,
-        options: {
-          urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
-          queue: process.env.NOTIFICATIONS_QUEUE || 'notifications',
-          queueOptions: { durable: false },
-        },
-      },
-    ]),
+    NotificationsModule,
     ExecutionModule,
     JwtModule.register({
       secret: 'your-secret-key',

@@ -350,6 +350,9 @@ export class CalendarService {
 
   // Get all event categories
   async getEventCategories(): Promise<EventCategory[]> {
-    return this.eventCategoryService.findAll();
+    console.log('🔍 CalendarService.getEventCategories called');
+    const categories = await this.eventCategoryService.findAll();
+    console.log('✅ CalendarService.getEventCategories returning:', categories);
+    return categories;
   }
 }

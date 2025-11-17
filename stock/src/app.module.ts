@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -8,6 +9,7 @@ import { Product } from './stock/entities/product.entity';
 import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { WasteRecord } from './stock/entities/waste-record.entity';
+import { ConsumptionRecord } from './stock/entities/consumption-record.entity';
 import { Category } from './stock/entities/category.entity';
 import { StockService } from './stock/stock.service';
 import { AuthModule } from './auth/auth.module';
@@ -25,6 +27,7 @@ import { CategoryService } from './stock/category.service';
   imports: [
     ScheduleModule.forRoot(),
     AuthModule,
+    HttpModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ClientsModule.register([
       {
@@ -44,7 +47,7 @@ import { CategoryService } from './stock/category.service';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Product, Stock, StockTransaction, WasteRecord, Category],
+      entities: [Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -54,7 +57,7 @@ import { CategoryService } from './stock/category.service';
         charset: 'utf8mb4',
       },
     }),
-    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, Category]),
+    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category]),
   ],
   controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController],
   providers: [

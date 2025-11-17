@@ -11,7 +11,7 @@ import { RecipeProduct } from './recipes/entities/recipe-product.entity';
 import { RecipePreparation } from './recipes/entities/recipe-preparation.entity';
 import { RecipeLabel } from './recipes/entities/recipe-label.entity';
 import { RecipeMedia } from './recipes/entities/recipe-media.entity';
-import { RecipesService } from './recipes/recipes.service';
+import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
 import { StockRef } from './external/stock-ref.entity';
 import { StockTransactionRef } from './external/stock-transaction-ref.entity';
@@ -19,6 +19,7 @@ import { RecipesMicroController } from './recipes.micro.controller';
 import { RecipesHttpController } from './recipes.http.controller';
 import { RecipePreparationsService } from './recipes/recipes-preparations.service';
 import { RecipesLabelsService } from './recipes/recipes-labels.service';
+import { RecipesPrinterService } from './recipes/recipes-printer.service';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -72,10 +73,11 @@ import { PermissionsGuard } from './permissions/permissions.guard';
   ],
   controllers: [RecipesMicroController, RecipesHttpController],
   providers: [
-    RecipesService,
+    RecipeService,
     RecipeMediaService,
     RecipePreparationsService,
     RecipesLabelsService,
+    RecipesPrinterService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

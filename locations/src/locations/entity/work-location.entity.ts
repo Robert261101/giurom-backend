@@ -48,10 +48,10 @@ export class WorkLocation {
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   notes: string | null;
 
-  @Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
+  @Column({ type: 'decimal', precision: 15, scale: 10, nullable: true })
   gps_lat: number | null;
 
-  @Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
+  @Column({ type: 'decimal', precision: 15, scale: 10, nullable: true })
   gps_lng: number | null;
 
   @Column({ type: 'int', nullable: true })

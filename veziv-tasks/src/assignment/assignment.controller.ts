@@ -43,9 +43,19 @@ export class AssignmentController {
     type: [TaskAssignment] 
   })
   @ApiQuery({ name: 'location_id', required: false, description: 'Filtrează task-urile după locație' })
-  findAll(@Request() req, @Query('location_id') location_id?: string): Promise<TaskAssignment[]> {
+  @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD (inclusiv)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD (inclusiv)' })
+  findAll(
+    @Request() req,
+    @Query('location_id') location_id?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ): Promise<TaskAssignment[]> {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.assignmentService.findAllWithPermissions(req.user, locationId);
+    console.log('🔍 [assignments.controller] findAll -> user perms:', req.user?.permissions, 'query.location_id:', location_id, 'parsed:', locationId);
+    const sd = startDate ? new Date(startDate) : undefined;
+    const ed = endDate ? new Date(endDate) : undefined;
+    return this.assignmentService.findAllWithPermissions(req.user, locationId, sd, ed);
   }
 
   @Get(':id')

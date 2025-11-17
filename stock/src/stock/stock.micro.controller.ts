@@ -8,6 +8,8 @@ import { UpdateStockDto } from './dto/update-stock.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { CreateWasteRecordDto } from './dto/create-waste-record.dto';
 import { UpdateWasteRecordDto } from './dto/update-waste-record.dto';
+import { CreateConsumptionRecordDto } from './dto/create-consumption-record.dto';
+import { UpdateConsumptionRecordDto } from './dto/update-consumption-record.dto';
 
 @Controller()
 export class StockMicroController {
@@ -71,4 +73,36 @@ export class StockMicroController {
 
   @MessagePattern('stock.check-low-stock-products')
   checkLowStockProducts() { return this.stockService.checkLowStockProducts(); }
+
+  // === CONSUMPTION RECORDS ===
+  @MessagePattern('stock.consumption-records.create')
+  createConsumptionRecord(@Payload() dto: CreateConsumptionRecordDto) { return this.stockService.createConsumptionRecord(dto); }
+
+  @MessagePattern('stock.consumption-records.findAll')
+  findAllConsumptionRecords(@Payload() filters?: any) { return this.stockService.findAllConsumptionRecords(filters); }
+
+  @MessagePattern('stock.consumption-records.findOne')
+  findConsumptionRecord(@Payload() id: number) { return this.stockService.findConsumptionRecord(id); }
+
+  @MessagePattern('stock.consumption-records.update')
+  updateConsumptionRecord(@Payload() payload: { id: number; dto: UpdateConsumptionRecordDto }) { 
+    return this.stockService.updateConsumptionRecord(payload.id, payload.dto); 
+  }
+
+  @MessagePattern('stock.consumption-records.delete')
+  deleteConsumptionRecord(@Payload() id: number) { return this.stockService.deleteConsumptionRecord(id); }
+
+  @MessagePattern('stock.consumption-records.stats')
+  getConsumptionStats(@Payload() filters?: any) { return this.stockService.getConsumptionStats(filters); }
+
+  // === RECIPE PREPARATION CONSUMPTION ===
+  @MessagePattern('stock.consume-for-recipe')
+  consumeForRecipe(@Payload() payload: { 
+    recipe_preparation_id: number; 
+    ingredients: Array<{ product_id: number; quantity: number }>; 
+    employee_id: number; 
+    location_id: number 
+  }) { 
+    return this.stockService.consumeForRecipePreparation(payload); 
+  }
 }

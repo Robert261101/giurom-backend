@@ -1,6 +1,6 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { RecipesService } from './recipes/recipes.service';
+import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
 import { RecipePreparationsService } from './recipes/recipes-preparations.service';
 import { RecipesLabelsService } from './recipes/recipes-labels.service';
@@ -18,7 +18,7 @@ import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
 @Controller()
 export class RecipesMicroController {
   constructor(
-    private readonly service: RecipesService,
+    private readonly service: RecipeService,
     private readonly mediaService: RecipeMediaService,
     private readonly prepService: RecipePreparationsService,
     private readonly labelsService: RecipesLabelsService,
@@ -162,7 +162,13 @@ export class RecipesMicroController {
   labelFindOne(@Payload() id: number) { return this.labelsService.findOne(id); }
 
   @MessagePattern('recipe-labels.create')
-  labelCreate(@Payload() dto: CreateRecipeLabelDto) { return this.labelsService.create(dto); }
+  labelCreate(@Payload() payload: CreateRecipeLabelDto | { dto: CreateRecipeLabelDto; user?: any }) {
+    // Poate primi doar DTO sau DTO + user
+    if ('dto' in payload) {
+      return this.labelsService.create(payload.dto, payload.user);
+    }
+    return this.labelsService.create(payload);
+  }
 
   @MessagePattern('recipe-labels.delete')
   labelDelete(@Payload() id: number) { return this.labelsService.remove(id); }

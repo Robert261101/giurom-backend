@@ -9,8 +9,9 @@ import {
   ParseIntPipe,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { UsersService } from './users.service';
@@ -305,9 +306,16 @@ export class UsersController {
   }
 
   @Get('role-permissions')
-  @ApiOperation({ summary: 'Returnează toate asocierile rol-permisiune' })
+  @ApiOperation({ summary: 'Returnează toate asocierile rol-permisiune sau filtrate după roleId' })
+  @ApiQuery({ name: 'roleId', required: false, type: Number, description: 'ID-ul rolului pentru filtrare' })
   @ApiResponse({ status: 200, description: 'Lista asocierilor', type: [RolePermission] })
-  async getAllRolePermissions(): Promise<RolePermission[]> {
+  async getAllRolePermissions(@Query('roleId') roleId?: string): Promise<RolePermission[]> {
+    if (roleId) {
+      const roleIdNum = parseInt(roleId, 10);
+      if (!isNaN(roleIdNum)) {
+        return this.usersService.getRolePermissionsByRoleId(roleIdNum);
+      }
+    }
     return this.usersService.getAllRolePermissions();
   }
 

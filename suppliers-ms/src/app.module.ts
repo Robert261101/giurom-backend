@@ -10,6 +10,7 @@ import { SupplierProduct } from './suppliers/entities/supplier-product.entity';
 import { SupplierOrder } from './suppliers/entities/supplier-order.entity';
 import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
+import { SupplierOrderItemReception } from './suppliers/entities/supplier-order-item-reception.entity';
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
 import { SupplierLocations } from './suppliers/entities/supplier-locations.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
@@ -55,6 +56,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         SupplierOrder,
         SupplierOrderItem,
         SupplierOrderDocument,
+        SupplierOrderItemReception,
         SupplierDocument,
         SupplierLocations,
       ],
@@ -82,6 +84,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       SupplierOrder,
       SupplierOrderItem,
       SupplierOrderDocument,
+      SupplierOrderItemReception,
       SupplierDocument,
       SupplierLocations,
     ]),
