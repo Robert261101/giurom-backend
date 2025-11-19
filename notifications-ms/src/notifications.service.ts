@@ -929,8 +929,8 @@ export class NotificationsService {
         for (const user of users) {
           await this.create({
             type: 'company_document_expiring',
-            title: `Document companie expiră în ${days} zile`,
-            description: `Documentul "${document.document_name}" al companiei "${companyName}" va expira în ${days} zile`,
+            title: `Document companie expira in ${days} zile`,
+            description: `Documentul "${document.document_name}" al companiei "${companyName}" va expira in ${days} zile`,
             user_id: user.id,
             entity_id: document.id,
             entity_type: 'company_document',
@@ -980,8 +980,8 @@ export class NotificationsService {
         for (const user of users) {
           await this.create({
             type: 'location_file_expiring',
-            title: `Document locație expiră în ${days} zile`,
-            description: `Documentul "${file.file_name}" al locației "${locationName}" va expira în ${days} zile`,
+            title: `Document locatie expira in ${days} zile`,
+            description: `Documentul "${file.file_name}" al locatiei "${locationName}" va expira in ${days} zile`,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'location_file',
@@ -1031,8 +1031,8 @@ export class NotificationsService {
         for (const user of users) {
           await this.create({
             type: 'employee_file_expiring',
-            title: `Document angajat expiră în ${days} zile`,
-            description: `Documentul "${file.file_name}" al angajatului "${employeeName}" va expira în ${days} zile`,
+            title: `Document angajat expira in ${days} zile`,
+            description: `Documentul "${file.file_name}" al angajatului "${employeeName}" va expira in ${days} zile`,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'employee_file',
@@ -1082,8 +1082,8 @@ export class NotificationsService {
         for (const user of users) {
           await this.create({
             type: 'supplier_document_expiring',
-            title: `Document furnizor expiră în ${days} zile`,
-            description: `Documentul "${document.file_name}" al furnizorului "${supplierName}" va expira în ${days} zile`,
+            title: `Document furnizor expira in ${days} zile`,
+            description: `Documentul "${document.file_name}" al furnizorului "${supplierName}" va expira in ${days} zile`,
             user_id: user.id,
             entity_id: document.id,
             entity_type: 'supplier_document',
@@ -1183,8 +1183,8 @@ export class NotificationsService {
         for (const user of users) {
           await this.create({
             type: 'location_file_expired',
-            title: 'Document locație expirat',
-            description: `Documentul "${file.file_name}" al locației "${locationName}" a expirat`,
+            title: 'Document locatie expirat',
+            description: `Documentul "${file.file_name}" al locatiei "${locationName}" a expirat`,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'location_file',
