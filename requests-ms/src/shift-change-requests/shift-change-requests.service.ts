@@ -34,7 +34,8 @@ export class ShiftChangeRequestsService {
     title: string,
     description: string,
     userId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -46,6 +47,7 @@ export class ShiftChangeRequestsService {
           entity_type: 'shift_change_request',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -173,7 +175,8 @@ export class ShiftChangeRequestsService {
         replacementId: dto.replacement_id,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
-      }
+      },
+      `/pontaj/${dto.employee_id}`  // Add target_url
     );
 
     return this.findOne(savedRequest.id);
@@ -335,7 +338,8 @@ export class ShiftChangeRequestsService {
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
-          }
+          },
+          `/pontaj/${shiftChangeRequest.employee_id}`  // Add target_url
         );
 
         // Notify replacement employee
@@ -350,7 +354,8 @@ export class ShiftChangeRequestsService {
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
-          }
+          },
+          `/pontaj/${shiftChangeRequest.replacement_id}`  // Add target_url
         );
       } else if (dto.status === ShiftChangeStatus.REJECTED) {
         // Notify employee who requested the change
@@ -366,7 +371,8 @@ export class ShiftChangeRequestsService {
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
-          }
+          },
+          `/pontaj/${shiftChangeRequest.employee_id}`  // Add target_url
         );
 
         // Notify replacement employee
@@ -382,7 +388,8 @@ export class ShiftChangeRequestsService {
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
-          }
+          },
+          `/pontaj/${shiftChangeRequest.replacement_id}`  // Add target_url
         );
       }
     } catch (error) {

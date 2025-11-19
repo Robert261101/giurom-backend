@@ -182,7 +182,7 @@ export class AuthService {
       first_name: employeeData?.first_name || '',
       last_name: employeeData?.last_name || '',
       phone: employeeData?.phone || '',
-      profile_image: user.profile_image,
+      profile_image: this.convertToApiProxyUrl(user.profile_image),
       birth_date: employeeData?.birth_date || '',
       department_id: employeeData?.department_default_id || null,
       work_location_id: employeeData?.work_location_default_id || null,
@@ -255,7 +255,7 @@ export class AuthService {
         first_name: employeeData?.first_name || '',
         last_name: employeeData?.last_name || '',
         phone: employeeData?.phone || '',
-        profile_image: user.profile_image,
+        profile_image: this.convertToApiProxyUrl(user.profile_image),
         birth_date: employeeData?.birth_date || '',
         department_id: employeeData?.department_default_id || null,
         work_location_id: employeeData?.work_location_default_id || null,
@@ -329,5 +329,29 @@ export class AuthService {
     // Acceptă formatul 07XXXXXXXX sau +407XXXXXXXX
     const phoneRegex = /^(\+40)?7[0-9]{8}$/;
     return phoneRegex.test(phone);
+  }
+
+  // Helper method to convert direct file path to API proxy URL
+  private convertToApiProxyUrl(profileImageUrl: string | null): string | null {
+    if (!profileImageUrl) {
+      return null;
+    }
+    
+    // If this is already an API proxy URL, return as is
+    if (profileImageUrl.startsWith('/api/')) {
+      return profileImageUrl;
+    }
+    
+    // If this is a direct file path, it means we need to handle it properly
+    // For now, we'll return null to use the default avatar
+    // In a real implementation, we would need to find the file ID and create the proper URL
+    if (profileImageUrl.startsWith('/files/')) {
+      // This is a direct file path that can't be accessed directly
+      // Return null to use default avatar until we can properly convert it
+      return null;
+    }
+    
+    // For any other URL, return as is
+    return profileImageUrl;
   }
 } 

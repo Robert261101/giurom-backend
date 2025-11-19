@@ -45,7 +45,8 @@ export class StockService {
     title: string,
     description: string,
     productId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -57,6 +58,7 @@ export class StockService {
           entity_type: 'stock_product',
           metadata,
           priority: 'high',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -466,7 +468,8 @@ export class StockService {
               productName: stock.product?.name,
               expirationDate: expirationDate.toISOString(),
               daysUntilExpiration: Math.ceil((expirationDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
-            }
+            },
+            '/stoc'  // Add target_url
           );
         }
       }
@@ -504,7 +507,8 @@ export class StockService {
               productName: product.name,
               currentQuantity: quantity,
               threshold: product.min_stock_level,
-            }
+            },
+            '/stoc'  // Add target_url
           );
         }
       }
@@ -544,7 +548,8 @@ export class StockService {
         unit: dto.unit,
         reason: dto.reason,
         wasteRecordId: savedWasteRecord.id,
-      }
+      },
+      '/stoc'  // Add target_url
     );
     
     return savedWasteRecord;

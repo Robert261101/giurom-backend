@@ -28,7 +28,8 @@ export class CalendarService {
     title: string,
     description: string,
     entity_id?: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -40,6 +41,7 @@ export class CalendarService {
           entity_type: 'calendar_event',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -115,7 +117,8 @@ export class CalendarService {
         title: savedEvent.title,
         startDatetime: savedEvent.start_datetime,
         createdBy: savedEvent.created_by,
-      }
+      },
+      `/calendar`  // Add target_url
     );
 
     return savedEvent;

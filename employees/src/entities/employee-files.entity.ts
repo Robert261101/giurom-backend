@@ -58,6 +58,14 @@ export class EmployeeFiles {
   file_link: string;
 
   @ApiProperty({
+    description: 'Data expirării documentului',
+    example: '2024-12-31T23:59:59Z',
+    required: false,
+  })
+  @Column({ type: 'datetime', nullable: true, default: null })
+  expire_date: Date | null;
+
+  @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',
   })

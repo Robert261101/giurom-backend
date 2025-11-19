@@ -77,7 +77,7 @@ export class CompanyHttpController {
 
 	@Post(':companyId/documents')
 	@Permissions('companies.create')
-	createDoc(@Param('companyId') companyId: string, @Body() dto: CreateCompanyDocumentDto & { file_content?: string }) {
+	createDoc(@Param('companyId') companyId: string, @Body() dto: CreateCompanyDocumentDto & { file_content?: string; expire_date?: string }) {
 		console.log(`[COMPANY CONTROLLER] Creating document for company ${companyId}`);
 		return this.service.createCompanyDocument({ ...(dto as any), company_id: parseInt(companyId, 10) });
 	}
@@ -94,6 +94,22 @@ export class CompanyHttpController {
 	removeDoc(@Param('documentId') documentId: string) { 
 		console.log(`[COMPANY CONTROLLER] Deleting document ${documentId}`);
 		return this.service.removeCompanyDocument(parseInt(documentId, 10)); 
+	}
+
+	// Get documents expiring on a specific date
+	@Get('documents/expiring/:targetDate')
+	@Permissions('companies.read')
+	getExpiringDocuments(@Param('targetDate') targetDate: string) {
+		console.log(`[COMPANY CONTROLLER] Getting documents expiring on ${targetDate}`);
+		return this.service.findExpiringDocuments(targetDate);
+	}
+
+	// Get documents that have already expired
+	@Get('documents/expired')
+	@Permissions('companies.read')
+	getExpiredDocuments() {
+		console.log(`[COMPANY CONTROLLER] Getting expired documents`);
+		return this.service.findExpiredDocuments();
 	}
 
 	// Serve company file (download or inline based on query)

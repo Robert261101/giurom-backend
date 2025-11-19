@@ -64,4 +64,13 @@ export class CreateWorkLocationFileDto {
   @IsOptional()
   @IsString({ message: 'Conținutul fișierului trebuie să fie un string' })
   file_content?: string;
+
+  @ApiProperty({
+    description: 'Data expirării documentului',
+    example: '2023-12-31T23:59:59Z',
+    required: false
+  })
+  @IsOptional()
+  @IsString({ message: 'Data expirării trebuie să fie un string' })
+  expire_date?: string;
 }
