@@ -57,6 +57,9 @@ export class WorkLocationFiles {
   })
   file_link: string;
 
+  @Column({ type: 'datetime', nullable: true, default: null })
+  expire_date: Date | null;
+
   @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',

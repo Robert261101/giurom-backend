@@ -506,7 +506,8 @@ export class LocationsService {
         locationName,
         departmentsCount,
         revenuePointsCount
-      }
+      },
+      `/locatii/${id}`  // Add target_url
     );
     
     await this.workLocationRepository.remove(workLocation as WorkLocation);
@@ -992,7 +993,7 @@ export class LocationsService {
   // ==================== LOCATION FILES METHODS ====================
 
   // Creează un nou fișier pentru locație
-  async createFile(createFileDto: CreateWorkLocationFileDto): Promise<WorkLocationFiles> {
+  async createFile(createFileDto: CreateWorkLocationFileDto & { expire_date?: string }): Promise<WorkLocationFiles> {
     console.log('📥 Received createFileDto:', {
       work_location_id: createFileDto.work_location_id,
       file_name: createFileDto.file_name,
@@ -1066,7 +1067,8 @@ export class LocationsService {
     const file = this.filesRepository.create({
       ...createFileDto,
       file_name: uniqueFileName,
-      file_link: updatedFileLink
+      file_link: updatedFileLink,
+      expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null
     });
 
     const savedFile = await this.filesRepository.save(file);
@@ -1190,21 +1192,37 @@ export class LocationsService {
     };
   }
 
-  // Găsește fișierele care se apropie de expirare
-  // Nota: Această metodă poate fi implementată în viitor când se va adăuga un câmp expiration_date
+  // Find files expiring on a specific date
   async findExpiringFiles(targetDate: string): Promise<WorkLocationFiles[]> {
-    // TODO: Implementare când se va adăuga câmpul expiration_date în entitatea WorkLocationFiles
-    // Pentru moment, returnează array gol
-    console.log(`⚠️ [findExpiringFiles] Method called but not yet implemented for targetDate: ${targetDate}`);
-    return [];
+    console.log(`[LOCATIONS SERVICE] Finding files expiring on ${targetDate}`);
+    // Format the date to match the database format (YYYY-MM-DD)
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('DATE(file.expire_date) = :targetDate', { targetDate })
+      .leftJoinAndSelect('file.workLocation', 'location')
+      .getMany();
+    
+    console.log(`[LOCATIONS SERVICE] Found ${files.length} files expiring on ${targetDate}`);
+    return files;
   }
 
-  // Găsește fișierele care au expirat
-  // Nota: Această metodă poate fi implementată în viitor când se va adăuga un câmp expiration_date
+  // Find files that have already expired
   async findExpiredFiles(): Promise<WorkLocationFiles[]> {
-    // TODO: Implementare când se va adăuga câmpul expiration_date în entitatea WorkLocationFiles
-    // Pentru moment, returnează array gol
-    console.log(`⚠️ [findExpiredFiles] Method called but not yet implemented`);
-    return [];
+    console.log(`[LOCATIONS SERVICE] Finding expired files`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('file.expire_date < :today', { today })
+      .andWhere('file.expire_date IS NOT NULL')
+      .leftJoinAndSelect('file.workLocation', 'location')
+      .getMany();
+    
+    console.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
+    return files;
   }
 } 

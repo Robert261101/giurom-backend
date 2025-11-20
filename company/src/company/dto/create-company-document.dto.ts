@@ -51,4 +51,9 @@ export class CreateCompanyDocumentDto {
   @IsString()
   @IsOptional()
   mime_type?: string;
+
+  @ApiProperty({ description: 'Data expirării documentului', example: '2023-12-31T23:59:59Z', required: false })
+  @IsOptional()
+  @IsDateString({}, { message: 'Data expirării trebuie să fie în format ISO 8601' })
+  expire_date?: string;
 }

@@ -36,7 +36,8 @@ export class LeaveRequestsService implements OnModuleInit {
     title: string,
     description: string,
     userId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       this.logger.log(`Attempting to send leave notification - Type: ${type}, User ID: ${userId}`);
@@ -52,6 +53,7 @@ export class LeaveRequestsService implements OnModuleInit {
           entity_type: 'leave_request',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
       
@@ -158,7 +160,8 @@ export class LeaveRequestsService implements OnModuleInit {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
         duration: durationDays,
-      }
+      },
+      `/pontaj/${dto.employee_id}`  // Add target_url
     );
 
     return this.findOne(savedRequest.id);
@@ -323,7 +326,8 @@ export class LeaveRequestsService implements OnModuleInit {
             startDate: leaveRequest.start_datetime.toISOString(),
             endDate: leaveRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
-          }
+          },
+          `/pontaj/${leaveRequest.employee_id}`  // Add target_url
         );
       } else if (dto.status === LeaveStatus.REJECTED) {
         this.logger.log(`Sending leave request rejected notification`);
@@ -339,7 +343,8 @@ export class LeaveRequestsService implements OnModuleInit {
             endDate: leaveRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
-          }
+          },
+          `/pontaj/${leaveRequest.employee_id}`  // Add target_url
         );
       }
     } catch (error) {

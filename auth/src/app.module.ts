@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { join } from 'path';
 import { AuthModule } from './auth/auth.module';
 import { TwoFactorAuthModule } from './otp-auth/otp-auth.module';
 import { TwoFactorAuthModule as TwoFactorAuthModule2 } from './2fa-auth/2fa-auth.module';
@@ -15,7 +16,8 @@ import { RolePermission } from './users/entities/role-permission.entity';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true
+      isGlobal: true,
+      envFilePath: [join(__dirname, '..', '.env')]
     }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({

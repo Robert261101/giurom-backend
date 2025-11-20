@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { UsersMicroController } from './users.micro.controller';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { Permission } from './entities/permission.entity';
@@ -14,7 +15,7 @@ import { RolePermission } from './entities/role-permission.entity';
     TypeOrmModule.forFeature([User, Role, Permission, UserRole, RolePermission]),
     HttpModule
   ],
-  controllers: [UsersController],
+  controllers: [UsersController, UsersMicroController],
   providers: [UsersService],
   exports: [UsersService], // Exportăm serviciul pentru a fi folosit în alte module
 })

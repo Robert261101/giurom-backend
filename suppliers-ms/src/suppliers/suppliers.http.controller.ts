@@ -243,5 +243,21 @@ export class SuppliersHttpController {
 	) {
 		return this.service.removeSupplierFromLocation(Number(supplierId), Number(locationId));
 	}
+
+	// Get documents expiring on a specific date
+	@Get('documents/expiring/:targetDate')
+	@Permissions('suppliers.read')
+	getExpiringDocuments(@Param('targetDate') targetDate: string) {
+		console.log(`[SUPPLIERS CONTROLLER] Getting documents expiring on ${targetDate}`);
+		return this.service.findExpiringDocuments(targetDate);
+	}
+
+	// Get documents that have already expired
+	@Get('documents/expired')
+	@Permissions('suppliers.read')
+	getExpiredDocuments() {
+		console.log(`[SUPPLIERS CONTROLLER] Getting expired documents`);
+		return this.service.findExpiredDocuments();
+	}
 }
 

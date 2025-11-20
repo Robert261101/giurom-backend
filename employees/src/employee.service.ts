@@ -46,6 +46,11 @@ export class EmployeeService {
     return path.join(repoRoot, 'files', 'employees');
   }
 
+  private simplifyEmployeeName(firstName: string, lastName: string): string {
+    const fullName = `${firstName} ${lastName}`;
+    return fullName.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').substring(0, 50);
+  }
+
   private async sendEmployeeNotification(
     type: string,
     title: string,
@@ -54,6 +59,15 @@ export class EmployeeService {
     entity_id?: number
   ): Promise<void> {
     try {
+      // Construct target URL based on notification type and entity ID
+      let target_url: string | null = null;
+      
+      // For deletion notifications, we don't set a target URL (as per requirements)
+      if (type !== 'employee_deleted' && entity_id) {
+        // For creation/modification, navigate to the employee detail page
+        target_url = `/angajati/${entity_id}`;
+      }
+      
       await firstValueFrom(
         this.notificationsClient.emit({ cmd: 'employees.notification' }, {
           type,
@@ -63,6 +77,7 @@ export class EmployeeService {
           entity_type: 'employee',
           metadata,
           priority: 'medium',
+          target_url, // Add target_url to the notification data
         })
       );
     } catch (error) {
@@ -139,7 +154,8 @@ export class EmployeeService {
         employeeId: savedEmployee.id,
         firstName: savedEmployee.first_name,
         lastName: savedEmployee.last_name,
-      }
+      },
+      savedEmployee.id
     );
 
     return savedEmployee;
@@ -239,7 +255,7 @@ export class EmployeeService {
   // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
   async findAllByCompany(companyId: number): Promise<Employee[]> {
     // 1) Preia toate locațiile companiei din microserviciul locations
-    const baseUrl = process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
+    const baseUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
     let locationIds: number[] = [];
     try {
       const resp = await axios.get(`${baseUrl}/locations`, {
@@ -435,7 +451,8 @@ export class EmployeeService {
         employeeId: updatedEmployee.id,
         firstName: updatedEmployee.first_name,
         lastName: updatedEmployee.last_name,
-      }
+      },
+      updatedEmployee.id
     );
 
     return updatedEmployee;
@@ -484,14 +501,29 @@ export class EmployeeService {
       console.error(`Failed to delete employee location assignments for employee ${id}:`, error);
     }
 
-    // 5. Delete physical files from file system
-    const employeeFilesDir = path.join(this.getEmployeesFilesRootDir(), id.toString());
-    if (fs.existsSync(employeeFilesDir)) {
+    // 5. Delete physical files from file system (both old and new structures)
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+    const baseDir = this.getEmployeesFilesRootDir();
+    
+    // Try to remove the new structure (name-based)
+    const employeeFilesDirNew = path.join(baseDir, employeeName);
+    if (fs.existsSync(employeeFilesDirNew)) {
       try {
-        fs.rmSync(employeeFilesDir, { recursive: true, force: true });
-        console.log(`✅ Deleted employee files directory: ${employeeFilesDir}`);
+        fs.rmSync(employeeFilesDirNew, { recursive: true, force: true });
+        console.log(`✅ Deleted employee files directory (new structure): ${employeeFilesDirNew}`);
       } catch (error) {
-        console.error(`Failed to delete employee files directory: ${employeeFilesDir}`, error);
+        console.error(`Failed to delete employee files directory (new structure): ${employeeFilesDirNew}`, error);
+      }
+    }
+    
+    // Try to remove the old structure (ID-based) for backward compatibility
+    const employeeFilesDirOld = path.join(baseDir, id.toString());
+    if (fs.existsSync(employeeFilesDirOld)) {
+      try {
+        fs.rmSync(employeeFilesDirOld, { recursive: true, force: true });
+        console.log(`✅ Deleted employee files directory (old structure): ${employeeFilesDirOld}`);
+      } catch (error) {
+        console.error(`Failed to delete employee files directory (old structure): ${employeeFilesDirOld}`, error);
       }
     }
 
@@ -508,7 +540,8 @@ export class EmployeeService {
         employeeId: employee.id,
         firstName: employee.first_name,
         lastName: employee.last_name,
-      }
+      },
+      employee.id
     );
 
     return {
@@ -608,6 +641,14 @@ export class EmployeeService {
       throw new BadRequestException('Nu se pot adăuga fișiere pentru un angajat inactiv');
     }
 
+    // Verifică dacă este un fișier de tip profil (profile picture)
+    const isProfilePicture = createFileDto.file_type === 'profile_picture';
+    
+    // Dacă este o fotografie de profil, șterge fotografia existentă
+    if (isProfilePicture) {
+      await this.removeExistingProfilePicture(employee.id);
+    }
+
     // Generate unique filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const fileExtension = createFileDto.file_name.split('.').pop() || 'txt';
@@ -617,13 +658,22 @@ export class EmployeeService {
     console.log(`📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`);
 
     // Update the file_link to use the unique filename
-    const updatedFileLink = createFileDto.file_link.replace(createFileDto.file_name, uniqueFileName);
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+    const fileLinkPath = isProfilePicture 
+      ? `/files/employees/${employeeName}/profile_picture/${uniqueFileName}`
+      : `/files/employees/${employeeName}/${uniqueFileName}`;
+      
+    const updatedFileLink = fileLinkPath;
 
     // Create the directory if it doesn't exist
-    const employeeId = createFileDto.employee_id?.toString() || 'unknown';
-    console.log(`📁 Creating directory for employee ID: ${employeeId}`);
+    console.log(`📁 Creating directory for employee: ${employeeName}`);
     const baseDir = this.getEmployeesFilesRootDir();
-    const fileDir = path.join(baseDir, employeeId);
+    
+    // Pentru fotografii de profil, folosim un subfolder dedicat
+    const fileDir = isProfilePicture 
+      ? path.join(baseDir, employeeName, 'profile_picture')
+      : path.join(baseDir, employeeName);
+      
     if (!fs.existsSync(fileDir)) {
       fs.mkdirSync(fileDir, { recursive: true });
     }
@@ -679,13 +729,117 @@ export class EmployeeService {
     const file = this.filesRepository.create({
       ...createFileDto,
       file_name: uniqueFileName,
-      file_link: updatedFileLink
+      file_link: updatedFileLink,
+      expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null
     });
 
     const savedFile = await this.filesRepository.save(file);
     console.log(`✅ File record saved to database with ID: ${savedFile.id}`);
     
+    // Dacă este o fotografie de profil, actualizează profilul angajatului
+    if (isProfilePicture) {
+      await this.updateEmployeeProfilePicture(employee.id, savedFile.file_link);
+    }
+    
     return savedFile;
+  }
+
+  // Șterge fotografia de profil existentă pentru un angajat
+  private async removeExistingProfilePicture(employeeId: number): Promise<void> {
+    console.log(`🗑️ Removing existing profile picture for employee ${employeeId}`);
+    
+    // Găsește fotografia de profil existentă
+    const existingProfilePicture = await this.filesRepository.findOne({
+      where: {
+        employee_id: employeeId,
+        file_type: 'profile_picture'
+      }
+    });
+
+    if (existingProfilePicture) {
+      try {
+        // Șterge fișierul de pe disk
+        const employee = await this.employeeRepository.findOne({
+          where: { id: employeeId }
+        });
+        
+        if (employee) {
+          const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+          const baseDir = this.getEmployeesFilesRootDir();
+          const filePath = path.join(baseDir, employeeName, 'profile_picture', existingProfilePicture.file_name);
+          
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`✅ Deleted existing profile picture from disk: ${filePath}`);
+          }
+          
+          // Șterge înregistrarea din baza de date
+          await this.filesRepository.delete(existingProfilePicture.id);
+          console.log(`✅ Deleted existing profile picture record from database: ${existingProfilePicture.id}`);
+        }
+      } catch (error) {
+        console.error('❌ Error removing existing profile picture:', error);
+        // Continuă chiar dacă ștergerea eșuează
+      }
+    }
+  }
+
+  // Actualizează link-ul fotografiei de profil în profilul angajatului
+  private async updateEmployeeProfilePicture(employeeId: number, profilePictureUrl: string): Promise<void> {
+    console.log(`📸 Updating profile picture URL for employee ${employeeId}: ${profilePictureUrl}`);
+    
+    // Convert direct file path to API proxy URL for the auth service
+    // The auth service needs an API proxy URL that can be accessed by the frontend
+    let apiProxyUrl = profilePictureUrl;
+    
+    // If this is a direct file path, convert it to an API proxy URL
+    if (profilePictureUrl.startsWith('/files/')) {
+      // Extract file ID from database to create proper API URL
+      try {
+        // Find the file record to get its ID
+        const fileRecord = await this.filesRepository.findOne({
+          where: { 
+            employee_id: employeeId,
+            file_type: 'profile_picture'
+          }
+        });
+        
+        if (fileRecord) {
+          // Create API proxy URL using the file ID
+          apiProxyUrl = `/api/employees/file/${fileRecord.id}/view`;
+          console.log(`🔄 Converted direct file path to API proxy URL: ${apiProxyUrl}`);
+        } else {
+          console.warn(`⚠️ Could not find profile picture file record for employee ${employeeId}`);
+          // If we can't find the file record, send empty string to use default avatar
+          apiProxyUrl = '';
+        }
+      } catch (error) {
+        console.error('❌ Error finding file record for API proxy conversion:', error);
+        // If there's an error, send empty string to use default avatar
+        apiProxyUrl = '';
+      }
+    }
+    
+    // Use API Gateway to communicate with auth service instead of direct service-to-service communication
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      await firstValueFrom(
+        this.httpService.patch(
+          `${apiGatewayUrl}/users/employee/${employeeId}/profile-image`,
+          { profile_image: apiProxyUrl }, // Send API proxy URL instead of direct file path
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Service': 'employees-service',
+              'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            }
+          }
+        )
+      );
+      console.log(`✅ Successfully updated profile image for employee ${employeeId} via API Gateway`);
+    } catch (error) {
+      console.error(`❌ Error updating profile image for employee ${employeeId} via API Gateway:`, error);
+    }
   }
 
   // Găsește un fișier după ID
@@ -731,9 +885,40 @@ export class EmployeeService {
       file_link: file.file_link
     });
     
+    const employee = await this.employeeRepository.findOne({
+      where: { id: file.employee_id }
+    });
+    
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${file.employee_id} nu a fost găsit`);
+    }
+    
+    const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
     const baseDir = this.getEmployeesFilesRootDir();
-    const filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
-    console.log(`📁 Serving file from: ${filePath}`);
+    
+    // Verifică dacă este o fotografie de profil
+    const isProfilePicture = file.file_type === 'profile_picture';
+    
+    // Încearcă mai întâi structura nouă (bazată pe nume)
+    let filePath = isProfilePicture
+      ? path.join(baseDir, employeeName, 'profile_picture', file.file_name)
+      : path.join(baseDir, employeeName, file.file_name);
+      
+    console.log(`📁 Trying new structure path: ${filePath}`);
+    
+    // Dacă nu este găsit, încearcă structura veche (bazată pe ID) pentru compatibilitate
+    if (!fs.existsSync(filePath)) {
+      console.log(`📁 File not found at new path, trying old structure`);
+      filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
+      console.log(`📁 Trying old structure path: ${filePath}`);
+    }
+    
+    // Dacă nici acum nu este găsit, încearcă și în subfolderul profile_picture pentru structura veche
+    if (!fs.existsSync(filePath) && isProfilePicture) {
+      console.log(`📁 File not found at old path, trying old structure with profile_picture folder`);
+      filePath = path.join(baseDir, file.employee_id.toString(), 'profile_picture', file.file_name);
+      console.log(`📁 Trying old structure with profile_picture folder: ${filePath}`);
+    }
     
     if (!fs.existsSync(filePath)) {
       console.error(`❌ File not found on disk: ${filePath}`);
@@ -1268,5 +1453,39 @@ export class EmployeeService {
     return {
       message: `Angajatul ${assignment.employee?.first_name} ${assignment.employee?.last_name} a fost eliminat de la locația ${id_location}`,
     };
+  }
+
+  // Find files expiring on a specific date
+  async findExpiringFiles(targetDate: string): Promise<EmployeeFiles[]> {
+    console.log(`[EMPLOYEES SERVICE] Finding files expiring on ${targetDate}`);
+    // Format the date to match the database format (YYYY-MM-DD)
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('DATE(file.expire_date) = :targetDate', { targetDate })
+      .leftJoinAndSelect('file.employee', 'employee')
+      .getMany();
+    
+    console.log(`[EMPLOYEES SERVICE] Found ${files.length} files expiring on ${targetDate}`);
+    return files;
+  }
+
+  // Find files that have already expired
+  async findExpiredFiles(): Promise<EmployeeFiles[]> {
+    console.log(`[EMPLOYEES SERVICE] Finding expired files`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const files = await this.filesRepository
+      .createQueryBuilder('file')
+      .where('file.expire_date < :today', { today })
+      .andWhere('file.expire_date IS NOT NULL')
+      .leftJoinAndSelect('file.employee', 'employee')
+      .getMany();
+    
+    console.log(`[EMPLOYEES SERVICE] Found ${files.length} expired files`);
+    return files;
   }
 }

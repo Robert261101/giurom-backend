@@ -27,6 +27,9 @@ export class CompanyDocument {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ type: 'datetime', nullable: true, default: null })
+  expire_date: Date | null;
+
   @ManyToOne(() => Company, (company) => company.documents, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'company_id' })
   company: Company;

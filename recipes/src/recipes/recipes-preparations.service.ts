@@ -28,7 +28,8 @@ export class RecipePreparationsService {
     description: string,
     preparationId: number,
     recipeId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -43,6 +44,7 @@ export class RecipePreparationsService {
             recipeId,
           },
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -108,7 +110,8 @@ export class RecipePreparationsService {
         recipeName: recipe.name,
         quantity: dto.quantity,
         producedBy: dto.employee_id
-      }
+      },
+      `/retetar/preparate/${saved.id}`  // Add target_url
     );
 
     // After saving, consume stock FIFO by expiration for each ingredient via stock service

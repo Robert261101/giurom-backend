@@ -81,7 +81,8 @@ export class AttendanceService implements OnModuleInit {
     description: string,
     userId: number,
     shiftId: number,
-    metadata?: any
+    metadata?: any,
+    target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -94,6 +95,7 @@ export class AttendanceService implements OnModuleInit {
           entity_type: 'shift',
           metadata,
           priority: 'medium',
+          target_url,  // Add target_url to notification data
         })
       );
     } catch (error) {
@@ -150,7 +152,8 @@ export class AttendanceService implements OnModuleInit {
         employeeId: employee_id,
         startDate: startDate,
         endDate: endDate,
-      }
+      },
+      `/pontaj`  // Add target_url
     );
 
     return savedShift;
@@ -261,7 +264,8 @@ export class AttendanceService implements OnModuleInit {
         employeeId: shift.employee_id,
         startDate: shift.start_datetime,
         endDate: shift.end_datetime,
-      }
+      },
+      `/pontaj`  // Add target_url
     );
   }
 

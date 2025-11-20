@@ -28,7 +28,12 @@ export class PermissionsGuard implements CanActivate {
     if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
     }
-
+        
+    // If this is an internal service request, bypass permissions check
+    if (request.bypassAuth === true) {
+      return true;
+    }
+    
     const user = request?.user;
     if (!user?.permissions) {
       throw new ForbiddenException('Fără permisiuni');
