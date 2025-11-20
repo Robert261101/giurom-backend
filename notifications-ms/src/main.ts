@@ -4,7 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as crypto from 'crypto';
 
-// Ensure crypto is available globally for @nestjs/schedule
+
 if (typeof globalThis.crypto === 'undefined') {
   (globalThis as any).crypto = crypto;
 }
