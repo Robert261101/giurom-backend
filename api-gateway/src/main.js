@@ -1,9 +1,14 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
+const bodyParser = require('body-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+// Increase payload size limit for image uploads (base64 can be ~33% larger)
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 // Enable CORS
 app.use(cors({

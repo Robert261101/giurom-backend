@@ -37,6 +37,10 @@ export class WorkLocationRevenue {
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_url' })
   image_url?: string;
 
+  @Index()
+  @Column({ type: 'int', nullable: true, name: 'user_id' })
+  user_id?: number; // ID-ul utilizatorului care a creat încasarea
+
   // points_awarded removed per latest requirements
 
   // No created/updated columns per schema

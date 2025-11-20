@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { Ctx, MessagePattern, Payload, RmqContext } from '@nestjs/microservices';
 import { NotificationsService } from './notifications.service';
 import { Permissions } from './permissions/permissions.decorator';
@@ -12,17 +12,21 @@ export class NotificationsController {
   // HTTP endpoints for frontend
   @Get('unread-count')
   @Permissions('notifications.read')
-  getUnreadCountHttp() {
-    return this.service.getUnreadCount();
+  getUnreadCountHttp(@Request() req, @Query('userId') userId?: string) {
+    // Use the userId from query params if provided, otherwise use the authenticated user's ID
+    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
+    return this.service.getUnreadCount(targetUserId);
   }
 
   // List notifications
   @Get()
   @Permissions('notifications.read')
-  findAll(@Query('userId') _userId?: string) {
-    // userId is currently ignored in this minimal implementation
-    return this.service.findAll();
+  findAll(@Request() req, @Query('userId') userId?: string) {
+    // Use the userId from query params if provided, otherwise use the authenticated user's ID
+    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
+    return this.service.findAll(targetUserId);
   }
+
 
   // Mark one as read
   @Patch(':id/read')
@@ -34,8 +38,10 @@ export class NotificationsController {
   // Mark all as read
   @Patch('mark-all-read')
   @Permissions('notifications.update')
-  markAllAsRead() {
-    return this.service.markAllAsRead();
+  markAllAsRead(@Request() req, @Query('userId') userId?: string) {
+    // Use the userId from query params if provided, otherwise use the authenticated user's ID
+    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
+    return this.service.markAllAsRead(targetUserId);
   }
 
   // Trigger expiring labels check (demo/seed)
@@ -43,6 +49,14 @@ export class NotificationsController {
   @Permissions('notifications.create')
   checkExpiringLabels() {
     return this.service.seedExpiringLabel();
+  }
+
+  // Trigger file expiration check
+  @Post('trigger-file-expiration-check')
+  @Permissions('notifications.create')
+  async triggerFileExpirationCheck() {
+    await this.service.checkExpiringFiles();
+    return { message: 'File expiration check triggered successfully' };
   }
 
   @Get('health')

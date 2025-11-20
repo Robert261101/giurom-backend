@@ -6,6 +6,12 @@ import {
   Index,
 } from 'typeorm';
 
+export enum ReceptionStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
+
 @Entity('supplier_order_item_receptions')
 export class SupplierOrderItemReception {
   @PrimaryGeneratedColumn()
@@ -44,9 +50,19 @@ export class SupplierOrderItemReception {
   @Column({ type: 'int', nullable: true })
   stock_item_id?: number;
 
+  @Column({ 
+    type: 'enum', 
+    enum: ReceptionStatus, 
+    default: ReceptionStatus.PENDING 
+  })
+  @Index()
+  status: ReceptionStatus;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 }
+
+
 
 
 

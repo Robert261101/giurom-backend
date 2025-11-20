@@ -1,13 +1,19 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationEntity } from './notification.entity';
 
 @Injectable()
 export class NotificationsService {
+  // Cache pentru roluri și user-roles (TTL: 5 minute)
+  private rolesCache: { data: any[], timestamp: number } | null = null;
+  private userRolesCache: { data: any[], timestamp: number } | null = null;
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minute
+
   constructor(
     private readonly gateway: NotificationsGateway,
     private readonly httpService: HttpService,
@@ -33,7 +39,58 @@ export class NotificationsService {
   }> = [];
   private nextId = 1;
 
-  async getUnreadCount() {
+  // Helper method pentru HTTP requests cu retry logic pentru 429 errors
+  private async httpRequestWithRetry<T>(
+    url: string,
+    maxRetries: number = 3,
+    initialDelay: number = 1000
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            }
+          })
+        );
+        return response.data;
+      } catch (error: any) {
+        lastError = error;
+        
+        // Dacă e 429 (rate limit), așteaptă și încearcă din nou
+        if (error.response?.status === 429 && attempt < maxRetries) {
+          const retryAfter = parseInt(error.response.headers['retry-after'] || '0', 10);
+          const delay = retryAfter > 0 
+            ? retryAfter * 1000 
+            : initialDelay * Math.pow(2, attempt); // Exponential backoff
+          
+          console.log(`⏳ [NOTIFICATIONS SERVICE] Rate limited (429), retrying after ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Pentru alte erori, aruncă imediat
+        throw error;
+      }
+    }
+    
+    throw lastError;
+  }
+
+  async getUnreadCount(userId?: number) {
+    if (userId) {
+      const count = await this.repo.count({ 
+        where: { 
+          status: 'unread',
+          user_id: userId 
+        } as any 
+      });
+      return { count };
+    }
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     return { count };
   }
@@ -78,6 +135,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     // For update-type notifications, apply time-based deduplication (5 minutes)
     let existing: NotificationEntity | null = null;
@@ -122,6 +180,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -137,6 +196,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     // For update-type notifications, apply time-based deduplication (5 minutes)
     let existing: NotificationEntity | null = null;
@@ -181,6 +241,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -196,6 +257,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`🔍 [NOTIFICATIONS SERVICE] Received location notification - Type: ${event.type}, Location ID: ${event.entity_id}`);
     
@@ -244,6 +306,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -260,6 +323,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received supplier notification:`, JSON.stringify(event, null, 2));
     
@@ -285,6 +349,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -301,6 +366,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received leave notification event:`, JSON.stringify(event, null, 2));
     
@@ -351,6 +417,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -367,6 +434,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received shift change notification event:`, JSON.stringify(event, null, 2));
     
@@ -417,6 +485,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -497,6 +566,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received shift notification event:`, JSON.stringify(event, null, 2));
     
@@ -542,6 +612,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -557,16 +628,20 @@ export class NotificationsService {
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
       console.log(`📡 [NOTIFICATIONS SERVICE] Using API Gateway URL: ${apiGatewayUrl}`);
       
-      // First get all roles
-      console.log(`📥 [NOTIFICATIONS SERVICE] Fetching all roles from ${apiGatewayUrl}/users/roles`);
-      const rolesResponse = await firstValueFrom(
-        this.httpService.get(`${apiGatewayUrl}/users/roles`)
-      );
-      console.log(`✅ [NOTIFICATIONS SERVICE] Roles response received`);
+      // Get all roles (cu cache)
+      let rolesData: any[];
+      const now = Date.now();
       
-      // Filter roles by names - the response is wrapped in a data object
-      const rolesData = Array.isArray(rolesResponse.data) ? rolesResponse.data : rolesResponse.data.data || [];
-      console.log(`📋 [NOTIFICATIONS SERVICE] All roles data:`, JSON.stringify(rolesData, null, 2));
+      if (this.rolesCache && (now - this.rolesCache.timestamp) < this.CACHE_TTL) {
+        console.log(`💾 [NOTIFICATIONS SERVICE] Using cached roles data`);
+        rolesData = this.rolesCache.data;
+      } else {
+        console.log(`📥 [NOTIFICATIONS SERVICE] Fetching all roles from ${apiGatewayUrl}/users/roles`);
+        const rolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/roles`);
+        rolesData = Array.isArray(rolesResponse) ? rolesResponse : rolesResponse.data || [];
+        this.rolesCache = { data: rolesData, timestamp: now };
+        console.log(`✅ [NOTIFICATIONS SERVICE] Roles response received and cached`);
+      }
       
       const targetRoles = rolesData.filter((role: any) => 
         roleNames.includes(role.name)
@@ -578,48 +653,47 @@ export class NotificationsService {
         return [];
       }
       
-      // Get all user roles
-      console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user roles from ${apiGatewayUrl}/users/user-roles`);
-      const userRolesResponse = await firstValueFrom(
-        this.httpService.get(`${apiGatewayUrl}/users/user-roles`)
-      );
-      console.log(`✅ [NOTIFICATIONS SERVICE] User roles response received`);
+      // Get all user roles (cu cache)
+      let userRolesData: any[];
       
-      // User roles data is also wrapped in a data object
-      const userRolesData = Array.isArray(userRolesResponse.data) ? userRolesResponse.data : userRolesResponse.data.data || [];
-      console.log(`📋 [NOTIFICATIONS SERVICE] User roles data length: ${userRolesData.length}`);
+      if (this.userRolesCache && (now - this.userRolesCache.timestamp) < this.CACHE_TTL) {
+        console.log(`💾 [NOTIFICATIONS SERVICE] Using cached user-roles data`);
+        userRolesData = this.userRolesCache.data;
+      } else {
+        console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user roles from ${apiGatewayUrl}/users/user-roles`);
+        const userRolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/user-roles`);
+        userRolesData = Array.isArray(userRolesResponse) ? userRolesResponse : userRolesResponse.data || [];
+        this.userRolesCache = { data: userRolesData, timestamp: now };
+        console.log(`✅ [NOTIFICATIONS SERVICE] User roles response received and cached`);
+      }
       
       // Find user IDs that have the target roles
       const targetRoleIds = targetRoles.map((role: any) => role.id);
-      console.log(`🎯 [NOTIFICATIONS SERVICE] Target role IDs:`, targetRoleIds);
-      
       const targetUserIds = userRolesData
         .filter((userRole: any) => targetRoleIds.includes(userRole.roleId))
         .map((userRole: any) => userRole.userId);
-      console.log(`👥 [NOTIFICATIONS SERVICE] Target user IDs:`, targetUserIds);
       
       // Get unique user IDs
       const uniqueUserIds = [...new Set(targetUserIds)];
-      console.log(`🔢 [NOTIFICATIONS SERVICE] Unique user IDs:`, uniqueUserIds);
+      console.log(`🔢 [NOTIFICATIONS SERVICE] Unique user IDs: ${uniqueUserIds.length}`);
       
       if (uniqueUserIds.length === 0) {
         console.log(`⚠️ [NOTIFICATIONS SERVICE] No users found with target roles`);
         return [];
       }
       
-      // Get user details for these users
+      // Get user details for these users (cu delay mic între request-uri pentru a evita rate limiting)
       const users = [];
-      for (const userId of uniqueUserIds) {
+      for (let i = 0; i < uniqueUserIds.length; i++) {
+        const userId = uniqueUserIds[i];
         try {
-          console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user details for user ID: ${userId}`);
-          const userResponse = await firstValueFrom(
-            this.httpService.get(`${apiGatewayUrl}/users/${userId}`)
-          );
-          console.log(`✅ [NOTIFICATIONS SERVICE] User response received for user ID: ${userId}`);
+          // Adaugă un delay mic între request-uri (50ms) pentru a evita rate limiting
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
           
-          // User data is also wrapped in a data object
-          const userData = userResponse.data.data || userResponse.data;
-          console.log(`👤 [NOTIFICATIONS SERVICE] User data for user ID ${userId}:`, JSON.stringify(userData, null, 2));
+          const userResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/${userId}`);
+          const userData = userResponse.data || userResponse;
           
           // Get user roles
           const userRoles = userRolesData
@@ -629,8 +703,6 @@ export class NotificationsService {
               return role ? role.name : null;
             })
             .filter(Boolean);
-          
-          console.log(`🏷️ [NOTIFICATIONS SERVICE] Roles for user ID ${userId}:`, userRoles);
           
           users.push({
             id: userData.id,
@@ -660,6 +732,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     // Avoid duplicate notifications for the same entity if one already exists
     if (event.entity_id) {
@@ -692,6 +765,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -700,7 +774,13 @@ export class NotificationsService {
   }
 
   // --- Minimal HTTP helpers to satisfy frontend ---
-  async findAll() {
+  async findAll(userId?: number) {
+    if (userId) {
+      return this.repo.find({ 
+        where: { user_id: userId } as any,
+        order: { created_at: 'DESC' } as any 
+      });
+    }
     return this.repo.find({ order: { created_at: 'DESC' } as any });
   }
 
@@ -740,7 +820,22 @@ export class NotificationsService {
     return { id };
   }
 
-  async markAllAsRead() {
+  async markAllAsRead(userId?: number) {
+    if (userId) {
+      await this.repo.createQueryBuilder()
+        .update(NotificationEntity)
+        .set({ status: 'read' } as any)
+        .where("status = 'unread' AND user_id = :userId", { userId })
+        .execute();
+      const count = await this.repo.count({ 
+        where: { 
+          status: 'unread',
+          user_id: userId 
+        } as any 
+      });
+      this.gateway.emitUnreadCount(count);
+      return { message: 'All notifications marked as read' };
+    }
     await this.repo.createQueryBuilder().update(NotificationEntity).set({ status: 'read' } as any).where("status = 'unread'").execute();
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);
@@ -757,6 +852,494 @@ export class NotificationsService {
     } as any);
   }
 
+  // Cron job to check for expiring and expired files at 12:00 AM daily
+  @Cron('0 0 0 * * *') // Runs at 12:00 AM every day
+  async checkExpiringFiles() {
+    console.log('🔍 [NOTIFICATIONS SERVICE] Starting daily file expiration check');
+    
+    try {
+      // Get users with manager and admin roles
+      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      
+      if (managerAndAdminUsers.length === 0) {
+        console.log('⚠️ [NOTIFICATIONS SERVICE] No manager or admin users found');
+        return;
+      }
+      
+      // Check for files expiring in 7 days
+      await this.checkFilesExpiringInDays(7, managerAndAdminUsers);
+      
+      // Check for already expired files
+      await this.checkExpiredFiles(managerAndAdminUsers);
+      
+      console.log('✅ [NOTIFICATIONS SERVICE] Completed daily file expiration check');
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error in file expiration check:', error);
+    }
+  }
+  
+  // Check for files expiring in a specific number of days
+  private async checkFilesExpiringInDays(days: number, users: Array<{id: number, email: string, roles: string[]}>) {
+    console.log(`🔍 [NOTIFICATIONS SERVICE] Checking for files expiring in ${days} days`);
+    
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + days);
+    
+    // Format date as YYYY-MM-DD for comparison
+    const targetDateString = targetDate.toISOString().split('T')[0];
+    
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      
+      // Check company documents
+      await this.checkCompanyDocumentsExpiring(targetDateString, days, users, apiGatewayUrl);
+      
+      // Check location files
+      await this.checkLocationFilesExpiring(targetDateString, days, users, apiGatewayUrl);
+      
+      // Check employee files
+      await this.checkEmployeeFilesExpiring(targetDateString, days, users, apiGatewayUrl);
+      
+      // Check supplier documents
+      await this.checkSupplierDocumentsExpiring(targetDateString, days, users, apiGatewayUrl);
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Completed check for files expiring in ${days} days`);
+    } catch (error) {
+      console.error(`❌ [NOTIFICATIONS SERVICE] Error checking files expiring in ${days} days:`, error);
+    }
+  }
+  
+  // Check for already expired files
+  private async checkExpiredFiles(users: Array<{id: number, email: string, roles: string[]}>) {
+    console.log('🔍 [NOTIFICATIONS SERVICE] Checking for already expired files');
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      
+      // Check expired company documents
+      await this.checkCompanyDocumentsExpired(today, users, apiGatewayUrl);
+      
+      // Check expired location files
+      await this.checkLocationFilesExpired(today, users, apiGatewayUrl);
+      
+      // Check expired employee files
+      await this.checkEmployeeFilesExpired(today, users, apiGatewayUrl);
+      
+      // Check expired supplier documents
+      await this.checkSupplierDocumentsExpired(today, users, apiGatewayUrl);
+      
+      console.log('✅ [NOTIFICATIONS SERVICE] Completed check for expired files');
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking expired files:', error);
+    }
+  }
+  
+  // Check company documents expiring
+  private async checkCompanyDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking company documents expiring on ${targetDate}`);
+      
+      // Make HTTP request to company service to get documents expiring on target date
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/companies/documents/expiring/${targetDate}`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const documents = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} company documents expiring on ${targetDate}`);
+      
+      // Create notifications for each expiring document
+      for (const document of documents) {
+        const companyName = document.company?.company_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'company_document_expiring',
+            title: `Document companie expira in ${days} zile`,
+            description: `Documentul "${document.document_name}" al companiei "${companyName}" va expira in ${days} zile`,
+            user_id: user.id,
+            entity_id: document.id,
+            entity_type: 'company_document',
+            metadata: { 
+              companyId: document.company_id,
+              companyName,
+              documentName: document.document_name,
+              expireDate: document.expire_date,
+              daysUntilExpiry: days
+            },
+            priority: 'medium',
+            status: 'unread',
+            target_url: `/firme/${document.company_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expiring company documents`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking company documents expiring:', error);
+    }
+  }
+  
+  // Check location files expiring
+  private async checkLocationFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking location files expiring on ${targetDate}`);
+      
+      // Make HTTP request to locations service to get files expiring on target date
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/locations/files/expiring/${targetDate}`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const files = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} location files expiring on ${targetDate}`);
+      
+      // Create notifications for each expiring file
+      for (const file of files) {
+        const locationName = file.workLocation?.location_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'location_file_expiring',
+            title: `Document locatie expira in ${days} zile`,
+            description: `Documentul "${file.file_name}" al locatiei "${locationName}" va expira in ${days} zile`,
+            user_id: user.id,
+            entity_id: file.id,
+            entity_type: 'location_file',
+            metadata: { 
+              locationId: file.work_location_id,
+              locationName,
+              fileName: file.file_name,
+              expireDate: file.expire_date,
+              daysUntilExpiry: days
+            },
+            priority: 'medium',
+            status: 'unread',
+            target_url: `/locatii/${file.work_location_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expiring location files`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking location files expiring:', error);
+    }
+  }
+  
+  // Check employee files expiring
+  private async checkEmployeeFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking employee files expiring on ${targetDate}`);
+      
+      // Make HTTP request to employees service to get files expiring on target date
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/employees/files/expiring/${targetDate}`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const files = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} employee files expiring on ${targetDate}`);
+      
+      // Create notifications for each expiring file
+      for (const file of files) {
+        const employeeName = file.employee ? `${file.employee.first_name} ${file.employee.last_name}` : 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'employee_file_expiring',
+            title: `Document angajat expira in ${days} zile`,
+            description: `Documentul "${file.file_name}" al angajatului "${employeeName}" va expira in ${days} zile`,
+            user_id: user.id,
+            entity_id: file.id,
+            entity_type: 'employee_file',
+            metadata: { 
+              employeeId: file.employee_id,
+              employeeName,
+              fileName: file.file_name,
+              expireDate: file.expire_date,
+              daysUntilExpiry: days
+            },
+            priority: 'medium',
+            status: 'unread',
+            target_url: `/angajati/${file.employee_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expiring employee files`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking employee files expiring:', error);
+    }
+  }
+  
+  // Check supplier documents expiring
+  private async checkSupplierDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking supplier documents expiring on ${targetDate}`);
+      
+      // Make HTTP request to suppliers service to get documents expiring on target date
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expiring/${targetDate}`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const documents = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} supplier documents expiring on ${targetDate}`);
+      
+      // Create notifications for each expiring document
+      for (const document of documents) {
+        const supplierName = document.folder?.supplier?.supplier_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'supplier_document_expiring',
+            title: `Document furnizor expira in ${days} zile`,
+            description: `Documentul "${document.file_name}" al furnizorului "${supplierName}" va expira in ${days} zile`,
+            user_id: user.id,
+            entity_id: document.id,
+            entity_type: 'supplier_document',
+            metadata: { 
+              supplierId: document.folder?.supplier_id,
+              supplierName,
+              fileName: document.file_name,
+              expireDate: document.expire_date,
+              daysUntilExpiry: days
+            },
+            priority: 'medium',
+            status: 'unread',
+            target_url: `/furnizori/${document.folder?.supplier_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expiring supplier documents`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking supplier documents expiring:', error);
+    }
+  }
+  
+  // Check company documents expired
+  private async checkCompanyDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking company documents expired before ${today}`);
+      
+      // Make HTTP request to company service to get expired documents
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/companies/documents/expired`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const documents = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} expired company documents`);
+      
+      // Create notifications for each expired document
+      for (const document of documents) {
+        const companyName = document.company?.company_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'company_document_expired',
+            title: 'Document companie expirat',
+            description: `Documentul "${document.document_name}" al companiei "${companyName}" a expirat`,
+            user_id: user.id,
+            entity_id: document.id,
+            entity_type: 'company_document',
+            metadata: { 
+              companyId: document.company_id,
+              companyName,
+              documentName: document.document_name,
+              expireDate: document.expire_date
+            },
+            priority: 'high',
+            status: 'unread',
+            target_url: `/firme/${document.company_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expired company documents`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking company documents expired:', error);
+    }
+  }
+  
+  // Check location files expired
+  private async checkLocationFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking location files expired before ${today}`);
+      
+      // Make HTTP request to locations service to get expired files
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/locations/files/expired`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const files = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} expired location files`);
+      
+      // Create notifications for each expired file
+      for (const file of files) {
+        const locationName = file.workLocation?.location_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'location_file_expired',
+            title: 'Document locatie expirat',
+            description: `Documentul "${file.file_name}" al locatiei "${locationName}" a expirat`,
+            user_id: user.id,
+            entity_id: file.id,
+            entity_type: 'location_file',
+            metadata: { 
+              locationId: file.work_location_id,
+              locationName,
+              fileName: file.file_name,
+              expireDate: file.expire_date
+            },
+            priority: 'high',
+            status: 'unread',
+            target_url: `/locatii/${file.work_location_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expired location files`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking location files expired:', error);
+    }
+  }
+  
+  // Check employee files expired
+  private async checkEmployeeFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking employee files expired before ${today}`);
+      
+      // Make HTTP request to employees service to get expired files
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/employees/files/expired`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const files = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} expired employee files`);
+      
+      // Create notifications for each expired file
+      for (const file of files) {
+        const employeeName = file.employee ? `${file.employee.first_name} ${file.employee.last_name}` : 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'employee_file_expired',
+            title: 'Document angajat expirat',
+            description: `Documentul "${file.file_name}" al angajatului "${employeeName}" a expirat`,
+            user_id: user.id,
+            entity_id: file.id,
+            entity_type: 'employee_file',
+            metadata: { 
+              employeeId: file.employee_id,
+              employeeName,
+              fileName: file.file_name,
+              expireDate: file.expire_date
+            },
+            priority: 'high',
+            status: 'unread',
+            target_url: `/angajati/${file.employee_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expired employee files`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking employee files expired:', error);
+    }
+  }
+  
+  // Check supplier documents expired
+  private async checkSupplierDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
+    try {
+      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking supplier documents expired before ${today}`);
+      
+      // Make HTTP request to suppliers service to get expired documents
+      const response = await firstValueFrom(
+        this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expired`, {
+          headers: {
+            'x-internal-service': 'notifications',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const documents = response.data;
+      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} expired supplier documents`);
+      
+      // Create notifications for each expired document
+      for (const document of documents) {
+        const supplierName = document.folder?.supplier?.supplier_name || 'N/A';
+        
+        // Create notification for each manager/admin user
+        for (const user of users) {
+          await this.create({
+            type: 'supplier_document_expired',
+            title: 'Document furnizor expirat',
+            description: `Documentul "${document.file_name}" al furnizorului "${supplierName}" a expirat`,
+            user_id: user.id,
+            entity_id: document.id,
+            entity_type: 'supplier_document',
+            metadata: { 
+              supplierId: document.folder?.supplier_id,
+              supplierName,
+              fileName: document.file_name,
+              expireDate: document.expire_date
+            },
+            priority: 'high',
+            status: 'unread',
+            target_url: `/furnizori/${document.folder?.supplier_id}`,
+          } as any);
+        }
+      }
+      
+      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expired supplier documents`);
+    } catch (error) {
+      console.error('❌ [NOTIFICATIONS SERVICE] Error checking supplier documents expired:', error);
+    }
+  }
+
   async onCalendarNotification(event: { 
     type: string;
     title: string;
@@ -765,6 +1348,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     // Avoid duplicate notifications for the same entity if one already exists
     if (event.entity_id) {
@@ -797,6 +1381,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -812,6 +1397,7 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     // Avoid duplicate notifications for the same entity if one already exists
     if (event.entity_id) {
@@ -844,6 +1430,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }
@@ -859,24 +1446,12 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
+    target_url?: string; // Add target_url parameter
   }) {
     console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
     
-    // Avoid duplicate notifications for the same entity if one already exists
-    if (event.entity_id) {
-      const existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type 
-        } as any 
-      });
-      
-      if (existing) {
-        console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate company notification ignored - Type: ${event.type}, Company ID: ${event.entity_id}`);
-        return existing;
-      }
-    }
+    // Always create notifications for company events - remove duplicate detection for now
+    // This ensures that all company operations generate notifications
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
@@ -897,6 +1472,7 @@ export class NotificationsService {
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
+        target_url: event.target_url, // Pass through target_url
       } as any);
       notifications.push(saved);
     }

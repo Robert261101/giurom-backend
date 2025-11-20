@@ -165,9 +165,15 @@ export class LocationsHttpController {
 	}
 
 	@Post(':id/revenue')
-	@Permissions('locations.create')
-	recordRevenue(@Param('id') id: string, @Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string }) {
-		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url);
+	@Permissions('cashing.create')
+	recordRevenue(
+		@Param('id') id: string, 
+		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string },
+		@Request() req?: any
+	) {
+		const user = req?.user;
+		const userId = user?.id || user?.employee_id || user?.userId || null;
+		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, userId);
 	}
 
 	@Get(':id/revenue')
@@ -189,13 +195,13 @@ export class LocationsHttpController {
 	}
 
 	@Delete('revenue/:revenueId')
-	@Permissions('locations.delete')
+	@Permissions('cashing.delete')
 	deleteRevenue(@Param('revenueId') revenueId: string) {
 		return this.service.deleteRevenue(parseInt(revenueId, 10));
 	}
 
 	@Patch('revenue/:revenueId')
-	@Permissions('locations.update')
+	@Permissions('cashing.update')
 	updateRevenue(@Param('revenueId') revenueId: string, @Body() body: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }) {
 		return this.service.updateRevenue(parseInt(revenueId, 10), body);
 	}
