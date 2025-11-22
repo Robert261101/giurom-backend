@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -68,7 +68,6 @@ export class NotificationsService {
             ? retryAfter * 1000 
             : initialDelay * Math.pow(2, attempt); // Exponential backoff
           
-          console.log(`⏳ [NOTIFICATIONS SERVICE] Rate limited (429), retrying after ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
@@ -81,18 +80,24 @@ export class NotificationsService {
     throw lastError;
   }
 
-  async getUnreadCount(userId?: number) {
-    if (userId) {
+  async getUnreadCount(userId?: number, currentUser?: any) {
+    // Always return count only for the authenticated user, not for all admins
+    // This ensures each user sees only their own unread count
+    const authenticatedUserId = currentUser?.userId;
+    const targetUserId = userId || authenticatedUserId;
+    
+    if (targetUserId) {
       const count = await this.repo.count({ 
         where: { 
           status: 'unread',
-          user_id: userId 
+          user_id: targetUserId 
         } as any 
       });
       return { count };
     }
-    const count = await this.repo.count({ where: { status: 'unread' } as any });
-    return { count };
+    
+    // Fallback: return 0 if no user ID provided
+    return { count: 0 };
   }
 
   async onExpiringLabel(event: { labelId: number; labelCode: string; preparationId: number; expiresAt: string }) {
@@ -259,59 +264,67 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`🔍 [NOTIFICATIONS SERVICE] Received location notification - Type: ${event.type}, Location ID: ${event.entity_id}`);
-    
-    // For update-type notifications, apply time-based deduplication (5 minutes)
-    let existing: NotificationEntity | null = null;
-    if (event.type.includes('updated') || event.type.includes('modified')) {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type,
-          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
-        } as any 
-      });
-    } else {
-      // For non-update notifications, check for any existing duplicate
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type 
-        } as any 
-      });
-    }
-    
-    if (existing) {
-      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate notification ignored - Type: ${event.type}, Location ID: ${event.entity_id}`);
-      return existing;
-    }
-    
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles`);
     
     // Create notifications for each manager and admin user
+    // IMPORTANT: We create notifications for ALL admins/managers, filtering happens on frontend
     const notifications = [];
     for (const user of managerAndAdminUsers) {
-      const saved = await this.create({
-        type: event.type,
-        title: event.title,
-        description: event.description,
-        user_id: user.id,
-        entity_id: event.entity_id,
-        entity_type: event.entity_type,
-        metadata: event.metadata,
-        priority: event.priority,
-        status: 'unread',
-        target_url: event.target_url, // Pass through target_url
-      } as any);
-      notifications.push(saved);
+      
+      // Check for duplicate per user, but with a very short window (30 seconds) for updates
+      // This allows multiple updates to be notified, but prevents spam from rapid-fire updates
+      let existing: NotificationEntity | null = null;
+      
+      if (event.type.includes('updated') || event.type.includes('modified')) {
+        // Very short window (5 seconds) - only prevent rapid-fire identical updates
+        // This allows different updates to be notified even if they happen close together
+        const fiveSecondsAgo = new Date(Date.now() - 5 * 1000);
+        existing = await this.repo.findOne({ 
+          where: { 
+            entity_id: event.entity_id, 
+            entity_type: event.entity_type, 
+            type: event.type,
+            user_id: user.id,
+            created_at: MoreThanOrEqual(fiveSecondsAgo) as any
+          } as any 
+        });
+      } else {
+        // For non-update notifications, check for any existing duplicate (no time limit)
+        existing = await this.repo.findOne({ 
+          where: { 
+            entity_id: event.entity_id, 
+            entity_type: event.entity_type, 
+            type: event.type,
+            user_id: user.id
+          } as any 
+        });
+      }
+      
+      if (existing) {
+        notifications.push(existing);
+        continue;
+      }
+      
+      try {
+        const saved = await this.create({
+          type: event.type,
+          title: event.title,
+          description: event.description,
+          user_id: user.id,
+          entity_id: event.entity_id,
+          entity_type: event.entity_type,
+          metadata: event.metadata,
+          priority: event.priority,
+          status: 'unread',
+          target_url: event.target_url, // Pass through target_url
+        } as any);
+        notifications.push(saved);
+      } catch (error) {
+        // Continue processing other users even if one fails
+      }
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for location event`);
     return notifications;
   }
 
@@ -325,20 +338,12 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received supplier notification:`, JSON.stringify(event, null, 2));
-    
-    // Always create notifications for supplier events - remove duplicate detection for now
-    // This ensures that all supplier operations generate notifications
-    
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for supplier notification`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
     for (const user of managerAndAdminUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -354,7 +359,6 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for supplier event`);
     return notifications;
   }
 
@@ -368,8 +372,6 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received leave notification event:`, JSON.stringify(event, null, 2));
-    
     // Avoid duplicate notifications for the same entity if one already exists
     // Use the requestId from metadata if available, otherwise fall back to user_id
     const entityId = event.metadata?.requestId || event.user_id;
@@ -382,7 +384,6 @@ export class NotificationsService {
     });
     
     if (existing) {
-      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate leave notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -391,22 +392,16 @@ export class NotificationsService {
     let targetUsers = [];
     
     if (event.type === 'leave_request_created') {
-      console.log(`👥 [NOTIFICATIONS SERVICE] Leave request created - sending to managers and admins`);
       // Send to managers and admins
       targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
     } else {
-      console.log(`👤 [NOTIFICATIONS SERVICE] Leave request ${event.type} - sending to employee ${event.user_id}`);
       // Send to the specific employee
       targetUsers = [{ id: event.user_id }];
     }
     
-    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(targetUsers, null, 2));
-    
     // Create notifications for target users
     const notifications = [];
     for (const user of targetUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -422,7 +417,6 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for leave event`);
     return notifications;
   }
 
@@ -436,8 +430,6 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received shift change notification event:`, JSON.stringify(event, null, 2));
-    
     // Avoid duplicate notifications for the same entity if one already exists
     // Use the requestId from metadata if available, otherwise fall back to user_id
     const entityId = event.metadata?.requestId || event.user_id;
@@ -450,7 +442,6 @@ export class NotificationsService {
     });
     
     if (existing) {
-      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate shift change notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -459,22 +450,16 @@ export class NotificationsService {
     let targetUsers = [];
     
     if (event.type === 'shift_change_request_created') {
-      console.log(`👥 [NOTIFICATIONS SERVICE] Shift change request created - sending to managers and admins`);
       // Send to managers and admins
       targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
     } else {
-      console.log(`👤 [NOTIFICATIONS SERVICE] Shift change request ${event.type} - sending to employee ${event.user_id}`);
       // Send to the specific employee
       targetUsers = [{ id: event.user_id }];
     }
     
-    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(targetUsers, null, 2));
-    
     // Create notifications for target users
     const notifications = [];
     for (const user of targetUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -490,7 +475,6 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for shift change event`);
     return notifications;
   }
 
@@ -503,8 +487,6 @@ export class NotificationsService {
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received attendance notification event:`, JSON.stringify(event, null, 2));
-    
     // Avoid duplicate notifications for the same entity if one already exists
     // Use the attendanceId from metadata if available, otherwise fall back to user_id
     const entityId = event.metadata?.attendanceId || event.user_id;
@@ -517,7 +499,6 @@ export class NotificationsService {
     });
     
     if (existing) {
-      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate attendance notification ignored - Type: ${event.type}, Entity ID: ${entityId}`);
       return existing;
     }
     
@@ -532,13 +513,9 @@ export class NotificationsService {
       index === self.findIndex(u => u.id === user.id)
     );
     
-    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(uniqueTargetUsers, null, 2));
-    
     // Create notifications for target users
     const notifications = [];
     for (const user of uniqueTargetUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -553,7 +530,6 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for attendance event`);
     return notifications;
   }
 
@@ -568,8 +544,6 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received shift notification event:`, JSON.stringify(event, null, 2));
-    
     // Avoid duplicate notifications for the same entity if one already exists
     const existing = await this.repo.findOne({ 
       where: { 
@@ -580,7 +554,6 @@ export class NotificationsService {
     });
     
     if (existing) {
-      console.log(`⚠️ [NOTIFICATIONS SERVICE] Duplicate shift notification ignored - Type: ${event.type}, Entity ID: ${event.entity_id}`);
       return existing;
     }
     
@@ -595,13 +568,9 @@ export class NotificationsService {
       index === self.findIndex(u => u.id === user.id)
     );
     
-    console.log(`🎯 [NOTIFICATIONS SERVICE] Target users for notification:`, JSON.stringify(uniqueTargetUsers, null, 2));
-    
     // Create notifications for target users
     const notifications = [];
     for (const user of uniqueTargetUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -617,7 +586,6 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for shift event`);
     return notifications;
   }
 
@@ -711,14 +679,11 @@ export class NotificationsService {
           });
         } catch (error) {
           // Skip users that can't be fetched
-          console.warn(`⚠️ [NOTIFICATIONS SERVICE] Could not fetch user with ID ${userId}:`, error);
         }
       }
       
-      console.log(`✅ [NOTIFICATIONS SERVICE] Found ${users.length} users with target roles`);
       return users;
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error fetching users with roles:', error);
       // Return empty array if there's an error
       return [];
     }
@@ -773,20 +738,109 @@ export class NotificationsService {
     return notifications;
   }
 
-  // --- Minimal HTTP helpers to satisfy frontend ---
-  async findAll(userId?: number) {
-    if (userId) {
-      return this.repo.find({ 
-        where: { user_id: userId } as any,
-        order: { created_at: 'DESC' } as any 
-      });
+  // Helper method to get user roles from API Gateway
+  private async getUserRoles(userId: number): Promise<string[]> {
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      const userRolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/user-roles`);
+      const userRolesData = Array.isArray(userRolesResponse) ? userRolesResponse : userRolesResponse.data || [];
+      
+      // Get all roles
+      const rolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/roles`);
+      const rolesData = Array.isArray(rolesResponse) ? rolesResponse : rolesResponse.data || [];
+      
+      // Find user's role IDs
+      const userRoleIds = userRolesData
+        .filter((ur: any) => ur.userId === userId)
+        .map((ur: any) => ur.roleId);
+      
+      // Map role IDs to role names
+      const roleNames = rolesData
+        .filter((role: any) => userRoleIds.includes(role.id))
+        .map((role: any) => role.name);
+      
+      return roleNames;
+    } catch (error) {
+      return [];
     }
-    return this.repo.find({ order: { created_at: 'DESC' } as any });
+  }
+
+  // --- Minimal HTTP helpers to satisfy frontend ---
+  async findAll(userId?: number, currentUser?: any) {
+    // Always check the authenticated user's roles (from req.user), not the userId from query params
+    let isAdminOrManager = false;
+    const authenticatedUserId = currentUser?.userId;
+    
+    // Calculate date 48 hours ago (48 * 60 * 60 * 1000 milliseconds)
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    
+    if (authenticatedUserId) {
+      const userRoles = await this.getUserRoles(authenticatedUserId);
+      isAdminOrManager = userRoles.some((role: string) => 
+        role.toLowerCase() === 'admin' || role.toLowerCase() === 'manager'
+      );
+    }
+
+    if (isAdminOrManager) {
+      // Get all admin/manager user IDs
+      const adminManagerUsers = await this.getUsersWithRoles(['admin', 'manager']);
+      const adminManagerUserIds = adminManagerUsers.map(u => u.id);
+      
+      if (adminManagerUserIds.length > 0) {
+        // Use query builder for IN clause with filtering:
+        // - All unread notifications
+        // - Read notifications only from last 48 hours
+        return this.repo
+          .createQueryBuilder('notification')
+          .where('notification.user_id IN (:...userIds)', { userIds: adminManagerUserIds })
+          .andWhere(
+            '(notification.status = :unreadStatus OR (notification.status = :readStatus AND notification.created_at >= :fortyEightHoursAgo))',
+            {
+              unreadStatus: 'unread',
+              readStatus: 'read',
+              fortyEightHoursAgo: fortyEightHoursAgo
+            }
+          )
+          .orderBy('notification.created_at', 'DESC')
+          .getMany();
+      }
+    }
+
+    // If not admin/manager, return notifications only for the authenticated user (or userId from query if provided)
+    const targetUserId = userId || authenticatedUserId;
+    if (targetUserId) {
+      // Filter: all unread + read from last 48 hours
+      return this.repo
+        .createQueryBuilder('notification')
+        .where('notification.user_id = :targetUserId', { targetUserId })
+        .andWhere(
+          '(notification.status = :unreadStatus OR (notification.status = :readStatus AND notification.created_at >= :fortyEightHoursAgo))',
+          {
+            unreadStatus: 'unread',
+            readStatus: 'read',
+            fortyEightHoursAgo: fortyEightHoursAgo
+          }
+        )
+        .orderBy('notification.created_at', 'DESC')
+        .getMany();
+    }
+    
+    // Fallback: return all with same filtering
+    return this.repo
+      .createQueryBuilder('notification')
+      .where(
+        '(notification.status = :unreadStatus OR (notification.status = :readStatus AND notification.created_at >= :fortyEightHoursAgo))',
+        {
+          unreadStatus: 'unread',
+          readStatus: 'read',
+          fortyEightHoursAgo: fortyEightHoursAgo
+        }
+      )
+      .orderBy('notification.created_at', 'DESC')
+      .getMany();
   }
 
   async create(notification: Partial<NotificationEntity>) {
-    console.log('📥 [NOTIFICATIONS SERVICE] Creating notification with data:', JSON.stringify(notification, null, 2));
-    
     const entity = this.repo.create({
       type: notification.type || 'general',
       title: notification.title || 'Notificare',
@@ -801,14 +855,39 @@ export class NotificationsService {
       priority: (notification.priority as any) || 'low',
     } as any);
     
-    console.log('📝 [NOTIFICATIONS SERVICE] Entity to be saved:', JSON.stringify(entity, null, 2));
+    const saved = (await this.repo.save(entity)) as unknown as NotificationEntity;
     
-    const saved = await this.repo.save(entity);
-    console.log('✅ [NOTIFICATIONS SERVICE] Notification saved with ID:', (saved as any).id);
-    
-    const count = await this.repo.count({ where: { status: 'unread' } as any });
-    console.log('🔄 [NOTIFICATIONS SERVICE] Emitting unread count:', count);
-    this.gateway.emitUnreadCount(count);
+    // Emit new notification to specific user via WebSocket
+    if (saved.user_id) {
+      try {
+        const notificationData = {
+          id: saved.id,
+          type: saved.type,
+          title: saved.title,
+          description: saved.description,
+          status: saved.status,
+          entity_id: saved.entity_id,
+          entity_type: saved.entity_type,
+          target_url: saved.target_url,
+          priority: saved.priority,
+          created_at: saved.created_at,
+          user_id: saved.user_id
+        };
+        
+        await this.gateway.emitNewNotification(saved.user_id, notificationData);
+        
+        // Also emit unread count update for this user
+        const count = await this.repo.count({ 
+          where: { 
+            status: 'unread',
+            user_id: saved.user_id 
+          } as any 
+        });
+        this.gateway.emitUnreadCountForUser(saved.user_id, count);
+      } catch (error) {
+        // Don't throw - notification is saved in DB, WebSocket is just a bonus
+      }
+    }
     
     return saved;
   }
@@ -855,14 +934,11 @@ export class NotificationsService {
   // Cron job to check for expiring and expired files at 12:00 AM daily
   @Cron('0 0 0 * * *') // Runs at 12:00 AM every day
   async checkExpiringFiles() {
-    console.log('🔍 [NOTIFICATIONS SERVICE] Starting daily file expiration check');
-    
     try {
       // Get users with manager and admin roles
       const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
       
       if (managerAndAdminUsers.length === 0) {
-        console.log('⚠️ [NOTIFICATIONS SERVICE] No manager or admin users found');
         return;
       }
       
@@ -871,16 +947,13 @@ export class NotificationsService {
       
       // Check for already expired files
       await this.checkExpiredFiles(managerAndAdminUsers);
-      
-      console.log('✅ [NOTIFICATIONS SERVICE] Completed daily file expiration check');
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error in file expiration check:', error);
+      // Silent error handling
     }
   }
   
   // Check for files expiring in a specific number of days
   private async checkFilesExpiringInDays(days: number, users: Array<{id: number, email: string, roles: string[]}>) {
-    console.log(`🔍 [NOTIFICATIONS SERVICE] Checking for files expiring in ${days} days`);
     
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + days);
@@ -902,16 +975,13 @@ export class NotificationsService {
       
       // Check supplier documents
       await this.checkSupplierDocumentsExpiring(targetDateString, days, users, apiGatewayUrl);
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Completed check for files expiring in ${days} days`);
     } catch (error) {
-      console.error(`❌ [NOTIFICATIONS SERVICE] Error checking files expiring in ${days} days:`, error);
+      // Silent error handling
     }
   }
   
   // Check for already expired files
   private async checkExpiredFiles(users: Array<{id: number, email: string, roles: string[]}>) {
-    console.log('🔍 [NOTIFICATIONS SERVICE] Checking for already expired files');
     
     const today = new Date().toISOString().split('T')[0];
     
@@ -929,18 +999,14 @@ export class NotificationsService {
       
       // Check expired supplier documents
       await this.checkSupplierDocumentsExpired(today, users, apiGatewayUrl);
-      
-      console.log('✅ [NOTIFICATIONS SERVICE] Completed check for expired files');
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking expired files:', error);
+      // Silent error handling
     }
   }
   
   // Check company documents expiring
   private async checkCompanyDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking company documents expiring on ${targetDate}`);
-      
       // Make HTTP request to company service to get documents expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expiring/${targetDate}`, {
@@ -952,7 +1018,6 @@ export class NotificationsService {
       );
       
       const documents = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} company documents expiring on ${targetDate}`);
       
       // Create notifications for each expiring document
       for (const document of documents) {
@@ -980,18 +1045,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expiring company documents`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking company documents expiring:', error);
+      // Silent error handling
     }
   }
   
   // Check location files expiring
   private async checkLocationFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking location files expiring on ${targetDate}`);
-      
       // Make HTTP request to locations service to get files expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/locations/files/expiring/${targetDate}`, {
@@ -1003,7 +1064,6 @@ export class NotificationsService {
       );
       
       const files = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} location files expiring on ${targetDate}`);
       
       // Create notifications for each expiring file
       for (const file of files) {
@@ -1031,18 +1091,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expiring location files`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking location files expiring:', error);
+      // Silent error handling
     }
   }
   
   // Check employee files expiring
   private async checkEmployeeFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking employee files expiring on ${targetDate}`);
-      
       // Make HTTP request to employees service to get files expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/employees/files/expiring/${targetDate}`, {
@@ -1054,7 +1110,6 @@ export class NotificationsService {
       );
       
       const files = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} employee files expiring on ${targetDate}`);
       
       // Create notifications for each expiring file
       for (const file of files) {
@@ -1082,18 +1137,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expiring employee files`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking employee files expiring:', error);
+      // Silent error handling
     }
   }
   
   // Check supplier documents expiring
   private async checkSupplierDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking supplier documents expiring on ${targetDate}`);
-      
       // Make HTTP request to suppliers service to get documents expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expiring/${targetDate}`, {
@@ -1105,7 +1156,6 @@ export class NotificationsService {
       );
       
       const documents = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} supplier documents expiring on ${targetDate}`);
       
       // Create notifications for each expiring document
       for (const document of documents) {
@@ -1133,18 +1183,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expiring supplier documents`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking supplier documents expiring:', error);
+      // Silent error handling
     }
   }
   
   // Check company documents expired
   private async checkCompanyDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking company documents expired before ${today}`);
-      
       // Make HTTP request to company service to get expired documents
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expired`, {
@@ -1156,7 +1202,6 @@ export class NotificationsService {
       );
       
       const documents = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} expired company documents`);
       
       // Create notifications for each expired document
       for (const document of documents) {
@@ -1183,18 +1228,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expired company documents`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking company documents expired:', error);
+      // Silent error handling
     }
   }
   
   // Check location files expired
   private async checkLocationFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking location files expired before ${today}`);
-      
       // Make HTTP request to locations service to get expired files
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/locations/files/expired`, {
@@ -1206,7 +1247,6 @@ export class NotificationsService {
       );
       
       const files = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} expired location files`);
       
       // Create notifications for each expired file
       for (const file of files) {
@@ -1233,18 +1273,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expired location files`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking location files expired:', error);
+      // Silent error handling
     }
   }
   
   // Check employee files expired
   private async checkEmployeeFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking employee files expired before ${today}`);
-      
       // Make HTTP request to employees service to get expired files
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/employees/files/expired`, {
@@ -1256,7 +1292,6 @@ export class NotificationsService {
       );
       
       const files = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${files.length} expired employee files`);
       
       // Create notifications for each expired file
       for (const file of files) {
@@ -1283,18 +1318,14 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${files.length} expired employee files`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking employee files expired:', error);
+      // Silent error handling
     }
   }
   
   // Check supplier documents expired
   private async checkSupplierDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Checking supplier documents expired before ${today}`);
-      
       // Make HTTP request to suppliers service to get expired documents
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expired`, {
@@ -1306,7 +1337,6 @@ export class NotificationsService {
       );
       
       const documents = response.data;
-      console.log(`📥 [NOTIFICATIONS SERVICE] Found ${documents.length} expired supplier documents`);
       
       // Create notifications for each expired document
       for (const document of documents) {
@@ -1333,10 +1363,8 @@ export class NotificationsService {
           } as any);
         }
       }
-      
-      console.log(`✅ [NOTIFICATIONS SERVICE] Created notifications for ${documents.length} expired supplier documents`);
     } catch (error) {
-      console.error('❌ [NOTIFICATIONS SERVICE] Error checking supplier documents expired:', error);
+      // Silent error handling
     }
   }
 
@@ -1448,19 +1476,19 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
+    // console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
     
     // Always create notifications for company events - remove duplicate detection for now
     // This ensures that all company operations generate notifications
     
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for company notification`);
+    // console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for company notification`);
     
     // Create notifications for each manager and admin user
     const notifications = [];
     for (const user of managerAndAdminUsers) {
-      console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
+      // console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
       
       const saved = await this.create({
         type: event.type,
@@ -1477,7 +1505,7 @@ export class NotificationsService {
       notifications.push(saved);
     }
     
-    console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for company event`);
+    // console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for company event`);
     return notifications;
   }
 }

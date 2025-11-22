@@ -1,15 +1,70 @@
-import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
-import { Server } from 'socket.io';
-import { Injectable } from '@nestjs/common';
+import { WebSocketGateway, WebSocketServer, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage } from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { Injectable, Logger } from '@nestjs/common';
 
-@WebSocketGateway({ cors: { origin: ['http://localhost:3000', 'http://localhost:3001'] } })
+@WebSocketGateway({ 
+  namespace: '/notifications',
+  path: '/notifications/socket.io',
+  cors: {
+    origin: [
+      'http://localhost:3000', 
+      'http://localhost:3001', 
+      'https://giurom.bitap.ro', 
+      'http://giurom.bitap.ro:3000', 
+      'http://giurom.bitap.ro:3001',
+      /^https:\/\/.*\.vercel\.app$/,
+      /^https:\/\/.*\.vercel\.app\/.*$/
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+})
 @Injectable()
-export class NotificationsGateway {
+export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
+  
+  private readonly logger = new Logger(NotificationsGateway.name);
+
+  handleConnection(client: Socket) {
+    // Connection handled silently
+  }
+
+  handleDisconnect(client: Socket) {
+    // Disconnection handled silently
+  }
+
+  @SubscribeMessage('join')
+  handleJoin(client: Socket, payload: { userId: number | string }) {
+    const userId = Number(payload.userId);
+    const room = `user:${userId}`;
+    client.join(room);
+  }
 
   emitUnreadCount(unread: number) {
     this.server.emit('notifications:unread', { unread });
+  }
+
+  // Emit new notification to specific user
+  async emitNewNotification(userId: number, notification: any) {
+    if (!this.server) {
+      this.logger.error('WebSocket server is not initialized');
+      return;
+    }
+    
+    const room = `user:${userId}`;
+    
+    try {
+      this.server.to(room).emit('notifications:new', notification);
+    } catch (error) {
+      this.logger.error(`Failed to emit notification to room ${room}:`, error);
+    }
+  }
+
+  // Emit unread count to specific user
+  emitUnreadCountForUser(userId: number, count: number) {
+    const room = `user:${userId}`;
+    this.server.to(room).emit('notifications:unread-update', { userId, count });
   }
 }
 

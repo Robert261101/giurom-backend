@@ -55,6 +55,30 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Middleware pentru a ignora cererile Next.js specifice și alte cereri care nu ar trebui să ajungă la API Gateway
+app.use((req, res, next) => {
+  const url = req.originalUrl || req.url;
+  
+  // Listează pattern-urile care trebuie ignorate (Next.js internals, Chrome DevTools, etc.)
+  const ignoredPatterns = [
+    /^\/_next\//,                    // Next.js internals (_next/internal/helpers.ts, _next/static/runtime.ts, etc.)
+    /^\/\.well-known\//,             // Well-known paths (.well-known/appspecific/com.chrome.devtools.json)
+    /^\/favicon\.ico/,               // Favicon requests
+    /^\/login$/,                     // Login page (ar trebui să fie servit de Next.js, nu de API Gateway)
+  ];
+  
+  // Verifică dacă URL-ul se potrivește cu vreun pattern ignorat
+  const shouldIgnore = ignoredPatterns.some(pattern => pattern.test(url));
+  
+  if (shouldIgnore) {
+    // Returnează 404 rapid, fără logging excesiv
+    return res.status(404).end();
+  }
+  
+  // Continuă la următorul middleware
+  next();
+});
+
 // Proxy configuration for microservices
 const microservices = {
   // Employees microservice

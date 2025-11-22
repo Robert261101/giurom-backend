@@ -2,7 +2,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import rateLimit from 'express-rate-limit';
+// import rateLimit from 'express-rate-limit'; // Rate limiting dezactivat
 
 async function bootstrap() {
   // Create HTTP application
@@ -15,32 +15,32 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Rate limiting general pentru endpoint-uri (300 request-uri / 15 min - mărit pentru a evita 429)
-  const generalRateLimit = rateLimit({ 
-    windowMs: 15*60*1000, // 15 minute
-    max: 300, 
-    message: 'Prea multe request-uri, te rugăm să aștepți câteva momente.',
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => {
-      // Skip pentru request-uri interne (din microservicii)
-      if (req.headers['x-internal-service'] || req.headers['x-service-secret']) {
-        return true;
-      }
-      
-      // Skip pentru request-uri de la Next.js API routes (care fac proxy)
-      if (req.headers['user-agent']?.includes('node-fetch') || 
-          req.headers['user-agent']?.includes('axios') ||
-          req.headers['user-agent']?.includes('undici')) {
-        return true;
-      }
-      
-      return false;
-    }
-  });
+  // Rate limiting dezactivat
+  // const generalRateLimit = rateLimit({ 
+  //   windowMs: 15*60*1000, // 15 minute
+  //   max: 300, 
+  //   message: 'Prea multe request-uri, te rugăm să aștepți câteva momente.',
+  //   standardHeaders: true,
+  //   legacyHeaders: false,
+  //   skip: (req) => {
+  //     // Skip pentru request-uri interne (din microservicii)
+  //     if (req.headers['x-internal-service'] || req.headers['x-service-secret']) {
+  //       return true;
+  //     }
+  //     
+  //     // Skip pentru request-uri de la Next.js API routes (care fac proxy)
+  //     if (req.headers['user-agent']?.includes('node-fetch') || 
+  //         req.headers['user-agent']?.includes('axios') ||
+  //         req.headers['user-agent']?.includes('undici')) {
+  //       return true;
+  //     }
+  //     
+  //     return false;
+  //   }
+  // });
 
-  // Aplică rate limiting
-  app.use(generalRateLimit);
+  // Rate limiting dezactivat
+  // app.use(generalRateLimit);
 
   // Setup Swagger
   const config = new DocumentBuilder()
