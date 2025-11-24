@@ -706,7 +706,7 @@ export class LocationsService {
     return this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
   }
 
-  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string, userId?: number | null) {
+  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string, employeeId?: number | null) {
     // Always insert a new revenue row (allow multiple entries per day)
     await this.findWorkLocationById(workLocationId);
     const row = this.revenueRepository.create({
@@ -718,7 +718,7 @@ export class LocationsService {
       total_amount: totalAmount as any,
       status: status,
       image_url: imageUrl,
-      user_id: userId || null,
+      employee_id: employeeId || null,
     } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
     return this.revenueRepository.save(row);
   }
@@ -747,42 +747,31 @@ export class LocationsService {
     const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
     
     const revenuesWithEmployeeId = await Promise.all(items.map(async (rev: any) => {
-      if (!rev.user_id) {
-        return { ...rev, employee_id: null };
+      if (!rev.employee_id) {
+        return { ...rev, employee_id: null, employee_first_name: null, employee_last_name: null };
       }
       
       try {
-        // Obține id_employee din users
-        const userResult = await this.dataSource.query(
-          `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
-          [rev.user_id]
+        // Obține first_name și last_name direct din employees folosind employee_id
+        const employeeResult = await this.dataSource.query(
+          `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+          [rev.employee_id]
         );
         
-        if (userResult && userResult.length > 0 && userResult[0].id_employee) {
-          const employeeId = Number(userResult[0].id_employee);
-          
-          // Obține first_name și last_name din employees
-          const employeeResult = await this.dataSource.query(
-            `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
-            [employeeId]
-          );
-          
-          if (employeeResult && employeeResult.length > 0) {
-            return {
-              ...rev,
-              employee_id: employeeId,
-              employee_first_name: employeeResult[0].first_name || null,
-              employee_last_name: employeeResult[0].last_name || null,
-            };
-          }
-          
-          return { ...rev, employee_id: employeeId };
+        if (employeeResult && employeeResult.length > 0) {
+          return {
+            ...rev,
+            employee_id: Number(rev.employee_id),
+            employee_first_name: employeeResult[0].first_name || null,
+            employee_last_name: employeeResult[0].last_name || null,
+          };
         }
+        
+        return { ...rev, employee_id: Number(rev.employee_id), employee_first_name: null, employee_last_name: null };
       } catch (error: any) {
-        console.error(`❌ Error fetching employee data for user_id ${rev.user_id}:`, error.message);
+        console.error(`❌ Error fetching employee data for employee_id ${rev.employee_id}:`, error.message);
+        return { ...rev, employee_id: Number(rev.employee_id), employee_first_name: null, employee_last_name: null };
       }
-      
-      return { ...rev, employee_id: null };
     }));
     
     return { revenues: revenuesWithEmployeeId, total, totalPages: Math.ceil(total / limit) };

@@ -38,12 +38,10 @@ export class WorkLocationRevenue {
   image_url?: string;
 
   @Index()
-  @Column({ type: 'int', nullable: true, name: 'user_id' })
-  user_id?: number; // ID-ul utilizatorului care a creat încasarea
+  @Column({ type: 'int', nullable: true, name: 'employee_id' })
+  employee_id?: number;
 
-  // points_awarded removed per latest requirements
 
-  // No created/updated columns per schema
 }
 
 

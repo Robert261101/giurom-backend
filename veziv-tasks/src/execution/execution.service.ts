@@ -928,13 +928,17 @@ export class ExecutionService {
   }
 
   async getEmployeePointsForDateRange(employeeId: number, startDate: string, endDate: string): Promise<EmployeeDailyPoints[]> {
+    // Normalize dates to YYYY-MM-DD format and create Date objects at midnight UTC
+    const start = new Date(startDate + 'T00:00:00.000Z');
+    const end = new Date(endDate + 'T23:59:59.999Z');
+    
     return await this.employeeDailyPointsRepository
       .createQueryBuilder('dailyPoints')
       .leftJoinAndSelect('dailyPoints.task_points', 'taskPoints')
       .leftJoinAndSelect('taskPoints.task_execution', 'taskExecution')
       .where('dailyPoints.employee_id = :employeeId', { employeeId })
-      .andWhere('dailyPoints.work_date >= :startDate', { startDate: new Date(startDate) })
-      .andWhere('dailyPoints.work_date <= :endDate', { endDate: new Date(endDate) })
+      .andWhere('DATE(dailyPoints.work_date) >= DATE(:startDate)', { startDate: startDate })
+      .andWhere('DATE(dailyPoints.work_date) <= DATE(:endDate)', { endDate: endDate })
       .orderBy('dailyPoints.work_date', 'ASC')
       .getMany();
   }
