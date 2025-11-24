@@ -42,6 +42,79 @@ export class LocationsService {
     return path.join(repoRoot, 'files', 'locations');
   }
 
+  // Create the required folder structure for a new location
+  private async createLocationFolderStructure(location: WorkLocation): Promise<void> {
+    try {
+      // Get company information using HTTP call to company service
+      let companyName = 'Unknown';
+      try {
+        const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        
+        const response = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
+          headers: {
+            'x-internal-service': 'locations',
+            'x-service-secret': serviceSecret,
+            'Content-Type': 'application/json',
+          },
+          timeout: 3000,
+        });
+        
+        if (response.data && response.data.company_name) {
+          companyName = response.data.company_name;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Could not fetch company name for company ID ${location.company_id}:`, error.message);
+        // Continue with default name
+      }
+      
+      // Get the company folder path using the company name
+      const companyFilesRootDir = path.resolve(__dirname, '../../../..');
+      const companyFilesDir = path.join(companyFilesRootDir, 'files', 'companies');
+      // Use company name instead of company ID
+      const companyDir = path.join(companyFilesDir, companyName);
+      
+      // Create company folder if it doesn't exist
+      if (!fs.existsSync(companyDir)) {
+        fs.mkdirSync(companyDir, { recursive: true });
+        console.log(`📁 Created company directory: ${companyDir}`);
+      }
+      
+      // Create "Locații" folder if it doesn't exist
+      const locationsDir = path.join(companyDir, 'Locații');
+      if (!fs.existsSync(locationsDir)) {
+        fs.mkdirSync(locationsDir, { recursive: true });
+        console.log(`📁 Created locations directory: ${locationsDir}`);
+      }
+      
+      // Create location folder using the actual location name
+      const locationDir = path.join(locationsDir, location.location_name);
+      if (!fs.existsSync(locationDir)) {
+        fs.mkdirSync(locationDir, { recursive: true });
+        console.log(`📁 Created location directory: ${locationDir}`);
+      }
+      
+      // Create only the main subfolders for the location (empty)
+      const locationSubfolders = [
+        'Furnizori',
+        'Angajați',
+        'Locații'
+      ];
+      
+      for (const subfolder of locationSubfolders) {
+        const subfolderPath = path.join(locationDir, subfolder);
+        if (!fs.existsSync(subfolderPath)) {
+          fs.mkdirSync(subfolderPath, { recursive: true });
+          console.log(`📁 Created location subfolder: ${subfolderPath}`);
+        }
+      }
+      
+      console.log(`✅ Folder structure created successfully for location ${location.id}`);
+    } catch (error) {
+      console.error(`❌ Error creating folder structure for location ${location.id}:`, error);
+    }
+  }
+
   private async sendLocationNotification(
     type: string,
     title: string,
@@ -75,6 +148,9 @@ export class LocationsService {
       dto as unknown as Partial<WorkLocation>,
     ) as WorkLocation;
     const saved: WorkLocation = await this.workLocationRepository.save(entity as WorkLocation);
+    
+    // Create the required folder structure for the new location
+    await this.createLocationFolderStructure(saved);
     
     // Send notification for new location
     await this.sendLocationNotification(
@@ -793,7 +869,7 @@ export class LocationsService {
   // ==================== LOCATION FILES METHODS ====================
 
   // Creează un nou fișier pentru locație
-  async createFile(createFileDto: CreateWorkLocationFileDto & { expire_date?: string }): Promise<WorkLocationFiles> {
+  async createFile(createFileDto: CreateWorkLocationFileDto & { expire_date?: string, notes?: string }): Promise<WorkLocationFiles> {
     console.log('📥 Received createFileDto:', {
       work_location_id: createFileDto.work_location_id,
       file_name: createFileDto.file_name,
@@ -811,6 +887,38 @@ export class LocationsService {
       throw new NotFoundException(`Locația cu ID-ul ${createFileDto.work_location_id} nu a fost găsită`);
     }
 
+    // Get company information using HTTP call to company service
+    let companyName = 'Unknown';
+    try {
+      const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      
+      const response = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
+        headers: {
+          'x-internal-service': 'locations',
+          'x-service-secret': serviceSecret,
+          'Content-Type': 'application/json',
+        },
+        timeout: 3000,
+      });
+      
+      if (response.data && response.data.company_name) {
+        companyName = response.data.company_name;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not fetch company name for company ID ${location.company_id}:`, error.message);
+      // Continue with default name
+    }
+
+    // Extract folder name from notes if available
+    let folderName: string | null = null;
+    if (createFileDto.notes) {
+      const folderMatch = createFileDto.notes.match(/\|folder:([^|]+)\|/);
+      if (folderMatch && folderMatch[1]) {
+        folderName = folderMatch[1];
+      }
+    }
+
     // Generate unique filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const fileExtension = createFileDto.file_name.split('.').pop() || 'txt';
@@ -819,14 +927,39 @@ export class LocationsService {
 
     console.log(`📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`);
 
-    // Update the file_link to use the unique filename
-    const updatedFileLink = createFileDto.file_link.replace(createFileDto.file_name, uniqueFileName);
+    // Create the directory path based on folder structure requirements
+    console.log(`📁 Creating directory for company: ${companyName}, location: ${location.location_name}`);
+    const companyFilesRootDir = path.resolve(__dirname, '../../../..');
+    const companyFilesDir = path.join(companyFilesRootDir, 'files', 'companies');
+    const companyDir = path.join(companyFilesDir, companyName);
+    const locationsDir = path.join(companyDir, 'Locații');
+    const locationDir = path.join(locationsDir, location.location_name);
+    
+    // If folderName is specified, use the designated subfolder within the "Locații" subfolder
+    // Otherwise, save directly in the location directory
+    let fileDir: string;
+    if (folderName) {
+      // Save in the designated subfolder within the "Locații" subfolder
+      const locatiiSubfolderDir = path.join(locationDir, 'Locații');
+      fileDir = path.join(locatiiSubfolderDir, folderName);
+    } else {
+      // Save directly in the location directory (fallback)
+      fileDir = locationDir;
+    }
 
-    // Create the directory if it doesn't exist
-    const locationId = createFileDto.work_location_id?.toString() || 'unknown';
-    console.log(`📁 Creating directory for location ID: ${locationId}`);
-    const baseDir = this.getLocationsFilesRootDir();
-    const fileDir = path.join(baseDir, locationId);
+    // Update the file_link to use the correct path structure
+    const updatedFileLink = `/files/companies/${companyName}/Locații/${location.location_name}${folderName ? `/Locații/${folderName}` : ''}/${uniqueFileName}`;
+    
+    // Create all necessary directories
+    if (!fs.existsSync(companyDir)) {
+      fs.mkdirSync(companyDir, { recursive: true });
+    }
+    if (!fs.existsSync(locationsDir)) {
+      fs.mkdirSync(locationsDir, { recursive: true });
+    }
+    if (!fs.existsSync(locationDir)) {
+      fs.mkdirSync(locationDir, { recursive: true });
+    }
     if (!fs.existsSync(fileDir)) {
       fs.mkdirSync(fileDir, { recursive: true });
     }
@@ -921,26 +1054,72 @@ export class LocationsService {
         file_link: file.file_link
       });
       
-      const baseDir = this.getLocationsFilesRootDir();
-      console.log(`📁 [serveFile] Base directory: ${baseDir}`);
+      // Get location information
+      const location = await this.workLocationRepository.findOne({
+        where: { id: file.work_location_id }
+      });
       
-      const filePath = path.join(baseDir, file.work_location_id.toString(), file.file_name);
+      if (!location) {
+        throw new NotFoundException(`Locația cu ID-ul ${file.work_location_id} nu a fost găsită`);
+      }
+      
+      // Get company information using HTTP call to company service
+      let companyName = 'Unknown';
+      try {
+        const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        
+        const response = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
+          headers: {
+            'x-internal-service': 'locations',
+            'x-service-secret': serviceSecret,
+            'Content-Type': 'application/json',
+          },
+          timeout: 3000,
+        });
+        
+        if (response.data && response.data.company_name) {
+          companyName = response.data.company_name;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Could not fetch company name for company ID ${location.company_id}:`, error.message);
+        // Continue with default name
+      }
+      
+      // Construct the file path using the new folder structure
+      const companyFilesRootDir = path.resolve(__dirname, '../../../..');
+      const companyFilesDir = path.join(companyFilesRootDir, 'files', 'companies');
+      const companyDir = path.join(companyFilesDir, companyName);
+      const locationsDir = path.join(companyDir, 'Locații');
+      const locationDir = path.join(locationsDir, location.location_name);
+      
+      // Extract folder name from notes if available (same logic as in createFile)
+      let folderName: string | null = null;
+      if (file.notes) {
+        const folderMatch = file.notes.match(/\|folder:([^|]+)\|/);
+        if (folderMatch && folderMatch[1]) {
+          folderName = folderMatch[1];
+        }
+      }
+      
+      // Construct the file path based on whether it's in a designated folder or not
+      let filePath: string;
+      if (folderName) {
+        // File is in a designated subfolder within the "Locații" subfolder
+        const locatiiSubfolderDir = path.join(locationDir, 'Locații');
+        const designatedFolderDir = path.join(locatiiSubfolderDir, folderName);
+        filePath = path.join(designatedFolderDir, file.file_name);
+      } else {
+        // File is directly in the location directory (fallback)
+        filePath = path.join(locationDir, file.file_name);
+      }
+      
       console.log(`📁 [serveFile] Full file path: ${filePath}`);
       console.log(`📁 [serveFile] Path exists check: ${fs.existsSync(filePath)}`);
       
-      // Check if directory exists
-      const fileDir = path.join(baseDir, file.work_location_id.toString());
-      console.log(`📁 [serveFile] Directory path: ${fileDir}`);
-      console.log(`📁 [serveFile] Directory exists: ${fs.existsSync(fileDir)}`);
-      
-      if (fs.existsSync(fileDir)) {
-        const filesInDir = fs.readdirSync(fileDir);
-        console.log(`📁 [serveFile] Files in directory:`, filesInDir);
-      }
-      
       if (!fs.existsSync(filePath)) {
         console.error(`❌ [serveFile] File not found on disk: ${filePath}`);
-        throw new NotFoundException(`Fișierul nu a fost găsit pe disk la calea: ${filePath}`);
+        throw new NotFoundException('Fișierul nu a fost găsit pe disk');
       }
       
       const mimeType = this.getMimeType(file.file_name);
@@ -948,7 +1127,7 @@ export class LocationsService {
       
       const fileBuffer = fs.readFileSync(filePath);
       console.log(`✅ [serveFile] File read successfully: ${file.file_name} (${fileBuffer.length} bytes)`);
-
+      
       return {
         data: fileBuffer.toString('base64'),
         mimeType,

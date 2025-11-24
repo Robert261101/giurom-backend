@@ -259,15 +259,16 @@ export class LocationsHttpController {
 	@Permissions('locations.create')
 	async addLocationFile(
 		@Param('locationId', ParseIntPipe) locationId: number,
-		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number },
+		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number, notes?: string },
 	) {
-		const dto: CreateWorkLocationFileDto = {
+		const dto: CreateWorkLocationFileDto & { notes?: string } = {
 			work_location_id: locationId,
 			file_name: body.file_name,
 			file_type: body.file_type,
 			file_link: body.file_link,
 			file_content: body.file_content,
-		} as CreateWorkLocationFileDto;
+			notes: body.notes,
+		} as CreateWorkLocationFileDto & { notes?: string };
 		return this.service.createFile(dto);
 	}
 
@@ -275,13 +276,15 @@ export class LocationsHttpController {
 	@Post(':locationId/documents-with-content')
 	async addLocationDocumentWithContent(
 		@Param('locationId', ParseIntPipe) locationId: number,
-		@Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; expire_date?: string }> },
+		@Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; notes?: string; expire_date?: string }> },
 	) {
 		if (!body?.documents || body.documents.length === 0) {
 			return { message: 'No documents provided' };
 		}
 		const first = body.documents[0];
 		const fileName = first.fileName || first.name || 'document.bin';
+		// Extract notes from either note or notes field
+		const notes = first.notes || first.note || undefined;
 		const file_link = `/files/locations/${locationId}/${fileName}`;
 		return this.service.createFile({
 			work_location_id: locationId,
@@ -290,7 +293,8 @@ export class LocationsHttpController {
 			file_link,
 			file_content: first.content,
 			expire_date: first.expire_date,
-		} as CreateWorkLocationFileDto);
+			notes: notes,
+		} as CreateWorkLocationFileDto & { notes?: string });
 	}
 
 	// Delete location file
