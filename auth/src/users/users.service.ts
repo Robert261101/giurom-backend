@@ -130,18 +130,22 @@ export class UsersService {
       throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
     }
 
-    // If this is a direct file path, convert it to an API proxy URL
-    let apiProxyUrl = profileImageUrl;
+    // Handle profile image URL properly
+    let processedProfileImageUrl = profileImageUrl;
     if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
       // This is a direct file path, we need to convert it to an API proxy URL
       // For now, we'll store empty string to use default avatar
       // In a real implementation, we would need to find the file ID and create the proper URL
-      apiProxyUrl = '';
+      processedProfileImageUrl = '';
+    }
+    // If this is already an API proxy URL, keep it as is
+    else if (profileImageUrl && profileImageUrl.startsWith('/api/')) {
+      processedProfileImageUrl = profileImageUrl;
     }
 
     await this.userRepository.update(
       { id_employee },
-      { profile_image: apiProxyUrl }
+      { profile_image: processedProfileImageUrl }
     );
 
     const updatedUser = await this.findByEmployeeId(id_employee);
@@ -222,7 +226,7 @@ export class UsersService {
       updateFields.password = await bcrypt.hash(updateData.password, saltRounds);
     }
     
-    // Handle profile image URL conversion if needed
+    // Handle profile image URL properly
     if (updateData.profile_image !== undefined) {
       let profileImageUrl = updateData.profile_image;
       if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
@@ -231,6 +235,11 @@ export class UsersService {
         // In a real implementation, we would need to find the file ID and create the proper URL
         profileImageUrl = '';
       }
+      // If this is already an API proxy URL, keep it as is
+      else if (profileImageUrl && profileImageUrl.startsWith('/api/')) {
+        profileImageUrl = profileImageUrl;
+      }
+      // For any other URL (including empty/null), keep as is
       updateFields.profile_image = profileImageUrl;
     }
     

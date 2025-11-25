@@ -66,6 +66,14 @@ export class EmployeeFiles {
   expire_date: Date | null;
 
   @ApiProperty({
+    description: 'Note adiționale despre fișier',
+    example: 'Document important',
+    required: false,
+  })
+  @Column({ type: 'text', nullable: true, default: null })
+  note: string | null;
+
+  @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',
   })

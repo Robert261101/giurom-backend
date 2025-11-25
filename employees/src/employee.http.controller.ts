@@ -310,13 +310,18 @@ export class EmployeeHttpController {
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Body() body: Omit<CreateEmployeeFileDto, 'employee_id'> & { employee_id?: number },
   ) {
+    console.log('📥 Received addEmployeeFile request:', { employeeId, body });
+    
     const dto: CreateEmployeeFileDto = {
       employee_id: employeeId,
       file_name: body.file_name,
       file_type: body.file_type,
       file_link: body.file_link,
       file_content: body.file_content,
+      note: body.note,
     } as CreateEmployeeFileDto;
+    
+    console.log('📤 Sending to employee service from addEmployeeFile:', { dto });
     return this.employeeService.createFile(dto);
   }
 
@@ -327,6 +332,8 @@ export class EmployeeHttpController {
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; expire_date?: string }> },
   ) {
+    console.log('📥 Received document upload request:', { employeeId, body });
+    
     if (!body?.documents || body.documents.length === 0) {
       return { message: 'No documents provided' };
     }
@@ -340,19 +347,21 @@ export class EmployeeHttpController {
     // Check if this is a profile picture
     const isProfilePicture = (first.document_type || first.type) === 'profile_picture';
     
-    // Build correct file link path
-    const fileLinkPath = isProfilePicture
-      ? `/files/employees/${employeeName}/profile_picture/${fileName}`
-      : `/files/employees/${employeeName}/${fileName}`;
+    // Don't provide file_link - let the service construct the correct path based on employee location binding
+    // The service will check if employee is location-bound and construct the appropriate path
       
-    return this.employeeService.createFile({
+    const createFileDto = {
       employee_id: employeeId,
       file_name: fileName,
       file_type: first.document_type || first.type || 'Altele',
-      file_link: fileLinkPath,
       file_content: first.content,
       expire_date: first.expire_date,
-    } as CreateEmployeeFileDto);
+      note: first.note,
+    };
+    
+    console.log('📤 Sending to employee service:', { createFileDto });
+    
+    return this.employeeService.createFile(createFileDto as CreateEmployeeFileDto);
   }
 
   // ==================== EMPLOYEES LOCATIONS ENDPOINTS ====================
