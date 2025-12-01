@@ -1164,10 +1164,83 @@ export class LocationsService {
   // Șterge un fișier
   async removeFile(id: number): Promise<{ message: string }> {
     const file = await this.findOneFile(id);
+    
+    // Remove physical file from disk
+    try {
+      // Get location information
+      const location = await this.workLocationRepository.findOne({
+        where: { id: file.work_location_id }
+      });
+      
+      if (location) {
+        // Get company information using HTTP call to company service
+        let companyName = 'Unknown';
+        try {
+          const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+          const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+          
+          const response = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
+            headers: {
+              'x-internal-service': 'locations',
+              'x-service-secret': serviceSecret,
+              'Content-Type': 'application/json',
+            },
+            timeout: 3000,
+          });
+          
+          if (response.data && response.data.company_name) {
+            companyName = response.data.company_name;
+          }
+        } catch (error) {
+          console.warn(`⚠️ Could not fetch company name for company ID ${location.company_id}:`, error.message);
+          // Continue with default name
+        }
+        
+        // Construct the file path using the same logic as in serveFile
+        const companyFilesRootDir = path.resolve(__dirname, '../../../..');
+        const companyFilesDir = path.join(companyFilesRootDir, 'files', 'companies');
+        const companyDir = path.join(companyFilesDir, companyName);
+        const locationsDir = path.join(companyDir, 'Locații');
+        const locationDir = path.join(locationsDir, location.location_name);
+        
+        // Extract folder name from notes if available (same logic as in createFile)
+        let folderName: string | null = null;
+        if (file.notes) {
+          const folderMatch = file.notes.match(/\|folder:([^|]+)\|/);
+          if (folderMatch && folderMatch[1]) {
+            folderName = folderMatch[1];
+          }
+        }
+        
+        // Construct the file path based on whether it's in a designated folder or not
+        let filePath: string;
+        if (folderName) {
+          // File is in a designated subfolder within the "Locații" subfolder
+          const locatiiSubfolderDir = path.join(locationDir, 'Locații');
+          const designatedFolderDir = path.join(locatiiSubfolderDir, folderName);
+          filePath = path.join(designatedFolderDir, file.file_name);
+        } else {
+          // File is directly in the location directory (fallback)
+          filePath = path.join(locationDir, file.file_name);
+        }
+        
+        // Remove the physical file if it exists
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`✅ Deleted physical file: ${filePath}`);
+        } else {
+          console.warn(`⚠️ Physical file not found for removal: ${filePath}`);
+        }
+      }
+    } catch (error) {
+      console.warn(`⚠️ Failed to delete physical file for file ${id}:`, error);
+    }
+    
+    // Remove database record
     await this.filesRepository.delete(id);
     
     return {
-      message: `Fișierul "${file.file_name}" al locației ${file.workLocation.location_name} a fost șters cu succes`,
+      message: `Fișierul "${file.file_name}" al locației ${file.workLocation?.location_name || 'Unknown'} a fost șters cu succes`,
     };
   }
 

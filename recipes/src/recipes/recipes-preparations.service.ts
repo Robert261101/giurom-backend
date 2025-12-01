@@ -131,33 +131,37 @@ export class RecipePreparationsService {
           'x-service-secret': serviceSecret
         };
         
-        for (const rp of fullRecipe.recipe_products) {
-          const neededTotal = Number(rp.quantity) * factor; // grams
-          if (!rp.product_id || !Number.isFinite(neededTotal) || neededTotal <= 0) continue;
+        // Create array of ingredients for the consume-for-recipe endpoint
+        const ingredients = fullRecipe.recipe_products
+          .filter(rp => rp.product_id && Number.isFinite(Number(rp.quantity)) && Number(rp.quantity) > 0)
+          .map(rp => ({
+            product_id: rp.product_id,
+            quantity: Number(rp.quantity) * factor
+          }));
+        
+        console.log(`🔍 [RecipePreparationsService] Consuming ingredients for preparation ${saved.id}`, ingredients);
+        
+        try {
+          // Use the specialized consume-for-recipe endpoint which properly tracks recipe_preparation_id and employee_id
+          await lastValueFrom(
+            this.httpService.post(
+              `${this.stockServiceUrl}/stock/consume-for-recipe`,
+              {
+                recipe_preparation_id: saved.id,
+                ingredients: ingredients,
+                employee_id: dto.employee_id,
+                location_id: dto.location_id
+              },
+              { headers }
+            )
+          );
+          console.log(`✅ [RecipePreparationsService] Successfully consumed all ingredients for preparation ${saved.id}`);
+        } catch (error: any) {
+          console.error(`❌ [RecipePreparationsService] Error consuming ingredients for preparation ${saved.id}:`, error?.response?.data || error?.message);
           
-          console.log(`🔍 [RecipePreparationsService] Consuming ${neededTotal} units of product ${rp.product_id} for preparation ${saved.id}`);
-          
-          try {
-            // Use stock service consume endpoint which handles FIFO by expiration
-            await lastValueFrom(
-              this.httpService.post(
-                `${this.stockServiceUrl}/stock/consume`,
-                {
-                  product_id: rp.product_id,
-                  quantity: neededTotal,
-                  target: `recipe-preparation:${saved.id}`
-                },
-                { headers }
-              )
-            );
-            console.log(`✅ [RecipePreparationsService] Successfully consumed ${neededTotal} units of product ${rp.product_id}`);
-          } catch (error: any) {
-            console.error(`❌ [RecipePreparationsService] Error consuming product ${rp.product_id}:`, error?.response?.data || error?.message);
-            
-            // Extract error message from stock service response
-            const errorMessage = error?.response?.data?.message || error?.message || 'Eroare necunoscută la consumarea stocului';
-            throw new BadRequestException(`Cantitate insuficientă în stoc pentru produs ${rp.product_id}. ${errorMessage}`);
-          }
+          // Extract error message from stock service response
+          const errorMessage = error?.response?.data?.message || error?.message || 'Eroare necunoscută la consumarea stocului';
+          throw new BadRequestException(`Eroare la consumarea ingredientelor: ${errorMessage}`);
         }
       }
     } catch (e) {

@@ -36,9 +36,9 @@ export class StockHttpController {
 
 	// Consume product (FIFO by expiration)
 	@Post('consume') @Permissions('stock.update')
-	async consume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number }) {
+	async consume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number; recipe_preparation_id?: number }) {
 	  console.log(`📡 [StockHttpController] Received consume request:`, dto);
-	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target, dto.employee_id, dto.location_id);
+	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target, dto.employee_id, dto.location_id, dto.recipe_preparation_id);
 	  console.log(`📡 [StockHttpController] Completed consume request for product ${dto.product_id}`);
 	  return result;
 	}

@@ -288,6 +288,25 @@ export class EmployeeHttpController {
     return res.send(buffer);
   }
 
+  // Delete employee file
+  @Delete('files/:fileId')
+  @Permissions('employees.delete')
+  @ApiOperation({
+    summary: 'Șterge un fișier al unui angajat',
+    description: 'Șterge definitiv un fișier al unui angajat din sistem. Atenție: această operație este ireversibilă!',
+  })
+  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului de șters' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Fișierul a fost șters cu succes',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Fișierul nu a fost găsit' })
+  async deleteEmployeeFile(
+    @Param('fileId', ParseIntPipe) fileId: number,
+  ): Promise<{ message: string }> {
+    return this.employeeService.removeFile(fileId);
+  }
+
   // Force inline view
   @Get('file/:fileId/view')
   @Permissions('employees.read')

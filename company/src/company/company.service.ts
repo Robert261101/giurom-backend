@@ -391,6 +391,26 @@ export class CompanyService {
 
   async removeCompanyDocument(documentId: number): Promise<void> {
     const document = await this.findDocumentById(documentId);
+    
+    // Remove physical file from disk
+    try {
+      // Construct the file path from the location_path (same logic as in serveCompanyFile)
+      const basePath = this.getCompanyFilesRootDir();
+      const relativePath = document.location_path.replace('/files/companies/', '');
+      const filePath = path.join(basePath, relativePath);
+      
+      // Remove the physical file if it exists
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`✅ Deleted physical file: ${filePath}`);
+      } else {
+        console.warn(`⚠️ Physical file not found for removal: ${filePath}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Failed to delete physical file for document ${documentId}:`, error);
+    }
+    
+    // Remove database record
     await this.companyDocumentRepository.remove(document);
   }
 
