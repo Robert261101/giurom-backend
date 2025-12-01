@@ -35,6 +35,9 @@ export class Product {
   @Column({ type: 'boolean', default: false })
   is_consumable: boolean;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  photo?: string;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

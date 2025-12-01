@@ -34,6 +34,11 @@ export class CreateProductDto {
   @IsBoolean()
   @IsOptional()
   is_consumable?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  photo?: string;
 }
 
 

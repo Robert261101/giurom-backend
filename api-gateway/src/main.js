@@ -1,9 +1,14 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
+const bodyParser = require('body-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+// Increase payload size limit for image uploads (base64 can be ~33% larger)
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 // Enable CORS
 app.use(cors({
@@ -48,6 +53,30 @@ app.get('/health', (req, res) => {
       '/users': 'http://localhost:3021'
     }
   });
+});
+
+// Middleware pentru a ignora cererile Next.js specifice și alte cereri care nu ar trebui să ajungă la API Gateway
+app.use((req, res, next) => {
+  const url = req.originalUrl || req.url;
+  
+  // Listează pattern-urile care trebuie ignorate (Next.js internals, Chrome DevTools, etc.)
+  const ignoredPatterns = [
+    /^\/_next\//,                    // Next.js internals (_next/internal/helpers.ts, _next/static/runtime.ts, etc.)
+    /^\/\.well-known\//,             // Well-known paths (.well-known/appspecific/com.chrome.devtools.json)
+    /^\/favicon\.ico/,               // Favicon requests
+    /^\/login$/,                     // Login page (ar trebui să fie servit de Next.js, nu de API Gateway)
+  ];
+  
+  // Verifică dacă URL-ul se potrivește cu vreun pattern ignorat
+  const shouldIgnore = ignoredPatterns.some(pattern => pattern.test(url));
+  
+  if (shouldIgnore) {
+    // Returnează 404 rapid, fără logging excesiv
+    return res.status(404).end();
+  }
+  
+  // Continuă la următorul middleware
+  next();
 });
 
 // Proxy configuration for microservices

@@ -140,6 +140,20 @@ export class AssignmentService {
       }
     }
 
+    // Adaugă execuția cu răspunsurile dacă există
+    try {
+      const execution = await this.executionService.getExecutionByAssignment(assignment.id);
+      if (execution) {
+        console.log(`[AssignmentService] Found execution ${execution.id} for assignment ${assignment.id} with ${execution.answers?.length || 0} answers`);
+        enrichedAssignment['execution'] = execution;
+      } else {
+        console.log(`[AssignmentService] No execution found for assignment ${assignment.id}`);
+      }
+    } catch (error) {
+      // Dacă nu există execuție, continuă fără eroare
+      console.log(`[AssignmentService] Error fetching execution for assignment ${assignment.id}:`, error.message);
+    }
+
     // Logica pentru grupuri se face prin department_group_id, nu prin assigned_to_type
 
     return enrichedAssignment;
@@ -410,13 +424,37 @@ export class AssignmentService {
     });
 
     // Încarcă template-ul pentru a obține toate elementele
-    const template = await this.templateRepository.findOne({
+    let template = await this.templateRepository.findOne({
       where: { id: createAssignmentDto.template_id },
       relations: ['elements']
     });
 
     if (!template) {
       throw new NotFoundException(`Template cu ID-ul ${createAssignmentDto.template_id} nu a fost găsit`);
+    }
+
+    // Actualizează opțiunile pentru checkbox, radio și select în TaskElement dacă sunt furnizate
+    if (createAssignmentDto.elements) {
+      for (const customElement of createAssignmentDto.elements) {
+        if (customElement.options && Array.isArray(customElement.options) && customElement.options.length > 0) {
+          const templateElement = template.elements.find(el => el.id === customElement.task_element_id);
+          if (templateElement && (templateElement.element_type === 'checkbox' || templateElement.element_type === 'radio' || templateElement.element_type === 'select')) {
+            // Actualizează opțiunile în TaskElement doar dacă există și nu sunt goale
+            await this.taskElementRepository.update(
+              { id: templateElement.id },
+              { options: customElement.options }
+            );
+          }
+        }
+      }
+      // Reîncarcă template-ul pentru a avea opțiunile actualizate
+      template = await this.templateRepository.findOne({
+        where: { id: createAssignmentDto.template_id },
+        relations: ['elements']
+      });
+      if (!template) {
+        throw new NotFoundException(`Template cu ID-ul ${createAssignmentDto.template_id} nu a fost găsit`);
+      }
     }
 
     // Creează elementele din template (exclude SCHEDULED_DATETIME - acestea sunt doar pentru programare)

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
@@ -87,16 +87,20 @@ export class ExecutionService {
     
 
     // Creează answers dacă sunt specificate
+    console.log(`[ExecutionService.create] Creating execution ${savedExecution.id} with ${answers?.length || 0} answers`);
     if (answers && answers.length > 0) {
       for (const answerDto of answers) {
+        console.log(`[ExecutionService.create] Processing answer for element ${answerDto.task_element_id} with value:`, answerDto.value);
+        
         // Verifică dacă elementul există
         const element = await this.taskElementRepository.findOne({
           where: { id: answerDto.task_element_id }
         });
         
         if (!element) {
+          console.error(`[ExecutionService.create] Element ${answerDto.task_element_id} not found`);
           throw new BadRequestException(`Elementul cu ID-ul ${answerDto.task_element_id} nu există`);
-      }
+        }
 
         // Folosește score_awarded din DTO sau calculează automat pentru elementele cu puncte
         let score_awarded = answerDto.score_awarded || 0;
@@ -145,8 +149,12 @@ export class ExecutionService {
           task_execution_id: savedExecution.id,
           score_awarded: score_awarded
         });
-        await this.answerRepository.save(answer);
+        const savedAnswer = await this.answerRepository.save(answer);
+        console.log(`[ExecutionService.create] Saved answer ${savedAnswer.id} for element ${answerDto.task_element_id} with value:`, answerDto.value);
       }
+      console.log(`[ExecutionService.create] Saved ${answers.length} answers for execution ${savedExecution.id}`);
+    } else {
+      console.log(`[ExecutionService.create] No answers to save for execution ${savedExecution.id}`);
     }
 
     // Returnează execuția cu relațiile
@@ -297,6 +305,248 @@ export class ExecutionService {
     }
     
     return execution;
+  }
+
+  async getExecutionByAssignment(assignmentId: number): Promise<TaskExecution | null> {
+    // Găsește execuția cea mai recentă cu răspunsuri (dacă există), altfel cea mai recentă
+    console.log(`[ExecutionService.getExecutionByAssignment] Looking for executions for assignment ${assignmentId}`);
+    const executions = await this.executionRepository
+      .createQueryBuilder('execution')
+      .leftJoinAndSelect('execution.answers', 'answers')
+      .leftJoinAndSelect('answers.task_element', 'task_element')
+      .where('execution.task_assignment_id = :assignmentId', { assignmentId })
+      .orderBy('execution.created_at', 'DESC')
+      .getMany();
+    
+    if (!executions || executions.length === 0) {
+      return null;
+    }
+    
+    // Log pentru debugging
+    console.log(`[ExecutionService] Found ${executions.length} executions for assignment ${assignmentId}`);
+    executions.forEach((exec, index) => {
+      console.log(`[ExecutionService] Execution ${index + 1}: ID=${exec.id}, created_at=${exec.created_at}, answers count=${exec.answers?.length || 0}`);
+    });
+    
+    // Verificare suplimentară: caută toate răspunsurile care ar putea fi asociate cu assignment-ul
+    // prin verificarea task_element_id-urilor din template-ul assignment-ului
+    const assignment = await this.taskAssignmentRepository.findOne({
+      where: { id: assignmentId },
+      relations: ['template', 'template.elements']
+    });
+    
+    if (assignment && assignment.template && assignment.template.elements) {
+      const templateElementIds = assignment.template.elements.map(el => el.id);
+      console.log(`[ExecutionService] Assignment ${assignmentId} has template with ${templateElementIds.length} elements: ${templateElementIds.join(', ')}`);
+      
+      // Caută răspunsuri care au task_element_id din template-ul assignment-ului
+      const allAnswersForTemplate = await this.answerRepository.find({
+        where: { task_element_id: In(templateElementIds) },
+        relations: ['task_element']
+      });
+      console.log(`[ExecutionService] Found ${allAnswersForTemplate.length} total answers for template elements`);
+      
+      // Grupează răspunsurile după task_execution_id
+      const answersByExecution = new Map<number, TaskExecutionAnswer[]>();
+      allAnswersForTemplate.forEach(answer => {
+        if (!answersByExecution.has(answer.task_execution_id)) {
+          answersByExecution.set(answer.task_execution_id, []);
+        }
+        answersByExecution.get(answer.task_execution_id)!.push(answer);
+      });
+      
+      console.log(`[ExecutionService] Answers grouped by execution: ${Array.from(answersByExecution.keys()).join(', ')}`);
+      
+      // Verifică dacă există răspunsuri pentru execuții care nu sunt în lista de execuții găsite
+      for (const [execId, answers] of answersByExecution.entries()) {
+        const exec = executions.find(e => e.id === execId);
+        if (!exec) {
+          console.log(`[ExecutionService] WARNING: Found ${answers.length} answers for execution ${execId} which is not in the executions list for assignment ${assignmentId}`);
+          
+          // Verifică dacă execuția există și pentru ce assignment este
+          const missingExecution = await this.executionRepository.findOne({
+            where: { id: execId },
+            relations: ['task_assignment']
+          });
+          
+          if (missingExecution) {
+            console.log(`[ExecutionService] Execution ${execId} belongs to assignment ${missingExecution.task_assignment_id}, not ${assignmentId}`);
+            
+            // Dacă execuția are răspunsuri și este pentru un assignment diferit, verifică dacă ar trebui să fie inclusă
+            // (poate există o problemă cu datele sau cu logica de căutare)
+            if (missingExecution.task_assignment_id !== assignmentId) {
+              console.log(`[ExecutionService] Execution ${execId} is for assignment ${missingExecution.task_assignment_id}, but we're looking for assignment ${assignmentId}`);
+            }
+          }
+        } else {
+          // Dacă execuția este în listă dar nu are răspunsuri încărcate, încarcă-le
+          if (!exec.answers || exec.answers.length === 0) {
+            exec.answers = answers;
+            console.log(`[ExecutionService] Loaded ${answers.length} answers for execution ${exec.id} from template elements search`);
+          }
+        }
+      }
+    }
+    
+    // Verifică manual dacă există răspunsuri pentru fiecare execuție
+    for (const exec of executions) {
+      // Verifică dacă există răspunsuri direct în DB pentru această execuție
+      const answersCount = await this.answerRepository.count({
+        where: { task_execution_id: exec.id }
+      });
+      console.log(`[ExecutionService] Execution ${exec.id} has ${answersCount} answers in DB (direct count)`);
+      
+      // Verifică și prin query pentru a vedea dacă există răspunsuri
+      const answersFromDB = await this.answerRepository.find({
+        where: { task_execution_id: exec.id },
+        relations: ['task_element']
+      });
+      console.log(`[ExecutionService] Execution ${exec.id} has ${answersFromDB.length} answers from find query`);
+      
+      // Dacă există răspunsuri în DB dar nu sunt încărcate, încarcă-le
+      if (answersFromDB.length > 0) {
+        exec.answers = answersFromDB;
+        console.log(`[ExecutionService] Loaded ${answersFromDB.length} answers for execution ${exec.id}`);
+      } else if (!exec.answers || exec.answers.length === 0) {
+        // Dacă nu există răspunsuri, setează array gol explicit
+        exec.answers = [];
+      }
+    }
+    
+    // Găsește prima execuție care are răspunsuri (verifică și după încărcare manuală)
+    let executionWithAnswers = executions.find(exec => exec.answers && exec.answers.length > 0);
+    
+    // Dacă nu s-a găsit execuție cu răspunsuri în lista inițială, verifică dacă există răspunsuri
+    // pentru execuții care nu sunt în listă (poate există o problemă cu task_assignment_id)
+    if (!executionWithAnswers && assignment && assignment.template && assignment.template.elements) {
+      const templateElementIds = assignment.template.elements.map(el => el.id);
+      
+      // Caută toate execuțiile care au răspunsuri pentru elementele din template
+      const allAnswersForTemplate = await this.answerRepository.find({
+        where: { task_element_id: In(templateElementIds) },
+        relations: ['task_element', 'task_execution']
+      });
+      
+      // Grupează răspunsurile după task_execution_id
+      const answersByExecution = new Map<number, TaskExecutionAnswer[]>();
+      allAnswersForTemplate.forEach(answer => {
+        if (!answersByExecution.has(answer.task_execution_id)) {
+          answersByExecution.set(answer.task_execution_id, []);
+        }
+        answersByExecution.get(answer.task_execution_id)!.push(answer);
+      });
+      
+      // Verifică dacă există o execuție cu răspunsuri care nu este în lista inițială
+      // Sortează execuțiile după data creării (cea mai recentă primul)
+      const executionsWithAnswersArray = Array.from(answersByExecution.entries())
+        .map(([execId, answers]) => ({ execId, answers, count: answers.length }))
+        .sort((a, b) => b.count - a.count); // Sortează după numărul de răspunsuri
+      
+      for (const { execId, answers } of executionsWithAnswersArray) {
+        const exec = executions.find(e => e.id === execId);
+        if (!exec && answers.length > 0) {
+          // Găsește execuția din DB
+          const foundExecution = await this.executionRepository.findOne({
+            where: { id: execId },
+            relations: ['task_assignment']
+          });
+          
+          if (foundExecution) {
+            console.log(`[ExecutionService] Found execution ${execId} with ${answers.length} answers, but it belongs to assignment ${foundExecution.task_assignment_id} (not ${assignmentId})`);
+            
+            // Dacă execuția este pentru assignment-ul curent, o adaugă în listă
+            if (foundExecution.task_assignment_id === assignmentId) {
+              foundExecution.answers = answers;
+              executions.push(foundExecution);
+              executionWithAnswers = foundExecution;
+              console.log(`[ExecutionService] Added execution ${execId} to the list with ${answers.length} answers`);
+              break;
+            } else {
+              // Dacă execuția nu este pentru assignment-ul curent, dar are răspunsuri pentru elementele din template,
+              // verifică dacă ar trebui să fie asociată cu assignment-ul curent (poate există o problemă cu datele)
+              console.log(`[ExecutionService] Execution ${execId} has ${answers.length} answers but is for assignment ${foundExecution.task_assignment_id}, not ${assignmentId}`);
+            }
+          }
+        }
+      }
+    }
+    
+    // Dacă există execuție cu răspunsuri, o returnează, altfel returnează cea mai recentă
+    const result = executionWithAnswers || executions[0];
+    
+    // Verificare finală: dacă execuția returnată nu are răspunsuri, verifică din nou în DB
+    if (result && (!result.answers || result.answers.length === 0)) {
+      const finalAnswersCount = await this.answerRepository.count({
+        where: { task_execution_id: result.id }
+      });
+      console.log(`[ExecutionService] Final check: execution ${result.id} has ${finalAnswersCount} answers in DB`);
+      
+      if (finalAnswersCount > 0) {
+        const answers = await this.answerRepository.find({
+          where: { task_execution_id: result.id },
+          relations: ['task_element']
+        });
+        result.answers = answers;
+        console.log(`[ExecutionService] Final check: loaded ${answers.length} answers for execution ${result.id}`);
+      } else if (assignment && assignment.template && assignment.template.elements) {
+        // Dacă execuția returnată nu are răspunsuri, caută execuția cea mai recentă cu răspunsuri
+        // pentru elementele din template (chiar dacă task_assignment_id nu se potrivește exact)
+        const templateElementIds = assignment.template.elements.map(el => el.id);
+        
+        // Caută toate răspunsurile pentru elementele din template
+        const allAnswersForTemplate = await this.answerRepository.find({
+          where: { task_element_id: In(templateElementIds) },
+          relations: ['task_element']
+        });
+        
+        // Grupează răspunsurile după task_execution_id și sortează după numărul de răspunsuri
+        const answersByExecution = new Map<number, TaskExecutionAnswer[]>();
+        allAnswersForTemplate.forEach(answer => {
+          if (!answersByExecution.has(answer.task_execution_id)) {
+            answersByExecution.set(answer.task_execution_id, []);
+          }
+          answersByExecution.get(answer.task_execution_id)!.push(answer);
+        });
+        
+        // Găsește execuția cu cele mai multe răspunsuri
+        let bestExecution: TaskExecution | null = null;
+        let maxAnswers = 0;
+        
+        for (const [execId, answers] of answersByExecution.entries()) {
+          if (answers.length > maxAnswers) {
+            const exec = await this.executionRepository.findOne({
+              where: { id: execId }
+            });
+            
+            if (exec) {
+              // Verifică dacă execuția este recentă (creată în ultimele 24 de ore)
+              const execDate = new Date(exec.created_at);
+              const now = new Date();
+              const hoursDiff = (now.getTime() - execDate.getTime()) / (1000 * 60 * 60);
+              
+              if (hoursDiff < 24) { // Execuție din ultimele 24 de ore
+                bestExecution = exec;
+                maxAnswers = answers.length;
+                bestExecution.answers = answers;
+                console.log(`[ExecutionService] Found better execution ${execId} with ${answers.length} answers (created ${hoursDiff.toFixed(2)} hours ago)`);
+              }
+            }
+          }
+        }
+        
+        if (bestExecution && bestExecution.answers && bestExecution.answers.length > 0) {
+          console.log(`[ExecutionService] Returning execution ${bestExecution.id} with ${bestExecution.answers.length} answers instead of execution ${result.id}`);
+          return bestExecution;
+        }
+      }
+    }
+    
+    // Log final pentru debugging
+    if (result) {
+      console.log(`[ExecutionService] Returning execution ${result.id} with ${result.answers?.length || 0} answers`);
+    }
+    
+    return result;
   }
 
   async update(id: number, updateExecutionDto: UpdateExecutionDto): Promise<TaskExecution> {
@@ -678,13 +928,17 @@ export class ExecutionService {
   }
 
   async getEmployeePointsForDateRange(employeeId: number, startDate: string, endDate: string): Promise<EmployeeDailyPoints[]> {
+    // Normalize dates to YYYY-MM-DD format and create Date objects at midnight UTC
+    const start = new Date(startDate + 'T00:00:00.000Z');
+    const end = new Date(endDate + 'T23:59:59.999Z');
+    
     return await this.employeeDailyPointsRepository
       .createQueryBuilder('dailyPoints')
       .leftJoinAndSelect('dailyPoints.task_points', 'taskPoints')
       .leftJoinAndSelect('taskPoints.task_execution', 'taskExecution')
       .where('dailyPoints.employee_id = :employeeId', { employeeId })
-      .andWhere('dailyPoints.work_date >= :startDate', { startDate: new Date(startDate) })
-      .andWhere('dailyPoints.work_date <= :endDate', { endDate: new Date(endDate) })
+      .andWhere('DATE(dailyPoints.work_date) >= DATE(:startDate)', { startDate: startDate })
+      .andWhere('DATE(dailyPoints.work_date) <= DATE(:endDate)', { endDate: endDate })
       .orderBy('dailyPoints.work_date', 'ASC')
       .getMany();
   }

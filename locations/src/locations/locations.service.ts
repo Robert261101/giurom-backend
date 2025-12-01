@@ -121,7 +121,7 @@ export class LocationsService {
     description: string,
     locationId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string
   ): Promise<void> {
     try {
       console.log(`🔍 [LOCATIONS SERVICE] Sending notification - Type: ${type}, Location ID: ${locationId}`);
@@ -134,7 +134,7 @@ export class LocationsService {
           entity_type: 'location',
           metadata,
           priority: 'medium',
-          target_url,  // Add target_url to notification data
+          target_url,
         })
       );
       console.log(`✅ [LOCATIONS SERVICE] Notification sent successfully - Type: ${type}, Location ID: ${locationId}`);
@@ -159,7 +159,7 @@ export class LocationsService {
       `A fost adaugata o noua locatie: ${saved.location_name}`,
       saved.id,
       { locationName: saved.location_name },
-      `/locatii/${saved.id}`  // Add target_url
+      `/locatii/${saved.id}`
     );
     
     return saved;
@@ -552,7 +552,7 @@ export class LocationsService {
         newName: updatedLocation.location_name,
         updatedFields: Object.keys(dto)
       },
-      `/locatii/${updatedLocation.id}`  // Add target_url
+      `/locatii/${updatedLocation.id}`
     );
     
     return updatedLocation;
@@ -782,7 +782,7 @@ export class LocationsService {
     return this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
   }
 
-  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string) {
+  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string, employeeId?: number | null) {
     // Always insert a new revenue row (allow multiple entries per day)
     await this.findWorkLocationById(workLocationId);
     const row = this.revenueRepository.create({
@@ -794,6 +794,7 @@ export class LocationsService {
       total_amount: totalAmount as any,
       status: status,
       image_url: imageUrl,
+      employee_id: employeeId || null,
     } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
     return this.revenueRepository.save(row);
   }
@@ -815,7 +816,41 @@ export class LocationsService {
 
     const offset = (page - 1) * limit;
     const [items, total] = await qb.skip(offset).take(limit).getManyAndCount();
-    return { revenues: items, total, totalPages: Math.ceil(total / limit) };
+    
+    // Obține employee_id pentru fiecare revenue cu user_id
+    // Trebuie să obținem id_employee din users bazat pe user_id
+    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    
+    const revenuesWithEmployeeId = await Promise.all(items.map(async (rev: any) => {
+      if (!rev.employee_id) {
+        return { ...rev, employee_id: null, employee_first_name: null, employee_last_name: null };
+      }
+      
+      try {
+        // Obține first_name și last_name direct din employees folosind employee_id
+        const employeeResult = await this.dataSource.query(
+          `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+          [rev.employee_id]
+        );
+        
+        if (employeeResult && employeeResult.length > 0) {
+          return {
+            ...rev,
+            employee_id: Number(rev.employee_id),
+            employee_first_name: employeeResult[0].first_name || null,
+            employee_last_name: employeeResult[0].last_name || null,
+          };
+        }
+        
+        return { ...rev, employee_id: Number(rev.employee_id), employee_first_name: null, employee_last_name: null };
+      } catch (error: any) {
+        console.error(`❌ Error fetching employee data for employee_id ${rev.employee_id}:`, error.message);
+        return { ...rev, employee_id: Number(rev.employee_id), employee_first_name: null, employee_last_name: null };
+      }
+    }));
+    
+    return { revenues: revenuesWithEmployeeId, total, totalPages: Math.ceil(total / limit) };
   }
 
   async deleteRevenue(revenueId: number): Promise<void> {
@@ -827,6 +862,16 @@ export class LocationsService {
   async updateRevenue(revenueId: number, data: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }): Promise<WorkLocationRevenue> {
     const revenue = await this.revenueRepository.findOne({ where: { id: revenueId } as any });
     if (!revenue) throw new NotFoundException(`Încasarea cu ID-ul ${revenueId} nu a fost găsită`);
+    
+    // Track if status is changing to approved (trigger for bonus calculation)
+    const wasApproved = revenue.status === RevenueStatus.Approved;
+    const becomingApproved = data.status === RevenueStatus.Approved;
+    const shouldCalculateBonuses = becomingApproved && !wasApproved;
+    // Use revenue_date from the revenue record (date when revenue was created), not approval date
+    const revenueDateRaw = data.revenue_date || revenue.revenue_date;
+    // Normalize date: extract only YYYY-MM-DD part (remove time if present)
+    const revenueDate = revenueDateRaw ? revenueDateRaw.toString().split(' ')[0].split('T')[0] : null;
+    
     if (data.revenue_date) revenue.revenue_date = data.revenue_date;
     if (data.online_amount !== undefined) revenue.online_amount = data.online_amount as any;
     if (data.cash_amount !== undefined) revenue.cash_amount = data.cash_amount as any;
@@ -834,7 +879,151 @@ export class LocationsService {
     if (data.total_amount !== undefined) revenue.total_amount = data.total_amount as any;
     if (data.status !== undefined) revenue.status = data.status;
     if (data.image_url !== undefined) revenue.image_url = data.image_url;
-    return await this.revenueRepository.save(revenue as WorkLocationRevenue);
+    
+    const savedRevenue = await this.revenueRepository.save(revenue as WorkLocationRevenue);
+    
+    // Trigger bonus calculation when revenue becomes approved
+    // IMPORTANT: Calculate bonuses based on revenue_date (date when revenue was created), 
+    // NOT the approval date. If revenue is approved tomorrow, bonuses are still calculated for revenue_date.
+    if (shouldCalculateBonuses && revenueDate) {
+      console.log(`🔔 [BONUS TRIGGER] Revenue ${revenueId} approved. Calculating bonuses for revenue_date: ${revenueDate} (date of revenue, not approval date)`);
+      // Calculate bonuses asynchronously (don't block the response)
+      this.calculateEmployeeBonusesForDate(revenue.work_location_id, revenueDate).catch(err => {
+        console.error(`❌ [BONUS TRIGGER] Error calculating bonuses for revenue ${revenueId}:`, err);
+      });
+    }
+    
+    return savedRevenue;
+  }
+
+  // Calculate bonuses for all employees in a location for a specific date based on approved revenues
+  // IMPORTANT: revenueDate is the date when revenue was created (revenue_date), not the approval date
+  private async calculateEmployeeBonusesForDate(locationId: number, revenueDate: string): Promise<void> {
+    try {
+      // Normalize date to YYYY-MM-DD format for consistent querying
+      const normalizedDate = revenueDate.toString().split(' ')[0].split('T')[0];
+      console.log(`🔍 [BONUS CALC] Starting bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`);
+      
+      // Get all approved revenues for this revenue_date (date when revenue was created)
+      // Query uses LIKE to match dates that start with normalizedDate (handles datetime format)
+      const approvedRevenues = await this.revenueRepository
+        .createQueryBuilder('revenue')
+        .where('revenue.work_location_id = :locationId', { locationId })
+        .andWhere('DATE(revenue.revenue_date) = :revenueDate', { revenueDate: normalizedDate })
+        .andWhere('revenue.status = :status', { status: RevenueStatus.Approved })
+        .getMany();
+      
+      if (!approvedRevenues || approvedRevenues.length === 0) {
+        console.log(`⚠️ [BONUS CALC] No approved revenues found for location ${locationId}, date ${revenueDate}`);
+        return;
+      }
+      
+      // Get revenue intervals for this location
+      const intervals = await this.revenuePointsRepository.find({
+        where: { work_location_id: locationId } as any,
+        order: { min_revenue: 'ASC' } as any
+      });
+      
+      // Get manager config (fallback_revenue_per_point was removed from entity, use 0 as default)
+      const managerCfg = await this.managerConfigRepository.findOne({
+        where: { work_location_id: locationId } as any
+      });
+      // fallback_revenue_per_point is no longer in the entity, use 0 as default fallback
+      const fallback = 0;
+      
+      // Get all employees from this location
+      const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+      let employees: any[] = [];
+      try {
+        const response = await axios.get(`${employeesUrl}/locations/${locationId}/employees`, {
+          headers: { 'Content-Type': 'application/json' }
+        });
+        employees = Array.isArray(response.data) ? response.data : Array.isArray(response.data?.data) ? response.data.data : [];
+        console.log(`👥 [BONUS CALC] Found ${employees.length} employees in location ${locationId}`);
+      } catch (error) {
+        console.error(`❌ [BONUS CALC] Failed to fetch employees for location ${locationId}:`, error);
+        return;
+      }
+      
+      // Helper function to find multiplier for a revenue amount
+      const pickMultiplier = (totalAmount: number): number => {
+        for (const intv of intervals) {
+          const minOk = totalAmount >= Number(intv.min_revenue);
+          const maxOk = intv.max_revenue == null ? true : totalAmount <= Number(intv.max_revenue);
+          if (minOk && maxOk) {
+            // Use 'points' property from WorkLocationRevenuePoints entity
+            return Number(intv.points);
+          }
+        }
+        return fallback;
+      };
+      
+      // For each employee, calculate bonus based on their daily points and approved revenues
+      const tasksApiUrl = process.env.TASKS_API_BASE || 'http://giurom.bitap.ro:3008';
+      const workDate = new Date(revenueDate);
+      workDate.setHours(0, 0, 0, 0);
+      
+      for (const employee of employees) {
+        try {
+          const employeeId = Number(employee.id || employee.employee_id);
+          if (!employeeId) continue;
+          
+          // Get employee daily points for this revenue_date (date when revenue was created, not approval date)
+          let employeePoints = 0;
+          try {
+            const pointsUrl = `${tasksApiUrl}/executions/daily-points/${employeeId}/${normalizedDate}`;
+            const pointsResponse = await axios.get(pointsUrl, {
+              headers: { 'Content-Type': 'application/json' }
+            });
+            const pointsData = pointsResponse.data;
+            employeePoints = Number(pointsData?.total_points || pointsData?.data?.total_points || 0);
+          } catch (error) {
+            console.log(`⚠️ [BONUS CALC] Could not fetch points for employee ${employeeId}, revenue_date: ${normalizedDate}`);
+            // Try alternative endpoint
+            try {
+              const rangeUrl = `${tasksApiUrl}/executions/employee-points/${employeeId}?startDate=${normalizedDate}&endDate=${normalizedDate}`;
+              const rangeResponse = await axios.get(rangeUrl, {
+                headers: { 'Content-Type': 'application/json' }
+              });
+              const rangeData = Array.isArray(rangeResponse.data) ? rangeResponse.data : Array.isArray(rangeResponse.data?.data) ? rangeResponse.data.data : [];
+              if (rangeData.length > 0) {
+                employeePoints = Number(rangeData[0]?.total_points || rangeData[0]?.points || 0);
+              }
+            } catch (rangeError) {
+              console.log(`⚠️ [BONUS CALC] Could not fetch points from range endpoint for employee ${employeeId}, revenue_date: ${normalizedDate}`);
+            }
+          }
+          
+          if (employeePoints <= 0) {
+            console.log(`⚠️ [BONUS CALC] Employee ${employeeId} has no points for revenue_date: ${normalizedDate}, skipping`);
+            continue;
+          }
+          
+          // Calculate bonus for each approved revenue individually
+          let totalBonus = 0;
+          for (const revenue of approvedRevenues) {
+            const totalAmount = Number(revenue.total_amount);
+            const multiplier = pickMultiplier(totalAmount);
+            const bonusForThisRevenue = employeePoints * multiplier;
+            totalBonus += bonusForThisRevenue;
+            
+            console.log(`💰 [BONUS CALC] Employee ${employeeId}: ${employeePoints} points × ${multiplier} (revenue ${totalAmount}) = ${bonusForThisRevenue.toFixed(2)} RON`);
+          }
+          
+          console.log(`✅ [BONUS CALC] Employee ${employeeId} total bonus for revenue_date ${normalizedDate}: ${totalBonus.toFixed(2)} RON`);
+          
+          // Note: The bonus is calculated but not stored in a separate table
+          // It will be calculated on-the-fly when requested via the /api/employees/[id]/money endpoint
+          
+        } catch (employeeError) {
+          console.error(`❌ [BONUS CALC] Error processing employee ${employee.id}:`, employeeError);
+        }
+      }
+      
+      console.log(`✅ [BONUS CALC] Finished bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`);
+    } catch (error) {
+      console.error(`❌ [BONUS CALC] Error in calculateEmployeeBonusesForDate:`, error);
+    }
   }
 
   async getManagerPointsForDate(workLocationId: number, revenueDate: string) {

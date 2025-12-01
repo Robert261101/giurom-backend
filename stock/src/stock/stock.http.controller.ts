@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { Permissions } from '../permissions/permissions.decorator';
 import { StockService } from './stock.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -153,6 +154,23 @@ export class StockHttpController {
     location_id: number 
   }) {
     return await this.service.consumeForRecipePreparation(payload);
+  }
+
+  // === PRODUCT IMAGE UPLOAD ===
+  @Post('products/upload-image') @Permissions('stock.update')
+  async uploadProductImage(@Body() payload: { fileName: string; content: string }) {
+    const imageUrl = await this.service.uploadProductImage(payload.fileName, payload.content);
+    return { imageUrl };
+  }
+
+  // === PRODUCT IMAGE SERVE ===
+  @Get('products/image/:fileName')
+  @Permissions('stock.read')
+  async serveProductImage(@Param('fileName') fileName: string, @Res() res: Response) {
+    const { buffer, mimeType } = await this.service.serveProductImage(fileName);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.send(buffer);
   }
 }
 

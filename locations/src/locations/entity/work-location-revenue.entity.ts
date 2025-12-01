@@ -37,9 +37,11 @@ export class WorkLocationRevenue {
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_url' })
   image_url?: string;
 
-  // points_awarded removed per latest requirements
+  @Index()
+  @Column({ type: 'int', nullable: true, name: 'employee_id' })
+  employee_id?: number;
 
-  // No created/updated columns per schema
+
 }
 
 

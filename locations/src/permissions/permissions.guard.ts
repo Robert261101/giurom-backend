@@ -53,8 +53,23 @@ export class PermissionsGuard implements CanActivate {
     
     // Dacă nu are permisiunea, dar este autentificat, verifică dacă încearcă să acceseze locațiile sale
     // Această verificare se aplică doar pentru endpoint-urile GET (citire)
+    // IMPORTANT: Pentru endpoint-urile de revenue (PATCH/DELETE /locations/revenue/:revenueId), 
+    // verificăm STRICT permisiunile, fără bypass
     const isGetRequest = request.method === 'GET';
     const path = request.path || request.url?.split('?')[0] || '';
+    
+    // Verifică dacă este endpoint de revenue (PATCH/DELETE revenue) - verifică strict permisiunile
+    const isRevenueEndpoint = path.includes('/revenue/') && (request.method === 'PATCH' || request.method === 'DELETE');
+    if (isRevenueEndpoint) {
+      // Pentru endpoint-urile de revenue, verificăm STRICT permisiunile, fără bypass
+      if (!user.permissions) {
+        this.logger.warn('User has no permissions for revenue endpoint');
+        throw new ForbiddenException('Fără permisiuni');
+      }
+      
+      this.logger.warn(`User missing required permissions for revenue endpoint: ${requiredPermissions.join(', ')}`);
+      throw new ForbiddenException('Permisiuni insuficiente');
+    }
     
     // Extrage locationId din params sau din path
     let locationId = request.params?.id || request.params?.locationId;

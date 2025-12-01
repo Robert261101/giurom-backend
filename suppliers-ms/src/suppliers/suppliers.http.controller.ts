@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
+import { ApproveReceptionDto, RejectReceptionDto } from './dto/approve-reception.dto';
 import { Response } from 'express';
 import { Permissions } from '../permissions/permissions.decorator';
 import { PermissionsGuard } from '../permissions/permissions.guard';
@@ -86,6 +87,20 @@ export class SuppliersHttpController {
 	@Permissions('suppliers.update')
 	partialReception(@Body() dto: any) { return this.service.markOrderAsPartiallyReceived(dto); }
 	
+	@Post('orders/receptions/approve')
+	@Permissions('suppliers.update')
+	@ApiOperation({ summary: 'Aprobă recepțiile și creează stock items' })
+	approveReceptions(@Body() dto: ApproveReceptionDto) { 
+		return this.service.approveReceptions(dto.orderId, dto.receptionIds); 
+	}
+	
+	@Post('orders/receptions/reject')
+	@Permissions('suppliers.update')
+	@ApiOperation({ summary: 'Respinge recepțiile' })
+	rejectReceptions(@Body() dto: RejectReceptionDto) { 
+		return this.service.rejectReceptions(dto.orderId, dto.receptionIds, dto.reason); 
+	}
+	
 	@Get('orders/reception-report')
 	@Permissions('suppliers.read')
 	@ApiOperation({ summary: 'Raport recepții și returnări pe perioadă' })
@@ -121,6 +136,13 @@ export class SuppliersHttpController {
 			productId ? Number(productId) : undefined,
 			userId ? Number(userId) : undefined,
 		);
+	}
+	
+	@Get('orders/:orderId/receptions')
+	@Permissions('suppliers.read')
+	@ApiOperation({ summary: 'Obține recepțiile pentru o comandă' })
+	getOrderReceptions(@Param('orderId') orderId: string) {
+		return this.service.getOrderReceptions(Number(orderId));
 	}
 	
 	@Patch('orders/:orderId/status') 

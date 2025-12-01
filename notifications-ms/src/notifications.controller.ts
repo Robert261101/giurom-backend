@@ -78,9 +78,7 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'suppliers.notification' })
   async handleSupplierNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
-    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received supplier notification message:`, JSON.stringify(data, null, 2));
     await this.service.onSupplierNotification(data);
-    console.log(`✅ [NOTIFICATIONS CONTROLLER] Supplier notification processed successfully`);
     return true;
   }
 
@@ -98,9 +96,7 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'locations.notification' })
   async handleLocationNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
-    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received location notification message:`, data);
     await this.service.onLocationNotification(data);
-    console.log(`✅ [NOTIFICATIONS CONTROLLER] Location notification processed successfully`);
     return true;
   }
 
@@ -148,9 +144,7 @@ export class NotificationsController {
 
   @MessagePattern({ cmd: 'company.notification' })
   async handleCompanyNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
-    console.log(`📥 [NOTIFICATIONS CONTROLLER] Received company notification message:`, JSON.stringify(data, null, 2));
     await this.service.onCompanyNotification(data);
-    console.log(`✅ [NOTIFICATIONS CONTROLLER] Company notification processed successfully`);
     return true;
   }
 

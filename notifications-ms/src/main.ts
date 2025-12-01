@@ -2,6 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import * as crypto from 'crypto';
+
+
+if (typeof globalThis.crypto === 'undefined') {
+  (globalThis as any).crypto = crypto;
+}
 
 async function bootstrap() {
   // Create HTTP application

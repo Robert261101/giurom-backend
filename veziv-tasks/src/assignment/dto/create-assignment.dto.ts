@@ -42,6 +42,16 @@ export class CreateElementDto {
   @IsOptional()
   @IsBoolean()
   is_visible_for_employee?: boolean;
+
+  @ApiProperty({
+    description: 'Opțiunile pentru elemente de tip checkbox, radio sau select (se salvează în TaskElement.options)',
+    example: ['Opțiunea 1', 'Opțiunea 2', 'Opțiunea 3'],
+    required: false
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
 }
 
 

@@ -6,6 +6,8 @@ import { Repository, MoreThan } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { firstValueFrom } from 'rxjs';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Product } from './entities/product.entity';
 import { Stock, StockStatus } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
@@ -85,6 +87,45 @@ export class StockService {
 
   async updateProduct(id: number, dto: UpdateProductDto): Promise<Product> {
     const product = await this.findProduct(id);
+    
+    // Dacă se actualizează imaginea și există o imagine veche, șterge-o
+    if (dto.photo && dto.photo !== product.photo && product.photo) {
+      try {
+        // Extrage numele fișierului din URL-ul vechi
+        // Format URL: /api/images/products/{fileName}
+        const oldPhotoUrl = product.photo;
+        let oldFileName: string | null = null;
+        
+        if (oldPhotoUrl.includes('/api/images/products/')) {
+          oldFileName = oldPhotoUrl.split('/api/images/products/')[1];
+        } else if (oldPhotoUrl.includes('/products/')) {
+          // Fallback pentru alte formate posibile
+          const parts = oldPhotoUrl.split('/products/');
+          if (parts.length > 1) {
+            oldFileName = parts[parts.length - 1];
+          }
+        }
+        
+        // Șterge fișierul vechi dacă s-a găsit numele
+        if (oldFileName) {
+          const repoRoot = this.getRepoRoot();
+          const imagesDir = path.join(repoRoot, 'images', 'products');
+          const oldFilePath = path.join(imagesDir, oldFileName);
+          
+          if (fs.existsSync(oldFilePath)) {
+            fs.unlinkSync(oldFilePath);
+            this.logger.log(`🗑️ Ștersă imaginea veche: ${oldFilePath}`);
+          } else {
+            this.logger.warn(`⚠️ Fișierul vechi nu a fost găsit: ${oldFilePath}`);
+          }
+        }
+      } catch (error: any) {
+        // Nu aruncăm eroare dacă nu se poate șterge imaginea veche
+        // Continuăm cu actualizarea produsului
+        this.logger.error(`❌ Eroare la ștergerea imaginii vechi: ${error?.message || error}`);
+      }
+    }
+    
     Object.assign(product, dto);
     return await this.productRepo.save(product);
   }
@@ -831,6 +872,99 @@ export class StockService {
         product,
       });
       await this.consumptionRecordRepo.save(consumptionRecord);
+    }
+  }
+
+  /**
+   * Calculează repo root-ul - similar cu employees și suppliers services
+   */
+  private getRepoRoot(): string {
+    // Resolve repo root relative to this file location
+    // __dirname is .../giurom-backend/stock/src (dev with ts-node) or .../giurom-backend/stock/dist (prod)
+    const repoRoot = path.resolve(__dirname, '../../..');
+    return repoRoot;
+  }
+
+  /**
+   * Upload imagine produs - salvează pe server în /home/giurombitap/images/
+   */
+  async uploadProductImage(fileName: string, base64Content: string): Promise<string> {
+    try {
+      // Extract base64 content from data URL (remove data:type;base64, prefix)
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      // Generate unique filename with timestamp
+      const timestamp = Date.now();
+      const fileExtension = fileName.split('.').pop() || 'jpg';
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
+      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+
+      // Save to images/products directory on server
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const productsDir = path.join(imagesDir, 'products');
+      
+      // Create images/products directory if it doesn't exist
+      if (!fs.existsSync(productsDir)) {
+        fs.mkdirSync(productsDir, { recursive: true });
+        this.logger.log(`📁 Created images/products directory: ${productsDir}`);
+      }
+
+      const filePath = path.join(productsDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      this.logger.log(`✅ Product image saved: ${filePath} (${buffer.length} bytes)`);
+
+      // Return the URL path (with products subfolder)
+      return `/api/images/products/${uniqueFileName}`;
+    } catch (error: any) {
+      this.logger.error(`❌ Error uploading product image: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Servește imaginea unui produs
+   */
+  async serveProductImage(fileName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    try {
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'products');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      
+      // Determină tipul MIME
+      const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
+      let mimeType = 'image/jpeg';
+      
+      switch (extension) {
+        case 'png':
+          mimeType = 'image/png';
+          break;
+        case 'gif':
+          mimeType = 'image/gif';
+          break;
+        case 'webp':
+          mimeType = 'image/webp';
+          break;
+        case 'svg':
+          mimeType = 'image/svg+xml';
+          break;
+      }
+
+      return { buffer, mimeType };
+    } catch (error: any) {
+      this.logger.error(`❌ Error serving product image: ${error}`);
+      throw error;
     }
   }
 

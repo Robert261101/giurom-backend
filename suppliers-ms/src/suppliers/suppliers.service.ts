@@ -11,7 +11,7 @@ import { SupplierProduct } from './entities/supplier-product.entity';
 import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './entities/supplier-order-document.entity';
-import { SupplierOrderItemReception } from './entities/supplier-order-item-reception.entity';
+import { SupplierOrderItemReception, ReceptionStatus } from './entities/supplier-order-item-reception.entity';
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
 import { SupplierLocations } from './entities/supplier-locations.entity';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
@@ -895,17 +895,13 @@ export class SuppliersService {
         );
       }
 
-      // Actualizează item-ul cu recepția parțială
-      this.logger.log(`📦 [SUPPLIERS SERVICE] Updating item ${orderItem.id}: received=${receivedQty}, returned=${returnedQty}, original=${originalQty}`);
-      
-      // Încarcă entity-ul fresh din DB pentru a evita problemele de cache
+      // Calculează diferența: ce s-a recepționat NOU în această recepție
+      // receivedQty este cantitatea TOTALĂ (cumulativă) trimisă în request
       const itemToUpdate = await this.orderItemRepo.findOne({ where: { id: orderItem.id } });
       if (!itemToUpdate) {
         throw new BadRequestException(`Item-ul ${orderItem.id} nu a fost găsit în baza de date.`);
       }
       
-      // Calculează diferența: ce s-a recepționat NOU în această recepție
-      // receivedQty este cantitatea TOTALĂ (cumulativă) trimisă în request
       const existingReceivedQty = Number(itemToUpdate.received_quantity) || 0;
       const existingReturnedQty = Number(itemToUpdate.returned_quantity) || 0;
       let newlyReceivedQty = receivedQty - existingReceivedQty; // Diferența = cât se recepționează acum
@@ -919,78 +915,11 @@ export class SuppliersService {
       
       this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${orderItem.id}: existing=${existingReceivedQty}, new total=${receivedQty}, newly received=${newlyReceivedQty}`);
       
-      // Actualizează valorile cu totalul cumulativ
-      itemToUpdate.received_quantity = receivedQty;
-      itemToUpdate.returned_quantity = returnedQty;
-      
-      // Setează data recepției la momentul actual când se face recepția
-      // (pentru recepții parțiale, va fi actualizată de fiecare dată)
-      if (receivedQty > 0) {
-        itemToUpdate.reception_date = new Date();
-        // TODO: Setează reception_user_id din context-ul request-ului (JWT token)
-        // itemToUpdate.reception_user_id = request.user?.id || order.created_by_user_id;
-        // Pentru moment, folosim created_by_user_id din order ca fallback
-        itemToUpdate.reception_user_id = order.created_by_user_id;
-      }
-      
-      if (receptionItem.returnReason) {
-        itemToUpdate.return_reason = receptionItem.returnReason;
-      } else {
-        itemToUpdate.return_reason = undefined;
-      }
-      
-      // Salvează folosind TypeORM save() care face commit automat
-      const savedItem = await this.orderItemRepo.save(itemToUpdate);
-      this.logger.log(`💾 [SUPPLIERS SERVICE] Saved item ${orderItem.id} using TypeORM save()`);
-      
-      // Așteaptă puțin pentru a se asigura că save-ul s-a propagat
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Verifică direct din DB cu o conexiune NOUĂ pentru a evita cache-ul complet
-      const verifyRunner = this.connection.createQueryRunner();
-      await verifyRunner.connect();
-      
-      try {
-        const verifyResult = await verifyRunner.query(
-          `SELECT received_quantity, returned_quantity, return_reason 
-           FROM supplier_order_items 
-           WHERE id = ?`,
-          [orderItem.id]
-        );
-        
-        if (!verifyResult || verifyResult.length === 0) {
-          this.logger.error(`❌ [SUPPLIERS SERVICE] Could not verify update for item ${orderItem.id} - item not found in DB`);
-          throw new BadRequestException(
-            `Nu s-a putut verifica actualizarea item-ului ${orderItem.id}. Actualizarea a fost anulată.`
-          );
-        }
-        
-        const verified = verifyResult[0];
-        const verifiedReceived = Number(verified.received_quantity) || 0;
-        const verifiedReturned = Number(verified.returned_quantity) || 0;
-        
-        this.logger.log(`🔍 [SUPPLIERS SERVICE] Verification for item ${orderItem.id}: DB has received=${verifiedReceived}, returned=${verifiedReturned}, Expected: received=${receivedQty}, returned=${returnedQty}`);
-        
-        // Verificare strictă: dacă valorile nu se salvează corect, aruncă eroare
-        const receivedMatch = Math.abs(verifiedReceived - receivedQty) < 0.01; // Toleranță pentru DECIMAL
-        const returnedMatch = Math.abs(verifiedReturned - returnedQty) < 0.01; // Toleranță pentru DECIMAL
-        
-        if (!receivedMatch || !returnedMatch) {
-          this.logger.error(`❌ [SUPPLIERS SERVICE] Value mismatch for item ${orderItem.id}! Expected: received=${receivedQty}, returned=${returnedQty}, Got: received=${verifiedReceived}, returned=${verifiedReturned}`);
-          throw new BadRequestException(
-            `Valorile pentru item-ul ${orderItem.id} nu s-au salvat corect în baza de date. ` +
-            `Așteptat: recepționat=${receivedQty}, returnat=${returnedQty}. ` +
-            `Salvat: recepționat=${verifiedReceived}, returnat=${verifiedReturned}. ` +
-            `Actualizarea a fost anulată.`
-          );
-        }
-        
-        this.logger.log(`✅ [SUPPLIERS SERVICE] Updated item ${orderItem.id}: received_quantity=${verifiedReceived}, returned_quantity=${verifiedReturned}`);
-      } finally {
-        await verifyRunner.release();
-      }
+      // NU actualizăm received_quantity în supplier_order_items imediat
+      // Vom actualiza doar când recepția este aprobată
+      // Creăm recepțiile cu status PENDING pentru aprobare ulterioară
 
-      // Înregistrează evenimentele de recepție/returnare ca delta-uri
+      // Înregistrează evenimentele de recepție/returnare ca delta-uri cu status PENDING
       const occurredAt = new Date();
       const userId = order.created_by_user_id;
       const locationId = order.supplier_location_id || null;
@@ -1007,7 +936,9 @@ export class SuppliersService {
           location_id: locationId || undefined,
           occurred_at: occurredAt,
           stock_item_id: undefined,
+          status: ReceptionStatus.PENDING, // Status pending pentru aprobare
         });
+        this.logger.log(`📝 [SUPPLIERS SERVICE] Created PENDING reception for item ${orderItem.id} with quantity ${newlyReceivedQty}`);
       }
       if (newlyReturnedQty > 0) {
         await this.orderItemReceptionRepo.save({
@@ -1021,122 +952,25 @@ export class SuppliersService {
           location_id: locationId || undefined,
           occurred_at: occurredAt,
           stock_item_id: undefined,
+          status: ReceptionStatus.PENDING, // Status pending pentru aprobare
         });
         hasReturnedItems = true;
+        this.logger.log(`📝 [SUPPLIERS SERVICE] Created PENDING return for item ${orderItem.id} with quantity ${newlyReturnedQty}`);
       }
 
-      // Creează stock doar pentru cantitatea NOU recepționată (diferența)
-      // Fiecare recepție parțială va crea un stock item SEPARAT cu entry_date diferit
-      // Astfel, în rapoarte vei vedea fiecare recepție parțială separat pe data ei
-      if (newlyReceivedQty > 0) {
-        const stockItemDto = {
-          product_id: orderItem.product_id,
-          supplier_order_item_id: orderItem.id, // Folosim același ID pentru legătură, dar creăm stock item nou
-          quantity: newlyReceivedQty, // Doar diferența (cantitatea nou recepționată)
-          price: Number(orderItem.price_per_unit),
-          entry_date: new Date().toISOString(), // Data recepției curente
-          status: 'valid',
-          location_id: order.supplier_location_id || undefined, // Adaugă location_id din comandă
-        };
-        stockItems.push(stockItemDto);
-        this.logger.log(`📦 [SUPPLIERS SERVICE] Added stock item to batch for item ${orderItem.id}: product_id=${stockItemDto.product_id}, quantity=${stockItemDto.quantity}, price=${stockItemDto.price}, entry_date=${stockItemDto.entry_date}, location_id=${stockItemDto.location_id || 'null'}`);
-      } else {
-        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Skipping stock creation for item ${orderItem.id}: newlyReceivedQty=${newlyReceivedQty} (must be > 0)`);
-      }
+      // NU creăm stock items imediat - vor fi creați doar când recepția este aprobată
+      // Eliminăm logica de creare stock aici
 
       if (returnedQty > 0) {
         hasReturnedItems = true;
       }
     }
 
-    // Verificare finală: confirmă că toate valorile s-au salvat corect în DB înainte de a crea stock items
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Final verification: checking all items in DB before creating stock...`);
-    const finalVerifyRunner = this.connection.createQueryRunner();
-    await finalVerifyRunner.connect();
-    
-    try {
-      for (const receptionItem of dto.items) {
-        const orderItem = order.items?.find(item => item.id === receptionItem.itemId);
-        if (!orderItem) continue;
-        
-        const expectedReceived = Number(receptionItem.receivedQuantity) || 0;
-        const expectedReturned = receptionItem.returnedQuantity !== undefined && receptionItem.returnedQuantity !== null
-          ? Number(receptionItem.returnedQuantity) || 0
-          : Math.max(0, Number(orderItem.quantity) - expectedReceived);
-        
-        const finalCheck = await finalVerifyRunner.query(
-          `SELECT received_quantity, returned_quantity 
-           FROM supplier_order_items 
-           WHERE id = ?`,
-          [orderItem.id]
-        );
-        
-        if (!finalCheck || finalCheck.length === 0) {
-          await finalVerifyRunner.release();
-          throw new BadRequestException(
-            `Item-ul ${orderItem.id} nu a fost găsit în baza de date după actualizare. Procesarea a fost oprită.`
-          );
-        }
-        
-        const dbReceived = Number(finalCheck[0].received_quantity) || 0;
-        const dbReturned = Number(finalCheck[0].returned_quantity) || 0;
-        
-        const receivedMatch = Math.abs(dbReceived - expectedReceived) < 0.01;
-        const returnedMatch = Math.abs(dbReturned - expectedReturned) < 0.01;
-        
-        if (!receivedMatch || !returnedMatch) {
-          await finalVerifyRunner.release();
-          this.logger.error(`❌ [SUPPLIERS SERVICE] Final verification failed for item ${orderItem.id}! Expected: received=${expectedReceived}, returned=${expectedReturned}, DB: received=${dbReceived}, returned=${dbReturned}`);
-          throw new BadRequestException(
-            `Verificarea finală a eșuat pentru item-ul ${orderItem.id}. ` +
-            `Valorile nu s-au salvat corect în baza de date. ` +
-            `Așteptat: recepționat=${expectedReceived}, returnat=${expectedReturned}. ` +
-            `În DB: recepționat=${dbReceived}, returnat=${dbReturned}. ` +
-            `Procesarea a fost oprită și stock items nu au fost creați.`
-          );
-        }
-        
-        this.logger.log(`✅ [SUPPLIERS SERVICE] Final verification passed for item ${orderItem.id}: received=${dbReceived}, returned=${dbReturned}`);
-      }
-    } finally {
-      await finalVerifyRunner.release();
-    }
-    
-    // Creează stock items pentru cantitățile recepționate
-    if (stockItems.length > 0) {
-      this.logger.log(`📦 [SUPPLIERS SERVICE] Creating ${stockItems.length} stock items...`);
-      const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
-      
-      if (createdStockItems.length !== stockItems.length) {
-        this.logger.error(
-          `❌ [SUPPLIERS SERVICE] Only ${createdStockItems.length} out of ${stockItems.length} stock items were created successfully. Some items failed!`
-        );
-        // Log details about failed items
-        const createdIds = new Set(createdStockItems.map(item => item.supplier_order_item_id));
-        const failedItems = stockItems.filter(item => !createdIds.has(item.supplier_order_item_id));
-        this.logger.error(`❌ [SUPPLIERS SERVICE] Failed stock items:`, JSON.stringify(failedItems, null, 2));
-      } else {
-        this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully created all ${createdStockItems.length} stock items`);
-      }
-    } else {
-      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] No stock items to create (stockItems array is empty)`);
-    }
+    // NU mai creăm stock items aici - vor fi creați doar când recepțiile sunt aprobate
+    this.logger.log(`📝 [SUPPLIERS SERVICE] Recepțiile au fost create cu status PENDING. Stock items vor fi creați după aprobare.`);
 
-    // Actualizează statusul comenzii
-    // Dacă toate itemele sunt complet recepționate, marchez ca DELIVERED
-    // Altfel, păstrează statusul actual sau poți adăuga un status nou PARTIALLY_DELIVERED
-    const allItemsFullyReceived = order.items?.every(item => {
-      const receptionItem = dto.items.find(ri => ri.itemId === item.id);
-      if (!receptionItem) return true; // Item-ul nu a fost procesat încă
-      const received = Number(receptionItem.receivedQuantity) || 0;
-      const original = Number(item.quantity);
-      return received === original;
-    });
-
-    if (allItemsFullyReceived && !hasReturnedItems) {
-      order.status = OrderStatus.DELIVERED;
-    }
-    // Altfel, păstrăm statusul actual (poate fi SENT sau CONFIRMED)
+    // NU actualizăm statusul comenzii imediat - va fi actualizat doar când recepțiile sunt aprobate
+    // Statusul comenzii rămâne neschimbat până la aprobare
 
     // Actualizează doar comanda fără a persista relația 'items' (evităm rescrierea recepțiilor)
     await this.orderRepo.update(order.id, {
@@ -1177,6 +1011,266 @@ export class SuppliersService {
     const updated = await this.orderRepo.findOne({ where: { id: order.id } });
     if (!updated) throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
     return updated;
+  }
+
+  /**
+   * Aprobă recepțiile pentru o comandă și creează stock items
+   */
+  async approveReceptions(orderId: number, receptionIds: number[]): Promise<{ approved: number; stockCreated: number }> {
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Approving ${receptionIds.length} receptions for order ${orderId}`);
+    
+    // Găsește recepțiile cu status PENDING
+    const receptions = await this.orderItemReceptionRepo.find({
+      where: {
+        id: In(receptionIds),
+        supplier_order_id: orderId,
+        status: ReceptionStatus.PENDING,
+      },
+      relations: [],
+    });
+
+    if (receptions.length === 0) {
+      throw new BadRequestException('Nu s-au găsit recepții PENDING pentru aprobare');
+    }
+
+    if (receptions.length !== receptionIds.length) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Only ${receptions.length} out of ${receptionIds.length} receptions found with PENDING status`);
+    }
+
+    // Obține order items pentru a calcula received_quantity
+    const orderItemIds = Array.from(new Set(receptions.map(r => r.supplier_order_item_id)));
+    const orderItems = await this.orderItemRepo.find({
+      where: { id: In(orderItemIds) },
+    });
+    const orderItemsMap = new Map(orderItems.map(item => [item.id, item]));
+
+    // Obține comanda pentru a accesa informații
+    const order = await this.orderRepo.findOne({
+      where: { id: orderId },
+      relations: ['items'],
+    });
+    if (!order) {
+      throw new NotFoundException(`Comanda ${orderId} nu a fost găsită`);
+    }
+
+    const stockItems: CreateStockItemDto[] = [];
+    const updatedItemQuantities = new Map<number, { received: number; returned: number }>();
+
+    // Procesează fiecare recepție aprobată
+    for (const reception of receptions) {
+      const orderItem = orderItemsMap.get(reception.supplier_order_item_id);
+      if (!orderItem) {
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order item ${reception.supplier_order_item_id} not found for reception ${reception.id}`);
+        continue;
+      }
+
+      // Actualizează statusul recepției la APPROVED
+      reception.status = ReceptionStatus.APPROVED;
+      await this.orderItemReceptionRepo.save(reception);
+
+      // Calculează cantitățile cumulate pentru order item
+      if (!updatedItemQuantities.has(reception.supplier_order_item_id)) {
+        const existingReceived = Number(orderItem.received_quantity) || 0;
+        const existingReturned = Number(orderItem.returned_quantity) || 0;
+        updatedItemQuantities.set(reception.supplier_order_item_id, {
+          received: existingReceived,
+          returned: existingReturned,
+        });
+      }
+
+      const quantities = updatedItemQuantities.get(reception.supplier_order_item_id)!;
+      
+      // Adaugă delta-urile recepției aprobate
+      if (reception.received_delta > 0) {
+        quantities.received += Number(reception.received_delta);
+        
+        // Creează stock item pentru recepția aprobată
+        const stockItemDto: CreateStockItemDto = {
+          product_id: reception.product_id,
+          supplier_order_item_id: reception.supplier_order_item_id,
+          quantity: Number(reception.received_delta),
+          price: Number(orderItem.price_per_unit),
+          entry_date: reception.occurred_at.toISOString(),
+          status: 'valid',
+          location_id: reception.location_id || undefined,
+        };
+        stockItems.push(stockItemDto);
+      }
+      
+      if (reception.returned_delta > 0) {
+        quantities.returned += Number(reception.returned_delta);
+      }
+    }
+
+    // Actualizează received_quantity și returned_quantity în order items
+    for (const [itemId, quantities] of updatedItemQuantities.entries()) {
+      const orderItem = orderItemsMap.get(itemId);
+      if (orderItem) {
+        orderItem.received_quantity = quantities.received;
+        orderItem.returned_quantity = quantities.returned;
+        
+        // Setează data recepției dacă există recepții aprobate
+        if (quantities.received > 0) {
+          orderItem.reception_date = new Date();
+          orderItem.reception_user_id = order.created_by_user_id;
+        }
+        
+        await this.orderItemRepo.save(orderItem);
+      }
+    }
+
+    // Creează stock items pentru recepțiile aprobate
+    let stockCreated = 0;
+    if (stockItems.length > 0) {
+      this.logger.log(`📦 [SUPPLIERS SERVICE] Creating ${stockItems.length} stock items for approved receptions...`);
+      const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
+      stockCreated = createdStockItems.length;
+      
+      // Actualizează stock_item_id în recepții
+      for (let i = 0; i < stockItems.length; i++) {
+        const stockItem = createdStockItems[i];
+        if (stockItem) {
+          const reception = receptions.find(r => 
+            r.supplier_order_item_id === stockItem.supplier_order_item_id &&
+            r.received_delta > 0
+          );
+          if (reception) {
+            reception.stock_item_id = stockItem.id;
+            await this.orderItemReceptionRepo.save(reception);
+          }
+        }
+      }
+      
+      this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully created ${stockCreated} stock items`);
+    }
+
+    // Verifică dacă toate recepțiile comenzii sunt aprobate și actualizează statusul comenzii
+    const allReceptions = await this.orderItemReceptionRepo.find({
+      where: { supplier_order_id: orderId },
+    });
+    const hasPendingReceptions = allReceptions.some(r => r.status === ReceptionStatus.PENDING);
+    
+    if (!hasPendingReceptions && order.items) {
+      // Verifică dacă toate itemele sunt complet recepționate
+      const allItemsFullyReceived = order.items.every(item => {
+        const received = Number(item.received_quantity) || 0;
+        const original = Number(item.quantity);
+        return received >= original;
+      });
+      
+      if (allItemsFullyReceived) {
+        order.status = OrderStatus.DELIVERED;
+        await this.orderRepo.update(order.id, { status: order.status });
+      }
+    }
+
+    return {
+      approved: receptions.length,
+      stockCreated,
+    };
+  }
+
+  /**
+   * Respinge recepțiile pentru o comandă
+   */
+  async rejectReceptions(orderId: number, receptionIds: number[], reason?: string): Promise<{ rejected: number }> {
+    this.logger.log(`❌ [SUPPLIERS SERVICE] Rejecting ${receptionIds.length} receptions for order ${orderId}`);
+    
+    // Găsește recepțiile cu status PENDING
+    const receptions = await this.orderItemReceptionRepo.find({
+      where: {
+        id: In(receptionIds),
+        supplier_order_id: orderId,
+        status: ReceptionStatus.PENDING,
+      },
+    });
+
+    if (receptions.length === 0) {
+      throw new BadRequestException('Nu s-au găsit recepții PENDING pentru respingere');
+    }
+
+    if (receptions.length !== receptionIds.length) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Only ${receptions.length} out of ${receptionIds.length} receptions found with PENDING status`);
+    }
+
+    // Actualizează statusul recepțiilor la REJECTED
+    for (const reception of receptions) {
+      reception.status = ReceptionStatus.REJECTED;
+      if (reason) {
+        reception.reason = reason;
+      }
+      await this.orderItemReceptionRepo.save(reception);
+    }
+
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Rejected ${receptions.length} receptions`);
+    
+    return {
+      rejected: receptions.length,
+    };
+  }
+
+  /**
+   * Obține toate recepțiile pentru o comandă cu numele utilizatorilor
+   */
+  async getOrderReceptions(orderId: number): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions for order ${orderId}`);
+    
+    const receptions = await this.orderItemReceptionRepo.find({
+      where: { supplier_order_id: orderId },
+      order: { created_at: 'DESC' },
+    });
+
+    // Obține numele utilizatorilor pentru recepții
+    const userIds = Array.from(new Set(
+      receptions
+        .map(r => r.user_id)
+        .filter((id): id is number => id !== undefined && id !== null)
+    ));
+
+    const usersMap = new Map<number, string>();
+    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+
+    for (const userId of userIds) {
+      try {
+        // Obține id_employee din users
+        const userResult = await this.connection.query(
+          `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
+          [userId]
+        );
+
+        if (userResult && userResult.length > 0 && userResult[0].id_employee) {
+          const employeeId = Number(userResult[0].id_employee);
+
+          // Obține first_name și last_name din employees
+          const employeeResult = await this.connection.query(
+            `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+            [employeeId]
+          );
+
+          if (employeeResult && employeeResult.length > 0) {
+            const firstName = employeeResult[0].first_name || null;
+            const lastName = employeeResult[0].last_name || null;
+            const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || `User #${userId}`;
+            usersMap.set(userId, fullName);
+            this.logger.log(`✅ [SUPPLIERS SERVICE] Fetched employee name for user ${userId} (employee ${employeeId}): ${fullName}`);
+          } else {
+            usersMap.set(userId, `User #${userId}`);
+          }
+        } else {
+          usersMap.set(userId, `User #${userId}`);
+        }
+      } catch (error: any) {
+        this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data for user ${userId}:`, error.message);
+        usersMap.set(userId, `User #${userId}`);
+      }
+    }
+
+    // Adaugă numele utilizatorilor la recepții
+    return receptions.map(reception => ({
+      ...reception,
+      user_name: reception.user_id ? usersMap.get(reception.user_id) : undefined,
+    })) as Array<SupplierOrderItemReception & { user_name?: string }>;
   }
 
   async getReceptionReport(startDate: string, endDate: string): Promise<any[]> {
@@ -1278,12 +1372,63 @@ export class SuppliersService {
           orderToSupplierName.set(o.id, o.supplier?.supplier_name || `Order #${o.id}`);
         }
 
-        // Normalizează listele de motive (unice) și atașează supplier_name
-        const result = Array.from(aggregated.values()).map(item => ({
-          ...item,
-          supplier_name: orderToSupplierName.get(item.supplier_order_id) || 'Necunoscut',
-          return_reasons: Array.from(new Set(item.return_reasons)),
-        }));
+        // Obține numele angajaților pentru user_id-urile din aggregated
+        const userIds = Array.from(new Set(Array.from(aggregated.values()).map(v => v.user_id).filter(id => id > 0)));
+        const usersMap = new Map<number, { first_name?: string; last_name?: string; employee_id?: number }>();
+        const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+        
+        for (const userId of userIds) {
+          try {
+            // Obține id_employee din users
+            const userResult = await this.connection.query(
+              `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
+              [userId]
+            );
+            
+            if (userResult && userResult.length > 0 && userResult[0].id_employee) {
+              const employeeId = Number(userResult[0].id_employee);
+              
+              // Obține first_name și last_name din employees
+              const employeeResult = await this.connection.query(
+                `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+                [employeeId]
+              );
+              
+              if (employeeResult && employeeResult.length > 0) {
+                const firstName = employeeResult[0].first_name || null;
+                const lastName = employeeResult[0].last_name || null;
+                usersMap.set(userId, {
+                  first_name: firstName,
+                  last_name: lastName,
+                  employee_id: employeeId
+                });
+              }
+            }
+          } catch (error: any) {
+            this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data for user ${userId}:`, error.message);
+          }
+        }
+
+        // Normalizează listele de motive (unice) și atașează supplier_name și user_name
+        const result = Array.from(aggregated.values()).map(item => {
+          const user = usersMap.get(item.user_id);
+          let userName: string;
+          if (user && user.first_name && user.last_name) {
+            userName = `${user.first_name} ${user.last_name}`.trim();
+          } else if (user && user.employee_id) {
+            userName = `ID: ${user.employee_id}`;
+          } else {
+            userName = item.user_id > 0 ? `User ID: ${item.user_id}` : 'Necunoscut';
+          }
+          
+          return {
+            ...item,
+            supplier_name: orderToSupplierName.get(item.supplier_order_id) || 'Necunoscut',
+            user_name: userName,
+            return_reasons: Array.from(new Set(item.return_reasons)),
+          };
+        });
         return result;
       }
     } catch (e: any) {
@@ -1671,60 +1816,50 @@ export class SuppliersService {
     
     // Obține toate user_id-urile unice pentru a le încărca odată
     const userIds = [...new Set(Array.from(aggregatedData.values()).map(d => d.user_id).filter(id => id > 0))];
-    const usersMap = new Map<number, any>();
+    const usersMap = new Map<number, { first_name?: string; last_name?: string; employee_id?: number }>();
     
-    // Obține informații despre useri din employees service (comunicare internă directă)
-    // Pentru comunicare internă pe server, folosim localhost (microserviciile rulează pe același server)
-    // Employees service rulează pe portul 3012 (conform API Gateway)
-    // Dacă EMPLOYEES_HTTP_URL conține "bitap.ro" sau IP extern, folosim localhost pentru comunicare internă
-    let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-    if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
-      // Pentru comunicare internă, înlocuim URL-ul extern cu localhost
-      // Folosim portul 3012 (employees service) sau portul din URL dacă e specificat
-      const portMatch = employeesServiceUrl.match(/:(\d+)/);
-      const port = portMatch ? portMatch[1] : '3012';
-      employeesServiceUrl = `http://localhost:${port}`;
-      this.logger.log(`🔧 [SUPPLIERS SERVICE] Converted external URL to internal: ${employeesServiceUrl}`);
-    }
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching ${userIds.length} users from ${employeesServiceUrl}`);
+    // Obține informații despre angajați din users -> id_employee -> employees
+    // Similar cu ce am făcut pentru revenues în locations service
+    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching employee data for ${userIds.length} users via users -> employees`);
     
     for (const userId of userIds) {
       try {
-        this.logger.log(`🔍 [SUPPLIERS SERVICE] Attempting to fetch user ${userId} from ${employeesServiceUrl}/employees/${userId} with headers:`, JSON.stringify(headers));
-        const userResponse: any = await firstValueFrom(
-          this.httpService.get(`${employeesServiceUrl}/employees/${userId}`, { headers })
+        // Obține id_employee din users
+        const userResult = await this.connection.query(
+          `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
+          [userId]
         );
         
-        this.logger.log(`📥 [SUPPLIERS SERVICE] Received response for user ${userId}. Status: ${userResponse?.status}, Data structure:`, JSON.stringify({
-          hasData: !!userResponse?.data,
-          hasDataData: !!userResponse?.data?.data,
-          dataKeys: userResponse?.data ? Object.keys(userResponse.data) : []
-        }));
-        
-        // HttpService din NestJS returnează datele în userResponse.data
-        const userData = userResponse?.data?.data || userResponse?.data || userResponse;
-        
-        if (userData) {
-          usersMap.set(userId, userData);
-          const fullName = `${userData.first_name || ''} ${userData.last_name || ''}`.trim() || userData.email || `ID: ${userId}`;
-          this.logger.log(`✅ [SUPPLIERS SERVICE] Fetched user ${userId}: ${fullName}`);
+        if (userResult && userResult.length > 0 && userResult[0].id_employee) {
+          const employeeId = Number(userResult[0].id_employee);
+          
+          // Obține first_name și last_name din employees
+          const employeeResult = await this.connection.query(
+            `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+            [employeeId]
+          );
+          
+          if (employeeResult && employeeResult.length > 0) {
+            const firstName = employeeResult[0].first_name || null;
+            const lastName = employeeResult[0].last_name || null;
+            usersMap.set(userId, {
+              first_name: firstName,
+              last_name: lastName,
+              employee_id: employeeId
+            });
+            const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || `ID: ${employeeId}`;
+            this.logger.log(`✅ [SUPPLIERS SERVICE] Fetched employee data for user ${userId} (employee ${employeeId}): ${fullName}`);
+          } else {
+            this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Employee ${employeeId} not found in employees table for user ${userId}`);
+          }
         } else {
-          this.logger.warn(`⚠️ [SUPPLIERS SERVICE] User ${userId} response has no data. Full response:`, JSON.stringify(userResponse, null, 2));
+          this.logger.warn(`⚠️ [SUPPLIERS SERVICE] User ${userId} not found in users table or has no id_employee`);
         }
       } catch (error: any) {
-        // 404 means employee doesn't exist - this is not critical, just log as warning
-        if (error?.response?.status === 404) {
-          this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Employee with ID ${userId} not found in employees service. This is normal if the employee was deleted or the ID is invalid. Will display "User ID: ${userId}" in frontend.`);
-        } else {
-          this.logger.error(`❌ [SUPPLIERS SERVICE] Could not fetch user ${userId} from ${employeesServiceUrl}/employees/${userId}:`, {
-            message: error?.message,
-            code: error?.code,
-            response: error?.response?.data,
-            status: error?.response?.status,
-            fullError: error
-          });
-        }
-        // Don't add to usersMap if not found - will display "User ID: X" in frontend
+        this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data for user ${userId}:`, error.message);
       }
     }
     
@@ -1743,12 +1878,11 @@ export class SuppliersService {
         // Obține informații despre user
         const user = usersMap.get(data.user_id);
         let userName: string;
-        if (user) {
-          // Încearcă multiple formate pentru nume
-          const firstName = user.first_name || user.firstName || '';
-          const lastName = user.last_name || user.lastName || '';
-          const fullName = `${firstName} ${lastName}`.trim();
-          userName = fullName || user.email || user.name || `User ID: ${data.user_id}`;
+        if (user && user.first_name && user.last_name) {
+          // Folosește numele din employees (users -> id_employee -> employees)
+          userName = `${user.first_name} ${user.last_name}`.trim();
+        } else if (user && user.employee_id) {
+          userName = `ID: ${user.employee_id}`;
         } else {
           userName = data.user_id > 0 ? `User ID: ${data.user_id}` : 'Necunoscut';
           this.logger.warn(`⚠️ [SUPPLIERS SERVICE] User ${data.user_id} not found in usersMap for product ${productId}`);
@@ -1771,12 +1905,11 @@ export class SuppliersService {
         // Obține informații despre user
         const user = usersMap.get(data.user_id);
         let userName: string;
-        if (user) {
-          // Încearcă multiple formate pentru nume
-          const firstName = user.first_name || user.firstName || '';
-          const lastName = user.last_name || user.lastName || '';
-          const fullName = `${firstName} ${lastName}`.trim();
-          userName = fullName || user.email || user.name || `User ID: ${data.user_id}`;
+        if (user && user.first_name && user.last_name) {
+          // Folosește numele din employees (users -> id_employee -> employees)
+          userName = `${user.first_name} ${user.last_name}`.trim();
+        } else if (user && user.employee_id) {
+          userName = `ID: ${user.employee_id}`;
         } else {
           userName = data.user_id > 0 ? `User ID: ${data.user_id}` : 'Necunoscut';
         }
