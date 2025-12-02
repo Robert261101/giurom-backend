@@ -8,6 +8,7 @@ import { firstValueFrom, lastValueFrom } from 'rxjs';
 import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
+import { RecipeRecipe } from './entities/recipe-recipe.entity';
 import { RecipeMedia } from './entities/recipe-media.entity';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
@@ -29,6 +30,8 @@ export class RecipeService {
     private categoriesRepository: Repository<RecipeCategory>,
     @InjectRepository(RecipeProduct)
     private recipeProductsRepository: Repository<RecipeProduct>,
+    @InjectRepository(RecipeRecipe)
+    private recipeRecipesRepository: Repository<RecipeRecipe>,
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -155,7 +158,7 @@ export class RecipeService {
   async findOne(id: number): Promise<Recipe> {
     const recipe = await this.recipesRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_products', 'recipeMedia'],
+      relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia'],
     });
     
     if (!recipe) {
@@ -400,6 +403,91 @@ export class RecipeService {
     }
     
     await this.recipeProductsRepository.remove(recipeProduct);
+  }
+
+  // ==================== RECIPE RECIPES METHODS (Rețete ca ingrediente) ====================
+
+  async addRecipeToRecipe(recipeId: number, ingredientRecipeId: number, quantity: number, notes?: string): Promise<RecipeRecipe> {
+    // Verifică dacă rețeta există
+    const recipe = await this.recipesRepository.findOne({
+      where: { id: recipeId }
+    });
+    
+    if (!recipe) {
+      throw new NotFoundException(`Recipe with ID ${recipeId} not found`);
+    }
+
+    // Verifică dacă rețeta-ingredient există
+    const ingredientRecipe = await this.recipesRepository.findOne({
+      where: { id: ingredientRecipeId }
+    });
+    
+    if (!ingredientRecipe) {
+      throw new NotFoundException(`Ingredient recipe with ID ${ingredientRecipeId} not found`);
+    }
+
+    // Verifică dacă nu se încearcă să adauge rețeta la ea însăși (circular reference)
+    if (recipeId === ingredientRecipeId) {
+      throw new BadRequestException('Nu poți adăuga o rețetă ca ingredient la ea însăși');
+    }
+
+    // Verifică dacă nu există deja această rețetă ca ingredient
+    const existing = await this.recipeRecipesRepository.findOne({
+      where: { recipe_id: recipeId, ingredient_recipe_id: ingredientRecipeId }
+    });
+
+    if (existing) {
+      throw new BadRequestException('Această rețetă este deja adăugată ca ingredient');
+    }
+
+    const recipeRecipe = this.recipeRecipesRepository.create({
+      recipe_id: recipeId,
+      ingredient_recipe_id: ingredientRecipeId,
+      quantity,
+      notes
+    });
+
+    return await this.recipeRecipesRepository.save(recipeRecipe);
+  }
+
+  async getRecipeRecipes(recipeId: number): Promise<RecipeRecipe[]> {
+    const recipeRecipes = await this.recipeRecipesRepository.find({
+      where: { recipe_id: recipeId },
+      relations: ['ingredient_recipe', 'ingredient_recipe.category'],
+      order: { created_at: 'ASC' }
+    });
+
+    return recipeRecipes;
+  }
+
+  async updateRecipeRecipe(id: number, quantity: number, notes?: string): Promise<RecipeRecipe> {
+    const recipeRecipe = await this.recipeRecipesRepository.findOne({
+      where: { id },
+      relations: ['recipe', 'ingredient_recipe']
+    });
+    
+    if (!recipeRecipe) {
+      throw new NotFoundException(`Recipe recipe with ID ${id} not found`);
+    }
+    
+    recipeRecipe.quantity = quantity;
+    if (notes !== undefined) {
+      recipeRecipe.notes = notes;
+    }
+    
+    return await this.recipeRecipesRepository.save(recipeRecipe);
+  }
+
+  async removeRecipeRecipe(id: number): Promise<void> {
+    const recipeRecipe = await this.recipeRecipesRepository.findOne({
+      where: { id },
+    });
+    
+    if (!recipeRecipe) {
+      throw new NotFoundException(`Recipe recipe with ID ${id} not found`);
+    }
+    
+    await this.recipeRecipesRepository.remove(recipeRecipe);
   }
 
   // ==================== STATISTICS METHODS ====================

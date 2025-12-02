@@ -1,6 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { Response } from 'express';
-import { DataSource } from 'typeorm';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { CreateWorkLocationDepartmentsDto } from './locations/dto/create-work-location-departments.dto';
@@ -15,10 +14,7 @@ import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 @Controller('locations')
 @UseGuards(PermissionsGuard)
 export class LocationsHttpController {
-	constructor(
-		private readonly service: LocationsService,
-		@Inject(DataSource) private readonly dataSource: DataSource
-	) {}
+	constructor(private readonly service: LocationsService) {}
 
 	@Post()
 	@Permissions('locations.create')
@@ -170,38 +166,14 @@ export class LocationsHttpController {
 
 	@Post(':id/revenue')
 	@Permissions('cashing.create')
-	async recordRevenue(
+	recordRevenue(
 		@Param('id') id: string, 
-		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string; employee_id?: number },
+		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string },
 		@Request() req?: any
 	) {
 		const user = req?.user;
-		// Dacă employee_id este trimis direct în body, folosim-l
-		// Altfel, obținem employee_id din JWT (user.id sau user.userId care este payload.sub)
-		// În JWT, payload.sub este user_id, deci trebuie să obținem id_employee din users
-		let employeeId = body.employee_id || null;
-		
-		if (!employeeId && user) {
-			// Încearcă să obțină employee_id direct din JWT payload
-			const userId = user?.userId || user?.id || null;
-			if (userId) {
-				// Obține id_employee din users bazat pe user_id
-				const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-				try {
-					const result = await this.dataSource.query(
-						`SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
-						[userId]
-					);
-					if (result && result.length > 0 && result[0].id_employee) {
-						employeeId = Number(result[0].id_employee);
-					}
-				} catch (error) {
-					console.error('❌ Error fetching employee_id from user_id:', error);
-				}
-			}
-		}
-		
-		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, employeeId);
+		const userId = user?.id || user?.employee_id || user?.userId || null;
+		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, userId);
 	}
 
 	@Get(':id/revenue')

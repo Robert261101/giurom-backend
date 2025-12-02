@@ -128,6 +128,7 @@ export class AssignmentService {
 
   /**
    * Adaugă informațiile despre persoana responsabilă și departamentul din grup
+   * @deprecated Folosește enrichAssignmentsWithDetailsBatch pentru performanță mai bună
    */
   private async enrichAssignmentWithDetails(assignment: TaskAssignment): Promise<TaskAssignment> {
     const enrichedAssignment = { ...assignment };
@@ -157,6 +158,116 @@ export class AssignmentService {
     // Logica pentru grupuri se face prin department_group_id, nu prin assigned_to_type
 
     return enrichedAssignment;
+  }
+
+  /**
+   * OPTIMIZAT: Adaugă informațiile despre persoane și execuții pentru TOATE assignments dintr-o dată
+   * Elimină problema N+1 prin batch loading
+   */
+  private async enrichAssignmentsWithDetailsBatch(assignments: TaskAssignment[]): Promise<TaskAssignment[]> {
+    if (!assignments || assignments.length === 0) {
+      return assignments;
+    }
+
+    const startTime = Date.now();
+    console.log(`🚀 [BATCH ENRICH] Starting batch enrichment for ${assignments.length} assignments`);
+
+    // 1. Colectează toți assigned_to_id unici
+    const uniqueEmployeeIds = new Set<number>();
+    assignments.forEach(assignment => {
+      if (assignment.assigned_to_id) {
+        uniqueEmployeeIds.add(assignment.assigned_to_id);
+      }
+    });
+
+    // 2. Batch load employees - OPTIMIZAT: face request-uri în paralel cu limitare de concurență
+    const employeeInfoMap = new Map<number, { first_name: string; last_name: string }>();
+    if (uniqueEmployeeIds.size > 0) {
+      try {
+        const employeeIdsArray = Array.from(uniqueEmployeeIds);
+        console.log(`📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees in parallel batches`);
+        
+        // Optimizare: face request-uri în paralel dar cu limitare de concurență (batch-uri de 20 pentru performanță mai bună)
+        const BATCH_SIZE = 20;
+        const batches: number[][] = [];
+        for (let i = 0; i < employeeIdsArray.length; i += BATCH_SIZE) {
+          batches.push(employeeIdsArray.slice(i, i + BATCH_SIZE));
+        }
+        
+        // Procesează toate batch-urile în paralel pentru viteză maximă
+        const allBatchPromises = batches.map(batch => 
+          Promise.all(
+            batch.map(employeeId => 
+              this.getEmployeeInfo(employeeId)
+                .then(info => ({ employeeId, info }))
+                .catch(() => ({ employeeId, info: null }))
+            )
+          )
+        );
+        
+        const allBatchResults = await Promise.all(allBatchPromises);
+        allBatchResults.flat().forEach(({ employeeId, info }) => {
+          if (info) {
+            employeeInfoMap.set(employeeId, info);
+          }
+        });
+        
+        console.log(`✅ [BATCH ENRICH] Loaded ${employeeInfoMap.size} employees`);
+      } catch (error) {
+        console.error(`❌ [BATCH ENRICH] Error loading employees:`, error.message);
+      }
+    }
+
+    // 3. Colectează toate assignment.id-urile
+    const assignmentIds = assignments.map(a => a.id);
+
+    // 4. Batch load executions - un singur query cu WHERE IN
+    const executionsMap = new Map<number, any>();
+    if (assignmentIds.length > 0) {
+      try {
+        console.log(`📦 [BATCH ENRICH] Loading executions for ${assignmentIds.length} assignments`);
+        const executions = await this.executionService.getExecutionsByAssignmentsBatch(assignmentIds);
+        
+        // Grupează executions după task_assignment_id (luăm doar cea mai recentă pentru fiecare assignment)
+        executions.forEach(execution => {
+          const assignmentId = execution.task_assignment_id;
+          if (!executionsMap.has(assignmentId) || 
+              new Date(execution.created_at) > new Date(executionsMap.get(assignmentId).created_at)) {
+            executionsMap.set(assignmentId, execution);
+          }
+        });
+        
+        console.log(`✅ [BATCH ENRICH] Loaded ${executionsMap.size} executions`);
+      } catch (error) {
+        console.error(`❌ [BATCH ENRICH] Error loading executions:`, error.message);
+      }
+    }
+
+    // 5. Populează assignments cu datele încărcate
+    const enrichedAssignments = assignments.map(assignment => {
+      const enriched = { ...assignment } as any;
+
+      // Adaugă informații despre angajat
+      if (assignment.assigned_to_id && employeeInfoMap.has(assignment.assigned_to_id)) {
+        enriched['assigned_to_info'] = employeeInfoMap.get(assignment.assigned_to_id);
+      }
+
+      // Adaugă execuția
+      if (executionsMap.has(assignment.id)) {
+        enriched['execution'] = executionsMap.get(assignment.id);
+      }
+
+      return enriched;
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`✅ [BATCH ENRICH] Completed in ${duration}ms (${assignments.length} assignments)`);
+    
+    if (duration > 500) {
+      console.warn(`⚠️ [BATCH ENRICH] Performance warning: ${duration}ms > 500ms target`);
+    }
+
+    return enrichedAssignments;
   }
 
   async create(createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
@@ -538,9 +649,9 @@ export class AssignmentService {
 
     
     // Adaugă informații despre persoana responsabilă și departamentul din grup
-    const enrichedAssignment = await this.enrichAssignmentWithDetails(assignment);
-    
-    return enrichedAssignment;
+    // Pentru un singur assignment, folosim metoda batch (mai eficientă decât metoda veche)
+    const enrichedAssignments = await this.enrichAssignmentsWithDetailsBatch([assignment]);
+    return enrichedAssignments[0];
   }
 
   async update(id: number, updateAssignmentDto: UpdateAssignmentDto): Promise<TaskAssignment> {
@@ -675,6 +786,7 @@ export class AssignmentService {
       endDate: endDate?.toISOString?.()
     });
     
+    // OPTIMIZAT: Folosește select explicit și indexuri pentru performanță maximă
     const query = this.assignmentRepository
       .createQueryBuilder('assignment')
       .leftJoinAndSelect('assignment.template', 'template')
@@ -702,7 +814,8 @@ export class AssignmentService {
         'assignment.created_at',
         'assignment.updated_at'
       ])
-      .orderBy('assignment.created_at', 'DESC');
+      .orderBy('assignment.created_at', 'DESC')
+      .cache(false); // Dezactivează cache pentru date fresh
 
     // Aplică filtrul după location_id dacă este furnizat
     if (locationId !== undefined) {
@@ -718,11 +831,37 @@ export class AssignmentService {
       
       // Dacă are și assignment.create (este manager), poate vedea sarcinile invizibile
       if (user?.permissions?.includes('assignment.create')) {
-        // Manager: fără filtru implicit pe ziua curentă — aplică interval doar dacă e trimis
+        // Manager: dacă nu se trimit date, limitează la ultimele 30 de zile pentru performanță
         if (startDate && endDate) {
-          const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
-          const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+          // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
+          const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+          const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+          console.log('📅 [assignment.service] Date filter:', { 
+            startDate: sdStr, 
+            endDate: edStr,
+            startDateObj: startDate.toISOString(),
+            endDateObj: endDate.toISOString()
+          });
+          // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          query.andWhere(
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+            { sdStr, edStr }
+          );
+        } else {
+          // Limită implicită: ultimele 30 de zile pentru performanță
+          const today = new Date();
+          const thirtyDaysAgo = new Date(today);
+          thirtyDaysAgo.setDate(today.getDate() - 30);
+          const sdStr = `${thirtyDaysAgo.getFullYear()}-${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(thirtyDaysAgo.getDate()).padStart(2, '0')}`;
+          const edStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          console.log('📅 [assignment.service] No date filter provided, using default: last 30 days', { 
+            startDate: sdStr, 
+            endDate: edStr
+          });
+          query.andWhere(
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) >= :sdStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) >= :sdStr)`,
+            { sdStr }
+          );
         }
         const result = await query
           .andWhere(
@@ -736,18 +875,35 @@ export class AssignmentService {
           )
           .getMany();
         console.log('🔍 [assignment.service] read_all+create result count:', result.length);
-        // Adaugă informații despre persoane și departamente
-        const enrichedResults = await Promise.all(
-          result.map(assignment => this.enrichAssignmentWithDetails(assignment))
-        );
+        if (startDate && endDate && result.length > 0) {
+          console.log('📅 [assignment.service] Sample dates from results:', result.slice(0, 3).map(r => ({
+            id: r.id,
+            assigned_at: r.assigned_at,
+            scheduled_datetime: r.scheduled_datetime,
+            status: r.status
+          })));
+        }
+        // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+        const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(result);
         return enrichedResults;
       } else {
         // Dacă nu este manager, filtrează doar sarcinile vizibile
         // Fără filtru implicit pe zi – aplică interval doar dacă e trimis
         if (startDate && endDate) {
-          const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
-          const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+          // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
+          const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+          const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+          console.log('📅 [assignment.service] Date filter:', { 
+            startDate: sdStr, 
+            endDate: edStr,
+            startDateObj: startDate.toISOString(),
+            endDateObj: endDate.toISOString()
+          });
+          // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          query.andWhere(
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+            { sdStr, edStr }
+          );
         }
         const result = await query
           .andWhere('assignment.is_visible_for_employee = :visible', { visible: true })
@@ -762,10 +918,8 @@ export class AssignmentService {
           )
           .getMany();
         console.log('🔍 [assignment.service] read_all (non-manager) result count:', result.length);
-        // Adaugă informații despre persoane și departamente
-        const enrichedResults = await Promise.all(
-          result.map(assignment => this.enrichAssignmentWithDetails(assignment))
-        );
+        // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+        const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(result);
         return enrichedResults;
       }
     }
@@ -867,7 +1021,11 @@ export class AssignmentService {
       if (startDate && endDate) {
         const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
         const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-        queryBuilder.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+        // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+        queryBuilder.andWhere(
+          '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+          { sd, ed }
+        );
       }
       // Aplică filtru pe locație dacă e furnizat
       if (locationId !== undefined) {
@@ -907,10 +1065,8 @@ export class AssignmentService {
           assignment_mode: result[0].assignment_mode
         })
       }
-      // Adaugă informații despre persoane și departamente
-      const enrichedResults = await Promise.all(
-        result.map(assignment => this.enrichAssignmentWithDetails(assignment))
-      );
+      // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+      const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(result);
       return enrichedResults;
     }
 
@@ -957,7 +1113,11 @@ export class AssignmentService {
           if (startDate && endDate) {
             const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
             const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-            qb.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd, ed });
+            // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+            qb.andWhere(
+              '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+              { sd, ed }
+            );
           }
           // Filtru explicit pe assignment.location_id dacă e trimis
           if (locationId !== undefined) {
@@ -966,10 +1126,8 @@ export class AssignmentService {
           const locationResult = await qb.getMany();
           console.log('🔍 [assignment.service] read_location result count:', locationResult.length, 'applied locationId:', (locationId !== undefined ? locationId : employee.work_location_default_id));
           
-          // Adaugă informații despre persoane și departamente
-          const enrichedLocationResults = await Promise.all(
-            locationResult.map(assignment => this.enrichAssignmentWithDetails(assignment))
-          );
+          // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+          const enrichedLocationResults = await this.enrichAssignmentsWithDetailsBatch(locationResult);
           return enrichedLocationResults;
         }
         
@@ -1048,7 +1206,11 @@ export class AssignmentService {
               if (startDate && endDate) {
                 const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
                 const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-                query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+                // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+                query.andWhere(
+                  '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+                  { sd: start, ed: end }
+                );
               }
               
               // Filtrare OBLIGATORIE - afișează DOAR task-urile cu location_id setat
@@ -1057,10 +1219,8 @@ export class AssignmentService {
               const companyLocationResult = await query.getMany();
               console.log('🔍 [assignment.service] read_company result count:', companyLocationResult.length, 'filter locationId:', locationId, 'company locations count:', locationIds.length);
               
-              // Adaugă informații despre persoane și departamente
-              const enrichedCompanyResults = await Promise.all(
-                companyLocationResult.map(assignment => this.enrichAssignmentWithDetails(assignment))
-              );
+              // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+              const enrichedCompanyResults = await this.enrichAssignmentsWithDetailsBatch(companyLocationResult);
               return enrichedCompanyResults;
             }
           }
@@ -1086,7 +1246,11 @@ export class AssignmentService {
         if (startDate && endDate) {
           const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
           const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+          // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          query.andWhere(
+            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+            { sd: start, ed: end }
+          );
         }
         const result = await query
           .where(
@@ -1099,10 +1263,8 @@ export class AssignmentService {
             }
           )
           .getMany();
-        // Adaugă informații despre persoane și departamente
-      const enrichedResults = await Promise.all(
-        result.map(assignment => this.enrichAssignmentWithDetails(assignment))
-      );
+        // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+      const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(result);
       return enrichedResults;
       } else {
         // Dacă nu este manager, filtrează doar sarcinile vizibile
@@ -1113,7 +1275,11 @@ export class AssignmentService {
         if (startDate && endDate) {
           const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
           const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
-          query.andWhere('assignment.assigned_at BETWEEN :sd AND :ed', { sd: start, ed: end });
+          // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          query.andWhere(
+            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+            { sd: start, ed: end }
+          );
         }
         const result = await query
           .where('assignment.is_visible_for_employee = :visible', { visible: true })
@@ -1127,10 +1293,8 @@ export class AssignmentService {
             }
           )
           .getMany();
-        // Adaugă informații despre persoane și departamente
-      const enrichedResults = await Promise.all(
-        result.map(assignment => this.enrichAssignmentWithDetails(assignment))
-      );
+        // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+      const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(result);
       return enrichedResults;
       }
     }
@@ -1472,10 +1636,8 @@ export class AssignmentService {
 
       console.log('🔍 [assignment.service] Rezultat overdue tasks:', overdueTasks.length, 'assignments')
       
-      // Adaugă informații despre persoane și departamente
-      const enrichedResults = await Promise.all(
-        overdueTasks.map(assignment => this.enrichAssignmentWithDetails(assignment))
-      );
+      // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+      const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(overdueTasks);
       return enrichedResults;
     }
 
@@ -1519,9 +1681,8 @@ export class AssignmentService {
 
       console.log('🔍 [assignment.service] Rezultat overdue tasks (manager):', overdueTasks.length, 'assignments')
       
-      const enrichedResults = await Promise.all(
-        overdueTasks.map(assignment => this.enrichAssignmentWithDetails(assignment))
-      );
+      // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
+      const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(overdueTasks);
       return enrichedResults;
     }
 

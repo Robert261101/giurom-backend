@@ -1,8 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { TaskExecution } from './task-execution.entity';
 import { TaskElement } from '../../template/entity/task-element.entity';
 
 @Entity('Task_Execution_Answers')
+@Index(['task_execution_id']) // Index pentru join-uri eficiente
+@Index(['task_element_id']) // Index pentru filtrare după element
 export class TaskExecutionAnswer {
   @PrimaryGeneratedColumn()
   id: number;

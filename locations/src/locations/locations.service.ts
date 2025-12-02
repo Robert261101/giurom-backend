@@ -753,20 +753,20 @@ export class LocationsService {
       
       try {
         // Obține first_name și last_name direct din employees folosind employee_id
-        const employeeResult = await this.dataSource.query(
-          `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+          const employeeResult = await this.dataSource.query(
+            `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
           [rev.employee_id]
-        );
-        
-        if (employeeResult && employeeResult.length > 0) {
-          return {
-            ...rev,
+          );
+          
+          if (employeeResult && employeeResult.length > 0) {
+            return {
+              ...rev,
             employee_id: Number(rev.employee_id),
-            employee_first_name: employeeResult[0].first_name || null,
-            employee_last_name: employeeResult[0].last_name || null,
-          };
-        }
-        
+              employee_first_name: employeeResult[0].first_name || null,
+              employee_last_name: employeeResult[0].last_name || null,
+            };
+          }
+          
         return { ...rev, employee_id: Number(rev.employee_id), employee_first_name: null, employee_last_name: null };
       } catch (error: any) {
         console.error(`❌ Error fetching employee data for employee_id ${rev.employee_id}:`, error.message);

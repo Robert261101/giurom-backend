@@ -387,6 +387,40 @@ export class UsersService {
   /**
    * Găsește un angajat după telefon din microserviciul employees
    */
+  /**
+   * Găsește un employee după ID
+   */
+  async findEmployeeById(employeeId: number): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`http://localhost:3012/employees/${employeeId}`, {
+          headers: {
+            'X-Internal-Service': 'auth-service',
+            'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      const employee = response.data?.data || response.data;
+      if (!employee) {
+        return null;
+      }
+      return {
+        id: employee.id,
+        email: employee.email || '',
+        first_name: employee.first_name || employee.firstName || '',
+        last_name: employee.last_name || employee.lastName || '',
+        phone: employee.phone || '',
+        profile_image: employee.profile_image || employee.profileImage || null,
+        birth_date: employee.birth_date || employee.birthDate || null,
+        department_default_id: employee.department_default_id || employee.departmentDefaultId || null,
+        work_location_default_id: employee.work_location_default_id || employee.workLocationDefaultId || null
+      };
+    } catch (error) {
+      console.error(`Eroare la găsirea employee-ului cu ID ${employeeId}:`, error);
+      return null;
+    }
+  }
+
   async findEmployeeByPhone(phone: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
     try {
       // Add internal service authentication header

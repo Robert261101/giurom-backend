@@ -1,9 +1,14 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
 import { TaskAssignment } from '../../assignment/entity/task-assignment.entity';
 import { TaskExecutionAnswer } from './task-execution-answer.entity';
 import { EmployeeDailyTaskPoints } from './employee-daily-task-points.entity';
 
 @Entity('Task_Execution')
+@Index(['task_assignment_id']) // Index pentru batch loading executions
+@Index(['location_id']) // Index pentru filtrare după locație
+@Index(['employee_id']) // Index pentru filtrare după angajat
+@Index(['created_at']) // Index pentru sortare
+@Index(['location_id', 'created_at']) // Index compus pentru filtrare + sortare
 export class TaskExecution {
   @PrimaryGeneratedColumn()
   id: number;

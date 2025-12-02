@@ -226,7 +226,7 @@ export class ExecutionService {
     };
   }
 
-  async findAll(user: any, includeAssignment: boolean = true, locationId?: number): Promise<TaskExecution[]> {
+  async findAll(user: any, includeAssignment: boolean = true, locationId?: number, startDate?: Date, endDate?: Date): Promise<TaskExecution[]> {
     
     const query = this.executionRepository
       .createQueryBuilder('execution')
@@ -245,6 +245,37 @@ export class ExecutionService {
     // Aplică filtrul după location_id dacă este furnizat
     if (locationId !== undefined) {
       query.andWhere('execution.location_id = :locationId', { locationId });
+    }
+
+    // Aplică filtrul după dată dacă este furnizat, altfel limitează la ultimele 30 de zile
+    if (startDate && endDate) {
+      // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
+      const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+      const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      console.log('📅 [execution.service] Date filter:', { 
+        startDate: sdStr, 
+        endDate: edStr,
+        startDateObj: startDate.toISOString(),
+        endDateObj: endDate.toISOString()
+      });
+      // Filtrează după created_at (data când a fost creată execuția)
+      query.andWhere(
+        `DATE(execution.created_at) BETWEEN :sdStr AND :edStr`,
+        { sdStr, edStr }
+      );
+    } else {
+      // Limită implicită: ultimele 30 de zile pentru performanță
+      const today = new Date();
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(today.getDate() - 30);
+      const sdStr = `${thirtyDaysAgo.getFullYear()}-${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(thirtyDaysAgo.getDate()).padStart(2, '0')}`;
+      console.log('📅 [execution.service] No date filter provided, using default: last 30 days', { 
+        startDate: sdStr
+      });
+      query.andWhere(
+        `DATE(execution.created_at) >= :sdStr`,
+        { sdStr }
+      );
     }
     
     // Filtrare OBLIGATORIE - afișează DOAR executions cu location_id setat
@@ -305,6 +336,32 @@ export class ExecutionService {
     }
     
     return execution;
+  }
+
+  /**
+   * OPTIMIZAT: Batch load executions pentru multiple assignments dintr-o dată
+   * Elimină problema N+1 prin un singur query cu WHERE IN
+   * Folosește indexuri pentru performanță maximă
+   */
+  async getExecutionsByAssignmentsBatch(assignmentIds: number[]): Promise<TaskExecution[]> {
+    if (!assignmentIds || assignmentIds.length === 0) {
+      return [];
+    }
+
+    console.log(`🚀 [BATCH EXECUTIONS] Loading executions for ${assignmentIds.length} assignments`);
+    
+    // OPTIMIZAT: Folosește select explicit pentru a reduce overhead-ul
+    const executions = await this.executionRepository
+      .createQueryBuilder('execution')
+      .leftJoinAndSelect('execution.answers', 'answers')
+      .leftJoinAndSelect('answers.task_element', 'task_element')
+      .where('execution.task_assignment_id IN (:...assignmentIds)', { assignmentIds })
+      .orderBy('execution.created_at', 'DESC')
+      .cache(false) // Dezactivează cache pentru date fresh
+      .getMany();
+
+    console.log(`✅ [BATCH EXECUTIONS] Loaded ${executions.length} executions`);
+    return executions;
   }
 
   async getExecutionByAssignment(assignmentId: number): Promise<TaskExecution | null> {

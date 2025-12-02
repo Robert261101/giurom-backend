@@ -90,9 +90,17 @@ export class ExecutionController {
   })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  findAll(@Request() req, @Query('include_assignment') includeAssignment?: string, @Query('location_id') location_id?: string): Promise<TaskExecution[]> {
+  findAll(
+    @Request() req, 
+    @Query('include_assignment') includeAssignment?: string, 
+    @Query('location_id') location_id?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ): Promise<TaskExecution[]> {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId);
+    const sd = startDate ? new Date(startDate) : undefined;
+    const ed = endDate ? new Date(endDate) : undefined;
+    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed);
   }
 
   @Get(':id')

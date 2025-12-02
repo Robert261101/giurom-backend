@@ -116,6 +116,33 @@ export class RecipesHttpController {
   @Permissions('recipes.read')
   getRecipeProducts(@Param('id') id: string) { return this.recipes.findRecipeProducts(Number(id)); }
 
+  // Recipe recipes (rețete ca ingrediente)
+  @Post('recipes/:id/recipe-ingredients')
+  @Permissions('recipes.update')
+  addRecipeIngredient(
+    @Param('id') recipeId: string,
+    @Body() body: { ingredient_recipe_id: number; quantity: number; notes?: string }
+  ) {
+    return this.recipes.addRecipeToRecipe(Number(recipeId), body.ingredient_recipe_id, body.quantity, body.notes);
+  }
+
+  @Get('recipes/:id/recipe-ingredients')
+  @Permissions('recipes.read')
+  getRecipeIngredients(@Param('id') id: string) { return this.recipes.getRecipeRecipes(Number(id)); }
+
+  @Patch('recipes/recipe-ingredients/:id')
+  @Permissions('recipes.update')
+  updateRecipeIngredient(
+    @Param('id') id: string,
+    @Body() body: { quantity: number; notes?: string }
+  ) {
+    return this.recipes.updateRecipeRecipe(Number(id), body.quantity, body.notes);
+  }
+
+  @Delete('recipes/recipe-ingredients/:id')
+  @Permissions('recipes.update')
+  removeRecipeIngredient(@Param('id') id: string) { return this.recipes.removeRecipeRecipe(Number(id)); }
+
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
   @Permissions('recipes.read')

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -229,6 +229,37 @@ export class TemplateService {
       id,
       { templateName }
     );
+  }
+
+  async addLocationToTemplate(templateId: number, locationId: number): Promise<TemplateLocation> {
+    // Verifică dacă template-ul există
+    const template = await this.templateRepository.findOne({
+      where: { id: templateId }
+    });
+
+    if (!template) {
+      throw new NotFoundException(`Template cu ID ${templateId} nu a fost găsit`);
+    }
+
+    // Verifică dacă relația există deja
+    const existing = await this.templateLocationRepository.findOne({
+      where: {
+        taskTemplateId: templateId,
+        idLocation: locationId
+      }
+    });
+
+    if (existing) {
+      throw new BadRequestException(`Template-ul este deja asignat la această locație`);
+    }
+
+    // Creează relația template-locație
+    const templateLocation = this.templateLocationRepository.create({
+      taskTemplateId: templateId,
+      idLocation: locationId
+    });
+    
+    return await this.templateLocationRepository.save(templateLocation);
   }
 
 }

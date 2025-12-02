@@ -241,10 +241,20 @@ export class AuthService {
         throw new Error('Utilizatorul nu a fost găsit');
       }
       
-      // Preia datele complete din microserviciul employees
+      // Preia datele complete din microserviciul employees folosind id_employee direct
       this.logger.log(`🔍 Refresh token payload:`, payload);
-      const employeeData: any = await this.usersService.findEmployeeByEmail(payload.email) || 
-                          (payload.phone ? await this.usersService.findEmployeeByPhone(payload.phone) : null);
+      // Folosim user.id_employee direct pentru a obține datele employee-ului
+      const employeeData: any = await this.usersService.findEmployeeById(user.id_employee);
+      
+      if (!employeeData) {
+        this.logger.warn(`⚠️ Nu s-au găsit date pentru employee cu ID ${user.id_employee} - folosim date alternative`);
+        // Dacă nu găsim prin ID, încercăm prin email sau phone din payload (pentru compatibilitate cu token-uri vechi)
+        const fallbackData = await this.usersService.findEmployeeByEmail(payload.email || '') || 
+                            (payload.phone ? await this.usersService.findEmployeeByPhone(payload.phone) : null);
+        if (fallbackData) {
+          Object.assign(employeeData || {}, fallbackData);
+        }
+      }
 
       // Obține roles și permissions pentru utilizator (folosind user.id, nu user.id_employee)
       const { roles, permissions } = await this.usersService.getUserRolesAndPermissions(user.id);

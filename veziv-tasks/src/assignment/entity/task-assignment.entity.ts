@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
 import { TaskTemplate } from '../../template/entity/task-template.entity';
 import { TaskAssignmentElement } from './task-assignment-element.entity';
 
@@ -27,6 +27,17 @@ export enum AssignmentMode {
 }
 
 @Entity('Task_Assignment')
+@Index(['location_id']) // Index pentru filtrare după locație
+@Index(['assigned_at']) // Index pentru filtrare după dată
+@Index(['scheduled_datetime']) // Index pentru filtrare după dată programată
+@Index(['status']) // Index pentru filtrare după status
+@Index(['assigned_to_id']) // Index pentru filtrare după angajat
+@Index(['location_id', 'status']) // Index compus pentru filtrare după locație + status
+@Index(['location_id', 'assigned_at']) // Index compus pentru filtrare după locație + dată
+@Index(['location_id', 'scheduled_datetime']) // Index compus pentru filtrare după locație + dată programată
+@Index(['assigned_at', 'status']) // Index compus pentru filtrare după dată + status
+@Index(['location_id', 'assigned_at', 'status']) // Index compus pentru query-uri complexe
+@Index(['is_visible_for_employee']) // Index pentru filtrare după vizibilitate
 export class TaskAssignment {
   @PrimaryGeneratedColumn()
   id: number;

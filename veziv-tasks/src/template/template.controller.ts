@@ -121,4 +121,22 @@ export class TemplateController {
     return this.templateService.remove(id);
   }
 
+  @Post(':id/locations/:locationId')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('template.update')
+  @ApiOperation({ summary: 'Adaugă un template existent la o locație' })
+  @ApiParam({ name: 'id', description: 'ID-ul template-ului' })
+  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiResponse({ status: 201, description: 'Template adăugat la locație cu succes' })
+  @ApiResponse({ status: 400, description: 'Template-ul este deja asignat la această locație' })
+  @ApiResponse({ status: 404, description: 'Template nu a fost găsit' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  addLocationToTemplate(
+    @Param('id', ParseIntPipe) templateId: number,
+    @Param('locationId', ParseIntPipe) locationId: number,
+  ): Promise<any> {
+    return this.templateService.addLocationToTemplate(templateId, locationId);
+  }
+
 }

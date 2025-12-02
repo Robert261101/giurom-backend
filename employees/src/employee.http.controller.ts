@@ -199,6 +199,29 @@ export class EmployeeHttpController {
     return this.employeeService.findByCNP(cnp);
   }
 
+  @Get('by-user/:userId')
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
+  @Permissions('employees.read')
+  @ApiOperation({
+    summary: 'Găsește angajat după user ID',
+    description: 'Returnează detaliile angajatului asociat cu user_id-ul specificat.',
+  })
+  @ApiParam({ name: 'userId', description: 'ID-ul utilizatorului (din auth service)' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Angajatul a fost găsit',
+    type: Employee,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Angajatul nu a fost găsit pentru acest user_id',
+  })
+  async findByUserId(
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<Employee> {
+    return this.employeeService.findByUserId(userId);
+  }
+
   @Get(':id')
   @UseGuards(InternalServiceGuard) // Allow internal service calls
   @Permissions('employees.read')

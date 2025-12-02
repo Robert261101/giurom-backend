@@ -288,6 +288,37 @@ export class EmployeeService {
     return employees;
   }
 
+  // Găsirea unui angajat după user_id (prin auth service)
+  async findByUserId(userId: number): Promise<Employee> {
+    try {
+      // Obține employee_id din auth service (prin gateway sau direct)
+      const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+      const userResponse = await firstValueFrom(
+        this.httpService.get(`${authServiceUrl}/users/${userId}`, {
+          headers: {
+            'X-Internal-Service': 'employees-service',
+            'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
+          }
+        })
+      );
+      
+      const userData = userResponse.data?.data || userResponse.data;
+      const employeeId = userData?.id_employee || userData?.employee_id;
+      
+      if (!employeeId) {
+        throw new NotFoundException(`Utilizatorul cu ID ${userId} nu are un employee_id asociat`);
+      }
+      
+      // Găsește employee-ul după employee_id
+      return this.findOne(employeeId);
+    } catch (error: any) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new NotFoundException(`Nu s-a putut găsi angajatul pentru utilizatorul cu ID ${userId}: ${error.message}`);
+    }
+  }
+
   // Găsirea unui angajat după ID
   async findOne(id: number): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({
