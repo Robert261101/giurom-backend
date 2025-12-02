@@ -61,6 +61,52 @@ export class CompanyHttpController {
 		return this.service.getCompanyFolders(parseInt(companyId, 10));
 	}
 
+	@Get(':companyId/documents/structure')
+	@Permissions('companies.read')
+	getCompanyFileStructure(@Param('companyId') companyId: string) {
+		console.log(`[COMPANY CONTROLLER] Getting file structure for company ${companyId}`);
+		return this.service.getCompanyFileStructure(parseInt(companyId, 10));
+	}
+
+	@Get(':companyId/documents/folder-files')
+	@Permissions('companies.read')
+	getFilesFromFolder(
+		@Param('companyId') companyId: string,
+		@Query('path') folderPath: string
+	) {
+		console.log(`[COMPANY CONTROLLER] Getting files from folder ${folderPath} for company ${companyId}`);
+		return this.service.getFilesFromFolder(parseInt(companyId, 10), folderPath);
+	}
+
+	@Get(':companyId/documents/file')
+	@Permissions('companies.read')
+	async serveFileFromPath(
+		@Param('companyId') companyId: string,
+		@Query('path') filePath: string,
+		@Query('download') download: string,
+		@Res() res: Response,
+	) {
+		try {
+			console.log(`[COMPANY CONTROLLER] Serving file from path ${filePath} for company ${companyId}, download: ${download}`);
+			const forceDownload = download === 'true';
+			const served = await this.service.serveFileFromPath(parseInt(companyId, 10), filePath, forceDownload);
+			const buffer = Buffer.from(served.data, 'base64');
+			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+			res.setHeader(
+				'Content-Disposition',
+				`${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
+			);
+			res.setHeader('Content-Length', buffer.length.toString());
+			return res.send(buffer);
+		} catch (error) {
+			console.error(`[COMPANY CONTROLLER] Error serving file from path:`, error);
+			if (error instanceof Error && error.message.includes('nu a fost găsit')) {
+				return res.status(404).json({ error: 'File not found' });
+			}
+			return res.status(500).json({ error: 'Internal server error' });
+		}
+	}
+
 	@Get(':companyId/documents/folder/:folder')
 	@Permissions('companies.read')
 	getDocsByFolder(@Param('companyId') companyId: string, @Param('folder') folder: string) {

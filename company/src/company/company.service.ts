@@ -25,8 +25,22 @@ export class CompanyService {
     // Resolve repo root relative to this file location
     // __dirname is .../giurom-backend/company/src (dev with ts-node) or .../giurom-backend/company/dist (prod)
     // We need to go up 3 levels to reach giurom-backend, then up one more to reach giurom root
-    const repoRoot = path.resolve(__dirname, '../../../..');
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      // In case resolution ended at giurom-backend due to different runtime path depth
+      repoRoot = path.dirname(repoRoot);
+    }
     return path.join(repoRoot, 'files', 'companies');
+  }
+
+  // Get repo root directory (helper method)
+  private getRepoRoot(): string {
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      // In case resolution ended at giurom-backend due to different runtime path depth
+      repoRoot = path.dirname(repoRoot);
+    }
+    return repoRoot;
   }
 
   async createCompany(dto: CreateCompanyDto): Promise<Company> {
@@ -64,16 +78,13 @@ export class CompanyService {
   }
 
   async createCompanyWithDocuments(dto: CreateCompanyWithDocumentsDto): Promise<Company> {
-    console.log('Received data in backend:', JSON.stringify(dto, null, 2));
     const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
     if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     const { documents, ...companyData } = dto as any;
     const companyEntity: Company = this.companyRepository.create(companyData as Partial<Company>);
     const saved: Company = await this.companyRepository.save(companyEntity);
     if (Array.isArray(documents) && documents.length) {
-      console.log('Documents received:', documents);
       for (const doc of documents) {
-        console.log('Processing document:', doc);
         // Create directory for company if it doesn't exist
         const companyDir = path.join(this.getCompanyFilesRootDir(), saved.id.toString());
         if (!fs.existsSync(companyDir)) {
@@ -114,7 +125,6 @@ export class CompanyService {
               locationPath = `/files/companies/${saved.id}/${fileName}`;
             }
           } catch (error) {
-            console.error('Error saving document to disk:', error);
             // Continue even if file save fails - document is still saved in DB
           }
         }
@@ -128,9 +138,7 @@ export class CompanyService {
           upload_date: new Date(),
           notes: doc.note || doc.notes || null,
         });
-        console.log('Document to be saved:', document);
         await this.companyDocumentRepository.save(document);
-        console.log('Document saved successfully');
       }
     }
     return saved;
@@ -326,32 +334,19 @@ export class CompanyService {
 
   // Serve a company file from disk
   async serveCompanyFile(fileId: number, forceDownload: boolean = false): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
-    console.log(`🔍 Serving company file with ID: ${fileId}, forceDownload: ${forceDownload}`);
-    
     const document = await this.findDocumentById(fileId);
-    console.log(`📄 Document metadata:`, {
-      id: document.id,
-      name: document.document_name,
-      company_id: document.company_id,
-      location_path: document.location_path
-    });
     
     // Construct the file path from the location_path
     const basePath = this.getCompanyFilesRootDir();
     const relativePath = document.location_path.replace('/files/companies/', '');
     const filePath = path.join(basePath, relativePath);
-    console.log(`📁 Serving file from: ${filePath}`);
     
     if (!fs.existsSync(filePath)) {
-      console.error(`❌ File not found on disk: ${filePath}`);
       throw new NotFoundException('Fișierul nu a fost găsit pe disk');
     }
     
     const mimeType = this.getMimeType(document.document_name);
-    console.log(`📋 MIME type determined: ${mimeType}`);
-    
     const fileBuffer = fs.readFileSync(filePath);
-    console.log(`✅ File read successfully: ${document.document_name} (${fileBuffer.length} bytes)`);
 
     return {
       data: fileBuffer.toString('base64'),
@@ -397,6 +392,341 @@ export class CompanyService {
     return folders;
   }
 
+  // Get file system structure from files/company directory
+  async getCompanyFileStructure(companyId: number): Promise<any> {
+    const company = await this.findCompanyById(companyId);
+    
+    // Try both paths: files/company/{companyName} and files/companies/{companyId}
+    const repoRoot = this.getRepoRoot();
+    
+    // Also try common alternative paths
+    const possibleRoots = [
+      repoRoot,
+      path.join(repoRoot, '..'), // One level up
+      '/home/giurom', // Common production path
+      '/var/www/giurom', // Alternative production path
+      process.cwd(), // Current working directory
+    ];
+    
+    let foundRoot = null;
+    for (const root of possibleRoots) {
+      const testFilesDir = path.join(root, 'files');
+      if (fs.existsSync(testFilesDir)) {
+        foundRoot = root;
+        break;
+      }
+    }
+    
+    if (!foundRoot) {
+      foundRoot = repoRoot;
+    }
+    
+    const companyNamePath = path.join(foundRoot, 'files', 'company', company.company_name);
+    const companyIdPath = path.join(foundRoot, 'files', 'companies', company.id.toString());
+    
+    // Check which path exists
+    let companyDir = '';
+    if (fs.existsSync(companyNamePath)) {
+      companyDir = companyNamePath;
+    } else if (fs.existsSync(companyIdPath)) {
+      companyDir = companyIdPath;
+    } else {
+      return { type: 'folder', name: company.company_name, children: [] };
+    }
+    
+    // Recursive function to read directory structure
+    const readDirectory = (dirPath: string, relativePath: string = ''): any => {
+      const result: any = {
+        type: 'folder',
+        name: path.basename(dirPath),
+        path: relativePath,
+        children: []
+      };
+      
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name);
+          const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+          
+          if (entry.isDirectory()) {
+            result.children.push(readDirectory(fullPath, entryRelativePath));
+          } else if (entry.isFile()) {
+            result.children.push({
+              type: 'file',
+              name: entry.name,
+              path: entryRelativePath
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Error reading directory ${dirPath}:`, error);
+      }
+      
+      return result;
+    };
+    
+    return readDirectory(companyDir);
+  }
+
+  // Get files from a specific folder path on server
+  async getFilesFromFolder(companyId: number, folderPath: string): Promise<Array<{ name: string; path: string; size?: number; modified?: Date }>> {
+    const company = await this.findCompanyById(companyId);
+    
+    // Try both paths: files/company/{companyName} and files/companies/{companyId}
+    const repoRoot = this.getRepoRoot();
+    
+    // Also try common alternative paths
+    const possibleRoots = [
+      repoRoot,
+      path.join(repoRoot, '..'), // One level up
+      '/home/giurom', // Common production path
+      '/var/www/giurom', // Alternative production path
+      process.cwd(), // Current working directory
+    ];
+    
+    let foundRoot = null;
+    for (const root of possibleRoots) {
+      const testFilesDir = path.join(root, 'files');
+      if (fs.existsSync(testFilesDir)) {
+        foundRoot = root;
+        break;
+      }
+    }
+    
+    if (!foundRoot) {
+      foundRoot = repoRoot;
+    }
+    
+    // Try multiple possible paths for company directory
+    const possibleCompanyPaths = [
+      path.join(foundRoot, 'files', 'companies', company.id.toString()), // /home/files/companies/3
+      path.join(foundRoot, 'files', 'companies', company.company_name), // /home/files/companies/Giurom Divert Srl
+      path.join(foundRoot, 'files', 'company', company.company_name), // /home/files/company/Giurom Divert Srl (legacy)
+      path.join(foundRoot, 'files', 'company', company.id.toString()), // /home/files/company/3 (legacy)
+    ];
+    
+    // Check which path exists
+    let companyDir = '';
+    for (const companyPath of possibleCompanyPaths) {
+      if (fs.existsSync(companyPath)) {
+        companyDir = companyPath;
+        break;
+      }
+    }
+    
+    if (!companyDir) {
+      return [];
+    }
+    
+    // Build full path to the folder
+    // folderPath is like: "locations/gyros-doner-constanta/suppliers/furnizor-testsx/certificat-de-inregistrare-furnizor"
+    // But on server:
+    // - "locations" is "Locații" (with diacritics and capital)
+    // - "gyros-doner-constanta" is "Gyros & Doner Constanta" (with diacritics and capital)
+    // - "suppliers" is "Furnizori" (with diacritics and capital)
+    // - "furnizor-testsx" might be "furnizor testsx" (with spaces)
+    // So we need to correct all of these step by step
+    let correctedFolderPath = folderPath;
+    
+    // Helper function to simplify a name for comparison
+    const simplifyName = (name: string): string => {
+      return name
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    };
+    
+    // Step 1: Correct "locations" -> "Locații"
+    if (correctedFolderPath.startsWith('locations/')) {
+      const companyDirContents = fs.existsSync(companyDir) ? fs.readdirSync(companyDir) : [];
+      const locationsFolderName = companyDirContents.find(name => 
+        name.toLowerCase() === 'locations' || 
+        name.toLowerCase() === 'locații' ||
+        name === 'Locații' ||
+        name === 'locations'
+      );
+      
+      if (locationsFolderName) {
+        correctedFolderPath = correctedFolderPath.replace(/^locations\//i, `${locationsFolderName}/`);
+      }
+    }
+    
+    // Step 2: Find the actual location name
+    const pathParts = correctedFolderPath.split('/');
+    const locationsIndex = pathParts.findIndex(part => 
+      part.toLowerCase() === 'locations' || 
+      part.toLowerCase() === 'locații' ||
+      part === 'Locații'
+    );
+    
+    if (locationsIndex >= 0 && locationsIndex + 1 < pathParts.length) {
+      const simplifiedLocationName = pathParts[locationsIndex + 1]; // e.g., "gyros-doner-constanta"
+      const locationsPath = path.join(companyDir, pathParts[locationsIndex]);
+      
+      if (fs.existsSync(locationsPath)) {
+        const locationDirContents = fs.readdirSync(locationsPath);
+        const actualLocationName = locationDirContents.find(name => 
+          simplifyName(name) === simplifiedLocationName
+        );
+        
+        if (actualLocationName && actualLocationName !== simplifiedLocationName) {
+          pathParts[locationsIndex + 1] = actualLocationName;
+          correctedFolderPath = pathParts.join('/');
+        }
+      }
+    }
+    
+    // Step 3: Correct "suppliers" -> "Furnizori" and find actual supplier name
+    // Use correctedFolderPath (after Step 1 and Step 2) to get the updated path parts
+    let updatedPathParts = correctedFolderPath.split('/');
+    const suppliersIndex = updatedPathParts.findIndex(part => 
+      part.toLowerCase() === 'suppliers' || 
+      part.toLowerCase() === 'furnizori'
+    );
+    
+    if (suppliersIndex >= 0) {
+      // Find the location folder to check for "Furnizori"
+      const locationFolderIndex = updatedPathParts.findIndex(part => 
+        part === 'Locații' || part.toLowerCase() === 'locații'
+      );
+      
+      if (locationFolderIndex >= 0 && locationFolderIndex + 1 < suppliersIndex) {
+        const locationName = updatedPathParts[locationFolderIndex + 1];
+        const locationPath = path.join(companyDir, updatedPathParts.slice(0, locationFolderIndex + 2).join('/'));
+        
+        if (fs.existsSync(locationPath)) {
+          const locationDirContents = fs.readdirSync(locationPath);
+          
+          const suppliersFolderName = locationDirContents.find(name => 
+            name.toLowerCase() === 'suppliers' || 
+            name.toLowerCase() === 'furnizori' ||
+            name === 'Furnizori' ||
+            name === 'suppliers'
+          );
+          
+          if (suppliersFolderName && suppliersFolderName !== updatedPathParts[suppliersIndex]) {
+            updatedPathParts[suppliersIndex] = suppliersFolderName;
+            correctedFolderPath = updatedPathParts.join('/');
+          }
+          
+          // Step 4: Find the actual supplier name
+          if (suppliersIndex + 1 < updatedPathParts.length) {
+            const simplifiedSupplierName = updatedPathParts[suppliersIndex + 1]; // e.g., "furnizor-testsx"
+            const suppliersPath = path.join(locationPath, suppliersFolderName || 'Furnizori');
+            
+            if (fs.existsSync(suppliersPath)) {
+              const suppliersDirContents = fs.readdirSync(suppliersPath);
+              
+              const actualSupplierName = suppliersDirContents.find(name => 
+                simplifyName(name) === simplifiedSupplierName
+              );
+              
+              if (actualSupplierName && actualSupplierName !== simplifiedSupplierName) {
+                updatedPathParts[suppliersIndex + 1] = actualSupplierName;
+                correctedFolderPath = updatedPathParts.join('/');
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    const fullFolderPath = path.join(companyDir, correctedFolderPath);
+    
+    if (!fs.existsSync(fullFolderPath) || !fs.statSync(fullFolderPath).isDirectory()) {
+      return [];
+    }
+    
+    const files: Array<{ name: string; path: string; size?: number; modified?: Date }> = [];
+    
+    try {
+      const entries = fs.readdirSync(fullFolderPath, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const filePath = path.join(fullFolderPath, entry.name);
+          const stats = fs.statSync(filePath);
+          files.push({
+            name: entry.name,
+            path: `${folderPath}/${entry.name}`,
+            size: stats.size,
+            modified: stats.mtime
+          });
+        }
+      }
+    } catch (error) {
+      // Error reading folder
+    }
+    
+    return files;
+  }
+
+  // Serve a file from a specific folder path on server
+  async serveFileFromPath(companyId: number, filePath: string, forceDownload: boolean = false): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
+    const company = await this.findCompanyById(companyId);
+    
+    // Try both paths: files/company/{companyName} and files/companies/{companyId}
+    const repoRoot = this.getRepoRoot();
+    
+    // Also try common alternative paths
+    const possibleRoots = [
+      repoRoot,
+      path.join(repoRoot, '..'), // One level up
+      '/home/giurom', // Common production path
+      '/var/www/giurom', // Alternative production path
+      process.cwd(), // Current working directory
+    ];
+    
+    let foundRoot = null;
+    for (const root of possibleRoots) {
+      const testFilesDir = path.join(root, 'files');
+      if (fs.existsSync(testFilesDir)) {
+        foundRoot = root;
+        break;
+      }
+    }
+    
+    if (!foundRoot) {
+      foundRoot = repoRoot;
+    }
+    
+    const companyNamePath = path.join(foundRoot, 'files', 'company', company.company_name);
+    const companyIdPath = path.join(foundRoot, 'files', 'companies', company.id.toString());
+    
+    // Check which path exists
+    let companyDir = '';
+    if (fs.existsSync(companyNamePath)) {
+      companyDir = companyNamePath;
+    } else if (fs.existsSync(companyIdPath)) {
+      companyDir = companyIdPath;
+    } else {
+      throw new NotFoundException('Folderul companiei nu a fost găsit');
+    }
+    
+    // Build full path to the file
+    const fullFilePath = path.join(companyDir, filePath);
+    
+    if (!fs.existsSync(fullFilePath) || !fs.statSync(fullFilePath).isFile()) {
+      throw new NotFoundException('Fișierul nu a fost găsit');
+    }
+    
+    const fileName = path.basename(fullFilePath);
+    const mimeType = this.getMimeType(fileName);
+    const fileBuffer = fs.readFileSync(fullFilePath);
+    
+    return {
+      data: fileBuffer.toString('base64'),
+      mimeType,
+      fileName,
+      disposition: forceDownload ? 'attachment' : 'inline',
+    };
+  }
+
   async getCompanyStatistics(): Promise<{ total: number; active: number; inactive: number; vat_payers: number }> {
     const total = await this.companyRepository.count();
     const active = await this.companyRepository.count({ where: { status: 'activ' } });
@@ -407,7 +737,6 @@ export class CompanyService {
 
   // Find documents expiring on a specific date
   async findExpiringDocuments(targetDate: string): Promise<CompanyDocument[]> {
-    console.log(`[COMPANY SERVICE] Finding documents expiring on ${targetDate}`);
     // Format the date to match the database format (YYYY-MM-DD)
     const formattedDate = new Date(targetDate);
     formattedDate.setHours(0, 0, 0, 0);
@@ -418,13 +747,11 @@ export class CompanyService {
       .leftJoinAndSelect('document.company', 'company')
       .getMany();
     
-    console.log(`[COMPANY SERVICE] Found ${documents.length} documents expiring on ${targetDate}`);
     return documents;
   }
 
   // Find documents that have already expired
   async findExpiredDocuments(): Promise<CompanyDocument[]> {
-    console.log(`[COMPANY SERVICE] Finding expired documents`);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -435,7 +762,6 @@ export class CompanyService {
       .leftJoinAndSelect('document.company', 'company')
       .getMany();
     
-    console.log(`[COMPANY SERVICE] Found ${documents.length} expired documents`);
     return documents;
   }
 }
