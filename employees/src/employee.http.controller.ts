@@ -375,6 +375,7 @@ export class EmployeeHttpController {
       file_link: fileLinkPath,
       file_content: first.content,
       expire_date: first.expire_date,
+      note: first.note || undefined, // Include note field with folder information
     } as CreateEmployeeFileDto);
   }
 

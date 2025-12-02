@@ -761,7 +761,8 @@ export class EmployeeService {
       ...createFileDto,
       file_name: uniqueFileName,
       file_link: updatedFileLink,
-      expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null
+      expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null,
+      note: createFileDto.note || null
     });
 
     const savedFile = await this.filesRepository.save(file);

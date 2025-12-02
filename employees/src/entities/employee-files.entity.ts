@@ -66,6 +66,19 @@ export class EmployeeFiles {
   expire_date: Date | null;
 
   @ApiProperty({
+    description: 'Notă sau comentariu despre fișier',
+    example: 'Document verificat și aprobat',
+    required: false,
+  })
+  @Column({
+    type: 'text',
+    nullable: true,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci'
+  })
+  note: string | null;
+
+  @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',
   })

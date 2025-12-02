@@ -74,4 +74,13 @@ export class CreateEmployeeFileDto {
   @IsOptional()
   @IsString({ message: 'Conținutul fișierului trebuie să fie un string' })
   file_content?: string;
+
+  @ApiProperty({
+    description: 'Notă sau comentariu despre fișier (opțional)',
+    example: 'Document verificat și aprobat',
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Nota trebuie să fie un string' })
+  note?: string;
 }
