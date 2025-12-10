@@ -11,6 +11,7 @@ import { SupplierOrder } from './suppliers/entities/supplier-order.entity';
 import { SupplierOrderItem } from './suppliers/entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './suppliers/entities/supplier-order-document.entity';
 import { SupplierOrderItemReception } from './suppliers/entities/supplier-order-item-reception.entity';
+import { SupplierOrderCancelledItem } from './suppliers/entities/supplier-order-cancelled-item.entity';
 import { SupplierDocument } from './suppliers/entities/supplier-document.entity';
 import { SupplierLocations } from './suppliers/entities/supplier-locations.entity';
 import { SuppliersService } from './suppliers/suppliers.service';
@@ -57,6 +58,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         SupplierOrderItem,
         SupplierOrderDocument,
         SupplierOrderItemReception,
+        SupplierOrderCancelledItem,
         SupplierDocument,
         SupplierLocations,
       ],
@@ -85,6 +87,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       SupplierOrderItem,
       SupplierOrderDocument,
       SupplierOrderItemReception,
+      SupplierOrderCancelledItem,
       SupplierDocument,
       SupplierLocations,
     ]),
@@ -97,6 +100,9 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
+})
+export class AppModule {}
   ],
 })
 export class AppModule {}

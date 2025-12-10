@@ -22,10 +22,24 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
+    const handler = context.getHandler();
+    const controller = context.getClass();
+    const handlerName = handler.name;
+    
+    // Log pentru a vedea ce handler este apelat
+    this.logger.log(`🔍 [PermissionsGuard] Handler name: ${handlerName}, Controller: ${controller.name}`);
+    
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
-      context.getHandler(),
-      context.getClass(),
+      handler,
+      controller,
     ]);
+    
+    // Log pentru a vedea ce permisiuni sunt găsite
+    const handlerPermissions = this.reflector.get<string[]>(PERMISSIONS_KEY, handler);
+    const classPermissions = this.reflector.get<string[]>(PERMISSIONS_KEY, controller);
+    this.logger.log(`🔍 [PermissionsGuard] Handler permissions: ${JSON.stringify(handlerPermissions)}`);
+    this.logger.log(`🔍 [PermissionsGuard] Class permissions: ${JSON.stringify(classPermissions)}`);
+    this.logger.log(`🔍 [PermissionsGuard] Final required permissions (getAllAndOverride): ${JSON.stringify(requiredPermissions)}`);
 
     if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
@@ -42,12 +56,26 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Fără permisiuni');
     }
 
+    // Extrage path-ul pentru logging
+    const path = request.path || request.url?.split('?')[0] || '';
+    const isGetRequest = request.method === 'GET';
+    
     // Verifică dacă utilizatorul are permisiunea necesară
     const hasAll = user.permissions && requiredPermissions.every((perm) => (user.permissions as string[]).includes(perm));
     
+    // Log detaliat pentru debugging
+    this.logger.log(`🔍 [PermissionsGuard] Checking permissions for ${request.method} ${path}`);
+    this.logger.log(`🔍 [PermissionsGuard] Required permissions: ${JSON.stringify(requiredPermissions)}`);
+    this.logger.log(`🔍 [PermissionsGuard] User permissions count: ${user.permissions?.length || 0}`);
+    this.logger.log(`🔍 [PermissionsGuard] User has cashing.create: ${user.permissions?.includes('cashing.create') || false}`);
+    if (user.permissions && user.permissions.length > 0) {
+      this.logger.log(`🔍 [PermissionsGuard] First 10 user permissions: ${JSON.stringify(user.permissions.slice(0, 10))}`);
+    }
+    this.logger.log(`🔍 [PermissionsGuard] Has all required permissions: ${hasAll}`);
+    
     // Dacă are permisiunea, permite accesul
     if (hasAll) {
-      this.logger.log(`User has all required permissions: ${requiredPermissions.join(', ')}`);
+      this.logger.log(`✅ User has all required permissions: ${requiredPermissions.join(', ')}`);
       return true;
     }
     
@@ -55,8 +83,6 @@ export class PermissionsGuard implements CanActivate {
     // Această verificare se aplică doar pentru endpoint-urile GET (citire)
     // IMPORTANT: Pentru endpoint-urile de revenue (PATCH/DELETE /locations/revenue/:revenueId), 
     // verificăm STRICT permisiunile, fără bypass
-    const isGetRequest = request.method === 'GET';
-    const path = request.path || request.url?.split('?')[0] || '';
     
     // Verifică dacă este endpoint de revenue (PATCH/DELETE revenue) - verifică strict permisiunile
     const isRevenueEndpoint = path.includes('/revenue/') && (request.method === 'PATCH' || request.method === 'DELETE');

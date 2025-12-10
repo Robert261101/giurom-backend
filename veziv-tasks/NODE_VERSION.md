@@ -49,3 +49,16 @@ Proiectul funcționează perfect cu Node.js 18 și npm 10. Nu este necesară act
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+

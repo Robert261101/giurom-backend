@@ -42,6 +42,15 @@ export class LocationsService {
     return path.join(repoRoot, 'files', 'locations');
   }
 
+  private getRepoRoot(): string {
+    // Resolve repo root relative to this file location
+    // __dirname is .../giurom-backend/locations/src/locations (dev with ts-node) or .../giurom-backend/locations/dist/locations (prod)
+    // Pentru locations/dist/locations: ../../.. merge la repo root (giurom-backend sau giurombitap)
+    // Similar cu stock care folosește ../../.. pentru că stock/dist/stock este la același nivel
+    const repoRoot = path.resolve(__dirname, '../../..');
+    return repoRoot;
+  }
+
   private async sendLocationNotification(
     type: string,
     title: string,
@@ -706,9 +715,26 @@ export class LocationsService {
     return this.managerConfigRepository.findOne({ where: { work_location_id: workLocationId } as any });
   }
 
-  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string, employeeId?: number | null) {
+  async recordRevenue(workLocationId: number, revenueDate: string, onlineAmount: number, cashAmount: number, cardAmount: number, totalAmount: number, status?: RevenueStatus, imageUrl?: string, userId?: number | null) {
     // Always insert a new revenue row (allow multiple entries per day)
     await this.findWorkLocationById(workLocationId);
+    
+    // Validare STRICTĂ: employee_id este OBLIGATORIU și trebuie să fie un număr valid
+    if (!userId || userId === 0 || isNaN(Number(userId))) {
+      console.error('❌ [recordRevenue Service] Invalid employee_id:', userId);
+      throw new Error('Employee ID is required and must be a valid number');
+    }
+    
+    const employeeId = Number(userId);
+    
+    // Log pentru debugging
+    console.log('🔍 [recordRevenue Service] Saving revenue with:', {
+      workLocationId,
+      revenueDate,
+      employeeId,
+      userId: employeeId
+    });
+    
     const row = this.revenueRepository.create({
       work_location_id: workLocationId,
       revenue_date: revenueDate,
@@ -718,9 +744,12 @@ export class LocationsService {
       total_amount: totalAmount as any,
       status: status,
       image_url: imageUrl,
-      employee_id: employeeId || null,
+      employee_id: employeeId, // OBLIGATORIU - nu poate fi null sau undefined
     } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
-    return this.revenueRepository.save(row);
+    
+    const saved = await this.revenueRepository.save(row);
+    console.log('✅ [recordRevenue Service] Revenue saved successfully with employee_id:', saved.employee_id);
+    return saved;
   }
 
   async listRevenue(
@@ -1213,5 +1242,126 @@ export class LocationsService {
     
     console.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
     return files;
+  }
+
+  /**
+   * Upload imagine cashing - salvează pe server în images/cashing
+   */
+  async uploadCashingImage(fileName: string, base64Content: string): Promise<string> {
+    try {
+      // Extract base64 content from data URL (remove data:type;base64, prefix)
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      // Generate unique filename with timestamp
+      const timestamp = Date.now();
+      const fileExtension = fileName.split('.').pop() || 'jpg';
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
+      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+
+      // Save to images/cashing directory on server
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const cashingDir = path.join(imagesDir, 'cashing');
+      
+      // Create images/cashing directory if it doesn't exist
+      if (!fs.existsSync(cashingDir)) {
+        fs.mkdirSync(cashingDir, { recursive: true });
+        console.log(`📁 Created images/cashing directory: ${cashingDir}`);
+        console.log(`📁 Repo root: ${repoRoot}`);
+        console.log(`📁 Images dir: ${imagesDir}`);
+      }
+
+      const filePath = path.join(cashingDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      console.log(`✅ Cashing image saved: ${filePath} (${buffer.length} bytes)`);
+      console.log(`✅ File exists check: ${fs.existsSync(filePath)}`);
+
+      // Return the URL path (with cashing subfolder)
+      return `/api/images/cashing/${uniqueFileName}`;
+    } catch (error: any) {
+      console.error(`❌ Error uploading cashing image: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Servește imaginea unui cashing
+   */
+  async serveCashingImage(fileName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    try {
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'cashing');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      
+      // Determină tipul MIME
+      const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
+      let mimeType = 'image/jpeg';
+      
+      switch (extension) {
+        case 'png':
+          mimeType = 'image/png';
+          break;
+        case 'gif':
+          mimeType = 'image/gif';
+          break;
+        case 'webp':
+          mimeType = 'image/webp';
+          break;
+        case 'svg':
+          mimeType = 'image/svg+xml';
+          break;
+        case 'jfif':
+          mimeType = 'image/jpeg';
+          break;
+      }
+
+      return { buffer, mimeType };
+    } catch (error: any) {
+      console.error(`❌ Error serving cashing image: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Șterge imaginea unui cashing de pe server
+   */
+  async deleteCashingImage(imageUrl: string): Promise<void> {
+    try {
+      // Extrage numele fișierului din URL
+      // URL-ul este de forma: /api/images/cashing/{fileName}
+      const urlParts = imageUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      
+      if (!fileName) {
+        throw new BadRequestException('URL-ul imaginii nu este valid');
+      }
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'cashing');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        console.warn(`⚠️ Cashing image not found for deletion: ${filePath}`);
+        // Nu aruncăm eroare dacă fișierul nu există, doar logăm
+        return;
+      }
+
+      fs.unlinkSync(filePath);
+      console.log(`✅ Cashing image deleted: ${filePath}`);
+    } catch (error: any) {
+      console.error(`❌ Error deleting cashing image: ${error}`);
+      throw new BadRequestException(`Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`);
+    }
   }
 } 

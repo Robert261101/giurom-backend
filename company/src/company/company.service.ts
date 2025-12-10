@@ -153,6 +153,38 @@ export class CompanyService {
     return { companies, total, totalPages: Math.ceil(total / limit) };
   }
 
+  // Returnează doar id și company_name pentru utilizatori cu permisiunea companies.read_own
+  async findForOwn(): Promise<{ id: number; company_name: string }[]> {
+    const companies = await this.companyRepository
+      .createQueryBuilder('company')
+      .select(['company.id', 'company.company_name'])
+      .where('company.status = :status', { status: 'active' })
+      .orderBy('company.company_name', 'ASC')
+      .getMany();
+
+    return companies.map(company => ({
+      id: company.id,
+      company_name: company.company_name,
+    }));
+  }
+
+  // Returnează doar id și company_name pentru o companie (pentru utilizatori cu permisiunea companies.read_own)
+  async findNameById(id: number): Promise<{ id: number; company_name: string }> {
+    const company = await this.companyRepository.findOne({
+      where: { id },
+      select: ['id', 'company_name']
+    });
+    
+    if (!company) {
+      throw new NotFoundException(`Compania cu ID-ul ${id} nu a fost găsită`);
+    }
+    
+    return {
+      id: company.id,
+      company_name: company.company_name,
+    };
+  }
+
   async findCompanyById(id: number): Promise<Company> {
     const company = await this.companyRepository.findOne({ where: { id }, relations: ['documents'] });
     if (!company) throw new NotFoundException(`Compania cu ID-ul ${id} nu a fost găsită`);

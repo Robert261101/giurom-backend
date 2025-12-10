@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   Index,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { SupplierOrder } from './supplier-order.entity';
 
 export enum ReceptionStatus {
   PENDING = 'pending',
@@ -20,6 +23,10 @@ export class SupplierOrderItemReception {
   @Index()
   @Column()
   supplier_order_id: number;
+
+  @ManyToOne(() => SupplierOrder, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'supplier_order_id' })
+  order: SupplierOrder;
 
   @Index()
   @Column()
@@ -60,6 +67,13 @@ export class SupplierOrderItemReception {
 
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
+}
+
+
+
+
+
+
 }
 
 

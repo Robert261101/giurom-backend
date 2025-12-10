@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, Raw } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
@@ -843,8 +843,9 @@ export class AssignmentService {
             endDateObj: endDate.toISOString()
           });
           // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
           query.andWhere(
-            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, '$.enabled')) = 'true' AND assignment.parent_recurrence_id IS NULL)`,
             { sdStr, edStr }
           );
         } else {
@@ -858,8 +859,9 @@ export class AssignmentService {
             startDate: sdStr, 
             endDate: edStr
           });
+          // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
           query.andWhere(
-            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) >= :sdStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) >= :sdStr)`,
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) >= :sdStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) >= :sdStr) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, '$.enabled')) = 'true' AND assignment.parent_recurrence_id IS NULL)`,
             { sdStr }
           );
         }
@@ -875,6 +877,24 @@ export class AssignmentService {
           )
           .getMany();
         console.log('🔍 [assignment.service] read_all+create result count:', result.length);
+        
+        // Debug pentru sarcinile recurente părinte
+        const parentRecurring = result.filter(r => {
+          try {
+            const recurrenceSettings = r.recurrence_settings;
+            const enabled = recurrenceSettings && typeof recurrenceSettings === 'object' ? recurrenceSettings.enabled : false;
+            const isParent = !r.parent_recurrence_id || r.parent_recurrence_id === null;
+            return enabled === true && isParent;
+          } catch (e) {
+            return false;
+          }
+        });
+        console.log(`🔄 [assignment.service] Sarcini recurente părinte găsite: ${parentRecurring.length}`);
+        if (parentRecurring.length > 0) {
+          parentRecurring.forEach(r => {
+            console.log(`🔄 [assignment.service] Parent recurring task ID: ${r.id}, status: ${r.status}, recurrence_settings:`, JSON.stringify(r.recurrence_settings));
+          });
+        }
         if (startDate && endDate && result.length > 0) {
           console.log('📅 [assignment.service] Sample dates from results:', result.slice(0, 3).map(r => ({
             id: r.id,
@@ -900,8 +920,9 @@ export class AssignmentService {
             endDateObj: endDate.toISOString()
           });
           // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
           query.andWhere(
-            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+            `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, '$.enabled')) = 'true' AND assignment.parent_recurrence_id IS NULL)`,
             { sdStr, edStr }
           );
         }
@@ -1022,8 +1043,9 @@ export class AssignmentService {
         const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
         const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
         // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+        // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
         queryBuilder.andWhere(
-          '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+          '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, \'$.enabled\')) = \'true\' AND assignment.parent_recurrence_id IS NULL)',
           { sd, ed }
         );
       }
@@ -1114,8 +1136,9 @@ export class AssignmentService {
             const sd = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
             const ed = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
             // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+            // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
             qb.andWhere(
-              '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+              '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, \'$.enabled\')) = \'true\' AND assignment.parent_recurrence_id IS NULL)',
               { sd, ed }
             );
           }
@@ -1207,8 +1230,9 @@ export class AssignmentService {
                 const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
                 const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
                 // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+                // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
                 query.andWhere(
-                  '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+                  '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, \'$.enabled\')) = \'true\' AND assignment.parent_recurrence_id IS NULL)',
                   { sd: start, ed: end }
                 );
               }
@@ -1247,8 +1271,9 @@ export class AssignmentService {
           const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
           const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
           // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
           query.andWhere(
-            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, \'$.enabled\')) = \'true\' AND assignment.parent_recurrence_id IS NULL)',
             { sd: start, ed: end }
           );
         }
@@ -1276,8 +1301,9 @@ export class AssignmentService {
           const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0);
           const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
           // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
+          // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
           query.andWhere(
-            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed)',
+            '(assignment.scheduled_datetime IS NOT NULL AND assignment.scheduled_datetime BETWEEN :sd AND :ed) OR (assignment.scheduled_datetime IS NULL AND assignment.assigned_at BETWEEN :sd AND :ed) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, \'$.enabled\')) = \'true\' AND assignment.parent_recurrence_id IS NULL)',
             { sd: start, ed: end }
           );
         }

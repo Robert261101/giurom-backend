@@ -108,10 +108,11 @@ export class LeaveRequestsService implements OnModuleInit {
       throw new BadRequestException('Data de sfârșit trebuie să fie după data de început');
     }
 
-    if (startDate < now) {
-      this.logger.error(`Start date ${startDate} is in the past`);
-      throw new BadRequestException('Data de început nu poate fi în trecut');
-    }
+    // Validare comentată pentru a permite crearea de cereri de concediu în trecut
+    // if (startDate < now) {
+    //   this.logger.error(`Start date ${startDate} is in the past`);
+    //   throw new BadRequestException('Data de început nu poate fi în trecut');
+    // }
 
     // Verifică suprapuneri cu alte cereri aprobate
     const overlappingRequests = await this.leaveRequestRepo

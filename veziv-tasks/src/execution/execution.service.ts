@@ -4,6 +4,8 @@ import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
+import * as fs from 'fs';
+import * as path from 'path';
 import { TaskExecution } from './entity/task-execution.entity';
 import { TaskExecutionAnswer } from './entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
@@ -1656,6 +1658,125 @@ export class ExecutionService {
     } catch (error) {
       console.error('❌ Eroare la căutarea managerului:', error);
       return null;
+    }
+  }
+
+  /**
+   * Calculează repo root-ul - similar cu locations și stock services
+   */
+  private getRepoRoot(): string {
+    // Resolve repo root relative to this file location
+    // __dirname is .../giurom-backend/veziv-tasks/src/execution (dev with ts-node) or .../giurom-backend/veziv-tasks/dist/execution (prod)
+    const repoRoot = path.resolve(__dirname, '../../..');
+    return repoRoot;
+  }
+
+  /**
+   * Upload imagine task - salvează pe server în images/tasks
+   */
+  async uploadTaskImage(fileName: string, base64Content: string): Promise<string> {
+    try {
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      const timestamp = Date.now();
+      const fileExtension = fileName.split('.').pop() || 'jpg';
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
+      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const tasksDir = path.join(imagesDir, 'tasks');
+      
+      if (!fs.existsSync(tasksDir)) {
+        fs.mkdirSync(tasksDir, { recursive: true });
+        console.log(`📁 Created images/tasks directory: ${tasksDir}`);
+      }
+
+      const filePath = path.join(tasksDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      console.log(`✅ Task image saved: ${filePath} (${buffer.length} bytes)`);
+
+      return `/api/images/tasks/${uniqueFileName}`;
+    } catch (error: any) {
+      console.error(`❌ Error uploading task image: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Servește imaginea unui task
+   */
+  async serveTaskImage(fileName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    try {
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'tasks');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      
+      const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
+      let mimeType = 'image/jpeg';
+      
+      switch (extension) {
+        case 'png':
+          mimeType = 'image/png';
+          break;
+        case 'gif':
+          mimeType = 'image/gif';
+          break;
+        case 'webp':
+          mimeType = 'image/webp';
+          break;
+        case 'svg':
+          mimeType = 'image/svg+xml';
+          break;
+        case 'jfif':
+          mimeType = 'image/jpeg';
+          break;
+      }
+
+      return { buffer, mimeType };
+    } catch (error: any) {
+      console.error(`❌ Error serving task image: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Șterge imaginea unui task de pe server
+   */
+  async deleteTaskImage(imageUrl: string): Promise<void> {
+    try {
+      const urlParts = imageUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      
+      if (!fileName) {
+        throw new BadRequestException('URL-ul imaginii nu este valid');
+      }
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'tasks');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        console.warn(`⚠️ Task image not found for deletion: ${filePath}`);
+        return;
+      }
+
+      fs.unlinkSync(filePath);
+      console.log(`✅ Task image deleted: ${filePath}`);
+    } catch (error: any) {
+      console.error(`❌ Error deleting task image: ${error}`);
+      throw new BadRequestException(`Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`);
     }
   }
 } 

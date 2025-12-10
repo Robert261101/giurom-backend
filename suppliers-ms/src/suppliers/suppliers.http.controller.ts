@@ -4,6 +4,8 @@ import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { ApproveReceptionDto, RejectReceptionDto } from './dto/approve-reception.dto';
+import { CancelRemainingDto } from './dto/cancel-remaining.dto';
+import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
 import { Response } from 'express';
 import { Permissions } from '../permissions/permissions.decorator';
 import { PermissionsGuard } from '../permissions/permissions.guard';
@@ -25,6 +27,13 @@ export class SuppliersHttpController {
 	) {
 		const locationId = location_id ? parseInt(location_id, 10) : undefined;
 		return this.service.findAll(locationId);
+	}
+
+	@Get('for-orders')
+	@Permissions('order.read')
+	getSuppliersForOrders(@Query('location_id') location_id?: string) {
+		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+		return this.service.findForOrders(locationId);
 	}
 
 	@Post()
@@ -66,7 +75,7 @@ export class SuppliersHttpController {
 
 	// Orders
 	@Get(':supplierId/orders') 
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	getOrders(
 		@Param('supplierId') supplierId: string,
 		@Query('location_id') location_id?: string
@@ -76,33 +85,33 @@ export class SuppliersHttpController {
 	}
 	
 	@Post('orders') 
-	@Permissions('suppliers.create')
+	@Permissions('order.create')
 	createOrder(@Body() dto: any) { return this.service.createOrder(dto); }
 	
 	@Patch('orders/:orderId/deliver') 
-	@Permissions('suppliers.update')
+	@Permissions('order.update')
 	deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
 	
 	@Post('orders/partial-reception')
-	@Permissions('suppliers.update')
+	@Permissions('order.reception')
 	partialReception(@Body() dto: any) { return this.service.markOrderAsPartiallyReceived(dto); }
 	
 	@Post('orders/receptions/approve')
-	@Permissions('suppliers.update')
+	@Permissions('order.approve')
 	@ApiOperation({ summary: 'Aprobă recepțiile și creează stock items' })
 	approveReceptions(@Body() dto: ApproveReceptionDto) { 
 		return this.service.approveReceptions(dto.orderId, dto.receptionIds); 
 	}
 	
 	@Post('orders/receptions/reject')
-	@Permissions('suppliers.update')
+	@Permissions('order.approve')
 	@ApiOperation({ summary: 'Respinge recepțiile' })
 	rejectReceptions(@Body() dto: RejectReceptionDto) { 
 		return this.service.rejectReceptions(dto.orderId, dto.receptionIds, dto.reason); 
 	}
 	
 	@Get('orders/reception-report')
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	@ApiOperation({ summary: 'Raport recepții și returnări pe perioadă' })
 	getReceptionReport(
 		@Query('start_date') startDate: string,
@@ -115,7 +124,7 @@ export class SuppliersHttpController {
 	}
 	
 	@Get('orders/reception-report/events')
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	@ApiOperation({ summary: 'Evenimente individuale de recepție/returnare pe perioadă (cronologic)' })
 	getReceptionEvents(
 		@Query('start_date') startDate: string,
@@ -139,21 +148,42 @@ export class SuppliersHttpController {
 	}
 	
 	@Get('orders/:orderId/receptions')
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	@ApiOperation({ summary: 'Obține recepțiile pentru o comandă' })
 	getOrderReceptions(@Param('orderId') orderId: string) {
 		return this.service.getOrderReceptions(Number(orderId));
 	}
+
+	@Get('orders/:orderId/cancelled-items')
+	@Permissions('order.read')
+	@ApiOperation({ summary: 'Obține item-urile anulate pentru o comandă' })
+	getOrderCancelledItems(@Param('orderId') orderId: string) {
+		return this.service.getOrderCancelledItems(Number(orderId));
+	}
 	
 	@Patch('orders/:orderId/status') 
-	@Permissions('suppliers.update')
+	@Permissions('order.update')
 	updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }
+	
+	@Post('orders/:orderId/cancel-remaining')
+	@Permissions('order.cancel')
+	@ApiOperation({ summary: '[DEPRECATED] Anulează partea rămasă de recepționat pentru o comandă' })
+	cancelRemaining(@Param('orderId') orderId: string, @Body() dto: CancelRemainingDto) { 
+		return this.service.cancelRemainingQuantity(Number(orderId), dto.reason); 
+	}
+
+	@Post('orders/cancel-items')
+	@Permissions('order.cancel')
+	@ApiOperation({ summary: 'Anulează item-uri dintr-o comandă (nouă abordare)' })
+	cancelOrderItems(@Body() dto: CancelOrderItemsDto) {
+		return this.service.cancelOrderItems(dto);
+	}
 	@Get(':supplierId/orders/:orderId/email-link') 
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	emailLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { emailLink: this.service.generateEmailLink(Number(supplierId), Number(orderId)) }; }
 	
 	@Get(':supplierId/orders/:orderId/whatsapp-link') 
-	@Permissions('suppliers.read')
+	@Permissions('order.read')
 	whatsappLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { whatsappLink: this.service.generateWhatsAppLink(Number(supplierId), Number(orderId)) }; }
 
 	// Documents

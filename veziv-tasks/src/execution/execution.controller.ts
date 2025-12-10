@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import { Response } from 'express';
 import { ExecutionService } from './execution.service';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { UpdateExecutionDto } from './dto/update-execution.dto';
@@ -395,5 +396,34 @@ export class ExecutionController {
       throw new (require('@nestjs/common').BadRequestException)('location_id este obligatoriu și trebuie să fie numeric');
     }
     return this.executionService.calculatePointsByEmployeeForLocation(locId, startDate, endDate);
+  }
+
+  // === TASK IMAGE UPLOAD ===
+  @Post('upload-image')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.create')
+  async uploadTaskImage(@Body() payload: { fileName: string; content: string }) {
+    const imageUrl = await this.executionService.uploadTaskImage(payload.fileName, payload.content);
+    return { imageUrl };
+  }
+
+  // === TASK IMAGE SERVE ===
+  @Get('image/:fileName')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all', 'execution.read')
+  async serveTaskImage(@Param('fileName') fileName: string, @Res() res: Response) {
+    const { buffer, mimeType } = await this.executionService.serveTaskImage(fileName);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+    res.send(buffer);
+  }
+
+  // === TASK IMAGE DELETE ===
+  @Post('delete-image')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.update')
+  async deleteTaskImage(@Body() payload: { imageUrl: string }) {
+    await this.executionService.deleteTaskImage(payload.imageUrl);
+    return { success: true, message: 'Imaginea a fost ștearsă cu succes' };
   }
 } 

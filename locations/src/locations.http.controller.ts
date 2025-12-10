@@ -16,6 +16,71 @@ import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 export class LocationsHttpController {
 	constructor(private readonly service: LocationsService) {}
 
+	// Revenue endpoints - trebuie să fie înainte de @Post() pentru a nu fi interceptate
+	@Post(':id/revenue')
+	@Permissions('cashing.create')
+	recordRevenue(
+		@Param('id') id: string, 
+		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string; employee_id?: number },
+		@Request() req?: any
+	) {
+		const user = req?.user;
+		if (!user) {
+			throw new Error('User not authenticated');
+		}
+		
+		// IMPORTANT: employee_id este OBLIGATORIU
+		// În JWT, sub = id_employee (vezi auth.service.ts: sub: user.id_employee)
+		// Extragem ID-ul angajatului din: 
+		// 1. JWT token (user.id, user.employee_id, user.userId, user.sub)
+		// 2. Body (body.employee_id) - fallback dacă nu există în JWT
+		const userIdFromJWT: number | undefined = user?.id || user?.employee_id || user?.userId || user?.sub;
+		const userIdFromBody: number | undefined = body?.employee_id;
+		const userId: number = userIdFromJWT || userIdFromBody;
+		
+		// Log pentru debugging
+		console.log('🔍 [recordRevenue Controller] Extracting employee ID:', {
+			hasUser: !!user,
+			userId: userId,
+			userIdFromJWT: userIdFromJWT,
+			userIdFromBody: userIdFromBody,
+			user_id: user?.id,
+			user_employee_id: user?.employee_id,
+			user_userId: user?.userId,
+			user_sub: user?.sub,
+			body_employee_id: body?.employee_id,
+			allUserKeys: Object.keys(user)
+		});
+		
+		if (!userId || userId === 0 || isNaN(Number(userId))) {
+			console.error('❌ [recordRevenue Controller] Invalid employee ID!', {
+				userId,
+				userIdFromJWT,
+				userIdFromBody,
+				user_id: user?.id,
+				user_employee_id: user?.employee_id,
+				user_userId: user?.userId,
+				user_sub: user?.sub,
+				body_employee_id: body?.employee_id
+			});
+			throw new Error('Employee ID is required and must be a valid number');
+		}
+		
+		console.log('✅ [recordRevenue Controller] Using employee_id:', userId);
+		
+		return this.service.recordRevenue(
+			parseInt(id, 10), 
+			body.revenue_date, 
+			body.online_amount, 
+			body.cash_amount, 
+			body.card_amount, 
+			body.total_amount, 
+			body.status, 
+			body.image_url, 
+			userId
+		);
+	}
+
 	@Post()
 	@Permissions('locations.create')
 	create(@Body() dto: CreateWorkLocationDto) { return this.service.createWorkLocation(dto); }
@@ -164,18 +229,6 @@ export class LocationsHttpController {
 		return this.service.getManagerConfig(parseInt(id, 10));
 	}
 
-	@Post(':id/revenue')
-	@Permissions('cashing.create')
-	recordRevenue(
-		@Param('id') id: string, 
-		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string },
-		@Request() req?: any
-	) {
-		const user = req?.user;
-		const userId = user?.id || user?.employee_id || user?.userId || null;
-		return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, userId);
-	}
-
 	@Get(':id/revenue')
 	@Permissions('locations.read')
 	listRevenue(
@@ -321,5 +374,31 @@ export class LocationsHttpController {
 	getExpiredFiles() {
 		console.log(`[LOCATIONS CONTROLLER] Getting expired files`);
 		return this.service.findExpiredFiles();
+	}
+
+	// === CASHING IMAGE UPLOAD ===
+	@Post('cashing/upload-image')
+	@Permissions('cashing.create')
+	async uploadCashingImage(@Body() payload: { fileName: string; content: string }) {
+		const imageUrl = await this.service.uploadCashingImage(payload.fileName, payload.content);
+		return { imageUrl };
+	}
+
+	// === CASHING IMAGE SERVE ===
+	@Get('cashing/image/:fileName')
+	@Permissions('cashing.read')
+	async serveCashingImage(@Param('fileName') fileName: string, @Res() res: Response) {
+		const { buffer, mimeType } = await this.service.serveCashingImage(fileName);
+		res.setHeader('Content-Type', mimeType);
+		res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate'); // 1 oră în loc de 1 an, cu must-revalidate
+		res.send(buffer);
+	}
+
+	// === CASHING IMAGE DELETE ===
+	@Post('cashing/delete-image')
+	@Permissions('cashing.update')
+	async deleteCashingImage(@Body() payload: { imageUrl: string }) {
+		await this.service.deleteCashingImage(payload.imageUrl);
+		return { success: true, message: 'Imaginea a fost ștearsă cu succes' };
 	}
 }

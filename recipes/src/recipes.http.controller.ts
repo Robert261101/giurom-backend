@@ -156,25 +156,44 @@ export class RecipesHttpController {
 
   // Preparations
   @Get('recipe-preparations')
-  @Permissions('recipes.read')
+  @Permissions('preparation.read')
   getPreparations(
     @Query('page') page = '1',
     @Query('limit') limit = '50',
-    @Query('location_id') locationId?: string
+    @Query('location_id') locationId?: string,
+    @Request() req?: any
   ) {
-    return this.preps.findAll(Number(page), Number(limit), locationId ? Number(locationId) : undefined);
+    const user = req?.user;
+    const hasRecipesRead = user?.permissions?.includes('recipes.read');
+    
+    // Dacă utilizatorul nu are permisiunea recipes.read, filtrare OBLIGATORIE după locație
+    if (!hasRecipesRead) {
+      // Dacă nu are location_id în query, încearcă să obțină din user
+      let finalLocationId = locationId ? parseInt(locationId, 10) : undefined;
+      if (!finalLocationId) {
+        finalLocationId = user?.work_location_id || user?.work_location_default_id;
+      }
+      if (!finalLocationId) {
+        // Dacă nu are locație, returnează array gol
+        return [];
+      }
+      return this.preps.findAll(Number(page), Number(limit), finalLocationId);
+    }
+    
+    // Pentru utilizatori cu recipes.read, permitem fără location_id
+    return this.preps.findAll(Number(page), Number(limit), locationId ? parseInt(locationId, 10) : undefined);
   }
   
   @Get('recipe-preparations/:id')
-  @Permissions('recipes.read')
+  @Permissions('preparation.read')
   getPreparation(@Param('id') id: string) { return this.preps.findOne(Number(id)); }
   
   @Post('recipe-preparations')
-  @Permissions('recipes.create')
+  @Permissions('preparation.create')
   createPreparation(@Body() dto: CreateRecipePreparationDto) { return this.preps.create(dto); }
   
   @Patch('recipe-preparations/:id')
-  @Permissions('recipes.update')
+  @Permissions('preparation.update')
   updatePreparation(@Param('id') id: string, @Body() dto: UpdateRecipePreparationDto) {
     const payload: any = { ...dto };
     if (payload.produced_at && typeof payload.produced_at === 'string') {
@@ -184,11 +203,11 @@ export class RecipesHttpController {
   }
   
   @Delete('recipe-preparations/:id')
-  @Permissions('recipes.delete')
+  @Permissions('preparation.delete')
   removePreparation(@Param('id') id: string) { return this.preps.remove(Number(id)); }
   
   @Post('recipe-preparations/prepare-with-stock')
-  @Permissions('recipes.create')
+  @Permissions('preparation.create')
   prepareWithStock(@Body() dto: CreateRecipePreparationDto) { return this.preps.prepareWithStock(dto); }
 
   // Labels

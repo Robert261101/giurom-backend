@@ -38,8 +38,8 @@ export class WorkLocationRevenue {
   image_url?: string;
 
   @Index()
-  @Column({ type: 'int', nullable: true, name: 'employee_id' })
-  employee_id?: number;
+  @Column({ type: 'int', nullable: false, name: 'employee_id' })
+  employee_id: number; // OBLIGATORIU - ID-ul angajatului care introduce încasarea
 
 
 }

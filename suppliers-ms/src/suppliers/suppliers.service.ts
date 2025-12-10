@@ -12,6 +12,7 @@ import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './entities/supplier-order-document.entity';
 import { SupplierOrderItemReception, ReceptionStatus } from './entities/supplier-order-item-reception.entity';
+import { SupplierOrderCancelledItem } from './entities/supplier-order-cancelled-item.entity';
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
 import { SupplierLocations } from './entities/supplier-locations.entity';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
@@ -20,6 +21,7 @@ import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
 import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
 import { PartialReceptionDto } from './dto/partial-reception.dto';
+import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
 import { StockHttpService, CreateStockItemDto } from './stock-http.service';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -36,6 +38,7 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderItem) private readonly orderItemRepo: Repository<SupplierOrderItem>,
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
     @InjectRepository(SupplierOrderItemReception) private readonly orderItemReceptionRepo: Repository<SupplierOrderItemReception>,
+    @InjectRepository(SupplierOrderCancelledItem) private readonly cancelledItemRepo: Repository<SupplierOrderCancelledItem>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
     @InjectConnection() private readonly connection: Connection,
@@ -380,6 +383,27 @@ export class SuppliersService {
     // Fără filter, returnează toți supplierii (dar vezi comentariul de mai jos)
     // NOTĂ: În producție, ai putea vrea să fie obligatoriu locationId pentru securitate
     return this.supplierRepo.find({ relations: ['folders', 'products', 'orders'], order: { created_at: 'DESC' } });
+  }
+
+  async findForOrders(locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
+    if (locationId !== undefined) {
+      const suppliers = await this.supplierRepo
+        .createQueryBuilder('supplier')
+        .select(['supplier.id', 'supplier.supplier_name'])
+        .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
+        .where('sl.id_location = :locationId', { locationId })
+        .orderBy('supplier.supplier_name', 'ASC')
+        .getMany();
+      
+      return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
+    }
+    
+    const suppliers = await this.supplierRepo.find({
+      select: ['id', 'supplier_name'],
+      order: { supplier_name: 'ASC' }
+    });
+    
+    return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
   }
 
   async findOne(id: number): Promise<Supplier> {
@@ -736,9 +760,23 @@ export class SuppliersService {
       }
 
       // Validare: received + returned <= original
-      if (receivedQty + returnedQty > originalQty) {
+      // EXCEPȚIE: Dacă există returnReason și este pentru anularea părții rămase,
+      // permitem received + returned > original (pentru că returnăm partea rămasă de recepționat)
+      const isCancellingRemaining = receptionItem.returnReason?.includes('Anulat - partea rămasă') || 
+                                     receptionItem.returnReason?.includes('anulat') ||
+                                     receptionItem.returnReason?.includes('Anulat');
+      
+      if (receivedQty + returnedQty > originalQty && !isCancellingRemaining) {
         throw new BadRequestException(
           `Pentru item-ul ${orderItem.id}: cantitatea recepționată (${receivedQty}) + returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`
+        );
+      }
+      
+      // Pentru anularea părții rămase, validăm doar că returned nu depășește ordered
+      // (nu verificăm received + returned <= ordered, pentru că returnăm partea rămasă)
+      if (isCancellingRemaining && returnedQty > originalQty) {
+        throw new BadRequestException(
+          `Pentru item-ul ${orderItem.id}: cantitatea returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`
         );
       }
 
@@ -861,11 +899,340 @@ export class SuppliersService {
   async updateOrderStatus(orderId: number, status: string): Promise<SupplierOrder> {
     const order = await this.orderRepo.findOne({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Comanda nu a fost găsită');
-    order.status = status as OrderStatus;
-    await this.orderRepo.update(order.id, { status: order.status });
+    
+    const updateData: any = { status: status as OrderStatus };
+    
+    // Dacă statusul este 'cancelled', setează cancelled_at la momentul curent
+    if (status === OrderStatus.CANCELLED && !order.cancelled_at) {
+      updateData.cancelled_at = new Date();
+    }
+    
+    await this.orderRepo.update(order.id, updateData);
     const updated = await this.orderRepo.findOne({ where: { id: order.id } });
     if (!updated) throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
     return updated;
+  }
+
+  /**
+   * Anulează item-uri dintr-o comandă
+   * Creează înregistrări în supplier_order_cancelled_items pentru item-urile anulate
+   */
+  async cancelOrderItems(dto: { orderId: number; items: Array<{ itemId: number; returnedQuantity: number; returnReason?: string }> }): Promise<SupplierOrder> {
+    this.logger.log(`🚫 [SUPPLIERS SERVICE] Cancelling items for order ${dto.orderId}`);
+    
+    const order = await this.orderRepo.findOne({ 
+      where: { id: dto.orderId }, 
+      relations: ['items'] 
+    });
+    
+    if (!order) {
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException('Comanda este deja anulată');
+    }
+
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new BadRequestException('Nu se pot anula item-uri pentru o comandă complet livrată');
+    }
+    
+    if (!order.items || order.items.length === 0) {
+      throw new BadRequestException('Comanda nu are item-uri');
+    }
+
+    // Obține recepțiile PENDING pentru această comandă
+    const pendingReceptions = await this.orderItemReceptionRepo.find({
+      where: {
+        supplier_order_id: dto.orderId,
+        status: ReceptionStatus.PENDING,
+      },
+    });
+
+    // Creează un map pentru recepțiile PENDING pe order_item_id
+    const pendingByItemId = new Map<number, { received: number; returned: number }>();
+    pendingReceptions.forEach(reception => {
+      const existing = pendingByItemId.get(reception.supplier_order_item_id) || { received: 0, returned: 0 };
+      pendingByItemId.set(reception.supplier_order_item_id, {
+        received: existing.received + Number(reception.received_delta || 0),
+        returned: existing.returned + Number(reception.returned_delta || 0),
+      });
+    });
+
+    const cancelledItems: SupplierOrderCancelledItem[] = [];
+
+    // Procesează fiecare item de anulat
+    for (const cancelItem of dto.items) {
+      const orderItem = order.items?.find(item => item.id === cancelItem.itemId);
+      
+      if (!orderItem) {
+        throw new BadRequestException(`Item-ul ${cancelItem.itemId} nu a fost găsit în comandă`);
+      }
+
+      const orderedQty = Number(orderItem.quantity) || 0;
+      const existingReceivedQty = Number(orderItem.received_quantity) || 0;
+      const existingReturnedQty = Number(orderItem.returned_quantity) || 0;
+      
+      const pending = pendingByItemId.get(orderItem.id) || { received: 0, returned: 0 };
+      const totalReceivedQty = existingReceivedQty + pending.received;
+      const totalReturnedQty = existingReturnedQty + pending.returned;
+      
+      // Calculează cantitatea rămasă de recepționat (fără să scadă returned)
+      const remainingToReceiveQty = orderedQty - totalReceivedQty;
+      
+      // Validare: cantitatea de anulat nu poate depăși cât mai rămâne de recepționat
+      if (cancelItem.returnedQuantity > remainingToReceiveQty + 0.01) {
+        throw new BadRequestException(
+          `Pentru item-ul ${orderItem.id}: cantitatea de anulat (${cancelItem.returnedQuantity}) depășește cantitatea rămasă de recepționat (${remainingToReceiveQty})`
+        );
+      }
+
+      // Verifică dacă nu există deja un item anulat pentru acest order_item_id
+      const existingCancelled = await this.cancelledItemRepo.findOne({
+        where: { supplier_order_item_id: orderItem.id }
+      });
+
+      if (existingCancelled) {
+        // Dacă există deja, actualizează cantitatea (dar nu poate depăși limita)
+        const maxAllowed = remainingToReceiveQty + existingCancelled.returned_quantity;
+        if (cancelItem.returnedQuantity > maxAllowed + 0.01) {
+          throw new BadRequestException(
+            `Pentru item-ul ${orderItem.id}: cantitatea totală anulată (${existingCancelled.returned_quantity + cancelItem.returnedQuantity}) depășește cantitatea rămasă de recepționat (${remainingToReceiveQty})`
+          );
+        }
+        existingCancelled.returned_quantity = Number(existingCancelled.returned_quantity) + cancelItem.returnedQuantity;
+        if (cancelItem.returnReason) {
+          existingCancelled.return_reason = cancelItem.returnReason;
+        }
+        existingCancelled.updated_at = new Date();
+        await this.cancelledItemRepo.save(existingCancelled);
+        this.logger.log(`✅ [SUPPLIERS SERVICE] Updated cancelled item ${existingCancelled.id} for order item ${orderItem.id}`);
+      } else {
+        // Creează un nou item anulat
+        const cancelledItem = this.cancelledItemRepo.create({
+          order_id: order.id,
+          supplier_order_item_id: orderItem.id,
+          product_id: orderItem.product_id,
+          quantity: orderedQty,
+          price_per_unit: Number(orderItem.price_per_unit) || 0,
+          subtotal: Number(orderItem.subtotal) || 0,
+          total: Number(orderItem.total) || 0,
+          received_quantity: existingReceivedQty,
+          returned_quantity: cancelItem.returnedQuantity,
+          return_reason: cancelItem.returnReason || 'Anulat - partea rămasă de recepționat',
+          reception_date: new Date(),
+          reception_user_id: order.created_by_user_id,
+        });
+        
+        await this.cancelledItemRepo.save(cancelledItem);
+        cancelledItems.push(cancelledItem);
+        this.logger.log(`✅ [SUPPLIERS SERVICE] Created cancelled item for order item ${orderItem.id}`);
+      }
+    }
+
+    // Reîncarcă comanda actualizată
+    const updatedOrder = await this.orderRepo.findOne({ 
+      where: { id: dto.orderId },
+      relations: ['items', 'supplier'],
+    });
+
+    if (!updatedOrder) {
+      throw new NotFoundException('Comanda nu a putut fi reîncărcată după anulare');
+    }
+
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully cancelled items for order ${dto.orderId}`);
+    return updatedOrder;
+  }
+
+  /**
+   * Anulează partea rămasă de recepționat pentru o comandă
+   * Marchează restul ca returnat cu motivul specificat
+   * @deprecated Folosește cancelOrderItems în loc de această metodă
+   */
+  async cancelRemainingQuantity(orderId: number, reason?: string): Promise<SupplierOrder> {
+    this.logger.log(`🚫 [SUPPLIERS SERVICE] Cancelling remaining quantity for order ${orderId}`);
+    
+    const order = await this.orderRepo.findOne({ 
+      where: { id: orderId }, 
+      relations: ['items'] 
+    });
+    
+    if (!order) {
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Order ${orderId} found with ${order.items?.length || 0} items`);
+
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException('Comanda este deja anulată');
+    }
+
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new BadRequestException('Nu se poate anula partea rămasă pentru o comandă complet livrată');
+    }
+    
+    if (!order.items || order.items.length === 0) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order ${orderId} has no items`);
+      throw new BadRequestException('Comanda nu are item-uri');
+    }
+
+    // Obține toate recepțiile PENDING pentru această comandă
+    const pendingReceptions = await this.orderItemReceptionRepo.find({
+      where: {
+        supplier_order_id: orderId,
+        status: ReceptionStatus.PENDING,
+      },
+    });
+
+    // Creează un map pentru recepțiile PENDING pe order_item_id
+    const pendingByItemId = new Map<number, { received: number; returned: number }>();
+    pendingReceptions.forEach(reception => {
+      const existing = pendingByItemId.get(reception.supplier_order_item_id) || { received: 0, returned: 0 };
+      pendingByItemId.set(reception.supplier_order_item_id, {
+        received: existing.received + Number(reception.received_delta || 0),
+        returned: existing.returned + Number(reception.returned_delta || 0),
+      });
+    });
+
+    const receptionItems: Array<{
+      itemId: number;
+      receivedQuantity: number;
+      returnedQuantity: number;
+      returnReason: string;
+    }> = [];
+
+    // Procesează fiecare item din comandă
+    for (const item of order.items || []) {
+      const orderedQty = Number(item.quantity) || 0;
+      const existingReceivedQty = Number(item.received_quantity) || 0;
+      const existingReturnedQty = Number(item.returned_quantity) || 0;
+      
+      const pending = pendingByItemId.get(item.id) || { received: 0, returned: 0 };
+      const totalReceivedQty = existingReceivedQty + pending.received;
+      const totalReturnedQty = existingReturnedQty + pending.returned;
+      
+      // Calculează cantitatea rămasă de recepționat (fără să scadă returned)
+      // "Rămas de recepționat" = cât mai trebuie adus, indiferent de returnări
+      const remainingToReceiveQty = orderedQty - totalReceivedQty;
+      
+      this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: ordered=${orderedQty}, existingReceived=${existingReceivedQty}, pendingReceived=${pending.received}, totalReceived=${totalReceivedQty}, existingReturned=${existingReturnedQty}, pendingReturned=${pending.returned}, totalReturned=${totalReturnedQty}, remainingToReceive=${remainingToReceiveQty}`);
+      
+      // Dacă mai rămâne ceva de recepționat, marchează-l ca returnat (anulat)
+      if (remainingToReceiveQty > 0.01) {
+        // IMPORTANT: Pentru anularea părții rămase, vrem să returnăm exact cât mai rămâne de recepționat
+        // Astfel, partea rămasă nu va mai putea fi recepționată ulterior
+        // Nu verificăm validarea strictă received + returned <= ordered pentru anulare,
+        // pentru că returnăm partea rămasă care nu a fost recepționată
+        
+        // Cantitatea nouă de returnat = cât mai rămâne de recepționat
+        const newlyReturnedQty = remainingToReceiveQty;
+        
+        // Total returned după această operațiune = returned existent + nou returnat
+        const newTotalReturnedQty = totalReturnedQty + newlyReturnedQty;
+        
+        this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: remainingToReceive=${remainingToReceiveQty}, existingReturned=${totalReturnedQty}, newlyReturnedQty=${newlyReturnedQty}, newTotalReturnedQty=${newTotalReturnedQty}`);
+        
+        // Pentru anularea părții rămase, validăm doar că returned nu depășește ordered
+        // (nu verificăm received + returned <= ordered, pentru că returnăm partea rămasă)
+        if (newTotalReturnedQty > orderedQty + 0.01) {
+          this.logger.error(`❌ [SUPPLIERS SERVICE] Item ${item.id}: Returned quantity would exceed ordered: returned(${newTotalReturnedQty}) > ordered(${orderedQty})`);
+        } else {
+          if (newlyReturnedQty > 0.01) {
+            receptionItems.push({
+              itemId: item.id,
+              receivedQuantity: existingReceivedQty, // Doar ce s-a recepționat și aprobat (fără PENDING)
+              returnedQuantity: newTotalReturnedQty, // Total returned (existent + PENDING + nou)
+              returnReason: reason || 'Anulat - partea rămasă de recepționat',
+            });
+            this.logger.log(`✅ [SUPPLIERS SERVICE] Item ${item.id}: Added to receptionItems for cancellation`);
+          } else {
+            this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: Skipped - newlyReturnedQty too small (${newlyReturnedQty})`);
+          }
+        }
+      } else {
+        this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: Skipped - no remaining quantity to receive (remainingToReceiveQty=${remainingToReceiveQty})`);
+      }
+    }
+
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Total receptionItems: ${receptionItems.length}`);
+    
+    if (receptionItems.length === 0) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] No items to cancel for order ${orderId}`);
+      throw new BadRequestException('Nu există cantitate rămasă de anulat pentru această comandă');
+    }
+
+    // Folosește mecanismul existent de recepție parțială
+    const partialReceptionDto = {
+      orderId: order.id,
+      items: receptionItems,
+    };
+
+    const updatedOrder = await this.markOrderAsPartiallyReceived(partialReceptionDto);
+
+    // Aprobă automat recepțiile de returnare create
+    const allReceptions = await this.orderItemReceptionRepo.find({
+      where: { supplier_order_id: orderId },
+    });
+
+    const newPendingReceptions = allReceptions.filter(r => 
+      r.status === ReceptionStatus.PENDING && 
+      r.returned_delta > 0 &&
+      receptionItems.some(item => item.itemId === r.supplier_order_item_id)
+    );
+
+    if (newPendingReceptions.length > 0) {
+      const receptionIds = newPendingReceptions.map(r => r.id);
+      await this.approveReceptions(orderId, receptionIds);
+      this.logger.log(`✅ [SUPPLIERS SERVICE] Approved ${receptionIds.length} return receptions automatically`);
+    }
+
+    // Reîncarcă comanda pentru a obține valorile actualizate
+    const orderAfterReception = await this.orderRepo.findOne({
+      where: { id: orderId },
+      relations: ['items'],
+    });
+    
+    if (!orderAfterReception) {
+      throw new NotFoundException('Comanda nu a putut fi reîncărcată după anulare');
+    }
+    
+    // Verifică dacă toate item-urile au fost complet procesate (received + returned >= ordered)
+    // Dacă da, marchează comanda ca anulată
+    let allItemsFullyProcessed = true;
+    if (orderAfterReception.items && orderAfterReception.items.length > 0) {
+      for (const item of orderAfterReception.items) {
+        const orderedQty = Number(item.quantity) || 0;
+        const receivedQty = Number(item.received_quantity) || 0;
+        const returnedQty = Number(item.returned_quantity) || 0;
+        
+        // Verifică dacă item-ul este complet procesat
+        if (receivedQty + returnedQty < orderedQty - 0.01) {
+          allItemsFullyProcessed = false;
+          break;
+        }
+      }
+    }
+    
+    // Dacă toate item-urile sunt complet procesate, marchează comanda ca anulată
+    if (allItemsFullyProcessed && orderAfterReception.status !== OrderStatus.CANCELLED) {
+      this.logger.log(`🚫 [SUPPLIERS SERVICE] All items fully processed, marking order ${orderId} as cancelled`);
+      orderAfterReception.status = OrderStatus.CANCELLED;
+      orderAfterReception.cancelled_at = new Date();
+      await this.orderRepo.save(orderAfterReception);
+    }
+    
+    // Reîncarcă comanda finală cu toate relațiile
+    const finalOrder = await this.orderRepo.findOne({ 
+      where: { id: orderId },
+      relations: ['items', 'supplier'],
+    });
+
+    if (!finalOrder) {
+      throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
+    }
+
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully cancelled remaining quantity for order ${orderId}`);
+    return finalOrder;
   }
 
   /**
@@ -1067,6 +1434,13 @@ export class SuppliersService {
   /**
    * Obține toate recepțiile pentru o comandă cu numele utilizatorilor
    */
+  async getOrderCancelledItems(orderId: number): Promise<SupplierOrderCancelledItem[]> {
+    return this.cancelledItemRepo.find({
+      where: { order_id: orderId },
+      relations: ['orderItem'],
+    });
+  }
+
   async getOrderReceptions(orderId: number): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions for order ${orderId}`);
     

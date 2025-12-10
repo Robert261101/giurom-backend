@@ -79,6 +79,19 @@ export class StockService {
     return await this.productRepo.find();
   }
 
+  async findProductsByLocation(locationId: number): Promise<Product[]> {
+    // Returnează doar produsele care au stock items în locația specificată
+    const productsWithStock = await this.productRepo
+      .createQueryBuilder('product')
+      .innerJoin('product.stocks', 'stock')
+      .where('stock.location_id = :locationId', { locationId })
+      .andWhere('product.is_active = :isActive', { isActive: true })
+      .distinct(true)
+      .getMany();
+    
+    return productsWithStock;
+  }
+
   async findProduct(id: number): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException('Produsul nu a fost găsit');
@@ -964,6 +977,224 @@ export class StockService {
     } catch (error: any) {
       this.logger.error(`❌ Error serving product image: ${error}`);
       throw error;
+    }
+  }
+
+  /**
+   * Upload imagine waste - salvează pe server în images/waste
+   */
+  async uploadWasteImage(fileName: string, base64Content: string): Promise<string> {
+    try {
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      const timestamp = Date.now();
+      const fileExtension = fileName.split('.').pop() || 'jpg';
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
+      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const wasteDir = path.join(imagesDir, 'waste');
+      
+      if (!fs.existsSync(wasteDir)) {
+        fs.mkdirSync(wasteDir, { recursive: true });
+        this.logger.log(`📁 Created images/waste directory: ${wasteDir}`);
+      }
+
+      const filePath = path.join(wasteDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      this.logger.log(`✅ Waste image saved: ${filePath} (${buffer.length} bytes)`);
+
+      return `/api/images/waste/${uniqueFileName}`;
+    } catch (error: any) {
+      this.logger.error(`❌ Error uploading waste image: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Servește imaginea unui waste
+   */
+  async serveWasteImage(fileName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    try {
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'waste');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      
+      const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
+      let mimeType = 'image/jpeg';
+      
+      switch (extension) {
+        case 'png':
+          mimeType = 'image/png';
+          break;
+        case 'gif':
+          mimeType = 'image/gif';
+          break;
+        case 'webp':
+          mimeType = 'image/webp';
+          break;
+        case 'svg':
+          mimeType = 'image/svg+xml';
+          break;
+        case 'jfif':
+          mimeType = 'image/jpeg';
+          break;
+      }
+
+      return { buffer, mimeType };
+    } catch (error: any) {
+      this.logger.error(`❌ Error serving waste image: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Șterge imaginea unui waste de pe server
+   */
+  async deleteWasteImage(imageUrl: string): Promise<void> {
+    try {
+      const urlParts = imageUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      
+      if (!fileName) {
+        throw new BadRequestException('URL-ul imaginii nu este valid');
+      }
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'waste');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        this.logger.warn(`⚠️ Waste image not found for deletion: ${filePath}`);
+        return;
+      }
+
+      fs.unlinkSync(filePath);
+      this.logger.log(`✅ Waste image deleted: ${filePath}`);
+    } catch (error: any) {
+      this.logger.error(`❌ Error deleting waste image: ${error}`);
+      throw new BadRequestException(`Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Upload imagine consume - salvează pe server în images/consume
+   */
+  async uploadConsumeImage(fileName: string, base64Content: string): Promise<string> {
+    try {
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      const timestamp = Date.now();
+      const fileExtension = fileName.split('.').pop() || 'jpg';
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
+      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const consumeDir = path.join(imagesDir, 'consume');
+      
+      if (!fs.existsSync(consumeDir)) {
+        fs.mkdirSync(consumeDir, { recursive: true });
+        this.logger.log(`📁 Created images/consume directory: ${consumeDir}`);
+      }
+
+      const filePath = path.join(consumeDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      this.logger.log(`✅ Consume image saved: ${filePath} (${buffer.length} bytes)`);
+
+      return `/api/images/consume/${uniqueFileName}`;
+    } catch (error: any) {
+      this.logger.error(`❌ Error uploading consume image: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Servește imaginea unui consume
+   */
+  async serveConsumeImage(fileName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    try {
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'consume');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
+
+      const buffer = fs.readFileSync(filePath);
+      
+      const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
+      let mimeType = 'image/jpeg';
+      
+      switch (extension) {
+        case 'png':
+          mimeType = 'image/png';
+          break;
+        case 'gif':
+          mimeType = 'image/gif';
+          break;
+        case 'webp':
+          mimeType = 'image/webp';
+          break;
+        case 'svg':
+          mimeType = 'image/svg+xml';
+          break;
+        case 'jfif':
+          mimeType = 'image/jpeg';
+          break;
+      }
+
+      return { buffer, mimeType };
+    } catch (error: any) {
+      this.logger.error(`❌ Error serving consume image: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Șterge imaginea unui consume de pe server
+   */
+  async deleteConsumeImage(imageUrl: string): Promise<void> {
+    try {
+      const urlParts = imageUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      
+      if (!fileName) {
+        throw new BadRequestException('URL-ul imaginii nu este valid');
+      }
+
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images', 'consume');
+      const filePath = path.join(imagesDir, fileName);
+
+      if (!fs.existsSync(filePath)) {
+        this.logger.warn(`⚠️ Consume image not found for deletion: ${filePath}`);
+        return;
+      }
+
+      fs.unlinkSync(filePath);
+      this.logger.log(`✅ Consume image deleted: ${filePath}`);
+    } catch (error: any) {
+      this.logger.error(`❌ Error deleting consume image: ${error}`);
+      throw new BadRequestException(`Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`);
     }
   }
 

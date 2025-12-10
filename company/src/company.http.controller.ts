@@ -26,9 +26,21 @@ export class CompanyHttpController {
 		return this.service.findAllCompanies(parseInt(page, 10), parseInt(limit, 10), search, status);
 	}
 
+	@Get('for-own')
+	@Permissions('companies.read_own')
+	findForOwn() {
+		return this.service.findForOwn();
+	}
+
 	@Get('statistics')
 	@Permissions('companies.read')
 	stats() { return this.service.getCompanyStatistics(); }
+
+	@Get(':id/name')
+	@Permissions('companies.read_own')
+	findNameById(@Param('id') id: string) { 
+		return this.service.findNameById(parseInt(id, 10)); 
+	}
 
 	@Get(':id')
 	@Permissions('companies.read')

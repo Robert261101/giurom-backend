@@ -11,6 +11,7 @@ import {
 import { Supplier } from './supplier.entity';
 import { SupplierOrderItem } from './supplier-order-item.entity';
 import { SupplierOrderDocument } from './supplier-order-document.entity';
+import { SupplierOrderItemReception } from './supplier-order-item-reception.entity';
 
 export enum OrderStatus {
   DRAFT = 'draft',
@@ -58,6 +59,9 @@ export class SupplierOrder {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at: Date;
 
+  @Column({ type: 'datetime', nullable: true })
+  cancelled_at?: Date;
+
   @ManyToOne(() => Supplier, (supplier) => supplier.orders, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
@@ -67,6 +71,16 @@ export class SupplierOrder {
 
   @OneToMany(() => SupplierOrderDocument, (document) => document.order)
   documents: SupplierOrderDocument[];
+
+  @OneToMany(() => SupplierOrderItemReception, (reception) => reception.order)
+  receptions: SupplierOrderItemReception[];
+}
+
+
+
+
+  @OneToMany(() => SupplierOrderItemReception, (reception) => reception.order)
+  receptions: SupplierOrderItemReception[];
 }
 
 

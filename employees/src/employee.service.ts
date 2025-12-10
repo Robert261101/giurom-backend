@@ -252,6 +252,33 @@ export class EmployeeService {
     };
   }
 
+  // Returnează doar id, first_name, last_name pentru angajați (pentru utilizatori cu permisiunea employees.read_own)
+  async findForOwn(location_id?: number): Promise<{ id: number; first_name: string; last_name: string }[]> {
+    const queryBuilder = this.employeeRepository.createQueryBuilder('employee')
+      .select(['employee.id', 'employee.first_name', 'employee.last_name'])
+      .where('employee.is_active = :is_active', { is_active: true });
+
+    if (location_id) {
+      queryBuilder
+        .leftJoin('employee.employeeLocations', 'employeeLocations')
+        .andWhere(
+          '(employeeLocations.idLocation = :location_id OR employee.work_location_default_id = :location_id)',
+          { location_id }
+        );
+    }
+
+    const employees = await queryBuilder
+      .orderBy('employee.first_name', 'ASC')
+      .addOrderBy('employee.last_name', 'ASC')
+      .getMany();
+
+    return employees.map(emp => ({
+      id: emp.id,
+      first_name: emp.first_name,
+      last_name: emp.last_name,
+    }));
+  }
+
   // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
   async findAllByCompany(companyId: number): Promise<Employee[]> {
     // 1) Preia toate locațiile companiei din microserviciul locations
@@ -320,6 +347,25 @@ export class EmployeeService {
   }
 
   // Găsirea unui angajat după ID
+  // Returnează doar id, first_name, last_name pentru un angajat (pentru utilizatori cu permisiunea employees.read_own)
+  async findNameById(id: number): Promise<{ id: number; first_name: string; last_name: string; full_name: string }> {
+    const employee = await this.employeeRepository.findOne({
+      where: { id },
+      select: ['id', 'first_name', 'last_name']
+    });
+    
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID-ul ${id} nu a fost găsit`);
+    }
+    
+    return {
+      id: employee.id,
+      first_name: employee.first_name,
+      last_name: employee.last_name,
+      full_name: `${employee.first_name} ${employee.last_name}`.trim()
+    };
+  }
+
   async findOne(id: number): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({
       where: { id }

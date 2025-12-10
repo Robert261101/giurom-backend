@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, Request } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from '../permissions/permissions.decorator';
 import { StockService } from './stock.service';
@@ -19,8 +19,12 @@ export class StockHttpController {
 
 	// Products
 	@Post('products') @Permissions('stock.create') async createProduct(@Body() dto: CreateProductDto) { return await this.service.createProduct(dto); }
-	@Get('products') @Permissions('stock.read') async getProducts() { return await this.service.findAllProducts(); }
-	@Get('products/:id') @Permissions('stock.read') async getProduct(@Param('id') id: string) { return await this.service.findProduct(Number(id)); }
+	@Get('products') 
+	@Permissions('products.read') 
+	async getProducts() { 
+		return await this.service.findAllProducts(); 
+	}
+	@Get('products/:id') @Permissions('products.read') async getProduct(@Param('id') id: string) { return await this.service.findProduct(Number(id)); }
 	@Patch('products/:id') @Permissions('stock.update') async updateProduct(@Param('id') id: string, @Body() dto: UpdateProductDto) { return await this.service.updateProduct(Number(id), dto); }
 	@Delete('products/:id') @Permissions('stock.delete') async deleteProduct(@Param('id') id: string) { return await this.service.deleteProduct(Number(id)); }
 
@@ -41,6 +45,41 @@ export class StockHttpController {
 	  console.log(`📡 [StockHttpController] Received consume request:`, dto);
 	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target, dto.employee_id, dto.location_id);
 	  console.log(`📡 [StockHttpController] Completed consume request for product ${dto.product_id}`);
+	  return result;
+	}
+
+	// === EMPLOYEE-SPECIFIC ENDPOINTS ===
+	// Consume product for employees (with separate permission)
+	@Post('employee/consume') @Permissions('stock.consume_own')
+	async employeeConsume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number }) {
+	  console.log(`📡 [StockHttpController] Received employee consume request:`, dto);
+	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target || 'employee-consumption', dto.employee_id, dto.location_id);
+	  console.log(`📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`);
+	  return result;
+	}
+
+	// Waste record for employees (with separate permission)
+	@Post('employee/waste') @Permissions('stock.waste_own')
+	async employeeWaste(@Body() dto: CreateWasteRecordDto) {
+	  console.log(`📡 [StockHttpController] Received employee waste request:`, dto);
+	  const result = await this.service.createWasteRecord(dto);
+	  
+	  // Also consume the stock when creating waste record
+	  try {
+	    await this.service.consumeProduct(
+	      dto.product_id,
+	      dto.quantity,
+	      'waste',
+	      undefined,
+	      dto.location_id
+	    );
+	    console.log(`📡 [StockHttpController] Consumed stock for wasted product ${dto.product_id}`);
+	  } catch (error) {
+	    console.error(`❌ [StockHttpController] Error consuming stock for waste:`, error);
+	    // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat
+	  }
+	  
+	  console.log(`📡 [StockHttpController] Completed employee waste request for product ${dto.product_id}`);
 	  return result;
 	}
 
@@ -68,6 +107,7 @@ export class StockHttpController {
   async getCategoriesByType(@Param('type') type: string) { return await this.service.findCategoriesByType(type); }
 
   @Get('products-with-categories')
+  @Permissions('products.read')
   async getProductsWithCategories() { return await this.service.findProductsWithCategories(); }
 
   @Post('products/:id/categories')
@@ -165,13 +205,59 @@ export class StockHttpController {
 
   // === PRODUCT IMAGE SERVE ===
   @Get('products/image/:fileName')
-  @Permissions('stock.read')
+  @Permissions('products.read')
   async serveProductImage(@Param('fileName') fileName: string, @Res() res: Response) {
-    const { buffer, mimeType } = await this.service.serveProductImage(fileName);
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Cache-Control', 'public, max-age=31536000');
-    res.send(buffer);
-  }
+		const { buffer, mimeType } = await this.service.serveProductImage(fileName);
+		res.setHeader('Content-Type', mimeType);
+		res.setHeader('Cache-Control', 'public, max-age=31536000');
+		res.send(buffer);
+	}
+
+	// === WASTE IMAGE UPLOAD ===
+	@Post('waste/upload-image') @Permissions('stock.update')
+	async uploadWasteImage(@Body() payload: { fileName: string; content: string }) {
+		const imageUrl = await this.service.uploadWasteImage(payload.fileName, payload.content);
+		return { imageUrl };
+	}
+
+	// === WASTE IMAGE SERVE ===
+	@Get('waste/image/:fileName') @Permissions('stock.read')
+	async serveWasteImage(@Param('fileName') fileName: string, @Res() res: Response) {
+		const { buffer, mimeType } = await this.service.serveWasteImage(fileName);
+		res.setHeader('Content-Type', mimeType);
+		res.setHeader('Cache-Control', 'public, max-age=31536000');
+		res.send(buffer);
+	}
+
+	// === WASTE IMAGE DELETE ===
+	@Post('waste/delete-image') @Permissions('stock.update')
+	async deleteWasteImage(@Body() payload: { imageUrl: string }) {
+		await this.service.deleteWasteImage(payload.imageUrl);
+		return { success: true, message: 'Imaginea a fost ștearsă cu succes' };
+	}
+
+	// === CONSUME IMAGE UPLOAD ===
+	@Post('consume/upload-image') @Permissions('stock.update')
+	async uploadConsumeImage(@Body() payload: { fileName: string; content: string }) {
+		const imageUrl = await this.service.uploadConsumeImage(payload.fileName, payload.content);
+		return { imageUrl };
+	}
+
+	// === CONSUME IMAGE SERVE ===
+	@Get('consume/image/:fileName') @Permissions('stock.read')
+	async serveConsumeImage(@Param('fileName') fileName: string, @Res() res: Response) {
+		const { buffer, mimeType } = await this.service.serveConsumeImage(fileName);
+		res.setHeader('Content-Type', mimeType);
+		res.setHeader('Cache-Control', 'public, max-age=31536000');
+		res.send(buffer);
+	}
+
+	// === CONSUME IMAGE DELETE ===
+	@Post('consume/delete-image') @Permissions('stock.update')
+	async deleteConsumeImage(@Body() payload: { imageUrl: string }) {
+		await this.service.deleteConsumeImage(payload.imageUrl);
+		return { success: true, message: 'Imaginea a fost ștearsă cu succes' };
+	}
 }
 
 

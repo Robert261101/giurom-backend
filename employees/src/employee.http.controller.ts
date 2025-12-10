@@ -11,6 +11,7 @@ import {
   UseGuards,
   Res,
   ParseIntPipe,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -97,6 +98,43 @@ export class EmployeeHttpController {
       location_id ? parseInt(location_id, 10) : undefined,
       department_name,
     );
+  }
+
+  @Get('for-own')
+  @Permissions('employees.read_own')
+  @ApiOperation({
+    summary: 'Listează angajații pentru utilizatori cu permisiunea employees.read_own',
+    description: 'Returnează doar id, first_name, last_name pentru angajați activi.',
+  })
+  @ApiQuery({ name: 'location_id', required: false, description: 'Filtrează după locație' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista angajaților a fost returnată cu succes',
+  })
+  async findForOwn(
+    @Query('location_id') location_id?: string,
+    @Request() req?: any
+  ): Promise<{ id: number; first_name: string; last_name: string }[]> {
+    const user = req?.user;
+    const hasEmployeesRead = user?.permissions?.includes('employees.read');
+    
+    // Dacă utilizatorul nu are permisiunea employees.read, filtrare OBLIGATORIE după locație
+    if (!hasEmployeesRead) {
+      // Dacă nu are location_id în query, încearcă să obțină din user
+      let finalLocationId = location_id ? parseInt(location_id, 10) : undefined;
+      if (!finalLocationId) {
+        finalLocationId = user?.work_location_id || user?.work_location_default_id;
+      }
+      if (!finalLocationId) {
+        // Dacă nu are locație, returnează array gol
+        return [];
+      }
+      return this.employeeService.findForOwn(finalLocationId);
+    }
+    
+    // Pentru utilizatori cu employees.read, permitem fără location_id
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.employeeService.findForOwn(locationId);
   }
 
   @Get('statistics')
@@ -220,6 +258,23 @@ export class EmployeeHttpController {
     @Param('userId', ParseIntPipe) userId: number,
   ): Promise<Employee> {
     return this.employeeService.findByUserId(userId);
+  }
+
+  @Get(':id/name')
+  @Permissions('employees.read_own')
+  @ApiOperation({
+    summary: 'Găsește numele unui angajat după ID',
+    description: 'Returnează doar id, first_name, last_name, full_name pentru utilizatori cu permisiunea employees.read_own.',
+  })
+  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Numele angajatului a fost returnat cu succes',
+  })
+  async findNameById(
+    @Param('id') id: string,
+  ): Promise<{ id: number; first_name: string; last_name: string; full_name: string }> {
+    return this.employeeService.findNameById(+id);
   }
 
   @Get(':id')
