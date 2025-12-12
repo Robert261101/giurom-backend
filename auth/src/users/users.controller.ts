@@ -10,7 +10,12 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  Req,
+  PipeTransform,
+  ArgumentMetadata,
+  Injectable,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -22,6 +27,14 @@ import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+
+// Pipe custom care nu validează nimic - doar returnează valoarea
+@Injectable()
+class NoValidationPipe implements PipeTransform {
+  transform(value: any, metadata: ArgumentMetadata) {
+    return value;
+  }
+}
 
 @ApiTags('users')
 @Controller('users')
@@ -366,6 +379,53 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
   async deleteRolePermission(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.usersService.deleteRolePermission(id);
+  }
+
+  @Post('role-permissions/bulk')
+  @ApiOperation({ summary: 'Creează multiple asocieri rol-permisiune într-un singur request (bulk insert)' })
+  @ApiBody({
+    description: 'Datele pentru crearea în bulk a asocierilor rol-permisiune',
+    examples: {
+      'exemplu-bulk': {
+        summary: 'Exemplu bulk insert',
+        value: {
+          roleId: 1,
+          permissionIds: [1, 2, 3, 4, 5]
+        }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Asocierile au fost create cu succes',
+    schema: {
+      type: 'object',
+      properties: {
+        created: { type: 'number', description: 'Numărul de asocieri create' },
+        rolePermissions: { type: 'array', items: { type: 'object' } }
+      }
+    }
+  })
+  async createRolePermissionsBulk(@Body() bulkDto: { roleId: number; permissionIds: number[] }): Promise<{ created: number; rolePermissions: RolePermission[] }> {
+    return this.usersService.createRolePermissionsBulk(bulkDto.roleId, bulkDto.permissionIds);
+  }
+
+  @Delete('role-permissions/bulk/:roleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Șterge toate permisiunile pentru un rol într-un singur request (bulk delete)' })
+  @ApiParam({ name: 'roleId', required: true, type: Number, description: 'ID-ul rolului pentru care se șterg permisiunile' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Permisiunile au fost șterse cu succes',
+    schema: {
+      type: 'object',
+      properties: {
+        deleted: { type: 'number', description: 'Numărul de permisiuni șterse' }
+      }
+    }
+  })
+  async deleteRolePermissionsBulk(@Param('roleId', ParseIntPipe) roleId: number): Promise<{ deleted: number }> {
+    return this.usersService.deleteRolePermissionsBulk(roleId);
   }
 
   // ===== USER_ROLES CRUD ENDPOINTS =====

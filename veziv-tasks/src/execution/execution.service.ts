@@ -228,7 +228,7 @@ export class ExecutionService {
     };
   }
 
-  async findAll(user: any, includeAssignment: boolean = true, locationId?: number, startDate?: Date, endDate?: Date): Promise<TaskExecution[]> {
+  async findAll(user: any, includeAssignment: boolean = true, locationId?: number, startDate?: Date, endDate?: Date, assignmentId?: number): Promise<TaskExecution[]> {
     
     const query = this.executionRepository
       .createQueryBuilder('execution')
@@ -247,6 +247,12 @@ export class ExecutionService {
     // Aplică filtrul după location_id dacă este furnizat
     if (locationId !== undefined) {
       query.andWhere('execution.location_id = :locationId', { locationId });
+    }
+
+    // Aplică filtrul după assignment_id dacă este furnizat
+    if (assignmentId !== undefined) {
+      query.andWhere('execution.task_assignment_id = :assignmentId', { assignmentId });
+      console.log(`🔍 [execution.service] Filtering by assignment_id: ${assignmentId}`);
     }
 
     // Aplică filtrul după dată dacă este furnizat, altfel limitează la ultimele 30 de zile

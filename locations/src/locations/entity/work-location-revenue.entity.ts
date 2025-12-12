@@ -41,7 +41,11 @@ export class WorkLocationRevenue {
   @Column({ type: 'int', nullable: false, name: 'employee_id' })
   employee_id: number; // OBLIGATORIU - ID-ul angajatului care introduce încasarea
 
+  @Column({ type: 'datetime', nullable: true, name: 'created_at', default: () => 'CURRENT_TIMESTAMP' })
+  created_at?: string;
 
+  @Column({ type: 'datetime', nullable: true, name: 'updated_at', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+  updated_at?: string;
 }
 
 

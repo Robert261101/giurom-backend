@@ -519,6 +519,54 @@ export class UsersService {
     await this.rolePermissionRepository.remove(rolePermission);
   }
 
+  /**
+   * Șterge toate permisiunile pentru un rol într-un singur query (bulk delete)
+   * Optimizare pentru a evita N+1 queries
+   */
+  async deleteRolePermissionsBulk(roleId: number): Promise<{ deleted: number }> {
+    const result = await this.rolePermissionRepository.delete({ roleId });
+    return { deleted: result.affected || 0 };
+  }
+
+  /**
+   * Creează multiple asocieri rol-permisiune într-un singur request (bulk insert)
+   * Optimizare pentru a evita N+1 queries
+   */
+  async createRolePermissionsBulk(roleId: number, permissionIds: number[]): Promise<{ created: number; rolePermissions: RolePermission[] }> {
+    if (!permissionIds || permissionIds.length === 0) {
+      return { created: 0, rolePermissions: [] };
+    }
+
+    // Verifică dacă permisiunile există deja pentru acest rol
+    const existingRolePermissions = await this.rolePermissionRepository.find({
+      where: { 
+        roleId,
+        permissionId: In(permissionIds)
+      }
+    });
+
+    const existingPermissionIds = new Set(existingRolePermissions.map(rp => rp.permissionId));
+    
+    // Filtrează doar permisiunile care nu există deja
+    const newPermissionIds = permissionIds.filter(permissionId => !existingPermissionIds.has(permissionId));
+
+    if (newPermissionIds.length === 0) {
+      return { created: 0, rolePermissions: existingRolePermissions };
+    }
+
+    // Creează toate asocierile într-un singur bulk insert
+    const rolePermissionsToCreate = newPermissionIds.map(permissionId => 
+      this.rolePermissionRepository.create({ roleId, permissionId })
+    );
+
+    const savedRolePermissions = await this.rolePermissionRepository.save(rolePermissionsToCreate);
+
+    return { 
+      created: savedRolePermissions.length, 
+      rolePermissions: [...existingRolePermissions, ...savedRolePermissions]
+    };
+  }
+
   // ===== USER_ROLES CRUD METHODS =====
   async createUserRole(createUserRoleDto: { userId: number; roleId: number }): Promise<UserRole> {
     const userRole = this.userRoleRepository.create(createUserRoleDto);

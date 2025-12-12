@@ -419,10 +419,28 @@ export class ScheduledTasksService {
         // Pentru grupuri, obține toate persoanele din grup și creează task-uri individuale
         await this.createRecurringTasksForGroup(parentTask, assignedAt, recurrenceId);
       } else {
-        console.log(`🔄 [RECURENTA] Responsabil: Persoană cu ID ${parentTask.assigned_to_id}`);
+        // Verifică dacă task-ul părinte este pentru un grup (FCFS sau everyone_gets_it)
+        // Dacă da, nu folosim assigned_to_id din părinte, ci creăm task-uri pentru grup
+        const isGroupTask = parentTask.assignment_mode === 'first_come_first_served' || 
+                           parentTask.assignment_mode === 'everyone_gets_it';
         
-        // Pentru persoane individuale, creează un singur task
-        await this.createSingleRecurringTask(parentTask, assignedAt, recurrenceId);
+        if (isGroupTask) {
+          // Task pentru grup (FCFS sau everyone_gets_it) - creează task-uri pentru grup
+          // NU folosim assigned_to_id din părinte pentru task-urile de grup
+          console.log(`🔄 [RECURENTA] Grup (${parentTask.assignment_mode}) - Creez task-uri pentru grup (ignor assigned_to_id=${parentTask.assigned_to_id})`);
+          await this.createRecurringTasksForGroup(parentTask, assignedAt, recurrenceId);
+        } else {
+          // Verifică dacă assigned_to_id este valid (nu este 0 sau null)
+          if (!parentTask.assigned_to_id || parentTask.assigned_to_id === 0) {
+            console.warn(`⚠️ [RECURENTA] Task părinte ${parentTask.id} nu are assigned_to_id valid (${parentTask.assigned_to_id}) - Nu pot crea task recurent`);
+            return;
+          }
+          
+          console.log(`🔄 [RECURENTA] Responsabil: Persoană cu ID ${parentTask.assigned_to_id}`);
+          
+          // Pentru persoane individuale, creează un singur task
+          await this.createSingleRecurringTask(parentTask, assignedAt, recurrenceId);
+        }
       }
       
       console.log(`🔄 [RECURENTA] Setări recurență:`, JSON.stringify(parentTask.recurrence_settings, null, 2));
@@ -439,11 +457,26 @@ export class ScheduledTasksService {
     const dueDate = new Date(assignedAt);
       dueDate.setHours(18, 0, 0, 0); // 18:00 seara
       
+      // IMPORTANT: Pentru task-urile recurente, nu folosim assigned_to_id din părinte
+      // dacă părintele este un sablon recurent (nu are parent_recurrence_id)
+      // În acest caz, task-ul recurent nu trebuie atribuit automat unei persoane
+      // Dacă task-ul părinte este un sablon recurent (parent_recurrence_id este null),
+      // atunci task-urile recurente nu trebuie să aibă assigned_to_id setat
+      const isParentRecurrenceTemplate = !parentTask.parent_recurrence_id;
+      const assignedToId = isParentRecurrenceTemplate ? undefined : parentTask.assigned_to_id;
+      
+      console.log(`🔍 [RECURENTA] Task părinte ${parentTask.id}:`, {
+        isParentRecurrenceTemplate,
+        parentAssignedToId: parentTask.assigned_to_id,
+        finalAssignedToId: assignedToId,
+        parentRecurrenceId: parentTask.parent_recurrence_id
+      });
+      
       const createAssignmentDto: CreateAssignmentDto = {
         template_id: parentTask.template_id,
         location_id: parentTask.location_id,
       // assigned_to_type eliminat - toate task-urile sunt pentru persoane
-        assigned_to_id: parentTask.assigned_to_id,
+        assigned_to_id: assignedToId, // undefined pentru sabloane recurente, parentTask.assigned_to_id pentru task-uri recurente create din task-uri recurente
         created_by_employee_id: parentTask.created_by_employee_id,
         status: AssignmentStatus.ASSIGNED,
         priority: parentTask.priority,

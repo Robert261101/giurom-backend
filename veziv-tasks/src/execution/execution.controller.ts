@@ -96,12 +96,14 @@ export class ExecutionController {
     @Query('include_assignment') includeAssignment?: string, 
     @Query('location_id') location_id?: string,
     @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string
+    @Query('endDate') endDate?: string,
+    @Query('assignment_id') assignment_id?: string
   ): Promise<TaskExecution[]> {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     const sd = startDate ? new Date(startDate) : undefined;
     const ed = endDate ? new Date(endDate) : undefined;
-    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed);
+    const assignmentId = assignment_id ? parseInt(assignment_id, 10) : undefined;
+    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed, assignmentId);
   }
 
   @Get(':id')

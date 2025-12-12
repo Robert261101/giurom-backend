@@ -82,11 +82,21 @@ async function bootstrap() {
   // // Rate limiting dezactivat
   // app.use(authPublicRateLimit);
   // app.use(generalRateLimit);
-  // Validare globală a DTO-urilor
+  // Validare globală a DTO-urilor - doar pentru body, nu pentru query params
+  // Query params sunt validate doar dacă sunt DTO-uri (cu @Body decorator)
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
     transform: true,
     forbidNonWhitelisted: true,
+    transformOptions: {
+      enableImplicitConversion: false,
+    },
+    skipMissingProperties: false,
+    skipNullProperties: false,
+    skipUndefinedProperties: false,
+    validateCustomDecorators: true,
+    // Nu valida query params - doar body params
+    // Query params sunt procesate manual în handler-uri
   }));
   app.useGlobalInterceptors(new ResponseInterceptor());
 

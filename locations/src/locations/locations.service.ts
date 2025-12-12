@@ -761,7 +761,7 @@ export class LocationsService {
     const limit = Math.max(1, Math.min(200, Number(opts?.limit || 50)));
     const qb = this.revenueRepository
       .createQueryBuilder('rev')
-      .where('rev.location_id = :workLocationId', { workLocationId })
+      .where('rev.work_location_id = :workLocationId', { workLocationId })
       .orderBy('rev.revenue_date', 'DESC');
 
     if (opts?.startDate) qb.andWhere('rev.revenue_date >= :startDate', { startDate: opts.startDate });
