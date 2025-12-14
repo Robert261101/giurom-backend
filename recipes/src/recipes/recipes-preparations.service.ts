@@ -115,6 +115,7 @@ export class RecipePreparationsService {
     );
 
     // After saving, consume stock FIFO by expiration for each ingredient via stock service
+    // This includes both direct products and products from nested recipes
     try {
       const fullRecipe = await this.recipeRepo.findOne({
         where: { id: dto.recipe_id },
@@ -176,6 +177,108 @@ export class RecipePreparationsService {
     }
 
     return saved;
+  }
+
+  /**
+   * Consumă recursiv ingredientele unei rețete (produse directe + produse din rețete-ingrediente)
+   * @param recipeId ID-ul rețetei
+   * @param quantity Cantitatea de rețetă de preparat
+   * @param preparationId ID-ul preparării (pentru tracking)
+   * @param visitedRecipeIds Set pentru a preveni referințe circulare
+   */
+  private async consumeRecipeIngredients(
+    recipeId: number,
+    quantity: number,
+    preparationId: number,
+    visitedRecipeIds: Set<number> = new Set()
+  ): Promise<void> {
+    // Previne referințe circulare
+    if (visitedRecipeIds.has(recipeId)) {
+      throw new BadRequestException(`Referință circulară detectată pentru rețeta ${recipeId}`);
+    }
+    visitedRecipeIds.add(recipeId);
+
+    // Obține rețeta completă cu toate ingredientele
+    const fullRecipe = await this.recipeRepo.findOne({
+      where: { id: recipeId },
+      relations: ['recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe'],
+    });
+
+    if (!fullRecipe) {
+      throw new NotFoundException(`Recipe with ID ${recipeId} not found`);
+    }
+
+    // Calculează factorul de scalare
+    const baseQty = Number(fullRecipe.quantity) || 1;
+    const factor = Number(quantity) / baseQty;
+
+    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const headers = {
+      'x-internal-service': 'recipes',
+      'x-service-secret': serviceSecret
+    };
+
+    // 1. Consumă produsele directe din rețetă
+    if (Array.isArray(fullRecipe.recipe_products)) {
+      for (const rp of fullRecipe.recipe_products) {
+        const neededTotal = Number(rp.quantity) * factor;
+        if (!rp.product_id || !Number.isFinite(neededTotal) || neededTotal <= 0) continue;
+
+        console.log(`🔍 [RecipePreparationsService] Consuming ${neededTotal} units of product ${rp.product_id} for preparation ${preparationId}`);
+
+        try {
+          await lastValueFrom(
+            this.httpService.post(
+              `${this.stockServiceUrl}/stock/consume`,
+              {
+                product_id: rp.product_id,
+                quantity: neededTotal,
+                target: `recipe-preparation:${preparationId}`
+              },
+              { headers }
+            )
+          );
+          console.log(`✅ [RecipePreparationsService] Successfully consumed ${neededTotal} units of product ${rp.product_id}`);
+        } catch (error: any) {
+          console.error(`❌ [RecipePreparationsService] Error consuming product ${rp.product_id}:`, error?.response?.data || error?.message);
+          const errorMessage = error?.response?.data?.message || error?.message || 'Eroare necunoscută la consumarea stocului';
+          throw new BadRequestException(`Cantitate insuficientă în stoc pentru produs ${rp.product_id}. ${errorMessage}`);
+        }
+      }
+    }
+
+    // 2. Consumă recursiv ingredientele din rețetele-ingrediente
+    if (Array.isArray(fullRecipe.recipe_recipes)) {
+      for (const rr of fullRecipe.recipe_recipes) {
+        if (!rr.ingredient_recipe_id || !rr.ingredient_recipe) continue;
+
+        // Calculează cantitatea necesară de rețetă-ingredient
+        const neededRecipeQuantity = Number(rr.quantity) * factor;
+
+        console.log(`🔍 [RecipePreparationsService] Consuming ${neededRecipeQuantity} units of recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name}) for preparation ${preparationId}`);
+
+        // Consumă recursiv ingredientele din rețeta-ingredient
+        // IMPORTANT: Nu adăugăm rețeta-ingredient în visitedRecipeIds înainte de apelul recursiv
+        // pentru a permite aceeași rețetă să fie folosită de mai multe ori în aceeași rețetă
+        // (ex: burger cu 2 chifle = aceeași rețetă de chifla folosită de 2 ori)
+        // Doar verificăm dacă există o referință circulară (rețetă care se referă la ea însăși)
+        if (rr.ingredient_recipe_id === recipeId) {
+          throw new BadRequestException(`Rețeta ${recipeId} nu poate conține ca ingredient rețeta ${rr.ingredient_recipe_id} (referință circulară directă)`);
+        }
+        
+        // Creează un nou set pentru fiecare rețetă-ingredient
+        // Acest set va preveni doar referințele circulare în ierarhie, nu utilizarea multiplă
+        const newVisitedSet = new Set(visitedRecipeIds);
+        await this.consumeRecipeIngredients(
+          rr.ingredient_recipe_id,
+          neededRecipeQuantity,
+          preparationId,
+          newVisitedSet
+        );
+
+        console.log(`✅ [RecipePreparationsService] Successfully consumed recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name})`);
+      }
+    }
   }
 
   async update(id: number, dto: Partial<RecipePreparation>) {

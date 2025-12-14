@@ -145,6 +145,32 @@ export class RecipesHttpController {
   deleteMedia(@Param('mediaId') mediaId: string) {
     return this.media.removeMedia(Number(mediaId));
   }
+  // Recipe recipes (rețete ca ingrediente)
+  @Post('recipes/:id/recipe-ingredients')
+  @Permissions('recipes.update')
+  addRecipeIngredient(
+    @Param('id') recipeId: string,
+    @Body() body: { ingredient_recipe_id: number; quantity: number; notes?: string }
+  ) {
+    return this.recipes.addRecipeToRecipe(Number(recipeId), body.ingredient_recipe_id, body.quantity, body.notes);
+  }
+
+  @Get('recipes/:id/recipe-ingredients')
+  @Permissions('recipes.read')
+  getRecipeIngredients(@Param('id') id: string) { return this.recipes.getRecipeRecipes(Number(id)); }
+
+  @Patch('recipes/recipe-ingredients/:id')
+  @Permissions('recipes.update')
+  updateRecipeIngredient(
+    @Param('id') id: string,
+    @Body() body: { quantity: number; notes?: string }
+  ) {
+    return this.recipes.updateRecipeRecipe(Number(id), body.quantity, body.notes);
+  }
+
+  @Delete('recipes/recipe-ingredients/:id')
+  @Permissions('recipes.update')
+  removeRecipeIngredient(@Param('id') id: string) { return this.recipes.removeRecipeRecipe(Number(id)); }
 
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
@@ -159,25 +185,44 @@ export class RecipesHttpController {
 
   // Preparations
   @Get('recipe-preparations')
-  @Permissions('recipes.read')
+  @Permissions('preparation.read')
   getPreparations(
     @Query('page') page = '1',
     @Query('limit') limit = '50',
-    @Query('location_id') locationId?: string
+    @Query('location_id') locationId?: string,
+    @Request() req?: any
   ) {
-    return this.preps.findAll(Number(page), Number(limit), locationId ? Number(locationId) : undefined);
+    const user = req?.user;
+    const hasRecipesRead = user?.permissions?.includes('recipes.read');
+    
+    // Dacă utilizatorul nu are permisiunea recipes.read, filtrare OBLIGATORIE după locație
+    if (!hasRecipesRead) {
+      // Dacă nu are location_id în query, încearcă să obțină din user
+      let finalLocationId = locationId ? parseInt(locationId, 10) : undefined;
+      if (!finalLocationId) {
+        finalLocationId = user?.work_location_id || user?.work_location_default_id;
+      }
+      if (!finalLocationId) {
+        // Dacă nu are locație, returnează array gol
+        return [];
+      }
+      return this.preps.findAll(Number(page), Number(limit), finalLocationId);
+    }
+    
+    // Pentru utilizatori cu recipes.read, permitem fără location_id
+    return this.preps.findAll(Number(page), Number(limit), locationId ? parseInt(locationId, 10) : undefined);
   }
   
   @Get('recipe-preparations/:id')
-  @Permissions('recipes.read')
+  @Permissions('preparation.read')
   getPreparation(@Param('id') id: string) { return this.preps.findOne(Number(id)); }
   
   @Post('recipe-preparations')
-  @Permissions('recipes.create')
+  @Permissions('preparation.create')
   createPreparation(@Body() dto: CreateRecipePreparationDto) { return this.preps.create(dto); }
   
   @Patch('recipe-preparations/:id')
-  @Permissions('recipes.update')
+  @Permissions('preparation.update')
   updatePreparation(@Param('id') id: string, @Body() dto: UpdateRecipePreparationDto) {
     const payload: any = { ...dto };
     if (payload.produced_at && typeof payload.produced_at === 'string') {
@@ -187,11 +232,11 @@ export class RecipesHttpController {
   }
   
   @Delete('recipe-preparations/:id')
-  @Permissions('recipes.delete')
+  @Permissions('preparation.delete')
   removePreparation(@Param('id') id: string) { return this.preps.remove(Number(id)); }
   
   @Post('recipe-preparations/prepare-with-stock')
-  @Permissions('recipes.create')
+  @Permissions('preparation.create')
   prepareWithStock(@Body() dto: CreateRecipePreparationDto) { return this.preps.prepareWithStock(dto); }
 
   // Labels

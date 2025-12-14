@@ -3,6 +3,7 @@ import { RecipeCategory } from './recipe-category.entity';
 import { RecipeProduct } from './recipe-product.entity';
 import { RecipePreparation } from './recipe-preparation.entity';
 import { RecipeMedia } from './recipe-media.entity';
+import { RecipeRecipe } from './recipe-recipe.entity';
 
 @Entity('recipes')
 export class Recipe {
@@ -46,6 +47,9 @@ export class Recipe {
 
   @OneToMany(() => RecipeProduct, (rp) => rp.recipe, { cascade: true, eager: false })
   recipe_products: RecipeProduct[];
+
+  @OneToMany(() => RecipeRecipe, (rr) => rr.recipe, { cascade: true, eager: false })
+  recipe_recipes: RecipeRecipe[];
 
   @OneToMany(() => RecipePreparation, (rp) => rp.recipe, { cascade: true, eager: false })
   recipe_preparations: RecipePreparation[];
