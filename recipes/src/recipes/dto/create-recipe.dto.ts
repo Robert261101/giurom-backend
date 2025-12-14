@@ -29,7 +29,7 @@ export class CreateRecipeDto {
   @IsNotEmpty()
   @Min(1)
   @Max(8760)
-  expiration_days: number;
+  expiration_hours: number;
 
   @ApiProperty()
   @IsNumber()
