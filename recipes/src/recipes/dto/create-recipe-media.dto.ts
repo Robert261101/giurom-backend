@@ -31,11 +31,11 @@ export class CreateRecipeMediaDto {
   file_link: string;
 
   @ApiProperty({
-    description: 'Conținutul fișierului în format base64',
+    description: 'Conținutul fișierului în format base64 sau data URL',
     example: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDA...',
     required: false,
   })
   @IsOptional()
-  @IsBase64()
+  @IsString()
   file_content?: string;
 }

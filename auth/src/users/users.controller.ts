@@ -546,13 +546,17 @@ export class UsersController {
       throw new Error(`Utilizatorul cu ID ${id} nu a fost găsit`);
     }
     
-    // Convert direct file path to API proxy URL if needed
+    // Handle profile image URL properly
     let profileImageUrl = user.profile_image;
     if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
       // This is a direct file path, we need to convert it to an API proxy URL
       // For now, we'll return empty string to use default avatar
       // In a real implementation, we would need to find the file ID and create the proper URL
       profileImageUrl = '';
+    }
+    // If this is already an API proxy URL, keep it as is
+    else if (profileImageUrl && profileImageUrl.startsWith('/api/')) {
+      profileImageUrl = profileImageUrl;
     }
     
     // Fetch employee email
@@ -600,13 +604,17 @@ export class UsersController {
       
       console.log(`✅ Found user ${user.id} for employee ${employeeId}`);
       
-      // Convert direct file path to API proxy URL if needed
+      // Handle profile image URL properly
       let profileImageUrl = user.profile_image;
       if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
         // This is a direct file path, we need to convert it to an API proxy URL
         // For now, we'll return empty string to use default avatar
         // In a real implementation, we would need to find the file ID and create the proper URL
         profileImageUrl = '';
+      }
+      // If this is already an API proxy URL, keep it as is
+      else if (profileImageUrl && profileImageUrl.startsWith('/api/')) {
+        profileImageUrl = profileImageUrl;
       }
       
       // Return profile image URL
