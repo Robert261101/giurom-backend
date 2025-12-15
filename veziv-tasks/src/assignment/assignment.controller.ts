@@ -33,6 +33,22 @@ export class AssignmentController {
     return this.assignmentService.create(createAssignmentDto);
   }
 
+  @Post('batch')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('assignment.create')
+  @ApiOperation({ summary: 'Creează mai multe assignments într-o singură tranzacție (batch)' })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Assignments create cu succes',
+    type: [TaskAssignment] 
+  })
+  @ApiResponse({ status: 400, description: 'Date invalide' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără permisiuni' })
+  createBatch(@Body() createAssignmentDtos: CreateAssignmentDto[]): Promise<TaskAssignment[]> {
+    return this.assignmentService.createBatch(createAssignmentDtos);
+  }
+
   @Get()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')

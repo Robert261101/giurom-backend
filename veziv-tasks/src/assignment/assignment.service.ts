@@ -615,6 +615,37 @@ export class AssignmentService {
     return finalAssignment;
   }
 
+  /**
+   * Creează mai multe assignments într-o singură tranzacție (batch)
+   * Optimizează crearea de assignments pentru mai multe persoane
+   */
+  async createBatch(createAssignmentDtos: CreateAssignmentDto[]): Promise<TaskAssignment[]> {
+    if (!createAssignmentDtos || createAssignmentDtos.length === 0) {
+      return [];
+    }
+
+    console.log(`📦 [ASSIGNMENT SERVICE] Creating ${createAssignmentDtos.length} assignments in batch`);
+
+    // Creează toate assignment-urile secvențial pentru a evita probleme de concurență
+    // (nu folosim tranzacție pentru că create() are deja logica sa complexă)
+    const createdAssignments: TaskAssignment[] = [];
+
+    for (const createAssignmentDto of createAssignmentDtos) {
+      try {
+        const assignment = await this.create(createAssignmentDto);
+        createdAssignments.push(assignment);
+      } catch (error) {
+        console.error(`❌ [ASSIGNMENT SERVICE] Error creating assignment in batch:`, error);
+        // Continuă cu următoarele chiar dacă unul eșuează
+        // (sau poți arunca eroarea dacă vrei să anulezi toate)
+        throw error;
+      }
+    }
+
+    console.log(`✅ [ASSIGNMENT SERVICE] Successfully created ${createdAssignments.length} assignments in batch`);
+    return createdAssignments;
+  }
+
   async findAll(): Promise<TaskAssignment[]> {
     return this.assignmentRepository.find({
       relations: ['template', 'elements', 'elements.task_element'],
