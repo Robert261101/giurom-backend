@@ -61,6 +61,20 @@ export class WorkLocationFiles {
   expire_date: Date | null;
 
   @ApiProperty({
+    description: 'Note despre fișier',
+    example: '|folder:Contract de Închiriere locație| Document încărcat la 15.11.2023',
+    required: false
+  })
+  @Column({
+    type: 'varchar',
+    length: 1000,
+    nullable: true,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci'
+  })
+  notes: string | null;
+
+  @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',
   })

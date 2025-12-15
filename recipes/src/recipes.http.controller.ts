@@ -116,6 +116,35 @@ export class RecipesHttpController {
   @Permissions('recipes.read')
   getRecipeProducts(@Param('id') id: string) { return this.recipes.findRecipeProducts(Number(id)); }
 
+  // Recipe Media endpoints
+  @Post('recipes/:id/media')
+  @Permissions('recipes.create')
+  uploadMedia(@Param('id') id: string, @Body() dto: CreateRecipeMediaDto) {
+    return this.media.createMedia({ ...dto, recipe_id: Number(id) });
+  }
+
+  @Get('recipes/:id/media')
+  @Permissions('recipes.read')
+  getRecipeMedia(@Param('id') id: string) {
+    return this.media.findMediaByRecipe(Number(id));
+  }
+
+  @Get('recipes/media/:mediaId')
+  @Permissions('recipes.read')
+  async serveMedia(@Param('mediaId') mediaId: string) {
+    const mediaData = await this.media.serveMedia(Number(mediaId));
+    return {
+      data: mediaData.data,
+      mimeType: mediaData.mimeType,
+      fileName: mediaData.fileName
+    };
+  }
+
+  @Delete('recipes/media/:mediaId')
+  @Permissions('recipes.delete')
+  deleteMedia(@Param('mediaId') mediaId: string) {
+    return this.media.removeMedia(Number(mediaId));
+  }
   // Recipe recipes (rețete ca ingrediente)
   @Post('recipes/:id/recipe-ingredients')
   @Permissions('recipes.update')

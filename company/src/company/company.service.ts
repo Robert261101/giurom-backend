@@ -42,12 +42,77 @@ export class CompanyService {
     }
     return repoRoot;
   }
+  // Create the required folder structure for a new company
+  private async createCompanyFolderStructure(company: Company): Promise<void> {
+    try {
+      // Create company folder with only company name
+      const companyRootDir = path.join(this.getCompanyFilesRootDir(), company.company_name);
+      
+      // Create company folder
+      if (!fs.existsSync(companyRootDir)) {
+        fs.mkdirSync(companyRootDir, { recursive: true });
+        console.log(`📁 Created company root directory: ${companyRootDir}`);
+      }
+      
+      // Create "Companie" folder with all subfolders
+      const companyDir = path.join(companyRootDir, 'Companie');
+      if (!fs.existsSync(companyDir)) {
+        fs.mkdirSync(companyDir, { recursive: true });
+        console.log(`📁 Created company directory: ${companyDir}`);
+      }
+      
+      // Create all required subfolders for "Companie"
+      const companySubfolders = [
+        'Certificat de Înregistrare',
+        'Act Constitutiv',
+        'Hotărâre ANAF',
+        'Certificat Fiscal',
+        'Procură',
+        'Contract de Închiriere sediu',
+        'Contracte utilități',
+        'Contracte parteneri',
+        'Contracte servicii (IT, contabilitate etc.)',
+        'Decizii fiscale',
+        'Declarații fiscale',
+        'Situații financiare (bilanț, balanță)',
+        'Registre contabile',
+        'Regulament intern',
+        'Politici GDPR',
+        'Proceduri interne',
+        'Documente SSM/PSI',
+        'Procese verbale',
+        'Alte documente'
+      ];
+      
+      for (const subfolder of companySubfolders) {
+        const subfolderPath = path.join(companyDir, subfolder);
+        if (!fs.existsSync(subfolderPath)) {
+          fs.mkdirSync(subfolderPath, { recursive: true });
+          console.log(`📁 Created company subfolder: ${subfolderPath}`);
+        }
+      }
+      
+      // Create "Locații" folder (empty initially)
+      const locationsDir = path.join(companyRootDir, 'Locații');
+      if (!fs.existsSync(locationsDir)) {
+        fs.mkdirSync(locationsDir, { recursive: true });
+        console.log(`📁 Created locations directory: ${locationsDir}`);
+      }
+      
+      console.log(`✅ Folder structure created successfully for company ${company.id}`);
+    } catch (error) {
+      console.error(`❌ Error creating folder structure for company ${company.id}:`, error);
+    }
+  }
 
   async createCompany(dto: CreateCompanyDto): Promise<Company> {
     const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
     if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     const company = this.companyRepository.create(dto);
     const saved = await this.companyRepository.save(company);
+    
+    // Create the required folder structure for the new company
+    await this.createCompanyFolderStructure(saved);
     
     // Send notification
     try {
@@ -83,18 +148,22 @@ export class CompanyService {
     const { documents, ...companyData } = dto as any;
     const companyEntity: Company = this.companyRepository.create(companyData as Partial<Company>);
     const saved: Company = await this.companyRepository.save(companyEntity);
+    
+    // Create the required folder structure for the new company
+    await this.createCompanyFolderStructure(saved);
+    
     if (Array.isArray(documents) && documents.length) {
       for (const doc of documents) {
         // Create directory for company if it doesn't exist
-        const companyDir = path.join(this.getCompanyFilesRootDir(), saved.id.toString());
+        const companyDir = path.join(this.getCompanyFilesRootDir(), saved.company_name);
         if (!fs.existsSync(companyDir)) {
           fs.mkdirSync(companyDir, { recursive: true });
         }
 
-        // Create folder directory if specified
+        // Create folder directory if specified - inside the "Companie" folder
         let folderPath = '';
         if (doc.folder) {
-          folderPath = path.join(companyDir, doc.folder);
+          folderPath = path.join(companyDir, 'Companie', doc.folder);
           if (!fs.existsSync(folderPath)) {
             fs.mkdirSync(folderPath, { recursive: true });
           }
@@ -120,9 +189,9 @@ export class CompanyService {
             
             // Update location path
             if (doc.folder) {
-              locationPath = `/files/companies/${saved.id}/${doc.folder}/${fileName}`;
+              locationPath = `/files/companies/${saved.company_name}/Companie/${doc.folder}/${fileName}`;
             } else {
-              locationPath = `/files/companies/${saved.id}/${fileName}`;
+              locationPath = `/files/companies/${saved.company_name}/${fileName}`;
             }
           } catch (error) {
             // Continue even if file save fails - document is still saved in DB
@@ -276,15 +345,15 @@ export class CompanyService {
     const company = await this.findCompanyById(dto.company_id);
     
     // Create directory for company if it doesn't exist
-    const companyDir = path.join(this.getCompanyFilesRootDir(), company.id.toString());
+    const companyDir = path.join(this.getCompanyFilesRootDir(), company.company_name);
     if (!fs.existsSync(companyDir)) {
       fs.mkdirSync(companyDir, { recursive: true });
     }
 
-    // Create folder directory if specified
+    // Create folder directory if specified - inside the "Companie" folder
     let folderPath = '';
     if (dto.folder) {
-      folderPath = path.join(companyDir, dto.folder);
+      folderPath = path.join(companyDir, 'Companie', dto.folder);
       if (!fs.existsSync(folderPath)) {
         fs.mkdirSync(folderPath, { recursive: true });
       }
@@ -310,9 +379,9 @@ export class CompanyService {
         
         // Update location path
         if (dto.folder) {
-          locationPath = `/files/companies/${company.id}/${dto.folder}/${fileName}`;
+          locationPath = `/files/companies/${company.company_name}/Companie/${dto.folder}/${fileName}`;
         } else {
-          locationPath = `/files/companies/${company.id}/${fileName}`;
+          locationPath = `/files/companies/${company.company_name}/${fileName}`;
         }
       } catch (error) {
         console.error('Error saving document to disk:', error);
@@ -361,6 +430,26 @@ export class CompanyService {
 
   async removeCompanyDocument(documentId: number): Promise<void> {
     const document = await this.findDocumentById(documentId);
+    
+    // Remove physical file from disk
+    try {
+      // Construct the file path from the location_path (same logic as in serveCompanyFile)
+      const basePath = this.getCompanyFilesRootDir();
+      const relativePath = document.location_path.replace('/files/companies/', '');
+      const filePath = path.join(basePath, relativePath);
+      
+      // Remove the physical file if it exists
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`✅ Deleted physical file: ${filePath}`);
+      } else {
+        console.warn(`⚠️ Physical file not found for removal: ${filePath}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Failed to delete physical file for document ${documentId}:`, error);
+    }
+    
+    // Remove database record
     await this.companyDocumentRepository.remove(document);
   }
 

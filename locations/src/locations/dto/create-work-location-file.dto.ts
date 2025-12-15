@@ -73,4 +73,14 @@ export class CreateWorkLocationFileDto {
   @IsOptional()
   @IsString({ message: 'Data expirării trebuie să fie un string' })
   expire_date?: string;
+
+  @ApiProperty({
+    description: 'Note despre fișier (poate include informații despre folder etc.)',
+    example: '|folder:Contract de Închiriere locație| Document încărcat la 15.11.2023',
+    required: false
+  })
+  @IsOptional()
+  @IsString({ message: 'Notele trebuie să fie un string' })
+  @Length(0, 1000, { message: 'Notele trebuie să aibă între 0 și 1000 de caractere' })
+  notes?: string;
 }

@@ -199,8 +199,8 @@ export class StockService {
     await this.stockRepo.remove(stock);
   }
 
-  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation', employeeId?: number, locationId?: number): Promise<void> {
-    console.log(`🔍 [StockService] Starting consumeProduct for productId: ${productId}, quantity: ${quantity}, target: ${target}, employeeId: ${employeeId}, locationId: ${locationId}`);
+  async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation', employeeId?: number, locationId?: number, recipePreparationId?: number): Promise<void> {
+    console.log(`🔍 [StockService] Starting consumeProduct for productId: ${productId}, quantity: ${quantity}, target: ${target}, employeeId: ${employeeId}, locationId: ${locationId}, recipePreparationId: ${recipePreparationId}`);
     
     // Use explicit transaction handling
     const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
@@ -292,6 +292,7 @@ export class StockService {
       const consumptionRecord = consumptionRecordRepo.create({
         product_id: productId,
         employee_id: employeeId,
+        recipe_preparation_id: recipePreparationId,
         quantity,
         unit: product.unit,
         location_id: locationId,

@@ -47,7 +47,8 @@ export class SuppliersService {
     private readonly configService: ConfigService,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {
-    this.locationsServiceUrl = this.configService.get<string>('LOCATIONS_HTTP_URL') || 'http://localhost:3005';
+    // Use API Gateway URL for inter-service communication
+    this.locationsServiceUrl = this.configService.get<string>('API_GATEWAY_URL') || 'http://localhost:3002';
   }
 
   private async sendSupplierNotification(
@@ -141,7 +142,7 @@ export class SuppliersService {
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier saved with ID: ${savedSupplier.id}`);
     
-    await this.createSupplierFoldersWithCustomName(savedSupplier, dto.folderName, dto.documents);
+    await this.createSupplierFoldersWithCustomName(savedSupplier, dto.folderName, dto.documents, location_id);
     
     // Automatically assign supplier to location if location_id is provided
     if (location_id) {
@@ -179,136 +180,200 @@ export class SuppliersService {
   }
 
   private async createSupplierFolders(supplier: Supplier): Promise<void> {
-    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
-    const repoRoot = this.getRepoRoot();
-    const filesDir = path.join(repoRoot, 'files');
-    const suppliersDir = path.join(filesDir, 'suppliers');
-    const supplierDir = path.join(suppliersDir, supplierNameSimplified);
-    const dataDir = path.join(supplierDir, 'data');
-    const ordersDir = path.join(supplierDir, 'orders');
-
-    this.logger.log(`📁 Creating supplier folders for: ${supplier.supplier_name} (${supplierNameSimplified})`);
-    this.logger.log(`📁 Files directory: ${filesDir}`);
-    this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
-    this.logger.log(`📁 Supplier directory: ${supplierDir}`);
-
-    if (!fs.existsSync(filesDir)) {
-      this.logger.log(`📁 Creating files directory: ${filesDir}`);
-      fs.mkdirSync(filesDir, { recursive: true });
-    }
-    if (!fs.existsSync(suppliersDir)) {
-      this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
-      fs.mkdirSync(suppliersDir, { recursive: true });
-    }
-    if (!fs.existsSync(supplierDir)) {
-      this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
-      fs.mkdirSync(supplierDir, { recursive: true });
-    }
-    if (!fs.existsSync(dataDir)) {
-      this.logger.log(`📁 Creating data directory: ${dataDir}`);
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    if (!fs.existsSync(ordersDir)) {
-      this.logger.log(`📁 Creating orders directory: ${ordersDir}`);
-      fs.mkdirSync(ordersDir, { recursive: true });
-    }
-
-    const basePath = `/files/suppliers/${supplierNameSimplified}`;
-    this.logger.log(`📁 Base path for database records: ${basePath}`);
-    
-    const folders = [
-      { supplier_id: supplier.id, description: 'Folder pentru documente și contracte', folder_path: `${basePath}/data/` },
-      { supplier_id: supplier.id, description: 'Folder pentru comenzi și PDF-uri generate', folder_path: `${basePath}/orders/` },
-    ];
-    
-    for (const folderData of folders) {
-      this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
-      const folder = this.folderRepo.create(folderData);
-      await this.folderRepo.save(folder);
+    try {
+      const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+      const repoRoot = this.getRepoRoot();
+      const filesDir = path.join(repoRoot, 'files');
+      const suppliersDir = path.join(filesDir, 'suppliers');
+      const supplierDir = path.join(suppliersDir, supplierNameSimplified);
+      
+      this.logger.log(`📁 Creating supplier folders for: ${supplier.supplier_name} (${supplierNameSimplified})`);
+      this.logger.log(`📁 Files directory: ${filesDir}`);
+      this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
+      this.logger.log(`📁 Supplier directory: ${supplierDir}`);
+      
+      // Create the main supplier directory
+      if (!fs.existsSync(filesDir)) {
+        this.logger.log(`📁 Creating files directory: ${filesDir}`);
+        fs.mkdirSync(filesDir, { recursive: true });
+      }
+      if (!fs.existsSync(suppliersDir)) {
+        this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
+        fs.mkdirSync(suppliersDir, { recursive: true });
+      }
+      if (!fs.existsSync(supplierDir)) {
+        this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
+        fs.mkdirSync(supplierDir, { recursive: true });
+      }
+      
+      // Only create the main supplier directory, subfolders will be created dynamically when needed
+      this.logger.log(`📁 Created main supplier directory: ${supplierDir}`);
+      
+      this.logger.log(`✅ Folder structure created successfully for supplier ${supplier.id}`);
+    } catch (error) {
+      this.logger.error(`❌ Error creating folder structure for supplier ${supplier.id}:`, error);
     }
   }
 
-  private async createSupplierFoldersWithCustomName(supplier: Supplier, customFolderName?: string, documents?: any[]): Promise<void> {
-    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
-    const repoRoot = this.getRepoRoot();
-    const filesDir = path.join(repoRoot, 'files');
-    const suppliersDir = path.join(filesDir, 'suppliers');
-    const supplierDir = path.join(suppliersDir, supplierNameSimplified);
-    const dataDir = path.join(supplierDir, 'data');
-    const ordersDir = path.join(supplierDir, 'orders');
-
-    this.logger.log(`📁 Creating supplier folders with custom name for: ${supplier.supplier_name} (${supplierNameSimplified})`);
-    this.logger.log(`📁 Files directory: ${filesDir}`);
-    this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
-    this.logger.log(`📁 Supplier directory: ${supplierDir}`);
-
-    if (!fs.existsSync(filesDir)) {
-      this.logger.log(`📁 Creating files directory: ${filesDir}`);
-      fs.mkdirSync(filesDir, { recursive: true });
-    }
-    if (!fs.existsSync(suppliersDir)) {
-      this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
-      fs.mkdirSync(suppliersDir, { recursive: true });
-    }
-    if (!fs.existsSync(supplierDir)) {
-      this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
-      fs.mkdirSync(supplierDir, { recursive: true });
-    }
-    if (!fs.existsSync(dataDir)) {
-      this.logger.log(`📁 Creating data directory: ${dataDir}`);
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    if (!fs.existsSync(ordersDir)) {
-      this.logger.log(`📁 Creating orders directory: ${ordersDir}`);
-      fs.mkdirSync(ordersDir, { recursive: true });
-    }
-
-    const basePath = `/files/suppliers/${supplierNameSimplified}`;
-    this.logger.log(`📁 Base path for database records: ${basePath}`);
-    
-    const documentFolderName = customFolderName || 'Folder pentru documente și contracte';
-    const folders = [
-      { supplier_id: supplier.id, description: documentFolderName, folder_path: `${basePath}/data/` },
-      { supplier_id: supplier.id, description: 'Folder pentru comenzi și PDF-uri generate', folder_path: `${basePath}/orders/` },
-    ];
-
-    const savedFolders: SupplierFolder[] = [];
-    for (const folderData of folders) {
-      this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
-      const folder = this.folderRepo.create(folderData);
-      const savedFolder = await this.folderRepo.save(folder);
-      savedFolders.push(savedFolder);
-    }
-
-    if (documents && documents.length > 0 && savedFolders[0]) {
-      const documentFolder = savedFolders[0];
-      for (const doc of documents) {
+  private async createSupplierFoldersWithCustomName(supplier: Supplier, customFolderName?: string, documents?: any[], locationId?: number): Promise<void> {
+    try {
+      const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+      const repoRoot = this.getRepoRoot();
+      
+      // Determine the correct base path - location-specific or default
+      let basePath: string;
+      let supplierDir: string;
+      
+      if (locationId) {
+        // Get location details for location-specific path
         try {
-          const fileName = doc.fileName || doc.name;
-          const timestamp = Date.now();
-          const uniqueFileName = `${timestamp}_${fileName}`;
-          const filePath = path.join(dataDir, uniqueFileName);
-          if (doc.content && doc.content.startsWith('data:')) {
-            const base64Data = doc.content.split(',')[1];
-            const buffer = Buffer.from(base64Data, 'base64');
-            fs.writeFileSync(filePath, buffer);
+          const location = await this.fetchLocation(locationId);
+          if (location) {
+            // Get company name for the location
+            let companyName = 'UnknownCompany';
+            try {
+              const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              
+              const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+                headers: {
+                  'x-internal-service': 'locations',
+                  'x-service-secret': serviceSecret,
+                  'Content-Type': 'application/json',
+                },
+                timeout: 3000,
+              }));
+              
+              if (response.data && response.data.company_name) {
+                companyName = response.data.company_name;
+              }
+            } catch (error: any) {
+              this.logger.warn(`⚠️ Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
+            }
+            
+            // Create location-specific path
+            const locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+            basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+            supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+            
+            this.logger.log(`📍 Using location-specific path for supplier folders: ${basePath}`);
           } else {
-            const fileContent = `Document: ${fileName}\nNote: ${doc.note || doc.notes || ''}\nUpload: ${new Date().toISOString()}\nFurnizor: ${supplier.supplier_name}`;
-            fs.writeFileSync(filePath, fileContent, 'utf8');
+            // Even if we can't fetch location details, we still want to use the location-specific structure
+            // We'll use a placeholder for company name and location name
+            this.logger.warn(`⚠️ Location ${locationId} not found, using placeholder location-specific path`);
+            const locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
+            basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+            supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
           }
-          const documentData = {
-            folder_id: documentFolder.id,
-            document_type: DocumentType.OTHER,
-            file_name: fileName,
-            file_path: `${basePath}/data/${uniqueFileName}`,
-            notes: doc.note || doc.notes || '',
-          };
-          const document = this.supplierDocumentRepo.create(documentData);
-          await this.supplierDocumentRepo.save(document);
         } catch (error) {
-          this.logger.error(`❌ Error creating document: ${error}`);
+          this.logger.warn(`⚠️ Error fetching location details, using placeholder location-specific path:`, error);
+          const locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
+          basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+          supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+        }
+      } else {
+        // Default path for non-location-bound suppliers
+        const filesDir = path.join(repoRoot, 'files');
+        const suppliersDir = path.join(filesDir, 'suppliers');
+        basePath = `/files/suppliers/${supplierNameSimplified}`;
+        supplierDir = path.join(suppliersDir, supplierNameSimplified);
+      }
+      
+      this.logger.log(`📁 Creating supplier folders with custom name for: ${supplier.supplier_name} (${supplierNameSimplified})`);
+      this.logger.log(`📁 Base path: ${basePath}`);
+      this.logger.log(`📁 Supplier directory: ${supplierDir}`);
+      
+      // Create the main supplier directory
+      const dirToCreate = path.dirname(supplierDir);
+      if (!fs.existsSync(dirToCreate)) {
+        this.logger.log(`📁 Creating parent directory: ${dirToCreate}`);
+        fs.mkdirSync(dirToCreate, { recursive: true });
+      }
+      if (!fs.existsSync(supplierDir)) {
+        this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
+        fs.mkdirSync(supplierDir, { recursive: true });
+      }
+      
+      // Only create the main supplier directory, subfolders will be created dynamically when needed
+      this.logger.log(`📁 Created main supplier directory: ${supplierDir}`);
+      
+      this.logger.log(`✅ Folder structure created successfully for supplier ${supplier.id}`);
+
+      // Handle documents if provided
+      const documentFolderName = customFolderName || 'Folder pentru documente și contracte';
+      
+      // Create folder records in database for backward compatibility
+      const folders = [
+        { supplier_id: supplier.id, description: documentFolderName, folder_path: `${basePath}/` },
+      ];
+      
+      const savedFolders: SupplierFolder[] = [];
+      for (const folderData of folders) {
+        this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
+        const folder = this.folderRepo.create(folderData);
+        const savedFolder = await this.folderRepo.save(folder);
+        savedFolders.push(savedFolder);
+      }
+      
+      // Handle documents if provided
+      if (documents && documents.length > 0 && savedFolders[0]) {
+        const documentFolder = savedFolders[0];
+        
+        // Define supplier subfolders array
+        const supplierSubfolders = [
+          'Certificat de Înregistrare furnizor',
+          'Certificat Fiscal furnizor',
+          'Act Constitutiv furnizor',
+          'Contract furnizare / prestări servicii',
+          'Acte adiționale',
+          'Acord GDPR',
+          'Comenzi (PO)',
+          'Confirmări de comandă',
+          'Recepții totale',
+          'Recepții parțiale',
+          'Facturi',
+          'Dovezi de plată',
+          'Procese verbale neconformitate',
+          'Oferte comerciale',
+          'Corespondență',
+          'Alte documente'
+        ];
+        
+        for (const doc of documents) {
+          try {
+            const fileName = doc.fileName || doc.name;
+            const timestamp = Date.now();
+            const uniqueFileName = `${timestamp}_${fileName}`;
+            
+            // Save to the first subfolder (Certificat de Înregistrare furnizor) as default
+            const firstSubfolder = supplierSubfolders[0];
+            const filePath = path.join(supplierDir, firstSubfolder, uniqueFileName);
+            
+            if (doc.content && doc.content.startsWith('data:')) {
+              const base64Data = doc.content.split(',')[1];
+              const buffer = Buffer.from(base64Data, 'base64');
+              fs.writeFileSync(filePath, buffer);
+            } else {
+              const fileContent = `Document: ${fileName}\nNote: ${doc.note || doc.notes || ''}\nUpload: ${new Date().toISOString()}\nFurnizor: ${supplier.supplier_name}`;
+              fs.writeFileSync(filePath, fileContent, 'utf8');
+            }
+            
+            const documentData = {
+              folder_id: documentFolder.id,
+              document_type: DocumentType.OTHER,
+              file_name: fileName,
+              file_path: `${basePath}/${firstSubfolder}/${uniqueFileName}`,
+              notes: doc.note || doc.notes || '',
+            };
+            const document = this.supplierDocumentRepo.create(documentData);
+            await this.supplierDocumentRepo.save(document);
+          } catch (error) {
+            this.logger.error(`❌ Error creating document: ${error}`);
+          }
         }
       }
+    } catch (error) {
+      this.logger.error(`❌ Error creating folder structure for supplier ${supplier.id}:`, error);
     }
   }
 
@@ -349,11 +414,69 @@ export class SuppliersService {
     const absolutePath = path.join(repoRoot, filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`);
     this.logger.log(`📄 Absolute file path: ${absolutePath}`);
     
+    // If file is not found at the specified path, check in subfolders
+    if (!fs.existsSync(absolutePath)) {
+      this.logger.log(`📁 File not found at specified path, checking subfolders`);
+      
+      // Extract the directory path without the filename
+      const dirPath = path.dirname(absolutePath);
+      const fileName = path.basename(absolutePath);
+      
+      // If the directory exists, check its subfolders
+      if (fs.existsSync(dirPath)) {
+        const subfolders = fs.readdirSync(dirPath).filter(item => 
+          fs.statSync(path.join(dirPath, item)).isDirectory()
+        );
+        
+        // Check each subfolder for the file
+        for (const subfolder of subfolders) {
+          const possiblePath = path.join(dirPath, subfolder, fileName);
+          if (fs.existsSync(possiblePath)) {
+            const newAbsolutePath = possiblePath;
+            this.logger.log(`📁 File found in subfolder ${subfolder}: ${newAbsolutePath}`);
+            
+            // Update the file path in the document record for future requests
+            try {
+              const relativePath = newAbsolutePath.replace(repoRoot, '').replace(/\\/g, '/');
+              document.file_path = relativePath.startsWith('/files') ? relativePath : `/files${relativePath}`;
+              await this.supplierDocumentRepo.save(document);
+              this.logger.log(`✅ Updated document file path in database: ${document.file_path}`);
+            } catch (saveError) {
+              this.logger.warn(`⚠️ Failed to update document file path in database:`, saveError);
+            }
+            
+            // Check if the path is a file, not a directory
+            const stats = fs.statSync(newAbsolutePath);
+            if (stats.isDirectory()) {
+              this.logger.error(`❌ Attempted to read directory as file: ${newAbsolutePath}`);
+              throw new BadRequestException('EISDIR: illegal operation on a directory, read');
+            }
+            
+            const buffer = fs.readFileSync(newAbsolutePath);
+            const fileExt = document.file_name.split('.').pop()?.toLowerCase() || '';
+            const mimeMap: Record<string, string> = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain' };
+            const mimeType = mimeMap[fileExt] || 'application/octet-stream';
+            const disposition: 'inline' | 'attachment' = forceDownload ? 'attachment' : 'inline';
+            
+            this.logger.log(`✅ Successfully read file: ${document.file_name} (${buffer.length} bytes)`);
+            return { data: buffer.toString('base64'), mimeType, fileName: document.file_name, disposition };
+          }
+        }
+      }
+    }
+    
     if (!fs.existsSync(absolutePath)) {
       this.logger.error(`❌ File not found on disk: ${absolutePath}`);
       this.logger.error(`📄 Database path was: ${document.file_path}`);
       this.logger.error(`📄 Computed path was: ${filePathToUse}`);
       throw new NotFoundException('Fișierul nu a fost găsit pe disk');
+    }
+    
+    // Check if the path is a file, not a directory
+    const stats = fs.statSync(absolutePath);
+    if (stats.isDirectory()) {
+      this.logger.error(`❌ Attempted to read directory as file: ${absolutePath}`);
+      throw new BadRequestException('EISDIR: illegal operation on a directory, read');
     }
     
     const buffer = fs.readFileSync(absolutePath);
@@ -407,8 +530,30 @@ export class SuppliersService {
   }
 
   async findOne(id: number): Promise<Supplier> {
-    const supplier = await this.supplierRepo.findOne({ where: { id }, relations: ['folders', 'folders.documents', 'products', 'orders', 'orders.items', 'orders.documents'] });
-    if (!supplier) throw new NotFoundException('Furnizorul nu a fost găsit');
+    console.log(`🔍 [findOne] Finding supplier with ID: ${id}`);
+    const supplier = await this.supplierRepo.findOne({ 
+      where: { id }, 
+      relations: ['folders', 'folders.documents', 'products', 'orders', 'orders.items', 'orders.documents'] 
+    });
+    
+    if (!supplier) {
+      console.error(`❌ [findOne] Supplier with ID ${id} not found`);
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+    
+    console.log(`✅ [findOne] Found supplier: ${supplier.supplier_name}`);
+    console.log(`📂 [findOne] Supplier folders:`, supplier.folders);
+    
+    // Log folder details
+    if (supplier.folders && supplier.folders.length > 0) {
+      console.log(`📋 [findOne] Folder details for supplier ${id}:`);
+      supplier.folders.forEach((folder, index) => {
+        console.log(`   Folder ${index + 1}: ID=${folder.id}, Description="${folder.description}", Path="${folder.folder_path}", Documents=${folder.documents?.length || 0}`);
+      });
+    } else {
+      console.log(`⚠️ [findOne] No folders found for supplier ${id}`);
+    }
+    
     return supplier;
   }
 
@@ -2328,64 +2473,315 @@ export class SuppliersService {
     supplierId: number,
     documentData: { fileName: string; folderId: number; notes?: string; content?: string; file_content?: string; expire_date?: string },
   ) {
-    const supplier = await this.findOne(supplierId);
-    const folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
-    if (!folder) throw new NotFoundException('Folderul nu a fost găsit');
-    
-    // Get the supplier name simplified
-    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
-    
-    // Save physical file if content provided
-    const base64 = documentData.content || documentData.file_content;
-    if (base64) {
-      const repoRoot = this.getRepoRoot();
+    try {
+      console.log(`📥 [addDocument] Starting document upload for supplier ${supplierId}`);
+      console.log(`📄 [addDocument] Document data:`, {
+        fileName: documentData.fileName,
+        folderId: documentData.folderId,
+        hasContent: !!(documentData.content || documentData.file_content),
+        notes: documentData.notes,
+        expire_date: documentData.expire_date
+      });
+
+      const supplier = await this.findOne(supplierId);
+      console.log(`✅ [addDocument] Found supplier: ${supplier.supplier_name} (ID: ${supplier.id})`);
+
+      const folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
+      if (!folder) {
+        console.error(`❌ [addDocument] Folder not found for ID ${documentData.folderId} and supplier ${supplierId}`);
+        throw new NotFoundException('Folderul nu a fost găsit');
+      }
+      console.log(`✅ [addDocument] Found folder: ${folder.description} (ID: ${folder.id})`);
+
+      // Get the supplier name simplified
+      const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+      console.log(`📝 [addDocument] Simplified supplier name: ${supplierNameSimplified}`);
+
+      // Check if supplier is bound to any locations
+      let locationPath: string | null = null;
+      let isBoundToLocation = false;
+
+      try {
+        console.log(`🔍 [addDocument] Checking if supplier ${supplierId} is bound to any locations`);
+        const supplierLocations = await this.supplierLocationsRepo.find({
+          where: { supplier_id: supplierId }
+        });
+        console.log(`📍 [addDocument] Found supplier locations:`, supplierLocations);
+
+        if (supplierLocations && supplierLocations.length > 0) {
+          console.log(`📍 [addDocument] Supplier is bound to ${supplierLocations.length} locations`);
+          // Get the first location (assuming supplier is primarily bound to one location)
+          const locationId = supplierLocations[0].id_location;
+          console.log(`📍 [addDocument] Checking details for location ID: ${locationId}`);
+          
+          // Add more detailed logging for location fetching
+          try {
+            const location = await this.fetchLocation(locationId);
+            console.log(`📍 [addDocument] Location details:`, location);
+            
+            if (location) {
+              console.log(`📍 [addDocument] Location data is valid`);
+              // Get company name for the location
+              let companyName = 'UnknownCompany';
+              try {
+                const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+                const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+                console.log(`🏢 [addDocument] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
+
+                const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+                  headers: {
+                    'x-internal-service': 'locations',
+                    'x-service-secret': serviceSecret,
+                    'Content-Type': 'application/json',
+                  },
+                  timeout: 3000,
+                }));
+
+                if (response.data && response.data.company_name) {
+                  companyName = response.data.company_name;
+                  console.log(`🏢 [addDocument] Company name: ${companyName}`);
+                } else {
+                  console.log(`🏢 [addDocument] Company response data:`, response.data);
+                }
+              } catch (error: any) {
+                console.warn(`⚠️ [addDocument] Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
+              }
+
+              // Create location-specific path
+              locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+              isBoundToLocation = true;
+              console.log(`📍 [addDocument] Location-specific path constructed: ${locationPath}`);
+              
+              // Verify that the location path components are valid
+              console.log(`📍 [addDocument] Location path components:`, {
+                companyName: companyName,
+                locationName: location.location_name,
+                companyId: location.company_id
+              });
+            } else {
+              console.log(`⚠️ [addDocument] Location details not found for location ID: ${locationId}`);
+              // Even if we can't fetch location details, we still want to use the location-specific structure
+              // We'll use a placeholder for company name and location name
+              locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
+              isBoundToLocation = true;
+              console.log(`📍 [addDocument] Using placeholder location-specific path: ${locationPath}`);
+            }
+          } catch (locationError) {
+            console.error(`❌ [addDocument] Error fetching location details for location ID ${locationId}:`, locationError);
+            // Even if we get an error fetching location details, we still want to use the location-specific structure
+            // We'll use a placeholder for company name and location name
+            locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
+            isBoundToLocation = true;
+            console.log(`📍 [addDocument] Using placeholder location-specific path due to error: ${locationPath}`);
+          }
+        } else {
+          console.log(`ℹ️ [addDocument] Supplier ${supplierId} is not bound to any locations`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [addDocument] Error checking supplier location binding:`, error);
+      }
+
+      console.log(`📍 [addDocument] Final location binding status - isBoundToLocation: ${isBoundToLocation}, locationPath: ${locationPath}`);
       
-      // Handle both old and new folder path structures
-      let folderPathToUse = folder.folder_path;
-      
-      // Check if the folder path follows the old structure (with ID)
-      if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
-        // This is the old structure with ID, we need to convert it to the new structure
-        folderPathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
-      } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
-        // This is already the new structure, use it as is
-        folderPathToUse = folder.folder_path;
+      // If bound to location, verify the path can be constructed
+      if (isBoundToLocation && locationPath) {
+        const repoRoot = this.getRepoRoot();
+        const absoluteLocationPath = path.join(repoRoot, locationPath);
+        console.log(`📁 [addDocument] Absolute location path: ${absoluteLocationPath}`);
+        
+        // Check if the location directory exists
+        if (fs.existsSync(absoluteLocationPath)) {
+          console.log(`✅ [addDocument] Location directory exists`);
+        } else {
+          console.log(`⚠️ [addDocument] Location directory does not exist, will be created during file save`);
+        }
+      }
+
+      // Save physical file if content provided
+      const base64 = documentData.content || documentData.file_content;
+      if (base64) {
+        console.log(`💾 [addDocument] Processing file content for: ${documentData.fileName}`);
+        const repoRoot = this.getRepoRoot();
+        console.log(`📁 [addDocument] Repository root: ${repoRoot}`);
+
+        // Determine the correct file path based on location binding
+        let folderPathToUse = folder.folder_path;
+        console.log(`📁 [addDocument] Original folder path: ${folderPathToUse}`);
+
+        if (isBoundToLocation && locationPath) {
+          // Use location-specific path - create supplier folder within Furnizori
+          folderPathToUse = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+          console.log(`📍 [addDocument] Using location-specific folder path: ${folderPathToUse}`);
+        } else {
+          // Handle both old and new folder path structures
+          // Check if the folder path follows the old structure (with ID)
+          if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
+            // This is the old structure with ID, we need to convert it to the new structure
+            folderPathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
+            console.log(`🔄 [addDocument] Converted old path structure to new: ${folderPathToUse}`);
+          } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
+            // This is already the new structure, use it as is
+            folderPathToUse = folder.folder_path;
+            console.log(`✅ [addDocument] Using existing new folder path structure: ${folderPathToUse}`);
+          }
+        }
+
+        // Determine the correct subfolder based on notes
+        let subfolderPath = folderPathToUse;
+        if (documentData.notes) {
+          // Extract folder name from notes if available (same logic as in locations service)
+          const folderMatch = documentData.notes.match(/\|folder:([^|]+)\|/);
+          if (folderMatch && folderMatch[1]) {
+            const designatedFolder = folderMatch[1];
+            subfolderPath = path.join(folderPathToUse, designatedFolder);
+            console.log(`📂 [addDocument] Using designated subfolder: ${designatedFolder}`);
+          }
+        }
+        console.log(`📁 [addDocument] Final subfolder path: ${subfolderPath}`);
+
+        const absoluteDir = path.join(repoRoot, subfolderPath);
+        const absolutePath = path.join(absoluteDir, documentData.fileName);
+        console.log(`📁 [addDocument] Absolute directory: ${absoluteDir}`);
+        console.log(`📄 [addDocument] Absolute file path: ${absolutePath}`);
+
+        // Ensure directory exists
+        try {
+          console.log(`🔍 [addDocument] Checking if directory exists: ${absoluteDir}`);
+          if (!fs.existsSync(absoluteDir)) {
+            console.log(`FontAwesomeIcon [addDocument] Directory does not exist, creating: ${absoluteDir}`);
+            fs.mkdirSync(absoluteDir, { recursive: true });
+            console.log(`✅ [addDocument] Directory created successfully`);
+          } else {
+            console.log(`✅ [addDocument] Directory already exists`);
+          }
+        } catch (dirError: any) {
+          console.error(`❌ [addDocument] Failed to create directory ${absoluteDir}:`, dirError);
+          throw new Error(`Failed to create directory: ${dirError.message || dirError}`);
+        }
+
+        // If using location-specific path, also ensure the supplier folder exists and create subfolders
+        if (isBoundToLocation && locationPath) {
+          const supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+          console.log(`📍 [addDocument] Checking location-specific supplier directory: ${supplierDir}`);
+
+          try {
+            if (!fs.existsSync(supplierDir)) {
+              console.log(`📁 [addDocument] Creating location-specific supplier directory`);
+              fs.mkdirSync(supplierDir, { recursive: true });
+              console.log(`✅ [addDocument] Created location-specific supplier directory: ${supplierDir}`);
+            } else {
+              console.log(`✅ [addDocument] Location-specific supplier directory already exists`);
+            }
+
+            // Create all required subfolders for the supplier in location structure ONLY when needed
+            const supplierSubfolders = [
+              'Certificat de Înregistrare furnizor',
+              'Certificat Fiscal furnizor',
+              'Act Constitutiv furnizor',
+              'Contract furnizare / prestări servicii',
+              'Acte adiționale',
+              'Acord GDPR',
+              'Comenzi (PO)',
+              'Confirmări de comandă',
+              'Recepții totale',
+              'Recepții parțiale',
+              'Facturi',
+              'Dovezi de plată',
+              'Procese verbale neconformitate',
+              'Oferte comerciale',
+              'Corespondență',
+              'Alte documente'
+            ];
+
+            console.log(`📂 [addDocument] Ensuring supplier subfolders exist in location structure`);
+            // Only create the specific subfolder that's being used
+            const designatedFolder = documentData.notes?.match(/\|folder:([^|]+)\|/)?.[1] || 'Alte documente';
+            const subfolderToCreate = supplierSubfolders.find(folder => folder === designatedFolder) || 'Alte documente';
+            const subfolderPath = path.join(supplierDir, subfolderToCreate);
+          
+            console.log(`🔍 [addDocument] Checking specific subfolder: ${subfolderPath}`);
+            if (!fs.existsSync(subfolderPath)) {
+              console.log(`📁 [addDocument] Creating subfolder: ${subfolderToCreate}`);
+              fs.mkdirSync(subfolderPath, { recursive: true });
+              console.log(`✅ [addDocument] Created subfolder: ${subfolderPath}`);
+            } else {
+              console.log(`✅ [addDocument] Subfolder already exists: ${subfolderToCreate}`);
+            }
+          } catch (error: any) {
+            console.error(`❌ [addDocument] Error creating location-specific supplier folder structure:`, error?.message || error);
+            throw new Error(`Failed to create location-specific supplier folder structure: ${error?.message || error}`);
+          }
+        }
+
+        try {
+          const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+          console.log(`💾 [addDocument] Writing file with ${base64Data.length} base64 characters`);
+          const buffer = Buffer.from(base64Data, 'base64');
+          fs.writeFileSync(absolutePath, buffer);
+          console.log(`✅ [addDocument] File written successfully to: ${absolutePath} (${buffer.length} bytes)`);
+        } catch (fileError: any) {
+          console.error(`❌ [addDocument] Failed to write file ${absolutePath}:`, fileError);
+          throw new Error(`Failed to write file: ${fileError.message || fileError}`);
+        }
+      } else {
+        console.log(`⚠️ [addDocument] No file content provided, skipping file save`);
+      }
+
+      // Determine the correct file path for the document record
+      let filePathToUse = folder.folder_path;
+      console.log(`📄 [addDocument] Determining file path for database record. Original: ${filePathToUse}`);
+
+      if (isBoundToLocation && locationPath) {
+        // Use location-specific path
+        filePathToUse = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+        console.log(`📍 [addDocument] Using location-specific path for database: ${filePathToUse}`);
+      } else {
+        // Handle both old and new file path structures for the document record
+        // Check if the folder path follows the old structure (with ID)
+        if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
+          // This is the old structure with ID, we need to convert it to the new structure
+          filePathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
+          console.log(`🔄 [addDocument] Converted old path structure for database: ${filePathToUse}`);
+        } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
+          // This is already the new structure, use it as is
+          filePathToUse = folder.folder_path;
+          console.log(`✅ [addDocument] Using existing new path structure for database: ${filePathToUse}`);
+        }
+      }
+
+      // Create the document record
+      // Determine the correct subfolder based on notes for database record
+      let subfolderForDb = '';
+      if (documentData.notes) {
+        // Extract folder name from notes if available (same logic as in locations service)
+        const folderMatch = documentData.notes.match(/\|folder:([^|]+)\|/);
+        if (folderMatch && folderMatch[1]) {
+          subfolderForDb = folderMatch[1];
+        }
       }
       
-      const absoluteDir = path.join(repoRoot, folderPathToUse);
-      const absolutePath = path.join(absoluteDir, documentData.fileName);
-      
-      // Ensure directory exists
-      if (!fs.existsSync(absoluteDir)) {
-        fs.mkdirSync(absoluteDir, { recursive: true });
+      // If no subfolder specified in notes, use default
+      if (!subfolderForDb) {
+        subfolderForDb = 'Alte documente';
       }
       
-      const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
-      const buffer = Buffer.from(base64Data, 'base64');
-      fs.writeFileSync(absolutePath, buffer);
+      const document = this.supplierDocumentRepo.create({
+        folder_id: documentData.folderId,
+        document_type: DocumentType.OTHER,
+        file_name: documentData.fileName,
+        file_path: `${filePathToUse}/${subfolderForDb}/${documentData.fileName}`,
+        expire_date: documentData.expire_date ? new Date(documentData.expire_date) : null,
+        notes: documentData.notes,
+      });
+      
+      console.log(`💾 [addDocument] Creating document record in database`);
+      const savedDocument = await this.supplierDocumentRepo.save(document);
+      console.log(`✅ [addDocument] Document saved to database with ID: ${savedDocument.id}`);
+      return savedDocument;
+    } catch (error) {
+      console.error(`❌ [addDocument] Unexpected error during document upload:`, error);
+      throw error;
     }
-    
-    // Handle both old and new file path structures for the document record
-    let filePathToUse = folder.folder_path;
-    
-    // Check if the folder path follows the old structure (with ID)
-    if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
-      // This is the old structure with ID, we need to convert it to the new structure
-      filePathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
-    } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
-      // This is already the new structure, use it as is
-      filePathToUse = folder.folder_path;
-    }
-    
-    const document = this.supplierDocumentRepo.create({
-      folder_id: documentData.folderId,
-      document_type: DocumentType.OTHER,
-      file_name: documentData.fileName,
-      file_path: `${filePathToUse}${documentData.fileName}`,
-      expire_date: documentData.expire_date ? new Date(documentData.expire_date) : null,
-      notes: documentData.notes,
-    });
-    return this.supplierDocumentRepo.save(document);
   }
 
   async removeDocument(documentId: number): Promise<void> {
@@ -2453,7 +2849,7 @@ export class SuppliersService {
   // === SUPPLIER LOCATIONS METHODS ===
   async assignSupplierToLocation(supplierId: number, locationId: number): Promise<SupplierLocations> {
     // Verify supplier exists
-    await this.findOne(supplierId);
+    const supplier = await this.findOne(supplierId);
     
     // Check if assignment already exists
     const existingAssignment = await this.supplierLocationsRepo.findOne({
@@ -2469,7 +2865,111 @@ export class SuppliersService {
       id_location: locationId,
     });
     
-    return await this.supplierLocationsRepo.save(assignment);
+    const savedAssignment = await this.supplierLocationsRepo.save(assignment);
+    
+    // Update folder paths to use location-specific structure
+    await this.updateFolderPathsForLocationBoundSupplier(supplierId, locationId);
+    
+    return savedAssignment;
+  }
+  
+  private async updateFolderPathsForLocationBoundSupplier(supplierId: number, locationId: number): Promise<void> {
+    try {
+      this.logger.log(`📍 [updateFolderPathsForLocationBoundSupplier] Updating folder paths for supplier ${supplierId} bound to location ${locationId}`);
+      
+      // Get the supplier
+      const supplier = await this.findOne(supplierId);
+      const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+      
+      // Get location details
+      const location = await this.fetchLocation(locationId);
+      if (!location) {
+        this.logger.warn(`⚠️ [updateFolderPathsForLocationBoundSupplier] Location ${locationId} not found`);
+        return;
+      }
+      
+      // Get company name for the location
+      let companyName = 'UnknownCompany';
+      try {
+        const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        this.logger.log(`🏢 [updateFolderPathsForLocationBoundSupplier] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
+        
+        const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+          headers: {
+            'x-internal-service': 'locations',
+            'x-service-secret': serviceSecret,
+            'Content-Type': 'application/json',
+          },
+          timeout: 3000,
+        }));
+        
+        if (response.data && response.data.company_name) {
+          companyName = response.data.company_name;
+          this.logger.log(`🏢 [updateFolderPathsForLocationBoundSupplier] Company name: ${companyName}`);
+        }
+      } catch (error: any) {
+        this.logger.warn(`⚠️ [updateFolderPathsForLocationBoundSupplier] Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
+      }
+      
+      // Create location-specific path
+      const locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+      const newBasePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+      
+      this.logger.log(`📍 [updateFolderPathsForLocationBoundSupplier] New base path: ${newBasePath}`);
+      
+      // Update all folder records for this supplier to use the location-specific path
+      const folders = await this.folderRepo.find({ where: { supplier_id: supplierId } });
+      
+      for (const folder of folders) {
+        // Update folder path to location-specific structure
+        const oldPath = folder.folder_path;
+        folder.folder_path = `${newBasePath}/`;
+        
+        this.logger.log(`📁 [updateFolderPathsForLocationBoundSupplier] Updating folder ${folder.id} path from '${oldPath}' to '${folder.folder_path}'`);
+        
+        await this.folderRepo.save(folder);
+      }
+      
+      this.logger.log(`✅ [updateFolderPathsForLocationBoundSupplier] Successfully updated ${folders.length} folder paths for supplier ${supplierId}`);
+      
+      // Also update document records to use the new folder path structure
+      // Get all documents for this supplier
+      const documents = await this.supplierDocumentRepo
+        .createQueryBuilder('document')
+        .leftJoinAndSelect('document.folder', 'folder')
+        .where('folder.supplier_id = :supplierId', { supplierId })
+        .getMany();
+      
+      this.logger.log(`📄 [updateFolderPathsForLocationBoundSupplier] Found ${documents.length} documents to update`);
+      
+      // Update each document's file_path to use the new location-specific structure
+      for (const document of documents) {
+        // Extract the subfolder and filename from the current file_path
+        const currentPath = document.file_path;
+        const pathParts = currentPath.split('/');
+        if (pathParts.length >= 2) {
+          // Get the subfolder (second to last part) and filename (last part)
+          const subfolder = pathParts[pathParts.length - 2];
+          const filename = pathParts[pathParts.length - 1];
+          
+          // Create the new path using the location-specific structure
+          const newDocumentPath = `${newBasePath}/${subfolder}/${filename}`;
+          
+          // Update the document record
+          const oldPath = document.file_path;
+          document.file_path = newDocumentPath;
+          
+          this.logger.log(`📄 [updateFolderPathsForLocationBoundSupplier] Updating document ${document.id} path from '${oldPath}' to '${document.file_path}'`);
+          
+          await this.supplierDocumentRepo.save(document);
+        }
+      }
+      
+      this.logger.log(`✅ [updateFolderPathsForLocationBoundSupplier] Successfully updated ${documents.length} document paths for supplier ${supplierId}`);
+    } catch (error) {
+      this.logger.error(`❌ [updateFolderPathsForLocationBoundSupplier] Error updating folder paths for supplier ${supplierId}:`, error);
+    }
   }
 
   async findSupplierLocations(supplierId: number): Promise<any[]> {
@@ -2491,10 +2991,18 @@ export class SuppliersService {
 
   private async fetchLocation(locationId: number): Promise<any | null> {
     try {
-      const resp = await firstValueFrom(this.httpService.get(`${this.locationsServiceUrl}/work-locations/${locationId}`));
+      console.log(`📍 [fetchLocation] Fetching location ${locationId} from ${this.locationsServiceUrl}/locations/${locationId}`);
+      const resp = await firstValueFrom(this.httpService.get(`${this.locationsServiceUrl}/locations/${locationId}`, {
+        headers: {
+          'x-internal-service': 'suppliers',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        },
+      }));
+      console.log(`📍 [fetchLocation] Location response:`, resp.data);
       return resp.data;
     } catch (error: any) {
-      this.logger.warn(`Nu am putut încărca locația ${locationId}: ${error?.message || error}`);
+      console.warn(`⚠️ [fetchLocation] Nu am putut încărca locația ${locationId}: ${error?.message || error}`);
       return null;
     }
   }
@@ -2554,6 +3062,8 @@ export class SuppliersService {
     this.logger.log(`[SUPPLIERS SERVICE] Found ${documents.length} expired documents`);
     return documents;
   }
+
+  
 }
 
 
