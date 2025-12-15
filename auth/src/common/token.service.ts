@@ -36,12 +36,16 @@ export class TokenService {
     const accessToken = await this.jwtService.signAsync(accessPayload);
     
     // Generează refresh token (7 zile) - fără roluri și permisiuni
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    if (!refreshSecret) {
+      throw new Error('JWT_REFRESH_SECRET nu este configurat în variabilele de mediu');
+    }
     const refreshPayload = { 
       sub: user.userId, 
       type: 'refresh'
     };
     const refreshToken = await this.jwtService.signAsync(refreshPayload, {
-      secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'your-refresh-secret-key',
+      secret: refreshSecret,
       expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d'
     });
     
@@ -65,8 +69,12 @@ export class TokenService {
   async refreshAccessToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
     try {
       // Verifică refresh token-ul cu secret-ul pentru refresh
+      const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+      if (!refreshSecret) {
+        throw new Error('JWT_REFRESH_SECRET nu este configurat în variabilele de mediu');
+      }
       const payload = await this.jwtService.verifyAsync(refreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'your-refresh-secret-key'
+        secret: refreshSecret
       });
 
       if (payload.type !== 'refresh') {

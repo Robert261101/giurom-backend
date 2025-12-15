@@ -16,7 +16,10 @@ export class InternalServiceGuard implements CanActivate {
     if (internalService && serviceSecret) {
       // In production, you should validate the service secret against a secure store
       // For now, we'll use environment variables
-      const expectedSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const expectedSecret = process.env.SERVICE_SECRET;
+      if (!expectedSecret) {
+        throw new UnauthorizedException('SERVICE_SECRET nu este configurat în variabilele de mediu');
+      }
       
       if (serviceSecret === expectedSecret) {
         // Mark request as internal service request

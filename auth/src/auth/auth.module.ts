@@ -21,13 +21,19 @@ import { TwoFactorAuthModule } from '../2fa-auth/2fa-auth.module';
     TwoFactorAuthModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        global: true,
-        secret: configService.get<string>('JWT_SECRET') || 'your-secret-key',
-        signOptions: { 
-          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m' 
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const jwtSecret = configService.get<string>('JWT_SECRET');
+        if (!jwtSecret) {
+          throw new Error('JWT_SECRET nu este configurat în variabilele de mediu');
+        }
+        return {
+          global: true,
+          secret: jwtSecret,
+          signOptions: { 
+            expiresIn: configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m' 
+          },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

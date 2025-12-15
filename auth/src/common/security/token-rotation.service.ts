@@ -18,8 +18,12 @@ export class TokenRotationService {
   async rotateRefreshToken(oldRefreshToken: string): Promise<string> {
     try {
       // Verifică vechiul token
+      const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+      if (!refreshSecret) {
+        throw new Error('JWT_REFRESH_SECRET nu este configurat în variabilele de mediu');
+      }
       const payload = await this.jwtService.verifyAsync(oldRefreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'your-refresh-secret-key'
+        secret: refreshSecret
       });
 
       if (payload.type !== 'refresh') {
@@ -31,7 +35,7 @@ export class TokenRotationService {
         throw new Error('Refresh token deja folosit - posibil replay attack');
       }
 
-      // Generează refresh token nou
+      // Generează refresh token nou (folosim refreshSecret deja declarat)
       const newRefreshToken = await this.jwtService.signAsync(
         { 
           sub: payload.sub, 
@@ -39,7 +43,7 @@ export class TokenRotationService {
           version: (payload.version || 0) + 1 // Incrementează versiunea
         },
         {
-          secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'your-refresh-secret-key',
+          secret: refreshSecret,
           expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d'
         }
       );
@@ -106,6 +110,10 @@ export class TokenRotationService {
     const accessToken = await this.jwtService.signAsync(accessPayload);
     
     // Generează refresh token nou cu informații despre utilizator
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    if (!refreshSecret) {
+      throw new Error('JWT_REFRESH_SECRET nu este configurat în variabilele de mediu');
+    }
     const refreshToken = await this.jwtService.signAsync(
       { 
         sub: user.id, 
@@ -115,7 +123,7 @@ export class TokenRotationService {
         version: 1
       },
       {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'your-refresh-secret-key',
+        secret: refreshSecret,
         expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d'
       }
     );

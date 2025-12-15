@@ -44,21 +44,21 @@ export class AuthService {
       throw new BadRequestException('Format invalid. Trebuie să fie un email valid sau un număr de telefon românesc.');
     }
 
-    // Verifică protecția împotriva brute force - TEMPORAR DEZACTIVAT
-    // try {
-    //   await this.bruteForceService.checkBruteForce(identifier);
-    // } catch (error) {
-    //   await this.securityAlertsService.logSecurityEvent({
-    //     type: SecurityEventType.ACCOUNT_LOCKED,
-    //     email: identifier,
-    //     ipAddress,
-    //     userAgent,
-    //     details: `Cont blocat temporar: ${error.message}`,
-    //     severity: 'HIGH',
-    //     timestamp: new Date()
-    //   });
-    //   throw error;
-    // }
+    // Verifică protecția împotriva brute force
+    try {
+      await this.bruteForceService.checkBruteForce(identifier);
+    } catch (error) {
+      await this.securityAlertsService.logSecurityEvent({
+        type: SecurityEventType.ACCOUNT_LOCKED,
+        email: identifier,
+        ipAddress,
+        userAgent,
+        details: `Cont blocat temporar: ${error.message}`,
+        severity: 'HIGH',
+        timestamp: new Date()
+      });
+      throw error;
+    }
 
     let user: User | undefined;
     
@@ -94,10 +94,7 @@ export class AuthService {
     }
 
     // Verifică parola folosind bcrypt
-    this.logger.log(`🔐 DEBUG: Parola trimisă: "${pass}"`);
-    this.logger.log(`🔐 DEBUG: Parola din DB: "${user.password}"`);
     const isPasswordValid = await bcrypt.compare(pass, user.password || '');
-    this.logger.log(`🔐 DEBUG: Parola validă: ${isPasswordValid}`);
     if (!isPasswordValid) {
       // Înregistrează încercarea eșuată
       await this.bruteForceService.recordFailedAttempt(identifier);
@@ -231,8 +228,12 @@ export class AuthService {
       const newRefreshToken = await this.tokenRotationService.rotateRefreshToken(refreshToken);
       
       // Generează access token nou
+      const refreshSecret = process.env.JWT_REFRESH_SECRET;
+      if (!refreshSecret) {
+        throw new Error('JWT_REFRESH_SECRET nu este configurat în variabilele de mediu');
+      }
       const payload = await this.jwtService.verifyAsync(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key'
+        secret: refreshSecret
       });
       
       // Găsește user-ul local după id_employee din payload
