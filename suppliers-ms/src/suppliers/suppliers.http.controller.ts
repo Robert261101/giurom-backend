@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
@@ -181,6 +181,31 @@ export class SuppliersHttpController {
 		);
 	}
 	
+	@Get('orders/receptions/batch')
+	@Permissions('order.read')
+	@ApiOperation({ summary: 'Obține recepțiile pentru mai multe comenzi (batch)' })
+	@ApiQuery({
+		name: 'order_ids',
+		required: true,
+		description: 'Lista de ID-uri de comenzi, separate prin virgulă (ex: 1,2,3)',
+	})
+	getOrderReceptionsBatch(@Query('order_ids') orderIdsRaw: string) {
+		if (!orderIdsRaw) {
+			return [];
+		}
+
+		const orderIds = orderIdsRaw
+			.split(',')
+			.map(id => parseInt(id.trim(), 10))
+			.filter(id => Number.isFinite(id));
+
+		if (orderIds.length === 0) {
+			return [];
+		}
+
+		return this.service.getOrderReceptionsBatch(orderIds);
+	}
+
 	@Get('orders/:orderId/receptions')
 	@Permissions('order.read')
 	@ApiOperation({ summary: 'Obține recepțiile pentru o comandă' })

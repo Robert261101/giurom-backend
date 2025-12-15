@@ -1662,6 +1662,105 @@ export class SuppliersService {
     })) as Array<SupplierOrderItemReception & { user_name?: string }>;
   }
 
+  async getOrderReceptionsBatch(orderIds: number[]): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
+    if (!orderIds || orderIds.length === 0) {
+      return [];
+    }
+
+    const uniqueOrderIds = Array.from(new Set(orderIds));
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions batch for ${uniqueOrderIds.length} orders`);
+
+    // Obține toate recepțiile pentru comenzile specificate într-un singur query
+    const receptions = await this.orderItemReceptionRepo.find({
+      where: { supplier_order_id: In(uniqueOrderIds) },
+      order: { created_at: 'DESC' },
+    });
+
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Found ${receptions.length} receptions for ${uniqueOrderIds.length} orders`);
+
+    // Obține toate user IDs unice
+    const userIds = Array.from(new Set(
+      receptions
+        .map(r => r.user_id)
+        .filter((id): id is number => id !== undefined && id !== null)
+    ));
+
+    const usersMap = new Map<number, string>();
+    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+
+    if (userIds.length > 0) {
+      try {
+        // Obține toate id_employee pentru user IDs într-un singur query
+        const userIdsPlaceholder = userIds.map(() => '?').join(',');
+        const userResult = await this.connection.query(
+          `SELECT id, id_employee FROM ${authDbName}.users WHERE id IN (${userIdsPlaceholder})`,
+          userIds
+        );
+
+        // Creează un map de user_id -> employee_id
+        const userToEmployeeMap = new Map<number, number>();
+        if (userResult && userResult.length > 0) {
+          for (const row of userResult) {
+            if (row.id && row.id_employee) {
+              userToEmployeeMap.set(Number(row.id), Number(row.id_employee));
+            }
+          }
+        }
+
+        // Obține toate employee IDs
+        const employeeIds = Array.from(userToEmployeeMap.values());
+        if (employeeIds.length > 0) {
+          const employeeIdsPlaceholder = employeeIds.map(() => '?').join(',');
+          const employeeResult = await this.connection.query(
+            `SELECT id, first_name, last_name FROM ${employeesDbName}.employees WHERE id IN (${employeeIdsPlaceholder})`,
+            employeeIds
+          );
+
+          // Creează un map de employee_id -> full_name
+          const employeeToNameMap = new Map<number, string>();
+          if (employeeResult && employeeResult.length > 0) {
+            for (const row of employeeResult) {
+              const firstName = row.first_name || null;
+              const lastName = row.last_name || null;
+              const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || `Employee #${row.id}`;
+              employeeToNameMap.set(Number(row.id), fullName);
+            }
+          }
+
+          // Creează map-ul final user_id -> user_name
+          for (const [userId, employeeId] of userToEmployeeMap.entries()) {
+            const fullName = employeeToNameMap.get(employeeId);
+            if (fullName) {
+              usersMap.set(userId, fullName);
+            } else {
+              usersMap.set(userId, `User #${userId}`);
+            }
+          }
+        }
+
+        // Pentru user IDs care nu au employee asociat
+        for (const userId of userIds) {
+          if (!usersMap.has(userId)) {
+            usersMap.set(userId, `User #${userId}`);
+          }
+        }
+      } catch (error: any) {
+        this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data batch:`, error.message);
+        // Setează default pentru toți userii în caz de eroare
+        for (const userId of userIds) {
+          usersMap.set(userId, `User #${userId}`);
+        }
+      }
+    }
+
+    // Adaugă numele utilizatorilor la recepții
+    return receptions.map(reception => ({
+      ...reception,
+      user_name: reception.user_id ? usersMap.get(reception.user_id) : undefined,
+    })) as Array<SupplierOrderItemReception & { user_name?: string }>;
+  }
+
   async getReceptionReport(startDate: string, endDate: string): Promise<any[]> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}`);
     
