@@ -504,6 +504,37 @@ export class UsersController {
     return this.usersService.deleteUserRole(id);
   }
 
+  @Get('batch')
+  @ApiOperation({ summary: 'Obține informații de bază pentru o listă de utilizatori' })
+  @ApiQuery({
+    name: 'ids',
+    required: true,
+    description: 'Lista de ID-uri de utilizatori, separate prin virgulă (ex: 1,2,3)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista utilizatorilor a fost returnată cu succes',
+    type: [User],
+  })
+  async findUsersBatch(
+    @Query('ids') ids: string,
+  ): Promise<Array<Pick<User, 'id' | 'id_employee'>>> {
+    if (!ids) {
+      return [];
+    }
+
+    const idList = ids
+      .split(',')
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+
+    if (idList.length === 0) {
+      return [];
+    }
+
+    return this.usersService.findUsersByIdsBasic(idList);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Găsește un utilizator după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul utilizatorului' })

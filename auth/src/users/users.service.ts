@@ -445,6 +445,26 @@ export class UsersService {
     }
   }
 
+  /**
+   * Găsește utilizatori după ID-urile lor și returnează doar informații de bază (pentru batch lookups)
+   */
+  async findUsersByIdsBasic(
+    ids: number[],
+  ): Promise<Array<Pick<User, 'id' | 'id_employee'>>> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(ids));
+
+    const users = await this.userRepository.find({
+      where: { id: In(uniqueIds) },
+      select: ['id', 'id_employee'],
+    });
+
+    return users;
+  }
+
   // ===== PERMISSIONS METHODS =====
   async createPermission(createPermissionDto: { name: string; group?: string; description?: string }): Promise<Permission> {
     const permission = this.permissionRepository.create(createPermissionDto);
