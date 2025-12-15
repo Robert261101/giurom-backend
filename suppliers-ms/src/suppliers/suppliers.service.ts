@@ -1441,6 +1441,21 @@ export class SuppliersService {
     });
   }
 
+  /**
+   * Batch: item-uri anulate pentru mai multe comenzi.
+   * Folosit în rapoarte pentru a evita N+1 request-uri (o singură interogare pe cancelledItemRepo).
+   */
+  async getOrderCancelledItemsBatch(orderIds: number[]): Promise<SupplierOrderCancelledItem[]> {
+    if (!orderIds || orderIds.length === 0) {
+      return [];
+    }
+
+    return this.cancelledItemRepo.find({
+      where: { order_id: In(orderIds) as any },
+      relations: ['orderItem'],
+    });
+  }
+
   async getOrderReceptions(orderId: number): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions for order ${orderId}`);
     
@@ -2309,6 +2324,45 @@ export class SuppliersService {
     }
     
     return this.orderRepo.find({ where: whereClause, relations: ['items', 'documents'], order: { created_at: 'DESC' } });
+  }
+
+  /**
+   * Batch: toate comenzile pentru mai mulți furnizori, cu filtre opționale de perioadă și locație.
+   * Folosit pentru rapoarte (evităm N+1 calls din frontend).
+   */
+  async getSupplierOrdersBatch(
+    supplierIds: number[],
+    options?: {
+      dateFrom?: string;
+      dateTo?: string;
+      locationId?: number;
+    },
+  ): Promise<SupplierOrder[]> {
+    if (!supplierIds || supplierIds.length === 0) {
+      return [];
+    }
+
+    const qb = this.orderRepo
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('order.documents', 'documents')
+      .where('order.supplier_id IN (:...supplierIds)', { supplierIds })
+      .orderBy('order.created_at', 'DESC');
+
+    if (options?.locationId !== undefined) {
+      qb.andWhere('order.supplier_location_id = :locationId', {
+        locationId: options.locationId,
+      });
+    }
+
+    if (options?.dateFrom && options?.dateTo) {
+      qb.andWhere('order.order_date BETWEEN :dateFrom AND :dateTo', {
+        dateFrom: options.dateFrom,
+        dateTo: options.dateTo,
+      });
+    }
+
+    return qb.getMany();
   }
 
   async updateSupplierProduct(productId: number, updateData: Partial<SupplierProduct>): Promise<SupplierProduct> {

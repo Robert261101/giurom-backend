@@ -83,6 +83,40 @@ export class SuppliersHttpController {
 		const locationId = location_id ? parseInt(location_id, 10) : undefined;
 		return this.service.getSupplierOrders(Number(supplierId), locationId); 
 	}
+
+	/**
+	 * Batch: toate comenzile pentru mai mulți furnizori, cu filtre opționale de perioadă și locație.
+	 * Ex: GET /suppliers/orders/batch?supplier_ids=1,2,3&date_from=2025-01-01&date_to=2025-01-31&location_id=10
+	 */
+	@Get('orders/batch')
+	@Permissions('order.read')
+	getOrdersBatch(
+		@Query('supplier_ids') supplierIdsRaw: string,
+		@Query('date_from') dateFrom?: string,
+		@Query('date_to') dateTo?: string,
+		@Query('location_id') location_id?: string,
+	) {
+		if (!supplierIdsRaw) {
+			return [];
+		}
+
+		const supplierIds = supplierIdsRaw
+			.split(',')
+			.map(id => parseInt(id.trim(), 10))
+			.filter(id => Number.isFinite(id));
+
+		if (supplierIds.length === 0) {
+			return [];
+		}
+
+		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+
+		return this.service.getSupplierOrdersBatch(supplierIds, {
+			dateFrom,
+			dateTo,
+			locationId,
+		});
+	}
 	
 	@Post('orders') 
 	@Permissions('order.create')
@@ -159,6 +193,32 @@ export class SuppliersHttpController {
 	@ApiOperation({ summary: 'Obține item-urile anulate pentru o comandă' })
 	getOrderCancelledItems(@Param('orderId') orderId: string) {
 		return this.service.getOrderCancelledItems(Number(orderId));
+	}
+
+	/**
+	 * Batch: item-uri anulate pentru mai multe comenzi.
+	 * Ex: GET /suppliers/orders/cancelled-items/batch?order_ids=1,2,3
+	 */
+	@Get('orders/cancelled-items/batch')
+	@Permissions('order.read')
+	@ApiOperation({ summary: 'Obține item-urile anulate pentru mai multe comenzi (batch)' })
+	getOrderCancelledItemsBatch(
+		@Query('order_ids') orderIdsRaw: string,
+	) {
+		if (!orderIdsRaw) {
+			return [];
+		}
+
+		const orderIds = orderIdsRaw
+			.split(',')
+			.map(id => parseInt(id.trim(), 10))
+			.filter(id => Number.isFinite(id));
+
+		if (orderIds.length === 0) {
+			return [];
+		}
+
+		return this.service.getOrderCancelledItemsBatch(orderIds);
 	}
 	
 	@Patch('orders/:orderId/status') 
