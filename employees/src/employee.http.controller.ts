@@ -32,6 +32,7 @@ import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
 import { Buffer } from 'buffer';
 import { Permissions } from './permissions/permissions.decorator';
 import { InternalServiceGuard } from './auth/internal-service.guard';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
 
 @ApiTags('employees')
 @Controller('employees')
@@ -101,7 +102,7 @@ export class EmployeeHttpController {
   }
 
   @Get('batch')
-  @UseGuards(InternalServiceGuard) // Folosit pentru apeluri interne între microservicii
+  @UseGuards(InternalServiceGuard, JwtAuthGuard) // Permite atât apeluri interne cât și JWT
   @Permissions('employees.read')
   @ApiOperation({
     summary: 'Obține mai mulți angajați după ID-uri (batch)',
