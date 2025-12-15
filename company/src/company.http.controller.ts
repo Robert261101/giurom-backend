@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService } from './company/company.service';
@@ -7,6 +7,8 @@ import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with
 import { UpdateCompanyDto } from './company/dto/update-company.dto';
 import { CreateCompanyDocumentDto } from './company/dto/create-company-document.dto';
 import { UpdateCompanyDocumentDto } from './company/dto/update-company-document.dto';
+import { Company } from './company/entity/company.entity';
+import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Controller('companies')
 export class CompanyHttpController {
@@ -24,6 +26,28 @@ export class CompanyHttpController {
 	@Permissions('companies.read')
 	findAll(@Query('page') page = '1', @Query('limit') limit = '10', @Query('search') search?: string, @Query('status') status?: string) {
 		return this.service.findAllCompanies(parseInt(page, 10), parseInt(limit, 10), search, status);
+	}
+
+	@Get('batch')
+	@UseGuards(InternalServiceGuard) // Folosit pentru apeluri interne între microservicii
+	@Permissions('companies.read')
+	findBatch(
+		@Query('ids') ids: string,
+	): Promise<Array<Pick<Company, 'id' | 'company_name'>>> {
+		if (!ids) {
+			return Promise.resolve([]);
+		}
+
+		const idList = ids
+			.split(',')
+			.map((id) => parseInt(id.trim(), 10))
+			.filter((id) => Number.isFinite(id));
+
+		if (idList.length === 0) {
+			return Promise.resolve([]);
+		}
+
+		return this.service.findByIdsBasic(idList);
 	}
 
 	@Get('for-own')

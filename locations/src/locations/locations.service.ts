@@ -342,37 +342,41 @@ export class LocationsService {
       return [];
     }
 
-    // Obține numele companiilor din companies microservice
-    const companies: Array<{ id: number; company_name: string }> = [];
+    // Obține numele companiilor din companies microservice folosind un singur request batch
     const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://giurom.bitap.ro:3003';
     const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-    
-    for (const companyId of companyIds) {
-      try {
-        const requestHeaders = {
-          'x-internal-service': 'locations',
-          'x-service-secret': serviceSecret,
-          'Content-Type': 'application/json',
-        };
-        console.log(`🔍 [getEmployeeCompanies] Requesting company ${companyId} from ${companiesUrl}/companies/${companyId} with headers:`, requestHeaders);
-        const response = await axios.get(`${companiesUrl}/companies/${companyId}`, {
-          headers: requestHeaders,
-          timeout: 3000,
-        });
-        
-        if (response.data && response.data.company_name) {
-          companies.push({
-            id: companyId,
-            company_name: response.data.company_name,
-          });
-        }
-      } catch (error: any) {
-        // Dacă nu putem obține numele companiei, continuăm cu următoarea
-        console.warn(`⚠️ Nu am putut obține numele companiei ${companyId}: ${error.message}`);
-      }
-    }
 
-    return companies;
+    try {
+      const requestHeaders = {
+        'x-internal-service': 'locations',
+        'x-service-secret': serviceSecret,
+        'Content-Type': 'application/json',
+      };
+
+      const idsParam = companyIds.join(',');
+      const response = await axios.get(`${companiesUrl}/companies/batch`, {
+        headers: requestHeaders,
+        params: { ids: idsParam },
+        timeout: 3000,
+      });
+
+      const companies = Array.isArray(response.data) ? response.data : [];
+      // Ne asigurăm că returnăm obiecte cu { id, company_name }
+      return companies
+        .filter((c: any) => c && typeof c.id === 'number' && typeof c.company_name === 'string')
+        .map((c: any) => ({
+          id: c.id,
+          company_name: c.company_name,
+        }));
+    } catch (error: any) {
+      console.warn(
+        `⚠️ [LocationsService] Nu am putut obține numele companiilor pentru IDs ${companyIds.join(
+          ', ',
+        )} de la ${companiesUrl}/companies/batch: ${error.message}`,
+      );
+      // Dacă batch-ul eșuează, întoarcem array gol și folosim IDs în frontend
+      return [];
+    }
   }
 
   async findWorkLocationById(id: number, user?: any): Promise<WorkLocation> {

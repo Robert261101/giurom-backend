@@ -180,39 +180,39 @@ export class AssignmentService {
       }
     });
 
-    // 2. Batch load employees - OPTIMIZAT: face request-uri în paralel cu limitare de concurență
+    // 2. Batch load employees - OPTIMIZAT: un singur request batch către employees service (fără N+1)
     const employeeInfoMap = new Map<number, { first_name: string; last_name: string }>();
     if (uniqueEmployeeIds.size > 0) {
       try {
         const employeeIdsArray = Array.from(uniqueEmployeeIds);
-        console.log(`📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees in parallel batches`);
-        
-        // Optimizare: face request-uri în paralel dar cu limitare de concurență (batch-uri de 20 pentru performanță mai bună)
-        const BATCH_SIZE = 20;
-        const batches: number[][] = [];
-        for (let i = 0; i < employeeIdsArray.length; i += BATCH_SIZE) {
-          batches.push(employeeIdsArray.slice(i, i + BATCH_SIZE));
-        }
-        
-        // Procesează toate batch-urile în paralel pentru viteză maximă
-        const allBatchPromises = batches.map(batch => 
-          Promise.all(
-            batch.map(employeeId => 
-              this.getEmployeeInfo(employeeId)
-                .then(info => ({ employeeId, info }))
-                .catch(() => ({ employeeId, info: null }))
-            )
-          )
+        console.log(`📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees via /employees/batch`);
+
+        const employeesServiceUrl = 'http://giurom.bitap.ro:3012'; // internal employees HTTP service
+        const headers = {
+          'x-internal-service': 'veziv-tasks',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        };
+
+        const idsParam = employeeIdsArray.join(',');
+        const response = await firstValueFrom(
+          this.httpService.get(`${employeesServiceUrl}/employees/batch`, {
+            headers,
+            params: { ids: idsParam },
+          }),
         );
-        
-        const allBatchResults = await Promise.all(allBatchPromises);
-        allBatchResults.flat().forEach(({ employeeId, info }) => {
-          if (info) {
-            employeeInfoMap.set(employeeId, info);
+
+        const employees = Array.isArray(response.data) ? response.data : [];
+        employees.forEach((employee: any) => {
+          if (employee && typeof employee.id === 'number') {
+            employeeInfoMap.set(employee.id, {
+              first_name: employee.first_name || '',
+              last_name: employee.last_name || '',
+            });
           }
         });
-        
-        console.log(`✅ [BATCH ENRICH] Loaded ${employeeInfoMap.size} employees`);
+
+        console.log(`✅ [BATCH ENRICH] Loaded ${employeeInfoMap.size} employees via batch`);
       } catch (error) {
         console.error(`❌ [BATCH ENRICH] Error loading employees:`, error.message);
       }

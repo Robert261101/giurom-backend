@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { Company } from './entity/company.entity';
 import { CompanyDocument } from './entity/company-document.entity';
@@ -386,6 +386,26 @@ export class CompanyService {
       fileName: document.document_name,
       disposition: forceDownload ? 'attachment' : 'inline',
     };
+  }
+
+  /**
+   * Returnează informații de bază pentru o listă de companii (folosit pentru batch lookup între microservicii)
+   */
+  async findByIdsBasic(
+    ids: number[],
+  ): Promise<Array<Pick<Company, 'id' | 'company_name'>>> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(ids));
+
+    const companies = await this.companyRepository.find({
+      where: { id: In(uniqueIds) },
+      select: ['id', 'company_name'],
+    });
+
+    return companies;
   }
 
   // Determine MIME type based on file extension
