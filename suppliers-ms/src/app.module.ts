@@ -103,6 +103,3 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   ],
 })
 export class AppModule {}
-  ],
-})
-export class AppModule {}

@@ -417,6 +417,26 @@ export class EmployeeService {
     return employee;
   }
 
+  /**
+   * Returnează informații de bază pentru o listă de angajați (folosit pentru batch lookup între microservicii)
+   */
+  async findByIdsBasic(
+    ids: number[],
+  ): Promise<Array<Pick<Employee, 'id' | 'first_name' | 'last_name' | 'email'>>> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(ids));
+
+    const employees = await this.employeeRepository.find({
+      where: { id: In(uniqueIds) },
+      select: ['id', 'first_name', 'last_name', 'email'],
+    });
+
+    return employees;
+  }
+
   // Găsirea unui angajat după telefon
   async findByPhone(phone: string): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({

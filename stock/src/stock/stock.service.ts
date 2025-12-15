@@ -722,26 +722,28 @@ export class StockService {
         'x-internal-service': 'stock',
         'x-service-secret': serviceSecret
       };
-      
-      for (const employeeId of employeeIds) {
-        try {
-          const employeeResponse: any = await firstValueFrom(
-            this.httpService!.get(`${employeesServiceUrl}/employees/${employeeId}`, { headers })
-          );
-          // HttpService din NestJS returnează datele în employeeResponse.data
-          const employeeData = employeeResponse?.data?.data || employeeResponse?.data || employeeResponse;
-          if (employeeData) {
-            employeesMap.set(employeeId, employeeData);
+
+      // Folosim un singur request batch către employees service pentru a evita N+1
+      try {
+        const idsParam = employeeIds.join(',');
+        const employeeResponse: any = await firstValueFrom(
+          this.httpService!.get(`${employeesServiceUrl}/employees/batch`, {
+            headers,
+            params: { ids: idsParam },
+          }),
+        );
+
+        const employees = employeeResponse?.data || [];
+        for (const employee of employees) {
+          if (employee && typeof employee.id === 'number') {
+            employeesMap.set(employee.id, employee);
           }
-        } catch (error: any) {
-          // 404 means employee doesn't exist - this is not critical, just log as warning
-          if (error?.response?.status === 404) {
-            this.logger?.warn(`⚠️ [STOCK SERVICE] Employee with ID ${employeeId} not found in employees service. This is normal if the employee was deleted or the ID is invalid.`);
-          } else {
-            this.logger?.warn(`⚠️ [STOCK SERVICE] Could not fetch employee ${employeeId} from ${employeesServiceUrl}/employees/${employeeId}:`, error?.message);
-          }
-          // Don't add to employeesMap if not found - will display "Angajat ID: X" in frontend
         }
+      } catch (error: any) {
+        this.logger?.warn(
+          `⚠️ [STOCK SERVICE] Could not fetch employees batch from ${employeesServiceUrl}/employees/batch:`,
+          error?.message,
+        );
       }
     }
 

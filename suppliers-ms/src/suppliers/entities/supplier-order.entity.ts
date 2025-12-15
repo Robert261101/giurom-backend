@@ -77,10 +77,3 @@ export class SupplierOrder {
 }
 
 
-
-
-  @OneToMany(() => SupplierOrderItemReception, (reception) => reception.order)
-  receptions: SupplierOrderItemReception[];
-}
-
-

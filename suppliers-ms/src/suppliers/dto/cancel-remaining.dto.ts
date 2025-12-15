@@ -12,16 +12,3 @@ export class CancelRemainingDto {
   reason?: string;
 }
 
-
-
-export class CancelRemainingDto {
-  @ApiProperty({ 
-    description: 'Motivul anulării (opțional)', 
-    required: false,
-    default: 'Anulat - partea rămasă de recepționat'
-  })
-  @IsString()
-  @IsOptional()
-  reason?: string;
-}
-

@@ -68,15 +68,3 @@ export class SupplierOrderItemReception {
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 }
-
-
-
-
-
-
-}
-
-
-
-
-

@@ -100,6 +100,42 @@ export class EmployeeHttpController {
     );
   }
 
+  @Get('batch')
+  @UseGuards(InternalServiceGuard) // Folosit pentru apeluri interne între microservicii
+  @Permissions('employees.read')
+  @ApiOperation({
+    summary: 'Obține mai mulți angajați după ID-uri (batch)',
+    description: 'Returnează informații de bază (id, first_name, last_name, email) pentru o listă de ID-uri de angajați.',
+  })
+  @ApiQuery({
+    name: 'ids',
+    required: true,
+    description: 'Lista de ID-uri de angajați, separate prin virgulă (ex: 1,2,3)',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista angajaților a fost returnată cu succes',
+    type: [Employee],
+  })
+  async findBatch(
+    @Query('ids') ids: string,
+  ): Promise<Array<Pick<Employee, 'id' | 'first_name' | 'last_name' | 'email'>>> {
+    if (!ids) {
+      return [];
+    }
+
+    const idList = ids
+      .split(',')
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+
+    if (idList.length === 0) {
+      return [];
+    }
+
+    return this.employeeService.findByIdsBasic(idList);
+  }
+
   @Get('for-own')
   @Permissions('employees.read_own')
   @ApiOperation({
