@@ -39,6 +39,12 @@ export class CreateProductDto {
   @IsString()
   @IsOptional()
   photo?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  @Length(1, 100)
+  sku?: string;
 }
 
 

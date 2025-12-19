@@ -68,6 +68,18 @@ export class CreateSupplierDto {
   contact_person: string;
 
   @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  @Length(1, 255)
+  bank_name?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  @Length(5, 34)
+  bank_account_number?: string;
+
+  @ApiProperty({ required: false })
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
