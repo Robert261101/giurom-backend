@@ -52,6 +52,24 @@ export class CreateElementDto {
   @IsArray()
   @IsString({ each: true })
   options?: string[];
+
+  @ApiProperty({
+    description: 'Opțiunile punctate pentru elemente de tip scoring_boolean (se pot furniza la atribuirea task-ului)',
+    example: [{ name: 'Opțiunea 1', points: 1 }],
+    required: false
+  })
+  @IsOptional()
+  scoring_options?: Array<{ name: string; points: number }>;
+
+  @ApiProperty({
+    description: 'Puncte fixe pentru elemente de tip scoring_simple (se pot furniza la atribuirea task-ului)',
+    example: 5,
+    required: false
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  simple_score_points?: number;
 }
 
 

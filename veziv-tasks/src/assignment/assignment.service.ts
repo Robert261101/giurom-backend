@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Raw } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -15,6 +15,7 @@ import { TaskGateway } from '../websocket/task.gateway';
 
 @Injectable()
 export class AssignmentService {
+  private readonly logger = new Logger(AssignmentService.name);
   constructor(
     @InjectRepository(TaskAssignment)
     private assignmentRepository: Repository<TaskAssignment>,
@@ -544,20 +545,51 @@ export class AssignmentService {
       throw new NotFoundException(`Template cu ID-ul ${createAssignmentDto.template_id} nu a fost găsit`);
     }
 
-    // Actualizează opțiunile pentru checkbox, radio și select în TaskElement dacă sunt furnizate
+    // Actualizează opțiunile pentru checkbox, radio și select și scoring_options pentru scoring_boolean
+    // în TaskElement dacă sunt furnizate la creare atribuiri
     if (createAssignmentDto.elements) {
       for (const customElement of createAssignmentDto.elements) {
+        const templateElement = template.elements.find(el => el.id === customElement.task_element_id);
+        if (!templateElement) continue;
+
+        // Actualizează opțiunile pentru checkbox/radio/select dacă sunt furnizate
         if (customElement.options && Array.isArray(customElement.options) && customElement.options.length > 0) {
-          const templateElement = template.elements.find(el => el.id === customElement.task_element_id);
-          if (templateElement && (templateElement.element_type === 'checkbox' || templateElement.element_type === 'radio' || templateElement.element_type === 'select')) {
-            // Actualizează opțiunile în TaskElement doar dacă există și nu sunt goale
+          if (templateElement.element_type === 'checkbox' || templateElement.element_type === 'radio' || templateElement.element_type === 'select') {
+            try {
+              await this.taskElementRepository.update(
+                { id: templateElement.id },
+                { options: customElement.options }
+              );
+            } catch (e) {
+              this.logger.warn(`Failed to update options for template element ${templateElement.id}: ${e}`);
+            }
+          }
+        }
+
+        // Persistă scoring_options pentru scoring_boolean, indiferent dacă există 'options'
+        if (templateElement.element_type === 'scoring_boolean' && customElement.scoring_options && Array.isArray(customElement.scoring_options) && customElement.scoring_options.length > 0) {
+          try {
             await this.taskElementRepository.update(
               { id: templateElement.id },
-              { options: customElement.options }
+              { scoring_options: JSON.stringify(customElement.scoring_options) }
             );
+          } catch (e) {
+            this.logger.warn(`Failed to update scoring_options for template element ${templateElement.id}: ${e}`);
+          }
+        }
+        // Persistă simple_score_points pentru scoring_simple dacă sunt furnizate la atribuirea task-ului
+        if (templateElement.element_type === 'scoring_simple' && typeof customElement.simple_score_points === 'number') {
+          try {
+            await this.taskElementRepository.update(
+              { id: templateElement.id },
+              { simple_score_points: customElement.simple_score_points }
+            );
+          } catch (e) {
+            this.logger.warn(`Failed to update simple_score_points for template element ${templateElement.id}: ${e}`);
           }
         }
       }
+
       // Reîncarcă template-ul pentru a avea opțiunile actualizate
       template = await this.templateRepository.findOne({
         where: { id: createAssignmentDto.template_id },
