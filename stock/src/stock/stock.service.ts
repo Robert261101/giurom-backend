@@ -68,15 +68,65 @@ export class StockService {
     }
   }
 
+  /**
+   * Return canonical static base URL used for images
+   */
+  private getStaticBase(): string {
+    const cfg = this.configService?.get<string>('STATIC_FILES_URL') || process.env.STATIC_FILES_URL || process.env.NEXT_PUBLIC_STATIC_FILES_URL;
+    if (cfg && cfg.startsWith('http')) return cfg.replace(/\/$/, '');
+    // Fallback to known host used in frontend
+    return 'http://giurom.bitap.ro:3005';
+  }
+
+  /**
+   * Normalize product.photo to a full canonical URL when possible
+   */
+  private normalizeProductPhoto(product: Product): Product {
+    if (!product) return product;
+    const copy = { ...product } as any;
+    if (!copy.photo) return copy;
+
+    const photo = String(copy.photo || '').trim();
+    // If already absolute URL, return as is
+    if (photo.startsWith('http://') || photo.startsWith('https://')) {
+      copy.photo = photo;
+      return copy;
+    }
+
+    const staticBase = this.getStaticBase();
+
+    // If photo already starts with /api/images or contains products path, extract filename and return public static path
+    if (photo.startsWith('/api/images/') || photo.startsWith('/products/') || photo.includes('/products/') || photo.startsWith('products/')) {
+      const parts = photo.split('/');
+      const filename = parts[parts.length - 1];
+      // Return the public static path which frontend rewrites to the static files server
+      copy.photo = `/api/images/products/${filename}`;
+      return copy;
+    }
+
+    // If it is an absolute URL (already handled earlier) or some other path starting with '/', fallback to staticBase
+    if (photo.startsWith('/')) {
+      copy.photo = `${staticBase}${photo}`;
+      return copy;
+    }
+
+    // Default fallback: treat as filename under products and use backend serve path
+    const filename = photo.split('/').pop();
+    copy.photo = `/stock/products/image/${filename}`;
+    return copy;
+  }
+
   async createProduct(dto: CreateProductDto): Promise<Product> {
     const existing = await this.productRepo.findOne({ where: { name: dto.name } });
     if (existing) throw new ConflictException('Produsul există deja');
     const product = this.productRepo.create(dto);
-    return await this.productRepo.save(product);
+    const saved = await this.productRepo.save(product);
+    return this.normalizeProductPhoto(saved);
   }
 
   async findAllProducts(): Promise<Product[]> {
-    return await this.productRepo.find();
+    const products = await this.productRepo.find();
+    return products.map(p => this.normalizeProductPhoto(p));
   }
 
   async findProductsByLocation(locationId: number): Promise<Product[]> {
@@ -89,13 +139,13 @@ export class StockService {
       .distinct(true)
       .getMany();
     
-    return productsWithStock;
+    return productsWithStock.map(p => this.normalizeProductPhoto(p));
   }
 
   async findProduct(id: number): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException('Produsul nu a fost găsit');
-    return product;
+    return this.normalizeProductPhoto(product);
   }
 
   async updateProduct(id: number, dto: UpdateProductDto): Promise<Product> {
@@ -454,10 +504,11 @@ export class StockService {
   }
 
   async findProductsWithCategories(): Promise<Product[]> {
-    return await this.productRepo.find({
+    const products = await this.productRepo.find({
       relations: ['categories'],
       order: { name: 'ASC' }
     });
+    return products.map(p => this.normalizeProductPhoto(p));
   }
 
   async findProductWithCategories(id: number): Promise<Product> {
@@ -467,7 +518,7 @@ export class StockService {
     });
     
     if (!product) throw new NotFoundException('Produsul nu a fost găsit');
-    return product;
+    return this.normalizeProductPhoto(product);
   }
 
   async assignCategoriesToProduct(productId: number, assignCategoryDto: AssignCategoryDto): Promise<Product> {

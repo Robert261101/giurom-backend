@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, Repository, DataSource, In } from 'typeorm';
+import { DeepPartial, Repository, DataSource, In, Like } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import * as path from 'path';
@@ -813,6 +813,21 @@ export class LocationsService {
       employeeId,
       userId: employeeId
     });
+
+    // Normalize date to YYYY-MM-DD to prevent multiple revenues on the same day
+    const normalizedDate = revenueDate ? revenueDate.toString().split(' ')[0].split('T')[0] : null;
+    if (normalizedDate) {
+      const existing = await this.revenueRepository.findOne({
+        where: {
+          work_location_id: workLocationId,
+          revenue_date: Like(`${normalizedDate}%`),
+        } as any,
+      });
+      if (existing) {
+        console.error(`❌ [recordRevenue Service] Duplicate revenue for date ${normalizedDate} at location ${workLocationId}`);
+        throw new ConflictException(`Există deja o încasare pentru data ${normalizedDate}`);
+      }
+    }
     
     const row = this.revenueRepository.create({
       work_location_id: workLocationId,
