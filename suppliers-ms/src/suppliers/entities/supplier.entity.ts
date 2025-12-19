@@ -48,6 +48,12 @@ export class Supplier {
   @Column({ type: 'varchar', length: 150, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   contact_person: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  bank_name: string | null;
+
+  @Column({ type: 'varchar', length: 34, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  bank_account_number: string | null;
+
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
