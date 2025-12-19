@@ -1245,6 +1245,7 @@ export class SuppliersService {
       returnedQuantity: number;
       returnReason: string;
     }> = [];
+    const cancelItems: Array<{ itemId: number; returnedQuantity: number; returnReason: string }> = [];
 
     // Procesează fiecare item din comandă
     for (const item of order.items || []) {
@@ -1282,17 +1283,23 @@ export class SuppliersService {
         if (newTotalReturnedQty > orderedQty + 0.01) {
           this.logger.error(`❌ [SUPPLIERS SERVICE] Item ${item.id}: Returned quantity would exceed ordered: returned(${newTotalReturnedQty}) > ordered(${orderedQty})`);
         } else {
-          if (newlyReturnedQty > 0.01) {
-            receptionItems.push({
-              itemId: item.id,
-              receivedQuantity: existingReceivedQty, // Doar ce s-a recepționat și aprobat (fără PENDING)
-              returnedQuantity: newTotalReturnedQty, // Total returned (existent + PENDING + nou)
-              returnReason: reason || 'Anulat - partea rămasă de recepționat',
-            });
-            this.logger.log(`✅ [SUPPLIERS SERVICE] Item ${item.id}: Added to receptionItems for cancellation`);
-          } else {
-            this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: Skipped - newlyReturnedQty too small (${newlyReturnedQty})`);
-          }
+            if (newlyReturnedQty > 0.01) {
+              receptionItems.push({
+                itemId: item.id,
+                receivedQuantity: existingReceivedQty, // Doar ce s-a recepționat și aprobat (fără PENDING)
+                returnedQuantity: newTotalReturnedQty, // Total returned (existent + PENDING + nou)
+                returnReason: reason || 'Anulat - partea rămasă de recepționat',
+              });
+              // Adaugă și payload-ul pentru creare item-urilor anulate (numai cantitatea nouă anulată)
+              cancelItems.push({
+                itemId: item.id,
+                returnedQuantity: newlyReturnedQty,
+                returnReason: reason || 'Anulat - partea rămasă de recepționat',
+              });
+              this.logger.log(`✅ [SUPPLIERS SERVICE] Item ${item.id}: Added to receptionItems and cancelItems for cancellation`);
+            } else {
+              this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: Skipped - newlyReturnedQty too small (${newlyReturnedQty})`);
+            }
         }
       } else {
         this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${item.id}: Skipped - no remaining quantity to receive (remainingToReceiveQty=${remainingToReceiveQty})`);
@@ -1313,6 +1320,26 @@ export class SuppliersService {
     };
 
     const updatedOrder = await this.markOrderAsPartiallyReceived(partialReceptionDto);
+    // Persist cancelled items entries so they appear in cancelled-items view
+    if (cancelItems.length > 0) {
+      try {
+        // Debug logs: show the payloads that will be used to create cancelled items
+        try {
+          const safeReception = JSON.stringify(receptionItems, (_k, v) => (typeof v === 'number' || typeof v === 'string' ? v : v), 2);
+          const safeCancel = JSON.stringify(cancelItems, (_k, v) => (typeof v === 'number' || typeof v === 'string' ? v : v), 2);
+          this.logger.log(`🧪 [DEBUG] receptionItems(${receptionItems.length}): ${safeReception}`);
+          this.logger.log(`🧪 [DEBUG] cancelItems(${cancelItems.length}): ${safeCancel}`);
+        } catch (e: any) {
+          this.logger.log(`🧪 [DEBUG] Could not stringify debug payloads: ${e?.message || e}`);
+        }
+
+        this.logger.log(`🚫 [SUPPLIERS SERVICE] Creating cancelled items records for order ${orderId}`);
+        await this.cancelOrderItems({ orderId: order.id, items: cancelItems as any });
+        this.logger.log(`✅ [SUPPLIERS SERVICE] Cancelled items recorded for order ${orderId}`);
+      } catch (e: any) {
+        this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to create cancelled items for order ${orderId}: ${e?.message || e}`, e?.stack);
+      }
+    }
 
     // Aprobă automat recepțiile de returnare create
     const allReceptions = await this.orderItemReceptionRepo.find({
@@ -1422,6 +1449,7 @@ export class SuppliersService {
 
     const stockItems: CreateStockItemDto[] = [];
     const updatedItemQuantities = new Map<number, { received: number; returned: number }>();
+    const cancelledPayload: Array<{ itemId: number; returnedQuantity: number; returnReason?: string }> = [];
 
     // Procesează fiecare recepție aprobată
     for (const reception of receptions) {
@@ -1466,6 +1494,14 @@ export class SuppliersService {
       
       if (reception.returned_delta > 0) {
         quantities.returned += Number(reception.returned_delta);
+        // If this approved reception represents a cancellation (reason includes 'Anulat'), collect for cancelled items
+        if (reception.reason && String(reception.reason).toLowerCase().includes('anulat')) {
+          cancelledPayload.push({
+            itemId: reception.supplier_order_item_id,
+            returnedQuantity: Number(reception.returned_delta),
+            returnReason: reception.reason,
+          });
+        }
       }
     }
 
@@ -1509,6 +1545,17 @@ export class SuppliersService {
       }
       
       this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully created ${stockCreated} stock items`);
+    }
+
+    // Dacă există recepții aprobate care reprezintă anulări, înregistrăm item-urile anulate în tabelul dedicated
+    if (cancelledPayload.length > 0) {
+      try {
+        this.logger.log(`🚫 [SUPPLIERS SERVICE] Creating cancelled items from approved receptions for order ${orderId}`);
+        await this.cancelOrderItems({ orderId, items: cancelledPayload as any });
+        this.logger.log(`✅ [SUPPLIERS SERVICE] Cancelled items created from approved receptions for order ${orderId}`);
+      } catch (e: any) {
+        this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to create cancelled items from approved receptions for order ${orderId}: ${e?.message || e}`, e?.stack);
+      }
     }
 
     // Verifică dacă toate recepțiile comenzii sunt aprobate și actualizează statusul comenzii
