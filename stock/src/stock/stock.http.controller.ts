@@ -203,6 +203,13 @@ export class StockHttpController {
     return { imageUrl };
   }
 
+  // === PDF UPLOAD ===
+  @Post('insert/upload-pdf') @Permissions('stock.create')
+  async uploadStockInsertPdf(@Body() payload: { fileName: string; content: string }) {
+    const pdfUrl = await this.service.uploadStockInsertPdf(payload.fileName, payload.content);
+    return { pdfUrl };
+  }
+
   // === PRODUCT IMAGE SERVE ===
   @Get('products/image/:fileName')
   @Permissions('products.read')

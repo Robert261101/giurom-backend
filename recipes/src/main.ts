@@ -18,6 +18,12 @@ async function bootstrap() {
     prefix: '/files/',
   });
   
+  // Serve images from the images directory (products, waste, consume)
+  const imagesDir = join(__dirname, '..', '..', '..', 'images');
+  (httpApp as any).useStaticAssets(imagesDir, {
+    prefix: '/images/',
+  });
+  
   const config = new DocumentBuilder()
     .setTitle('Recipes API')
     .setDescription('Recipes service endpoints')
@@ -30,6 +36,7 @@ async function bootstrap() {
   console.log(`🍲 Recipes HTTP on http://localhost:${httpPort}`);
   console.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
   console.log(`📁 Static files served from: ${filesDir}`);
+  console.log(`📷 Images served from: ${imagesDir}`);
 
 }
 

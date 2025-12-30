@@ -1,0 +1,67 @@
+import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { ClientProxy } from '@nestjs/microservices';
+import { Recipe } from './entities/recipe.entity';
+import { RecipeCategory } from './entities/recipe-category.entity';
+import { RecipeProduct } from './entities/recipe-product.entity';
+import { RecipeRecipe } from './entities/recipe-recipe.entity';
+import { CreateRecipeDto } from './dto/create-recipe.dto';
+import { UpdateRecipeDto } from './dto/update-recipe.dto';
+import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
+import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
+import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
+import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
+import { RecipeMediaService } from './recipes-media.service';
+export declare class RecipeService {
+    private recipesRepository;
+    private categoriesRepository;
+    private recipeProductsRepository;
+    private recipeRecipesRepository;
+    private recipeMediaService;
+    private readonly httpService;
+    private readonly configService;
+    private readonly notificationsClient;
+    private readonly stockServiceUrl;
+    constructor(recipesRepository: Repository<Recipe>, categoriesRepository: Repository<RecipeCategory>, recipeProductsRepository: Repository<RecipeProduct>, recipeRecipesRepository: Repository<RecipeRecipe>, recipeMediaService: RecipeMediaService, httpService: HttpService, configService: ConfigService, notificationsClient: ClientProxy);
+    private sendRecipeNotification;
+    create(createRecipeDto: CreateRecipeDto): Promise<Recipe>;
+    findAll(params: {
+        page?: number;
+        limit?: number;
+        search?: string;
+        category_id?: number;
+        location_id?: number;
+        difficulty?: 'easy' | 'medium' | 'hard';
+        max_cooking_time?: number;
+    }): Promise<{
+        recipes: Recipe[];
+        total: number;
+        totalPages: number;
+    }>;
+    findOne(id: number): Promise<Recipe>;
+    update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe>;
+    remove(id: number): Promise<void>;
+    createCategory(createCategoryDto: CreateRecipeCategoryDto): Promise<RecipeCategory>;
+    findAllCategories(params: {
+        page?: number;
+        limit?: number;
+        search?: string;
+    }): Promise<{
+        categories: RecipeCategory[];
+        total: number;
+        totalPages: number;
+    }>;
+    findOneCategory(id: number): Promise<RecipeCategory>;
+    updateCategory(id: number, updateCategoryDto: UpdateRecipeCategoryDto): Promise<RecipeCategory>;
+    removeCategory(id: number): Promise<void>;
+    addProductToRecipe(createRecipeProductDto: CreateRecipeProductDto): Promise<RecipeProduct>;
+    findRecipeProducts(recipe_id: number): Promise<RecipeProduct[]>;
+    updateRecipeProduct(id: number, updateRecipeProductDto: UpdateRecipeProductDto): Promise<RecipeProduct>;
+    removeRecipeProduct(id: number): Promise<void>;
+    addRecipeToRecipe(recipeId: number, ingredientRecipeId: number, quantity: number, notes?: string): Promise<RecipeRecipe>;
+    getRecipeRecipes(recipeId: number): Promise<RecipeRecipe[]>;
+    updateRecipeRecipe(id: number, quantity: number, notes?: string): Promise<RecipeRecipe>;
+    removeRecipeRecipe(id: number): Promise<void>;
+    getStatistics(): Promise<any>;
+}

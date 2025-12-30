@@ -2,14 +2,14 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException, 
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository, MoreThan, DeepPartial } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { firstValueFrom } from 'rxjs';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Product } from './entities/product.entity';
-import { Stock, StockStatus } from './entities/stock.entity';
+import { Stock, StockStatus, StockSource } from './entities/stock.entity';
 import { StockTransaction, TransactionType } from './entities/stock-transaction.entity';
 import { WasteRecord } from './entities/waste-record.entity';
 import { ConsumptionRecord } from './entities/consumption-record.entity';
@@ -69,63 +69,40 @@ export class StockService {
   }
 
   /**
-   * Return canonical static base URL used for images
-   */
-  private getStaticBase(): string {
-    const cfg = this.configService?.get<string>('STATIC_FILES_URL') || process.env.STATIC_FILES_URL || process.env.NEXT_PUBLIC_STATIC_FILES_URL;
-    if (cfg && cfg.startsWith('http')) return cfg.replace(/\/$/, '');
-    // Fallback to known host used in frontend
-    return 'http://giurom.bitap.ro:3005';
-  }
-
-  /**
-   * Normalize product.photo to a full canonical URL when possible
+   * Normalize product.photo - keep it as-is since frontend will handle URL construction
+   * Photo paths are stored as /api/images/products/... which work through API Gateway
    */
   private normalizeProductPhoto(product: Product): Product {
-    if (!product) return product;
-    const copy = { ...product } as any;
-    if (!copy.photo) return copy;
-
-    const photo = String(copy.photo || '').trim();
-    // If already absolute URL, return as is
-    if (photo.startsWith('http://') || photo.startsWith('https://')) {
-      copy.photo = photo;
-      return copy;
+    // Simply return the product as-is without URL transformation
+    // The /api/images/... paths work directly through API Gateway (port 3002)
+    if (product.photo) {
+      this.logger.log(`📸 [normalizeProductPhoto] Product ID ${product.id} (${product.name}) - Photo path: ${product.photo}`);
+    } else {
+      this.logger.log(`📸 [normalizeProductPhoto] Product ID ${product.id} (${product.name}) - No photo`);
     }
-
-    const staticBase = this.getStaticBase();
-
-    // If photo already starts with /api/images or contains products path, extract filename and return public static path
-    if (photo.startsWith('/api/images/') || photo.startsWith('/products/') || photo.includes('/products/') || photo.startsWith('products/')) {
-      const parts = photo.split('/');
-      const filename = parts[parts.length - 1];
-      // Return the public static path which frontend rewrites to the static files server
-      copy.photo = `/api/images/products/${filename}`;
-      return copy;
-    }
-
-    // If it is an absolute URL (already handled earlier) or some other path starting with '/', fallback to staticBase
-    if (photo.startsWith('/')) {
-      copy.photo = `${staticBase}${photo}`;
-      return copy;
-    }
-
-    // Default fallback: treat as filename under products and use backend serve path
-    const filename = photo.split('/').pop();
-    copy.photo = `/stock/products/image/${filename}`;
-    return copy;
+    return product;
   }
 
   async createProduct(dto: CreateProductDto): Promise<Product> {
     const existing = await this.productRepo.findOne({ where: { name: dto.name } });
     if (existing) throw new ConflictException('Produsul există deja');
     const product = this.productRepo.create(dto);
+    this.logger.log(`💾 [createProduct] Creating product with photo: ${dto.photo || 'no photo'}`);
     const saved = await this.productRepo.save(product);
+    this.logger.log(`✅ [createProduct] Saved product ID ${saved.id} with photo: ${saved.photo || 'no photo'}`);
     return this.normalizeProductPhoto(saved);
   }
 
   async findAllProducts(): Promise<Product[]> {
     const products = await this.productRepo.find();
+    this.logger.log(`📦 [findAllProducts] Found ${products.length} products`);
+    const productsWithPhotos = products.filter(p => p.photo);
+    if (productsWithPhotos.length > 0) {
+      this.logger.log(`📸 [findAllProducts] Products with photos: ${productsWithPhotos.length}`);
+      productsWithPhotos.forEach(p => {
+        this.logger.log(`   - Product ID ${p.id} (${p.name}): ${p.photo}`);
+      });
+    }
     return products.map(p => this.normalizeProductPhoto(p));
   }
 
@@ -150,6 +127,7 @@ export class StockService {
 
   async updateProduct(id: number, dto: UpdateProductDto): Promise<Product> {
     const product = await this.findProduct(id);
+    this.logger.log(`🔄 [updateProduct] Product ID ${id} - Current photo: ${product.photo || 'no photo'}, New photo: ${dto.photo || 'no change'}`);
     
     // Dacă se actualizează imaginea și există o imagine veche, șterge-o
     if (dto.photo && dto.photo !== product.photo && product.photo) {
@@ -190,7 +168,9 @@ export class StockService {
     }
     
     Object.assign(product, dto);
-    return await this.productRepo.save(product);
+    const updated = await this.productRepo.save(product);
+    this.logger.log(`✅ [updateProduct] Updated product ID ${id} with final photo: ${updated.photo || 'no photo'}`);
+    return updated;
   }
 
   async deleteProduct(id: number): Promise<void> {
@@ -211,9 +191,25 @@ export class StockService {
     // recepțiile separate pe zile diferite. Fiecare recepție parțială creează un stock item nou
     // pentru a păstra istoricul precis al recepțiilor.
     
-    const stock = this.stockRepo.create({ ...dto, product, status: StockStatus.VALID });
-    const savedStock = await this.stockRepo.save(stock);
-    console.log(`✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ''}`);
+    // Determine source: if supplier_order_item_id present and source not provided, treat as 'comanda'
+    const payload: DeepPartial<Stock> = { ...(dto as any), product, status: StockStatus.VALID };
+    // If supplier_order_item_id present and no explicit source provided, treat as 'comanda'
+    const hasSupplier = dto.supplier_order_item_id !== undefined && dto.supplier_order_item_id !== null;
+    // Decide source: if created from a supplier order item, mark as COMANDA, otherwise MANUAL
+    if (hasSupplier && (dto as any).source === undefined) {
+      payload.source = StockSource.COMANDA;
+    } else if ((dto as any).source) {
+      payload.source = (dto as any).source === 'comanda' ? StockSource.COMANDA : StockSource.MANUAL;
+    } else {
+      payload.source = StockSource.MANUAL;
+    }
+
+    // Log the chosen source so it's obvious in runtime logs that order-based stocks get 'comanda'
+    this.logger.log(`ℹ️ [createStock] Determined source for product ${dto.product_id}: ${payload.source}`);
+
+    const stock = this.stockRepo.create(payload) as Stock;
+    const savedStock = await this.stockRepo.save<Stock>(stock);
+    this.logger.log(`✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ''}`);
     return savedStock;
   }
 
@@ -962,11 +958,11 @@ export class StockService {
         base64Data = base64Data.split(',')[1];
       }
 
-      // Generate unique filename with timestamp
+      // Add timestamp prefix to filename
+      // Frontend sends: compressed_1764180869380.jpeg
+      // We save as: 1764180863230_compressed_1764180869380.jpeg (with our own timestamp)
       const timestamp = Date.now();
-      const fileExtension = fileName.split('.').pop() || 'jpg';
-      const baseFileName = fileName.replace(/\.[^/.]+$/, '') || 'image';
-      const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
+      const uniqueFileName = `${timestamp}_${fileName}`;
 
       // Save to images/products directory on server
       const repoRoot = this.getRepoRoot();
@@ -982,11 +978,26 @@ export class StockService {
       const filePath = path.join(productsDir, uniqueFileName);
       const buffer = Buffer.from(base64Data, 'base64');
       
+      // ========== DEBUGGING: SALVARE IMAGINE ==========
+      console.log('\n🟢 ========== SALVARE IMAGINE ==========');
+      console.log('📂 Repo root:', repoRoot);
+      console.log('📂 Images dir:', imagesDir);
+      console.log('📂 Products dir:', productsDir);
+      console.log('💾 File path complet:', filePath);
+      console.log('📝 Nume fișier:', uniqueFileName);
+      console.log('🟢 ========================================\n');
+      
       fs.writeFileSync(filePath, buffer);
       this.logger.log(`✅ Product image saved: ${filePath} (${buffer.length} bytes)`);
 
-      // Return the URL path (with products subfolder)
-      return `/api/images/products/${uniqueFileName}`;
+      // Return the URL path with /api prefix for API Gateway static files endpoint
+      const returnPath = `/api/images/products/${uniqueFileName}`;
+      console.log('\n🔵 ========== URL RETURNAT ==========');
+      console.log('🔗 Path returnat către frontend:', returnPath);
+      console.log('🔵 ====================================\n');
+      this.logger.log(`🔗 [uploadProductImage] Returning path: ${returnPath}`);
+      this.logger.log(`📁 [uploadProductImage] Physical file location: ${filePath}`);
+      return returnPath;
     } catch (error: any) {
       this.logger.error(`❌ Error uploading product image: ${error}`);
       throw new BadRequestException(`Eroare la salvarea imaginii: ${error?.message || 'Unknown error'}`);
@@ -1001,10 +1012,17 @@ export class StockService {
       const repoRoot = this.getRepoRoot();
       const imagesDir = path.join(repoRoot, 'images', 'products');
       const filePath = path.join(imagesDir, fileName);
+      
+      this.logger.log(`🔍 [serveProductImage] Looking for file: ${fileName}`);
+      this.logger.log(`📁 [serveProductImage] Full path: ${filePath}`);
+      this.logger.log(`📂 [serveProductImage] Images directory: ${imagesDir}`);
 
       if (!fs.existsSync(filePath)) {
+        this.logger.error(`❌ [serveProductImage] File NOT FOUND: ${filePath}`);
         throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
       }
+      
+      this.logger.log(`✅ [serveProductImage] File found, serving: ${filePath}`);
 
       const buffer = fs.readFileSync(filePath);
       
@@ -1064,6 +1082,7 @@ export class StockService {
       fs.writeFileSync(filePath, buffer);
       this.logger.log(`✅ Waste image saved: ${filePath} (${buffer.length} bytes)`);
 
+      // Return the URL path with /api prefix for API Gateway static files endpoint
       return `/api/images/waste/${uniqueFileName}`;
     } catch (error: any) {
       this.logger.error(`❌ Error uploading waste image: ${error}`);
@@ -1173,6 +1192,7 @@ export class StockService {
       fs.writeFileSync(filePath, buffer);
       this.logger.log(`✅ Consume image saved: ${filePath} (${buffer.length} bytes)`);
 
+      // Return the URL path with /api prefix for API Gateway static files endpoint
       return `/api/images/consume/${uniqueFileName}`;
     } catch (error: any) {
       this.logger.error(`❌ Error uploading consume image: ${error}`);
@@ -1249,6 +1269,45 @@ export class StockService {
     } catch (error: any) {
       this.logger.error(`❌ Error deleting consume image: ${error}`);
       throw new BadRequestException(`Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Upload PDF - salvează pe server în /images/insert_stock_pdf/
+   */
+  async uploadStockInsertPdf(fileName: string, base64Content: string): Promise<string> {
+    try {
+      let base64Data = base64Content;
+      if (base64Data.includes(',')) {
+        base64Data = base64Data.split(',')[1];
+      }
+
+      const timestamp = Date.now();
+      const uniqueFileName = `${timestamp}_${fileName}`;
+
+      // Save PDFs under repoRoot/images/stock_manually to match other image upload locations
+      const repoRoot = this.getRepoRoot();
+      const imagesDir = path.join(repoRoot, 'images');
+      const pdfDir = path.join(imagesDir, 'stock_manually');
+
+      if (!fs.existsSync(pdfDir)) {
+        fs.mkdirSync(pdfDir, { recursive: true });
+        this.logger.log(`📁 Created directory: ${pdfDir}`);
+      }
+
+      const filePath = path.join(pdfDir, uniqueFileName);
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      this.logger.log(`✅ PDF saved: ${filePath} (${buffer.length} bytes)`);
+
+      // Return the URL path with /api prefix matching the physical folder 'stock_manually'
+      const returnPath = `/api/images/stock_manually/${uniqueFileName}`;
+      this.logger.log(`🔗 [uploadStockInsertPdf] Returning path: ${returnPath}`);
+      return returnPath;
+    } catch (error: any) {
+      this.logger.error(`❌ Error uploading PDF: ${error}`);
+      throw new BadRequestException(`Eroare la salvarea PDF-ului: ${error?.message || 'Unknown error'}`);
     }
   }
 

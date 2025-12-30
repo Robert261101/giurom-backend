@@ -17,6 +17,11 @@ export enum StockStatus {
   BELOW_MINIMUM = 'below_minimum',
 }
 
+export enum StockSource {
+  MANUAL = 'manual',
+  COMANDA = 'comanda',
+}
+
 @Entity('stock')
 export class Stock {
   @PrimaryGeneratedColumn()
@@ -45,6 +50,12 @@ export class Stock {
 
   @Column({ type: 'datetime', nullable: true })
   last_update?: Date;
+
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  document_url?: string;
+
+  @Column({ type: 'enum', enum: StockSource, default: StockSource.MANUAL })
+  source: StockSource;
 
   @Column({ type: 'enum', enum: StockStatus, default: StockStatus.VALID })
   status: StockStatus;

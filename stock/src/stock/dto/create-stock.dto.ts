@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive, IsEnum, IsDate, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsPositive, IsEnum, IsDate, IsOptional, Min, IsString, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { StockStatus } from '../entities/stock.entity';
 
@@ -44,6 +44,17 @@ export class CreateStockDto {
   @IsEnum(StockStatus)
   @IsOptional()
   status?: StockStatus;
+
+  @ApiProperty({ required: false, description: 'Optional URL to an attached document (PDF) for this stock entry' })
+  @IsString()
+  @IsOptional()
+  @Length(1, 1024)
+  document_url?: string;
+
+  @ApiProperty({ required: false, description: 'Source of the stock entry', enum: ['manual','comanda'] })
+  @IsEnum(['manual','comanda'] as any)
+  @IsOptional()
+  source?: 'manual' | 'comanda';
 }
 
 

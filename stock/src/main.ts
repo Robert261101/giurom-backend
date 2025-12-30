@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as bodyParser from 'body-parser';
+import { join } from 'path';
 
 async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
@@ -10,6 +11,12 @@ async function bootstrap() {
   // Increase payload size limit for image uploads (base64 can be ~33% larger)
   httpApp.use(bodyParser.json({ limit: '10mb' }));
   httpApp.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+  
+  // Serve images from the images directory (products, waste, consume)
+  const imagesDir = join(__dirname, '..', '..', '..', 'images');
+  (httpApp as any).useStaticAssets(imagesDir, {
+    prefix: '/images/',
+  });
   
   const config = new DocumentBuilder()
     .setTitle('Stock API')
@@ -22,6 +29,7 @@ async function bootstrap() {
   await httpApp.listen(httpPort);
   console.log(`📦 Stock HTTP on http://localhost:${httpPort}`);
   console.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
+  console.log(`📷 Images served from: ${imagesDir}`);
 
 }
 

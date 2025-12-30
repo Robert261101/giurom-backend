@@ -2,6 +2,7 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -54,6 +55,43 @@ app.get('/health', (req, res) => {
     }
   });
 });
+
+// Serve static files from images directory (must be before other middlewares)
+// API Gateway is in /home/giurombitap/api-gateway/src
+// Images are in /home/giurombitap/images
+const imagesPath = path.join(__dirname, '../../images');
+console.log('\n🟡 ========== API GATEWAY STATIC FILES ==========');
+console.log('📂 __dirname:', __dirname);
+console.log('📂 Images path calculat:', imagesPath);
+console.log('📂 Path absolut:', path.resolve(imagesPath));
+console.log('🟡 ===============================================\n');
+
+// Log all image requests for debugging
+app.use('/api/images', (req, res, next) => {
+  const fullPath = path.join(imagesPath, req.path);
+  const exists = require('fs').existsSync(fullPath);
+  console.log('\n🔴 ========== CERERE IMAGINE ==========');
+  console.log('🌐 URL cerut:', req.path);
+  console.log('📂 Path complet căutat:', fullPath);
+  console.log('✅ Fișierul există?', exists);
+  if (!exists) {
+    console.log('❌ FIȘIERUL NU EXISTĂ LA ACEST PATH!');
+    // List files in directory to see what's there
+    const dir = path.dirname(fullPath);
+    if (require('fs').existsSync(dir)) {
+      const files = require('fs').readdirSync(dir);
+      console.log('📋 Fișiere în director:', files.length > 0 ? files.slice(0, 5) : 'GOL');
+    }
+  }
+  console.log('🔴 =====================================\n');
+  next();
+});
+
+app.use('/api/images', express.static(imagesPath, {
+  maxAge: '1d', // Cache for 1 day
+  etag: true,
+  lastModified: true
+}));
 
 // Middleware pentru a ignora cererile Next.js specifice și alte cereri care nu ar trebui să ajungă la API Gateway
 app.use((req, res, next) => {
@@ -253,6 +291,23 @@ Object.keys(microservices).forEach(path => {
       
       if (req.headers['x-service-secret']) {
         proxyReq.setHeader('x-service-secret', req.headers['x-service-secret']);
+      }
+
+      // If the request body was parsed by bodyParser, forward the raw body
+      // to the proxied request. Without this, POST/PUT bodies are lost
+      // and downstream services may hang waiting for a body.
+      try {
+        if (req.body && Object.keys(req.body).length) {
+          const bodyData = JSON.stringify(req.body);
+          // Ensure content-type and length are correctly set
+          if (!proxyReq.getHeader('content-type')) {
+            proxyReq.setHeader('Content-Type', 'application/json');
+          }
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
+        }
+      } catch (err) {
+        console.error('Error forwarding request body to proxy target:', err && err.message);
       }
     },
     onProxyRes: (proxyRes, req, res) => {
