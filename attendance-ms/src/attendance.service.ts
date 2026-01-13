@@ -13,6 +13,7 @@ import { CreatePresenceDto } from './dto/create-presence.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto';
 import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
+import { toZonedTime } from 'date-fns-tz';
 
 @Injectable()
 export class AttendanceService implements OnModuleInit {
@@ -108,8 +109,8 @@ export class AttendanceService implements OnModuleInit {
     const { start_datetime, end_datetime, employee_id, ...rest } = createShiftDto;
 
     // Validare date
-    const startDate = new Date(start_datetime);
-    const endDate = new Date(end_datetime);
+    const startDate = toZonedTime(new Date(start_datetime), 'Europe/Bucharest');
+    const endDate = toZonedTime(new Date(end_datetime), 'Europe/Bucharest');
 
     if (startDate >= endDate) {
       throw new BadRequestException('Data de început trebuie să fie înainte de data de sfârșit');
@@ -199,12 +200,12 @@ export class AttendanceService implements OnModuleInit {
     const shift = await this.findShiftById(id);
 
     if (updateShiftDto.start_datetime || updateShiftDto.end_datetime) {
-      const startDate = updateShiftDto.start_datetime 
-        ? new Date(updateShiftDto.start_datetime) 
-        : shift.start_datetime;
-      const endDate = updateShiftDto.end_datetime 
-        ? new Date(updateShiftDto.end_datetime) 
-        : shift.end_datetime;
+        const startDate = updateShiftDto.start_datetime 
+          ? toZonedTime(new Date(updateShiftDto.start_datetime), 'Europe/Bucharest') 
+          : shift.start_datetime;
+        const endDate = updateShiftDto.end_datetime 
+          ? toZonedTime(new Date(updateShiftDto.end_datetime), 'Europe/Bucharest') 
+          : shift.end_datetime;
 
       if (startDate >= endDate) {
         throw new BadRequestException('Data de început trebuie să fie înainte de data de sfârșit');
@@ -308,15 +309,15 @@ export class AttendanceService implements OnModuleInit {
       ...rest,
       shift_id,
       date: new Date(date),
-      check_in: check_in ? new Date(check_in) : null,
-      check_out: check_out ? new Date(check_out) : null,
+      check_in: check_in ? toZonedTime(new Date(check_in), 'Europe/Bucharest') : null,
+      check_out: check_out ? toZonedTime(new Date(check_out), 'Europe/Bucharest') : null,
     });
 
     const savedPresence = await this.presenceRepository.save(presence);
     
     // Logica pentru puncte - doar dacă există check_in
     if (check_in) {
-      const checkInTime = new Date(check_in);
+      const checkInTime = savedPresence.check_in ? new Date(savedPresence.check_in) : new Date(check_in);
       const shiftStartTime = new Date(shift.start_datetime);
 
       // Extrag doar ora din shift (ignorăm data pentru pontajul curent)
@@ -449,6 +450,14 @@ export class AttendanceService implements OnModuleInit {
         const diffMs = checkOutDate.getTime() - checkInDate.getTime();
         updatePresenceDto.total_hours = diffMs / (1000 * 60 * 60);
       }
+    }
+
+    // Asigură conversia la fusul orar corect și pentru update
+    if (updatePresenceDto.check_in) {
+      updatePresenceDto.check_in = toZonedTime(new Date(updatePresenceDto.check_in), 'Europe/Bucharest') as any;
+    }
+    if (updatePresenceDto.check_out) {
+      updatePresenceDto.check_out = toZonedTime(new Date(updatePresenceDto.check_out), 'Europe/Bucharest') as any;
     }
 
     Object.assign(presence, updatePresenceDto);
