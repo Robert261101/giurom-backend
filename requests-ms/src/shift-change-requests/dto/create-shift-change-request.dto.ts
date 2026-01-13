@@ -47,4 +47,14 @@ export class CreateShiftChangeRequestDto {
   @IsOptional()
   @IsEnum(['days','hours'], { message: 'Unitatea de durată trebuie să fie days sau hours' } as any)
   duration_unit?: 'days' | 'hours';
+
+  @ApiProperty({ 
+    description: 'ID locație de lucru asociată cererii', 
+    example: 1,
+    required: false 
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
+  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  location_id?: number;
 }

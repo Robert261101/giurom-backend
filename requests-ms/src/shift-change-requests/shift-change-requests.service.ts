@@ -59,9 +59,10 @@ export class ShiftChangeRequestsService {
   async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
     this.logger.log(`Creating shift change request from employee ${dto.employee_id} to ${dto.replacement_id}`);
 
-    // Verifică dacă angajatul care cere schimbul există prin HTTP call
+    // Verifică dacă angajatul care cere schimbul există și obține location_id prin HTTP call
+    let locationId: number | undefined = dto.location_id;
     try {
-      await firstValueFrom(
+      const response = await firstValueFrom(
         this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
           headers: {
             'x-internal-service': 'requests',
@@ -69,6 +70,17 @@ export class ShiftChangeRequestsService {
           }
         })
       );
+      const employeeData = response.data as any;
+      if (!employeeData) {
+        this.logger.error(`Employee with ID ${dto.employee_id} not found`);
+        throw new NotFoundException('Angajatul care cere schimbul nu a fost găsit');
+      }
+      
+      // Dacă location_id nu este furnizat în DTO, îl obținem din employee (work_location_default_id)
+      if (!locationId && employeeData.work_location_default_id) {
+        locationId = employeeData.work_location_default_id;
+        this.logger.log(`Using default location ${locationId} for employee ${dto.employee_id}`);
+      }
     } catch (error) {
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul care cere schimbul nu a fost găsit');
@@ -155,6 +167,7 @@ export class ShiftChangeRequestsService {
       start_datetime: startDate as any,
       end_datetime: endDate as any,
       status: ShiftChangeStatus.PENDING,
+      location_id: locationId,
     };
 
     const shiftChangeRequest: ShiftChangeRequest = this.shiftChangeRepo.create(partial);
@@ -219,6 +232,11 @@ export class ShiftChangeRequestsService {
     // Filtrare pe reviewer
     if (filters.reviewed_by_id) {
       queryBuilder.andWhere('scr.reviewed_by_id = :reviewerId', { reviewerId: filters.reviewed_by_id });
+    }
+
+    // Filtrare pe locație
+    if (filters.location_id) {
+      queryBuilder.andWhere('scr.location_id = :locationId', { locationId: filters.location_id });
     }
 
     // Autorizare: angajații pot vedea doar cererile în care sunt implicați

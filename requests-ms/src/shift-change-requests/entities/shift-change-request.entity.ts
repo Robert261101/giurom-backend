@@ -33,6 +33,14 @@ export class ShiftChangeRequest {
   replacement_id: number;
 
   @ApiProperty({ 
+    description: 'ID locație de lucru asociată cererii', 
+    example: 1,
+    required: false 
+  })
+  @Column({ nullable: true })
+  location_id?: number;
+
+  @ApiProperty({ 
     description: 'Data și ora de început a schimbului', 
     example: '2024-08-01T08:00:00Z' 
   })

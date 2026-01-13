@@ -59,4 +59,14 @@ export class CreateLeaveRequestDto {
   @IsOptional()
   @IsEnum(DurationUnit, { message: 'Unitatea de durată trebuie să fie days sau hours' })
   duration_unit?: DurationUnit;
+
+  @ApiProperty({ 
+    description: 'ID locație de lucru asociată cererii', 
+    example: 1,
+    required: false 
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
+  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  location_id?: number;
 }

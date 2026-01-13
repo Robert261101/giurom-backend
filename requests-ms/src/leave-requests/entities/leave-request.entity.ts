@@ -29,6 +29,14 @@ export class LeaveRequest {
   employee_id: number;
 
   @ApiProperty({ 
+    description: 'ID locație de lucru asociată cererii', 
+    example: 1,
+    required: false 
+  })
+  @Column({ nullable: true })
+  location_id?: number;
+
+  @ApiProperty({ 
     description: 'Tipul concediului', 
     example: 'Concediu de odihnă',
     maxLength: 100 

@@ -66,4 +66,14 @@ export class FilterShiftChangeRequestsDto {
   @IsNumber({}, { message: 'reviewed_by_id trebuie să fie un număr' })
   @IsPositive({ message: 'reviewed_by_id trebuie să fie pozitiv' })
   reviewed_by_id?: number;
+
+  @ApiProperty({ 
+    description: 'ID locație de lucru pentru filtrare', 
+    example: 1,
+    required: false 
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
+  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  location_id?: number;
 }

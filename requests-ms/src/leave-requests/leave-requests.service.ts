@@ -70,7 +70,8 @@ export class LeaveRequestsService implements OnModuleInit {
     this.logger.log(`Creating leave request for employee ${dto.employee_id}`);
     this.logger.log(`Leave request details: ${JSON.stringify(dto)}`);
 
-    // Verifică dacă angajatul există prin HTTP call către microserviciul employees
+    // Verifică dacă angajatul există și obține location_id prin HTTP call către microserviciul employees
+    let locationId: number | undefined = dto.location_id;
     try {
       this.logger.log(`Checking if employee ${dto.employee_id} exists via HTTP call`);
       const response = await firstValueFrom(
@@ -87,6 +88,12 @@ export class LeaveRequestsService implements OnModuleInit {
         throw new NotFoundException('Angajatul nu a fost găsit');
       }
       this.logger.log(`Employee ${dto.employee_id} found: ${JSON.stringify(employeeData)}`);
+      
+      // Dacă location_id nu este furnizat în DTO, îl obținem din employee (work_location_default_id)
+      if (!locationId && employeeData.work_location_default_id) {
+        locationId = employeeData.work_location_default_id;
+        this.logger.log(`Using default location ${locationId} for employee ${dto.employee_id}`);
+      }
     } catch (error) {
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul nu a fost găsit');
@@ -137,6 +144,7 @@ export class LeaveRequestsService implements OnModuleInit {
       end_datetime: endDate,
       status: LeaveStatus.PENDING,
       duration_unit: dto.duration_unit || DurationUnit.DAYS,
+      location_id: locationId,
     });
 
     const savedRequest = await this.leaveRequestRepo.save(leaveRequest);
@@ -210,6 +218,11 @@ export class LeaveRequestsService implements OnModuleInit {
     // Filtrare pe unitatea de durată
     if (filters.duration_unit) {
       queryBuilder.andWhere('lr.duration_unit = :durationUnit', { durationUnit: filters.duration_unit });
+    }
+
+    // Filtrare pe locație
+    if (filters.location_id) {
+      queryBuilder.andWhere('lr.location_id = :locationId', { locationId: filters.location_id });
     }
 
     // Autorizare: angajații pot vedea doar propriile cereri (managerii pot vedea toate)
