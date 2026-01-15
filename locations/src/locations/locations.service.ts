@@ -919,7 +919,31 @@ export class LocationsService {
     // Normalize date: extract only YYYY-MM-DD part (remove time if present)
     const revenueDate = revenueDateRaw ? revenueDateRaw.toString().split(' ')[0].split('T')[0] : null;
     
-    if (data.revenue_date) revenue.revenue_date = data.revenue_date;
+    // IMPORTANT: Pentru a evita conversia de timezone care poate schimba ziua,
+    // folosim ora 12:00:00 (amiază) pentru a evita conversiile de timezone
+    // care pot schimba ziua când se folosește 00:00:00 (miezul nopții)
+    if (data.revenue_date) {
+      const dateStr = data.revenue_date.toString();
+      let datePart: string;
+      
+      // Extragem partea de dată (YYYY-MM-DD)
+      if (dateStr.includes('T')) {
+        datePart = dateStr.split('T')[0];
+      } else if (dateStr.includes(' ')) {
+        datePart = dateStr.split(' ')[0];
+      } else {
+        datePart = dateStr;
+      }
+      
+      // Verificăm că datePart este în format valid YYYY-MM-DD
+      if (datePart.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // Folosim ora 12:00:00 pentru a evita conversiile de timezone
+        revenue.revenue_date = `${datePart} 12:00:00`;
+      } else {
+        // Fallback: folosim direct string-ul primit
+        revenue.revenue_date = data.revenue_date;
+      }
+    }
     if (data.online_amount !== undefined) revenue.online_amount = data.online_amount as any;
     if (data.cash_amount !== undefined) revenue.cash_amount = data.cash_amount as any;
     if (data.card_amount !== undefined) revenue.card_amount = data.card_amount as any;
