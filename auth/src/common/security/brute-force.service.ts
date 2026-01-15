@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 
 interface FailedAttempt {
   count: number;
@@ -30,7 +30,7 @@ export class BruteForceProtectionService {
     if (attempts.blockedUntil > Date.now()) {
       const remainingTime = Math.ceil((attempts.blockedUntil - Date.now()) / 1000 / 60);
       this.logger.warn(`Cont blocat pentru ${identifier} - mai sunt ${remainingTime} minute`);
-      throw new Error(`Cont blocat temporar. Încearcă din nou în ${remainingTime} minute.`);
+      throw new ForbiddenException(`Cont blocat temporar. Încearcă din nou în ${remainingTime} minute.`);
     }
 
     // Reset dacă a trecut suficient timp
