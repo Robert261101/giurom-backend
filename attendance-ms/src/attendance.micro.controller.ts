@@ -62,8 +62,8 @@ export class AttendanceMicroController {
   }
 
   @MessagePattern('attendance.presences.update')
-  updatePresence(@Payload() payload: { id: number; dto: UpdatePresenceDto }) {
-    return this.service.updatePresence(payload.id, payload.dto);
+  updatePresence(@Payload() payload: { id: number; dto: UpdatePresenceDto; user?: any }) {
+    return this.service.updatePresence(payload.id, payload.dto, payload.user);
   }
 
   @MessagePattern('attendance.presences.delete')

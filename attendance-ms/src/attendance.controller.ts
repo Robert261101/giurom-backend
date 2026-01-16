@@ -9,6 +9,7 @@ import {
   Query,
   HttpStatus,
   ParseIntPipe,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -248,8 +249,9 @@ export class AttendanceController {
   async updatePresence(
     @Param('id', ParseIntPipe) id: number,
     @Body() updatePresenceDto: UpdatePresenceDto,
+    @Request() req: any,
   ): Promise<Presence> {
-    return await this.attendanceService.updatePresence(id, updatePresenceDto);
+    return await this.attendanceService.updatePresence(id, updatePresenceDto, req.user);
   }
 
   @Delete('presences/:id')

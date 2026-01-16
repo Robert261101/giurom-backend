@@ -326,7 +326,7 @@ export class ExecutionService {
         startDateObj: startDate.toISOString(),
         endDateObj: endDate.toISOString(),
       });
-      
+
       // Filtrează după completed_at (data când a fost finalizată execuția) SAU data din assignment
       // Pentru sarcini programate, folosește scheduled_datetime; pentru restul, assigned_at
       // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
@@ -342,7 +342,11 @@ export class ExecutionService {
     // execution.read_all - vede toate
     if (user?.permissions?.includes('execution.read_all')) {
       // Dacă are și assignment.create (este manager), aplică limitare implicită dacă nu se trimit date
-      if (user?.permissions?.includes('assignment.create') && !startDate && !endDate) {
+      if (
+        user?.permissions?.includes('assignment.create') &&
+        !startDate &&
+        !endDate
+      ) {
         // Limită implicită: ultimele 30 de zile pentru performanță
         const today = new Date();
         const thirtyDaysAgo = new Date(today);

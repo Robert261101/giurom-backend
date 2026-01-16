@@ -55,6 +55,59 @@ export class PermissionsGuard implements CanActivate {
       }
     }
     
+    // Dacă utilizatorul nu are permisiunea, verifică dacă încearcă să actualizeze o prezență pentru propriul shift
+    if (!hasAll && requiredPermissions.includes('attendance.update')) {
+      const presenceId = request.params?.id;
+      // În JWT, sub = id_employee (vezi auth.service.ts: sub: user.id_employee)
+      // Verifică toate posibilitățile pentru ID-ul angajatului
+      const userEmployeeId = user.id || user.userId || user.employee_id || user.id_employee || user.sub;
+      
+      console.log('[PermissionsGuard] Checking presence ownership:', {
+        presenceId,
+        userEmployeeId,
+        userKeys: Object.keys(user || {}),
+        user: user
+      });
+      
+      // Dacă există presence_id în params, verifică dacă prezența aparține angajatului prin shift
+      if (presenceId && userEmployeeId) {
+        try {
+          const presence = await this.attendanceService.findPresenceById(Number(presenceId));
+          console.log('[PermissionsGuard] Found presence:', {
+            presenceId: presence?.id,
+            shiftId: presence?.shift_id
+          });
+          
+          if (presence?.shift_id) {
+            const shift = await this.attendanceService.findShiftById(presence.shift_id);
+            // Compară ca numere pentru a evita problemele de tip (string vs number)
+            const shiftEmployeeId = Number(shift?.employee_id);
+            const userEmployeeIdNum = Number(userEmployeeId);
+            
+            console.log('[PermissionsGuard] Comparing:', {
+              shiftEmployeeId,
+              userEmployeeIdNum,
+              match: shiftEmployeeId === userEmployeeIdNum
+            });
+            
+            if (shift && shiftEmployeeId === userEmployeeIdNum) {
+              // Permite actualizarea prezenței pentru propriul shift
+              console.log('[PermissionsGuard] Allowing update - presence belongs to employee');
+              return true;
+            }
+          }
+        } catch (error) {
+          // Dacă prezența sau shift-ul nu există sau apare o eroare, continuă cu verificarea normală
+          console.error('[PermissionsGuard] Error checking presence ownership:', error);
+        }
+      } else {
+        console.log('[PermissionsGuard] Missing presenceId or userEmployeeId:', {
+          presenceId,
+          userEmployeeId
+        });
+      }
+    }
+    
     if (!hasAll) {
       throw new ForbiddenException('Permisiuni insuficiente');
     }

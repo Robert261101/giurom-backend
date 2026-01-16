@@ -1398,7 +1398,7 @@ export class AssignmentService {
       // 1. assigned_to_id = userId (pentru toate modurile: individual, everyone_gets_it acceptat, FCFS acceptat)
       // 2. assignment_mode = 'first_come_first_served' AND assigned_to_id IS NULL AND department_group_id corespunde departamentului user-ului
       // 3. assignment_mode = 'everyone_gets_it' AND assigned_to_id IS NULL AND department_group_id corespunde departamentului user-ului
-      // IMPORTANT: 
+      // IMPORTANT:
       // - Taskurile individual cu assigned_to_id != userId trebuie excluse COMPLET
       // - Taskurile everyone_gets_it cu assigned_to_id != userId și assigned_to_id != NULL trebuie excluse COMPLET
       // - Taskurile FCFS/everyone_gets_it neatribuite trebuie să fie din departamentul user-ului (dept_${userDepartmentId}_%)
@@ -1472,7 +1472,7 @@ export class AssignmentService {
         const assignmentMode = r.assignment_mode;
         const parentRecurrenceId = r.parent_recurrence_id;
         const departmentGroupId = r.department_group_id;
-        
+
         // Verifică dacă este sarcină recurentă părinte (sablon)
         let isParentRecurring = false;
         try {
@@ -1487,27 +1487,29 @@ export class AssignmentService {
         } catch (e) {
           isParentRecurring = false;
         }
-        
+
         // Dacă se trimite un interval de date, exclude sarcinile recurente părinte (sabloane)
         // Sarcinile recurente părinte nu ar trebui să apară în lista de sarcini pentru o zi specifică
         // Ele ar trebui să fie afișate doar în secțiunea separată "Sarcini cu Recurență"
         if (startDate && endDate && isParentRecurring) {
           return false; // Exclude sarcinile recurente părinte când se filtrează după date
         }
-        
+
         // Verificare suplimentară: exclude sarcinile care nu sunt în intervalul de date
         // Aceasta este o măsură de siguranță pentru a elimina sarcinile care au trecut prin SQL din cauza unei erori
         if (startDate && endDate && !isParentRecurring) {
-          const taskDate = r.scheduled_datetime ? new Date(r.scheduled_datetime) : new Date(r.assigned_at);
+          const taskDate = r.scheduled_datetime
+            ? new Date(r.scheduled_datetime)
+            : new Date(r.assigned_at);
           const taskDateStr = `${taskDate.getFullYear()}-${String(taskDate.getMonth() + 1).padStart(2, '0')}-${String(taskDate.getDate()).padStart(2, '0')}`;
           const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
           const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-          
+
           if (taskDateStr < sdStr || taskDateStr > edStr) {
             return false; // Exclude sarcini care nu sunt în intervalul de date
           }
         }
-        
+
         // Task-ul este vizibil DOAR dacă:
         // 1. assigned_to_id === userId (pentru TOATE modurile)
         if (assignedToId !== null && assignedToId !== undefined) {
@@ -1517,23 +1519,28 @@ export class AssignmentService {
           }
           return true; // Task atribuit user-ului - OK
         }
-        
+
         // 2. assigned_to_id IS NULL AND (FCFS/everyone_gets_it SAU sarcină recurentă părinte) AND department_group_id corespunde
         if (assignedToId === null || assignedToId === undefined) {
           // Task neatribuit - trebuie să fie FCFS/everyone_gets_it SAU sarcină recurentă părinte, fără parent_recurrence_id, și cu department_group_id corect
-          const isFCFSOrEveryone = assignmentMode === 'first_come_first_served' || assignmentMode === 'everyone_gets_it';
-          
+          const isFCFSOrEveryone =
+            assignmentMode === 'first_come_first_served' ||
+            assignmentMode === 'everyone_gets_it';
+
           if (!isFCFSOrEveryone && !isParentRecurring) {
             return false; // Exclude task neatribuit care nu este FCFS/everyone_gets_it și nu este sarcină recurentă părinte
           }
-          
+
           if (parentRecurrenceId !== null && parentRecurrenceId !== undefined) {
             return false; // Exclude task neatribuit cu parent_recurrence_id (ar trebui să fie atribuit user-ului)
           }
-          
+
           if (userDepartmentId) {
             // Pentru utilizatorii cu department_id, trebuie să aibă department_group_id corect
-            if (!departmentGroupId || !departmentGroupId.startsWith(`dept_${userDepartmentId}_`)) {
+            if (
+              !departmentGroupId ||
+              !departmentGroupId.startsWith(`dept_${userDepartmentId}_`)
+            ) {
               return false; // Exclude task neatribuit fără department_group_id corect
             }
           } else {
@@ -1544,10 +1551,10 @@ export class AssignmentService {
           }
           return true; // Task neatribuit valid - OK
         }
-        
+
         return false; // Exclude orice alt caz
       });
-      
+
       console.log(
         '🔍 [assignment.service] read_own result count (după filtrare finală):',
         filteredResult.length,
@@ -1561,7 +1568,7 @@ export class AssignmentService {
         const assignmentMode = r.assignment_mode;
         const parentRecurrenceId = r.parent_recurrence_id;
         const departmentGroupId = r.department_group_id;
-        
+
         // Verifică dacă este sarcină recurentă părinte (sablon)
         let isParentRecurring = false;
         try {
@@ -1576,50 +1583,71 @@ export class AssignmentService {
         } catch (e) {
           isParentRecurring = false;
         }
-        
+
         // Task-ul ar trebui să fie vizibil DOAR dacă:
         // 1. assigned_to_id === userId SAU
         // 2. assigned_to_id IS NULL AND parent_recurrence_id IS NULL AND (FCFS/everyone_gets_it SAU sarcină recurentă părinte) AND department_group_id corespunde
-        if (assignedToId !== null && assignedToId !== undefined && assignedToId !== user.sub) {
+        if (
+          assignedToId !== null &&
+          assignedToId !== undefined &&
+          assignedToId !== user.sub
+        ) {
           return true; // Task cu assigned_to_id diferit de userId - INCORECT
         }
-        
+
         // Verifică taskurile everyone_gets_it cu assigned_to_id setat
-        if (assignmentMode === 'everyone_gets_it' && assignedToId !== null && assignedToId !== undefined && assignedToId !== user.sub) {
+        if (
+          assignmentMode === 'everyone_gets_it' &&
+          assignedToId !== null &&
+          assignedToId !== undefined &&
+          assignedToId !== user.sub
+        ) {
           return true; // Task everyone_gets_it cu assigned_to_id diferit de userId - INCORECT
         }
-        
+
         // Verifică taskurile individual
         if (assignmentMode === 'individual' && assignedToId !== user.sub) {
           return true; // Task individual cu assigned_to_id diferit de userId - INCORECT
         }
-        
+
         // Verifică taskurile neatribuite - trebuie să fie FCFS/everyone_gets_it SAU sarcină recurentă părinte, fără parent_recurrence_id, și cu department_group_id corect
         if (assignedToId === null || assignedToId === undefined) {
-          const isFCFSOrEveryone = assignmentMode === 'first_come_first_served' || assignmentMode === 'everyone_gets_it';
+          const isFCFSOrEveryone =
+            assignmentMode === 'first_come_first_served' ||
+            assignmentMode === 'everyone_gets_it';
           if (!isFCFSOrEveryone && !isParentRecurring) {
             return true; // Task neatribuit care nu este FCFS/everyone_gets_it și nu este sarcină recurentă părinte - INCORECT
           }
           if (parentRecurrenceId !== null && parentRecurrenceId !== undefined) {
             return true; // Task neatribuit cu parent_recurrence_id - INCORECT (ar trebui să fie atribuit user-ului)
           }
-          if (userDepartmentId && (!departmentGroupId || !departmentGroupId.startsWith(`dept_${userDepartmentId}_`))) {
+          if (
+            userDepartmentId &&
+            (!departmentGroupId ||
+              !departmentGroupId.startsWith(`dept_${userDepartmentId}_`))
+          ) {
             return true; // Task neatribuit fără department_group_id corect - INCORECT
           }
         }
-        
+
         return false;
       });
-      
+
       if (incorrectTasks.length > 0) {
-        console.error(`❌ [assignment.service] GĂSITE ${incorrectTasks.length} TASKURI INCORECTE ÎN REZULTAT (după filtrare finală)!`);
+        console.error(
+          `❌ [assignment.service] GĂSITE ${incorrectTasks.length} TASKURI INCORECTE ÎN REZULTAT (după filtrare finală)!`,
+        );
         incorrectTasks.slice(0, 10).forEach((task) => {
-          console.error(`❌ [assignment.service] Task ${task.id} - assigned_to_id: ${task.assigned_to_id}, mode: ${task.assignment_mode}, parent_recurrence_id: ${task.parent_recurrence_id}, department_group_id: ${task.department_group_id}, userId: ${user.sub}`);
+          console.error(
+            `❌ [assignment.service] Task ${task.id} - assigned_to_id: ${task.assigned_to_id}, mode: ${task.assignment_mode}, parent_recurrence_id: ${task.parent_recurrence_id}, department_group_id: ${task.department_group_id}, userId: ${user.sub}`,
+          );
         });
       } else {
-        console.log('✅ [assignment.service] Toate taskurile sunt corecte după filtrare finală!');
+        console.log(
+          '✅ [assignment.service] Toate taskurile sunt corecte după filtrare finală!',
+        );
       }
-      
+
       // Folosește rezultatul filtrat
       const finalResult = filteredResult;
 

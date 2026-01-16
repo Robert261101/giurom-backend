@@ -429,8 +429,78 @@ export class AttendanceService implements OnModuleInit {
     return presence;
   }
 
-  async updatePresence(id: number, updatePresenceDto: UpdatePresenceDto): Promise<Presence> {
+  async updatePresence(id: number, updatePresenceDto: UpdatePresenceDto, user?: any): Promise<Presence> {
     const presence = await this.findPresenceById(id);
+
+    console.log('[AttendanceService] updatePresence called:', {
+      presenceId: id,
+      presenceShiftId: presence?.shift_id,
+      presenceCheckOut: presence?.check_out,
+      updateData: updatePresenceDto,
+      user: user ? { userId: user.userId, permissions: user.permissions } : null
+    });
+
+    // Verifică dacă utilizatorul are permisiunea attendance.update
+    const hasUpdatePermission = user?.permissions?.includes('attendance.update') || false;
+    
+    // Dacă utilizatorul nu are permisiunea, verifică dacă prezența aparține angajatului
+    if (!hasUpdatePermission) {
+      // Verifică dacă prezența aparține angajatului prin shift
+      const userEmployeeId = user?.userId || user?.id || user?.employee_id || user?.id_employee || user?.sub;
+      
+      console.log('[AttendanceService] No update permission, checking ownership:', {
+        userEmployeeId,
+        presenceShiftId: presence?.shift_id
+      });
+      
+      if (!presence?.shift_id || !userEmployeeId) {
+        console.log('[AttendanceService] Missing shift_id or userEmployeeId');
+        throw new BadRequestException('Nu aveți permisiunea de a modifica această prezență');
+      }
+      
+      const shift = await this.findShiftById(presence.shift_id);
+      const shiftEmployeeId = Number(shift?.employee_id);
+      const userEmployeeIdNum = Number(userEmployeeId);
+      
+      console.log('[AttendanceService] Comparing employee IDs:', {
+        shiftEmployeeId,
+        userEmployeeIdNum,
+        match: shiftEmployeeId === userEmployeeIdNum
+      });
+      
+      if (!shift || shiftEmployeeId !== userEmployeeIdNum) {
+        console.log('[AttendanceService] Employee IDs do not match');
+        throw new BadRequestException('Nu aveți permisiunea de a modifica această prezență');
+      }
+
+      // SECURITATE: Pentru angajați fără attendance.update, permitem doar actualizarea check_out
+      // și doar dacă check_out nu a fost deja setat
+      if (presence.check_out) {
+        console.log('[AttendanceService] Check-out already set, cannot modify');
+        throw new BadRequestException('Check-out-ul a fost deja setat și nu poate fi modificat');
+      }
+
+      // Verifică dacă încearcă să modifice alte câmpuri decât check_out și total_hours
+      // total_hours este permis în request dar va fi ignorat și calculat automat
+      const allowedFields = ['check_out', 'total_hours'];
+      const attemptedFields = Object.keys(updatePresenceDto).filter(key => updatePresenceDto[key] !== undefined);
+      const unauthorizedFields = attemptedFields.filter(field => !allowedFields.includes(field));
+      
+      console.log('[AttendanceService] Checking allowed fields:', {
+        attemptedFields,
+        unauthorizedFields,
+        allowedFields
+      });
+      
+      if (unauthorizedFields.length > 0) {
+        console.log('[AttendanceService] Unauthorized fields detected');
+        throw new BadRequestException(`Nu aveți permisiunea de a modifica câmpurile: ${unauthorizedFields.join(', ')}. Puteți modifica doar check_out.`);
+      }
+
+      // Ignoră total_hours dacă este trimis - va fi calculat automat mai jos
+      delete updatePresenceDto.total_hours;
+      console.log('[AttendanceService] Security checks passed, proceeding with update');
+    }
 
     // Validare check-in și check-out
     if (updatePresenceDto.check_in || updatePresenceDto.check_out) {
@@ -445,8 +515,9 @@ export class AttendanceService implements OnModuleInit {
         throw new BadRequestException('Check-in trebuie să fie înainte de check-out');
       }
 
-      // Recalculează orele lucrate dacă ambele sunt setate
-      if (checkInDate && checkOutDate && !updatePresenceDto.total_hours) {
+      // Recalculează automat orele lucrate dacă ambele sunt setate
+      // Ignoră valoarea trimisă de client pentru securitate
+      if (checkInDate && checkOutDate) {
         const diffMs = checkOutDate.getTime() - checkInDate.getTime();
         updatePresenceDto.total_hours = diffMs / (1000 * 60 * 60);
       }
@@ -456,12 +527,75 @@ export class AttendanceService implements OnModuleInit {
     if (updatePresenceDto.check_in) {
       updatePresenceDto.check_in = toZonedTime(new Date(updatePresenceDto.check_in), 'Europe/Bucharest') as any;
     }
+    
+    // Verifică dacă check_out este setat pentru prima dată (programul este finalizat)
+    const wasCheckOutSet = !!presence.check_out;
+    const isCheckOutBeingSet = !!updatePresenceDto.check_out;
+    const isProgramCompleted = !wasCheckOutSet && isCheckOutBeingSet;
+    
     if (updatePresenceDto.check_out) {
       updatePresenceDto.check_out = toZonedTime(new Date(updatePresenceDto.check_out), 'Europe/Bucharest') as any;
     }
 
     Object.assign(presence, updatePresenceDto);
-    return await this.presenceRepository.save(presence);
+    const savedPresence = await this.presenceRepository.save(presence);
+
+    // Trimite notificare când programul este finalizat pentru prima dată
+    if (isProgramCompleted && presence.shift_id) {
+      try {
+        const shift = await this.findShiftById(presence.shift_id);
+        if (shift?.employee_id) {
+          // Obține user_id din employee_id prin request HTTP la employees-ms
+          let employeeUserId: number | null = null;
+          try {
+            const employeeResponse = await firstValueFrom(
+              this.httpService.get(`http://giurom.bitap.ro:3002/employees/${shift.employee_id}`)
+            );
+            employeeUserId = employeeResponse.data?.user_id || employeeResponse.data?.id || shift.employee_id;
+          } catch (error) {
+            // Dacă request-ul eșuează, folosim employee_id direct (presupunem că employee_id = user_id pentru angajați)
+            console.warn(`[AttendanceService] Nu s-a putut obține user_id pentru employee_id ${shift.employee_id}, folosim employee_id direct`);
+            employeeUserId = shift.employee_id;
+          }
+          
+          if (employeeUserId) {
+            // Calculează orele lucrate pentru mesaj
+            const checkInDate = savedPresence.check_in;
+            const checkOutDate = savedPresence.check_out;
+            let hoursWorked = 0;
+            if (checkInDate && checkOutDate) {
+              const diffMs = new Date(checkOutDate).getTime() - new Date(checkInDate).getTime();
+              hoursWorked = diffMs / (1000 * 60 * 60);
+            }
+            
+            const hoursText = hoursWorked > 0 
+              ? `${hoursWorked.toFixed(2)} ore` 
+              : 'programul';
+            
+            await this.sendAttendanceNotification(
+              'program_finalizat',
+              'Program finalizat',
+              `Programul tău a fost finalizat cu succes! Ai lucrat ${hoursText}.`,
+              employeeUserId,
+              {
+                presence_id: savedPresence.id,
+                shift_id: shift.id,
+                check_in: savedPresence.check_in,
+                check_out: savedPresence.check_out,
+                total_hours: savedPresence.total_hours
+              }
+            );
+            
+            console.log(`[AttendanceService] Notificare trimisă angajatului ${employeeUserId} (employee_id: ${shift.employee_id}) pentru finalizarea programului`);
+          }
+        }
+      } catch (error) {
+        console.error('[AttendanceService] Eroare la trimiterea notificării:', error);
+        // Nu aruncăm eroarea - notificarea este opțională
+      }
+    }
+
+    return savedPresence;
   }
 
   async deletePresence(id: number): Promise<void> {
