@@ -172,6 +172,17 @@ export class RecipesHttpController {
   @Permissions('recipes.update')
   removeRecipeIngredient(@Param('id') id: string) { return this.recipes.removeRecipeRecipe(Number(id)); }
 
+  // Get scaled ingredients with stock availability (placed before recipes/:id to avoid route conflicts)
+  @Get('recipes/:id/scaled-ingredients-with-stock')
+  @Permissions('preparation.create')
+  getScaledIngredientsWithStock(
+    @Param('id') id: string,
+    @Query('quantity') quantity: string
+  ) {
+    const qty = Number(quantity) || 1000;
+    return this.recipes.getScaledIngredientsWithStock(Number(id), qty);
+  }
+
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
   @Permissions('recipes.read')

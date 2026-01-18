@@ -213,14 +213,30 @@ export class StockService {
     return savedStock;
   }
 
-  async findAllStocks(locationId?: number): Promise<Stock[]> {
-    console.log(`🔍 [StockService] Finding all stocks, locationId: ${locationId}`);
+  async findAllStocks(locationId?: number, productId?: number): Promise<Stock[]> {
+    console.log(`🔍 [StockService] Finding all stocks, locationId: ${locationId}, productId: ${productId}`);
     const queryBuilder = this.stockRepo.createQueryBuilder('stock')
       .leftJoinAndSelect('stock.product', 'product');
     
-    if (locationId !== undefined) {
-      queryBuilder.where('stock.location_id = :locationId', { locationId });
-      console.log('🔍 [StockService] Filtering stocks by location_id:', locationId);
+    if (locationId !== undefined || productId !== undefined) {
+      const conditions: string[] = [];
+      const params: any = {};
+      
+      if (locationId !== undefined) {
+        conditions.push('stock.location_id = :locationId');
+        params.locationId = locationId;
+        console.log('🔍 [StockService] Filtering stocks by location_id:', locationId);
+      }
+      
+      if (productId !== undefined) {
+        conditions.push('stock.product_id = :productId');
+        params.productId = productId;
+        console.log('🔍 [StockService] Filtering stocks by product_id:', productId);
+      }
+      
+      if (conditions.length > 0) {
+        queryBuilder.where(conditions.join(' AND '), params);
+      }
     }
     
     const stocks = await queryBuilder.getMany();
@@ -395,18 +411,19 @@ export class StockService {
         }
       }
       
-      const oldQuantity = stock.quantity;
+      const oldQuantity = Number(stock.quantity) || 0;
+      const dtoQuantity = Number(dto.quantity) || 0;
       
       if (dto.type === TransactionType.ENTRY) {
-        stock.quantity += dto.quantity;
-        console.log(`📈 [StockService] ENTRY transaction: ${oldQuantity} + ${dto.quantity} = ${stock.quantity}`);
+        stock.quantity = oldQuantity + dtoQuantity;
+        console.log(`📈 [StockService] ENTRY transaction: ${oldQuantity} + ${dtoQuantity} = ${stock.quantity}`);
       } else {
-        if (stock.quantity < dto.quantity) {
-          console.error(`❌ [StockService] Insufficient stock for stock_id: ${dto.stock_id}. Available: ${stock.quantity}, Requested: ${dto.quantity}`);
+        if (oldQuantity < dtoQuantity) {
+          console.error(`❌ [StockService] Insufficient stock for stock_id: ${dto.stock_id}. Available: ${oldQuantity}, Requested: ${dtoQuantity}`);
           throw new BadRequestException('Cantitate insuficientă în stoc');
         }
-        stock.quantity -= dto.quantity;
-        console.log(`📉 [StockService] EXIT transaction: ${oldQuantity} - ${dto.quantity} = ${stock.quantity}`);
+        stock.quantity = oldQuantity - dtoQuantity;
+        console.log(`📉 [StockService] EXIT transaction: ${oldQuantity} - ${dtoQuantity} = ${stock.quantity}`);
       }
       stock.last_update = new Date();
       

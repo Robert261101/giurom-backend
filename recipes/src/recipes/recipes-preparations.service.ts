@@ -28,6 +28,7 @@ export class RecipePreparationsService {
     description: string,
     preparationId: number,
     recipeId: number,
+    user_id?: number,
     metadata?: any,
     target_url?: string  // Add target_url parameter
   ): Promise<void> {
@@ -37,6 +38,7 @@ export class RecipePreparationsService {
           type,
           title,
           description,
+          user_id,
           entity_id: preparationId,
           entity_type: 'recipe_preparation',
           metadata: {
@@ -100,12 +102,14 @@ export class RecipePreparationsService {
     const saved: RecipePreparation = (await this.prepRepo.save(p as any)) as RecipePreparation;
 
     // Send notification for new preparation
+    const user_id = dto.employee_id || undefined;
     await this.sendPreparationNotification(
       'recipe_preparation_created',
       'Preparat realizat',
-      `A fost realizat un nou preparat pentru reteta: ${recipe.name}`,
+      `S-a creat ${dto.quantity}g de ${recipe.name}${user_id ? ` de către utilizatorul ${user_id}` : ''}`,
       saved.id,
       recipe.id,
+      user_id,
       { 
         recipeName: recipe.name,
         quantity: dto.quantity,

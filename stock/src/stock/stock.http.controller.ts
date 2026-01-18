@@ -30,7 +30,7 @@ export class StockHttpController {
 
 	// Stock items
 	@Post('items') @Permissions('stock.create') async createStock(@Body() dto: CreateStockDto) { return await this.service.createStock(dto); }
-	@Get('items') @Permissions('stock.read') async getStocks(@Query('location_id') locationId?: string) { return await this.service.findAllStocks(locationId ? Number(locationId) : undefined); }
+	@Get('items') @Permissions('stock.read') async getStocks(@Query('location_id') locationId?: string, @Query('product_id') productId?: string) { return await this.service.findAllStocks(locationId ? Number(locationId) : undefined, productId ? Number(productId) : undefined); }
 	@Get('items/:id') @Permissions('stock.read') async getStock(@Param('id') id: string) { return await this.service.findStock(Number(id)); }
 	@Patch('items/:id') @Permissions('stock.update') async updateStock(@Param('id') id: string, @Body() dto: UpdateStockDto) { return await this.service.updateStock(Number(id), dto); }
 	@Delete('items/:id') @Permissions('stock.delete') async deleteStock(@Param('id') id: string) { return await this.service.deleteStock(Number(id)); }
@@ -227,6 +227,13 @@ export class StockHttpController {
 		return { imageUrl };
 	}
 
+	// === WASTE IMAGE UPLOAD FOR EMPLOYEES (with stock.waste_own permission) ===
+	@Post('employee/waste/upload-image') @Permissions('stock.waste_own')
+	async employeeUploadWasteImage(@Body() payload: { fileName: string; content: string }) {
+		const imageUrl = await this.service.uploadWasteImage(payload.fileName, payload.content);
+		return { imageUrl };
+	}
+
 	// === WASTE IMAGE SERVE ===
 	@Get('waste/image/:fileName') @Permissions('stock.read')
 	async serveWasteImage(@Param('fileName') fileName: string, @Res() res: Response) {
@@ -246,6 +253,13 @@ export class StockHttpController {
 	// === CONSUME IMAGE UPLOAD ===
 	@Post('consume/upload-image') @Permissions('stock.update')
 	async uploadConsumeImage(@Body() payload: { fileName: string; content: string }) {
+		const imageUrl = await this.service.uploadConsumeImage(payload.fileName, payload.content);
+		return { imageUrl };
+	}
+
+	// === CONSUME IMAGE UPLOAD FOR EMPLOYEES (with stock.consume_own permission) ===
+	@Post('employee/consume/upload-image') @Permissions('stock.consume_own')
+	async employeeUploadConsumeImage(@Body() payload: { fileName: string; content: string }) {
 		const imageUrl = await this.service.uploadConsumeImage(payload.fileName, payload.content);
 		return { imageUrl };
 	}

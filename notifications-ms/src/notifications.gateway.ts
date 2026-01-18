@@ -27,18 +27,25 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   private readonly logger = new Logger(NotificationsGateway.name);
 
   handleConnection(client: Socket) {
-    // Connection handled silently
+    this.logger.log(`🔌 WebSocket Client connected: ${client.id}`);
+    this.logger.log(`🔌 Client IP: ${client.handshake.address}`);
+    this.logger.log(`🔌 Client Origin: ${client.handshake.headers.origin}`);
+    this.logger.log(`🔌 Client Headers:`, JSON.stringify(client.handshake.headers));
   }
 
   handleDisconnect(client: Socket) {
-    // Disconnection handled silently
+    this.logger.log(`🔌 WebSocket Client disconnected: ${client.id}`);
   }
 
   @SubscribeMessage('join')
   handleJoin(client: Socket, payload: { userId: number | string }) {
     const userId = Number(payload.userId);
     const room = `user:${userId}`;
+    this.logger.log(`✅ Client ${client.id} joining room ${room} for userId ${userId}`);
     client.join(room);
+    this.logger.log(`✅ Client ${client.id} successfully joined room ${room}`);
+    // Send confirmation back to client
+    client.emit('joined', { userId, room, socketId: client.id });
   }
 
   emitUnreadCount(unread: number) {

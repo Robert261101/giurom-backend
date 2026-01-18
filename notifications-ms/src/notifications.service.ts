@@ -136,6 +136,7 @@ export class NotificationsService {
     type: string;
     title: string;
     description: string;
+    user_id?: number;
     entity_id: number;
     entity_type: string;
     metadata?: any;
@@ -172,9 +173,15 @@ export class NotificationsService {
     // Get users with manager and admin roles
     const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
     
-    // Create notifications for each manager and admin user
+    // Combine manager/admin users with the specific user (if provided)
+    const targetUsers: Array<{id: number, email?: string, roles?: string[]}> = [...managerAndAdminUsers];
+    if (event.user_id && !managerAndAdminUsers.some(u => u.id === event.user_id)) {
+      targetUsers.push({ id: event.user_id, email: '', roles: [] });
+    }
+    
+    // Create notifications for each target user
     const notifications = [];
-    for (const user of managerAndAdminUsers) {
+    for (const user of targetUsers) {
       const saved = await this.create({
         type: event.type,
         title: event.title,
@@ -392,8 +399,16 @@ export class NotificationsService {
     let targetUsers = [];
     
     if (event.type === 'leave_request_created') {
-      // Send to managers and admins
-      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      // Send to managers/admins AND to the employee who created the request
+      // event.user_id is the employee_id who created the leave request
+      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      const employeeUser = [{ id: event.user_id }];
+      
+      // Combine both groups (avoiding duplicates)
+      const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
+      targetUsers = allTargetUsers.filter((user, index, self) => 
+        index === self.findIndex(u => u.id === user.id)
+      );
     } else {
       // Send to the specific employee
       targetUsers = [{ id: event.user_id }];

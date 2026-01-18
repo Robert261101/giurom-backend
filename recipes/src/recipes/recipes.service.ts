@@ -508,4 +508,135 @@ export class RecipeService {
       byCategory,
     };
   }
+
+  // ==================== SCALED INGREDIENTS WITH STOCK ====================
+
+  /**
+   * Calculează ingredientele scalate pentru o rețetă și verifică stocul disponibil
+   * Folosește comunicare internă cu stock service (fără să necesite stock.read de la user)
+   */
+  async getScaledIngredientsWithStock(recipeId: number, quantity: number): Promise<Array<{
+    product_id: number;
+    product_name: string;
+    unit: string;
+    required_quantity: number;
+    available_quantity: number;
+    sufficient: boolean;
+  }>> {
+    // Obține rețeta cu ingredientele (fără product pentru că nu e relație TypeORM)
+    const recipe = await this.recipesRepository.findOne({
+      where: { id: recipeId },
+      relations: ['recipe_products'],
+    });
+
+    if (!recipe) {
+      throw new NotFoundException(`Rețeta cu ID ${recipeId} nu a fost găsită`);
+    }
+
+    // Calculează factorul de scalare
+    const baseQty = Number(recipe.quantity) || 1;
+    const scalingFactor = Number(quantity) / baseQty;
+
+    // Unități care necesită numere întregi
+    const wholeNumberUnits = ['buc', 'bucati', 'bucăți', 'sticla', 'sticle', 'cutie', 'cutii', 'pachet', 'pachete'];
+
+    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const headers = {
+      'x-internal-service': 'recipes',
+      'x-service-secret': serviceSecret
+    };
+
+    const result: Array<{
+      product_id: number;
+      product_name: string;
+      unit: string;
+      required_quantity: number;
+      available_quantity: number;
+      sufficient: boolean;
+    }> = [];
+
+    // Procesează fiecare ingredient din rețetă
+    if (Array.isArray(recipe.recipe_products)) {
+      for (const rp of recipe.recipe_products) {
+        if (!rp.product_id) continue;
+
+        const originalQuantity = Number(rp.quantity) || 0;
+        let scaledQuantity = originalQuantity * scalingFactor;
+        
+        console.log(`🔍 [RecipeService] Ingredient calculation: product_id=${rp.product_id}, originalQuantity=${originalQuantity}, scalingFactor=${scalingFactor}, scaledQuantity=${scaledQuantity}`);
+
+        // Încarcă datele produsului prin HTTP request (pentru că nu e relație TypeORM)
+        let productUnit = 'g';
+        let productName = 'Ingredient necunoscut';
+        try {
+          const productResponse = await lastValueFrom(
+            this.httpService.get(`${this.stockServiceUrl}/stock/products/${rp.product_id}`, {
+              headers
+            })
+          );
+          if (productResponse.data) {
+            productUnit = productResponse.data.unit || 'g';
+            productName = productResponse.data.name || 'Ingredient necunoscut';
+          }
+        } catch (error) {
+          // Dacă nu putem încărca produsul, folosim valorile default
+          console.warn(`⚠️ [RecipeService] Nu s-a putut încărca produsul ${rp.product_id}`);
+        }
+
+        // Rotunjire pentru unități întregi
+        const requiresWholeNumber = wholeNumberUnits.some(unit =>
+          productUnit?.toLowerCase().includes(unit.toLowerCase())
+        );
+        const finalQuantity = requiresWholeNumber
+          ? Math.ceil(scaledQuantity)
+          : Math.round(scaledQuantity * 100) / 100;
+
+        // Verifică stocul disponibil prin comunicare internă cu stock service
+        let availableQuantity = 0;
+        try {
+          const stockResponse = await lastValueFrom(
+            this.httpService.get(`${this.stockServiceUrl}/stock/items`, {
+              headers,
+              params: {
+                product_id: rp.product_id,
+                limit: 1000
+              }
+            })
+          );
+
+          // Suma stocului disponibil pentru acest produs (doar stoc VALID cu quantity > 0)
+          const stockItems = stockResponse.data?.data || stockResponse.data || [];
+          if (Array.isArray(stockItems)) {
+            // Filtrează doar stocul VALID cu quantity > 0
+            const validStockItems = stockItems.filter((item: any) => {
+              const quantity = parseFloat(item.quantity?.toString() || '0') || 0;
+              const status = item.status?.toLowerCase();
+              return status === 'valid' && quantity > 0;
+            });
+            
+            availableQuantity = validStockItems.reduce((sum: number, item: any) => {
+              return sum + (parseFloat(item.quantity?.toString() || '0') || 0);
+            }, 0);
+            
+            console.log(`📊 [RecipeService] Product ${rp.product_id} (${productName}): total stock items=${stockItems.length}, valid items=${validStockItems.length}, availableQuantity=${availableQuantity}${productUnit}`);
+          }
+        } catch (error: any) {
+          console.error(`⚠️ [RecipeService] Eroare la verificarea stocului pentru produs ${rp.product_id}:`, error?.response?.data || error?.message);
+          // Dacă nu putem verifica stocul, setăm disponibil la 0
+          availableQuantity = 0;
+        }
+
+        result.push({
+          product_id: rp.product_id,
+          product_name: productName,
+          unit: productUnit,
+          required_quantity: finalQuantity,
+          available_quantity: availableQuantity,
+          sufficient: availableQuantity >= finalQuantity,
+        });
+      }
+    }
+
+    return result;
+  }
 }
