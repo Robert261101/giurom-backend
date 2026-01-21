@@ -910,16 +910,16 @@ export class CronService {
    * Cron job care rulează din minut în minut
    * Reatribuie automat task-urile expirate la alți angajați disponibili
    */
-  @Cron(CronExpression.EVERY_MINUTE)
-  async handleExpiredTaskReassignment() {
-    this.logger.log('🔄 Starting expired task reassignment cron job...');
-    
-    try {
-      await this.processExpiredTasks();
-    } catch (error) {
-      this.logger.error('❌ Error in expired task reassignment cron job:', error);
-    }
-  }
+  // @Cron(CronExpression.EVERY_MINUTE)
+  // async handleExpiredTaskReassignment() {
+  //   this.logger.log('🔄 Starting expired task reassignment cron job...');
+  //   
+  //   try {
+  //     await this.processExpiredTasks();
+  //   } catch (error) {
+  //     this.logger.error('❌ Error in expired task reassignment cron job:', error);
+  //   }
+  // }
 
   // La miezul nopții: marchează ca 'completed' toate task-urile nefinalizate din ziua anterioară (fără puncte)
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
