@@ -86,7 +86,7 @@ export class SuppliersService {
     }
   }
 
-  async create(dto: CreateSupplierDto): Promise<Supplier> {
+  async create(dto: CreateSupplierDto, location_id?: number): Promise<Supplier> {
     const existingSupplier = await this.supplierRepo.findOne({
       where: [
         { registration_number: dto.registration_number },
@@ -97,27 +97,24 @@ export class SuppliersService {
       throw new BadRequestException('Furnizor duplicat (registration_number sau vat_number)');
     }
     
-    // Separate location_id from supplier data
-    const { location_id, ...supplierData } = dto;
-    
-    const supplier = this.supplierRepo.create(supplierData);
+    const supplier = this.supplierRepo.create(dto);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
     await this.createSupplierFolders(savedSupplier);
     
-    // Automatically assign supplier to location if location_id is provided
+    // Asignează automat furnizorul la locația utilizatorului dacă este furnizată
     if (location_id) {
       try {
         await this.assignSupplierToLocation(savedSupplier.id, location_id);
       } catch (error: any) {
-        // Log the error but don't fail the supplier creation
-        console.warn(`Failed to assign supplier ${savedSupplier.id} to location ${location_id}:`, error?.message || error);
+        // Dacă există deja, nu e problemă (ar trebui să fie imposibil, dar să fie safe)
+        // Eroarea este logată în assignSupplierToLocation
       }
     }
     
     return savedSupplier;
   }
 
-  async createWithDocuments(dto: CreateSupplierWithDocumentsDto): Promise<Supplier> {
+  async createWithDocuments(dto: CreateSupplierWithDocumentsDto, location_id?: number): Promise<Supplier> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating supplier with documents: ${JSON.stringify(dto, null, 2)}`);
     
     const existingSupplier = await this.supplierRepo.findOne({
@@ -133,10 +130,8 @@ export class SuppliersService {
     
     // Separate special fields from supplier data
     const supplierData = { ...dto } as any;
-    const { location_id } = dto;
     delete supplierData.folderName;
     delete supplierData.documents;
-    delete supplierData.location_id;
     
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
@@ -144,7 +139,7 @@ export class SuppliersService {
     
     await this.createSupplierFoldersWithCustomName(savedSupplier, dto.folderName, dto.documents, location_id);
     
-    // Automatically assign supplier to location if location_id is provided
+    // Asignează automat furnizorul la locația utilizatorului dacă este furnizată
     if (location_id) {
       try {
         this.logger.log(`📍 [SUPPLIERS SERVICE] Assigning supplier ${savedSupplier.id} to location ${location_id}`);
@@ -489,23 +484,17 @@ export class SuppliersService {
     return { data: buffer.toString('base64'), mimeType, fileName: document.file_name, disposition };
   }
 
-  async findAll(locationId?: number): Promise<Supplier[]> {
-    if (locationId !== undefined) {
-      console.log('🔍 [SuppliersService] Filtrăm suppliers după location_id:', locationId);
-      const queryBuilder = this.supplierRepo.createQueryBuilder('supplier')
-        .leftJoinAndSelect('supplier.folders', 'folders')
-        .leftJoinAndSelect('supplier.products', 'products')
-        .leftJoinAndSelect('supplier.orders', 'orders')
-        .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
-        .where('sl.id_location = :locationId', { locationId })
-        .orderBy('supplier.created_at', 'DESC');
-      
-      return await queryBuilder.getMany();
-    }
+  async findAll(locationId: number): Promise<Supplier[]> {
+    // location_id este OBLIGATORIU
+    const queryBuilder = this.supplierRepo.createQueryBuilder('supplier')
+      .leftJoinAndSelect('supplier.folders', 'folders')
+      .leftJoinAndSelect('supplier.products', 'products')
+      .leftJoinAndSelect('supplier.orders', 'orders')
+      .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
+      .where('sl.id_location = :locationId', { locationId })
+      .orderBy('supplier.created_at', 'DESC');
     
-    // Fără filter, returnează toți supplierii (dar vezi comentariul de mai jos)
-    // NOTĂ: În producție, ai putea vrea să fie obligatoriu locationId pentru securitate
-    return this.supplierRepo.find({ relations: ['folders', 'products', 'orders'], order: { created_at: 'DESC' } });
+    return await queryBuilder.getMany();
   }
 
   async findForOrders(locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
@@ -529,29 +518,25 @@ export class SuppliersService {
     return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
   }
 
-  async findOne(id: number): Promise<Supplier> {
-    console.log(`🔍 [findOne] Finding supplier with ID: ${id}`);
+  async findOne(id: number, location_id?: number): Promise<Supplier> {
     const supplier = await this.supplierRepo.findOne({ 
       where: { id }, 
-      relations: ['folders', 'folders.documents', 'products', 'orders', 'orders.items', 'orders.documents'] 
+      relations: ['folders', 'folders.documents', 'products', 'orders', 'orders.items', 'orders.documents', 'locations'] 
     });
     
     if (!supplier) {
-      console.error(`❌ [findOne] Supplier with ID ${id} not found`);
       throw new NotFoundException('Furnizorul nu a fost găsit');
     }
     
-    console.log(`✅ [findOne] Found supplier: ${supplier.supplier_name}`);
-    console.log(`📂 [findOne] Supplier folders:`, supplier.folders);
-    
-    // Log folder details
-    if (supplier.folders && supplier.folders.length > 0) {
-      console.log(`📋 [findOne] Folder details for supplier ${id}:`);
-      supplier.folders.forEach((folder, index) => {
-        console.log(`   Folder ${index + 1}: ID=${folder.id}, Description="${folder.description}", Path="${folder.folder_path}", Documents=${folder.documents?.length || 0}`);
-      });
-    } else {
-      console.log(`⚠️ [findOne] No folders found for supplier ${id}`);
+    // Dacă location_id este furnizat, verifică dacă furnizorul este asignat la acea locație
+    if (location_id !== undefined) {
+      const isAssignedToLocation = supplier.locations?.some(
+        (loc: any) => loc.id_location === location_id
+      );
+      
+      if (!isAssignedToLocation) {
+        throw new NotFoundException(`Furnizorul cu ID ${id} nu este asignat la locația specificată`);
+      }
     }
     
     return supplier;
@@ -560,7 +545,7 @@ export class SuppliersService {
   async update(id: number, dto: UpdateSupplierDto): Promise<Supplier> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier ${id} with data: ${JSON.stringify(dto, null, 2)}`);
     
-    const supplier = await this.findOne(id);
+    const supplier = await this.findOne(id, undefined); // Nu verificăm location_id la update
     if (dto.registration_number || dto.vat_number) {
       const existingSupplier = await this.supplierRepo.findOne({
         where: [
@@ -3048,8 +3033,12 @@ export class SuppliersService {
 
   // === SUPPLIER LOCATIONS METHODS ===
   async assignSupplierToLocation(supplierId: number, locationId: number): Promise<SupplierLocations> {
-    // Verify supplier exists
-    const supplier = await this.findOne(supplierId);
+    // Verify supplier exists (fără verificare location_id pentru că încă nu este asignat)
+    const supplier = await this.findOne(supplierId, undefined);
+    
+    if (!supplier) {
+      throw new NotFoundException(`Furnizorul cu ID ${supplierId} nu a fost găsit`);
+    }
     
     // Check if assignment already exists
     const existingAssignment = await this.supplierLocationsRepo.findOne({
@@ -3067,8 +3056,11 @@ export class SuppliersService {
     
     const savedAssignment = await this.supplierLocationsRepo.save(assignment);
     
-    // Update folder paths to use location-specific structure
-    await this.updateFolderPathsForLocationBoundSupplier(supplierId, locationId);
+    // Update folder paths to use location-specific structure (în background, nu blochează asignarea)
+    this.updateFolderPathsForLocationBoundSupplier(supplierId, locationId).catch((error) => {
+      this.logger.error(`❌ [assignSupplierToLocation] Eroare la actualizarea path-urilor pentru furnizor ${supplierId}:`, error);
+      // Nu aruncăm eroarea - asignarea a fost deja făcută cu succes
+    });
     
     return savedAssignment;
   }
@@ -3077,8 +3069,8 @@ export class SuppliersService {
     try {
       this.logger.log(`📍 [updateFolderPathsForLocationBoundSupplier] Updating folder paths for supplier ${supplierId} bound to location ${locationId}`);
       
-      // Get the supplier
-      const supplier = await this.findOne(supplierId);
+      // Get the supplier (fără verificare location_id pentru că încă nu este asignat)
+      const supplier = await this.findOne(supplierId, undefined);
       const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
       
       // Get location details
@@ -3173,7 +3165,7 @@ export class SuppliersService {
   }
 
   async findSupplierLocations(supplierId: number): Promise<any[]> {
-    await this.findOne(supplierId);
+    await this.findOne(supplierId, undefined); // Nu verificăm location_id pentru această operație
     const rows = await this.supplierLocationsRepo.find({
       where: { supplier_id: supplierId },
       relations: ['supplier'],
@@ -3191,18 +3183,19 @@ export class SuppliersService {
 
   private async fetchLocation(locationId: number): Promise<any | null> {
     try {
-      console.log(`📍 [fetchLocation] Fetching location ${locationId} from ${this.locationsServiceUrl}/locations/${locationId}`);
+      this.logger.log(`📍 [fetchLocation] Fetching location ${locationId} from ${this.locationsServiceUrl}/locations/${locationId}`);
       const resp = await firstValueFrom(this.httpService.get(`${this.locationsServiceUrl}/locations/${locationId}`, {
         headers: {
           'x-internal-service': 'suppliers',
           'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
           'Content-Type': 'application/json',
         },
+        timeout: 5000, // Timeout de 5 secunde
       }));
-      console.log(`📍 [fetchLocation] Location response:`, resp.data);
+      this.logger.log(`✅ [fetchLocation] Location response received for ${locationId}`);
       return resp.data;
     } catch (error: any) {
-      console.warn(`⚠️ [fetchLocation] Nu am putut încărca locația ${locationId}: ${error?.message || error}`);
+      this.logger.warn(`⚠️ [fetchLocation] Nu am putut încărca locația ${locationId}: ${error?.message || error}`);
       return null;
     }
   }

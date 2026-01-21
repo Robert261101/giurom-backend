@@ -18,6 +18,7 @@ import { CreateRecipeMediaDto } from './recipes/dto/create-recipe-media.dto';
 import { CreateRecipePreparationDto } from './recipes/dto/create-recipe-preparation.dto';
 import { UpdateRecipePreparationDto } from './recipes/dto/update-recipe-preparation.dto';
 import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
+import { CreateRecipeLocationDto } from './recipes/dto/create-recipe-location.dto';
 
 @Controller()
 export class RecipesHttpController {
@@ -34,13 +35,27 @@ export class RecipesHttpController {
   // Recipes
   @Get('recipes')
   @Permissions('recipes.read')
-  async findAll(@Query() q: any) {
+  async findAll(@Query() q: any, @Request() req?: any) {
     const page = Number.parseInt(q.page, 10);
     const limit = Number.parseInt(q.limit, 10);
     const maybeCid = q.category_id !== undefined ? Number(q.category_id) : undefined;
     const category_id = Number.isFinite(maybeCid as number) && (maybeCid as number) > 0 ? (maybeCid as number) : undefined;
+    
+    // location_id este OBLIGATORIU - din query sau din user context
+    let location_id: number | undefined;
     const maybeLid = q.location_id !== undefined ? Number(q.location_id) : undefined;
-    const location_id = Number.isFinite(maybeLid as number) && (maybeLid as number) > 0 ? (maybeLid as number) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      location_id = maybeLid as number;
+    } else {
+      // Încearcă să obțină din user context
+      const user = req?.user;
+      location_id = user?.work_location_id || user?.work_location_default_id;
+    }
+    
+    // Dacă încă nu avem location_id, aruncă eroare
+    if (!location_id) {
+      throw new BadRequestException('Parametrul location_id este obligatoriu pentru a obține rețetele');
+    }
     
     const result = await this.recipes.findAll({
       page: Number.isFinite(page) && page > 0 ? page : 1,
@@ -62,7 +77,17 @@ export class RecipesHttpController {
   
   @Post('recipes')
   @Permissions('recipes.create')
-  create(@Body() dto: CreateRecipeDto) { return this.recipes.create(dto); }
+  create(@Body() dto: CreateRecipeDto, @Request() req?: any) {
+    // Obține location_id din user context
+    const user = req?.user;
+    const location_id = user?.work_location_id || user?.work_location_default_id;
+    
+    if (!location_id) {
+      throw new BadRequestException('Nu se poate crea o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
+    }
+    
+    return this.recipes.create(dto, location_id);
+  }
 
   // Categories
   @Get('recipes/categories')
@@ -186,7 +211,17 @@ export class RecipesHttpController {
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
   @Permissions('recipes.read')
-  findOne(@Param('id') id: string) { return this.recipes.findOne(Number(id)); }
+  findOne(@Param('id') id: string, @Request() req?: any) {
+    // Obține location_id din user context
+    const user = req?.user;
+    const location_id = user?.work_location_id || user?.work_location_default_id;
+    
+    if (!location_id) {
+      throw new BadRequestException('Nu se poate accesa o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
+    }
+    
+    return this.recipes.findOne(Number(id), location_id);
+  }
   @Patch('recipes/:id')
   @Permissions('recipes.update')
   update(@Param('id') id: string, @Body() dto: UpdateRecipeDto) { return this.recipes.update(Number(id), dto); }
@@ -376,5 +411,29 @@ export class RecipesHttpController {
       success: isConnected, 
       message: isConnected ? 'Conexiunea la imprimantă este funcțională' : 'Nu s-a putut conecta la imprimantă. Verifică IP-ul și portul.' 
     };
+  }
+
+  // ==================== RECIPE LOCATIONS ENDPOINTS ====================
+
+  @Post('recipes/locations/assign')
+  @Permissions('recipes.update')
+  async assignRecipeToLocation(@Body() assignDto: CreateRecipeLocationDto) {
+    return this.recipes.assignRecipeToLocation(assignDto);
+  }
+
+  @Get('recipes/:recipeId/locations')
+  @Permissions('recipes.read')
+  async getRecipeLocations(@Param('recipeId') recipeId: string) {
+    return this.recipes.findRecipeLocations(Number(recipeId));
+  }
+
+  @Delete('recipes/:recipeId/locations/:locationId')
+  @Permissions('recipes.update')
+  async removeRecipeFromLocation(
+    @Param('recipeId') recipeId: string,
+    @Param('locationId') locationId: string
+  ) {
+    await this.recipes.removeRecipeFromLocation(Number(recipeId), Number(locationId));
+    return { message: 'Rețeta a fost eliminată de la locație cu succes' };
   }
 }

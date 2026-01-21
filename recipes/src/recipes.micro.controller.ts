@@ -58,25 +58,40 @@ export class RecipesMicroController {
 
   // Recipes
   @MessagePattern('recipes.create')
-  create(@Payload() dto: CreateRecipeDto) {
-    return this.service.create(dto);
+  create(@Payload() payload: CreateRecipeDto | { dto: CreateRecipeDto; location_id?: number }) {
+    // Suport pentru payload simplu (doar DTO) sau payload cu DTO și location_id
+    if ('dto' in payload) {
+      return this.service.create(payload.dto, payload.location_id);
+    }
+    // Dacă este doar DTO, nu avem location_id - aruncă eroare sau permite fără (pentru compatibilitate)
+    return this.service.create(payload, undefined);
   }
 
   @MessagePattern('recipes.findAll')
   findAllRecipes(
-    @Payload() payload: { page?: number; limit?: number; search?: string; category_id?: number },
+    @Payload() payload: { page?: number; limit?: number; search?: string; category_id?: number; location_id: number },
   ) {
+    if (!payload.location_id) {
+      throw new Error('location_id is required for recipes.findAll');
+    }
     return this.service.findAll({
       page: payload.page || 1,
       limit: payload.limit || 10,
       search: payload.search,
-      category_id: payload.category_id
+      category_id: payload.category_id,
+      location_id: payload.location_id
     });
   }
 
   @MessagePattern('recipes.findOne')
-  findOne(@Payload() id: number) {
-    return this.service.findOne(id);
+  findOne(@Payload() payload: number | { id: number; location_id?: number }) {
+    // Suport pentru payload simplu (doar id) sau payload cu id și location_id
+    if (typeof payload === 'number') {
+      // Dacă este doar un număr, nu avem location_id - aruncă eroare sau returnează fără verificare
+      // Pentru compatibilitate, permitem fără location_id în microservice (poate fi folosit intern)
+      return this.service.findOne(payload, undefined);
+    }
+    return this.service.findOne(payload.id, payload.location_id);
   }
 
   @MessagePattern('recipes.update')

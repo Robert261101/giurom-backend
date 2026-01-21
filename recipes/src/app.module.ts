@@ -12,6 +12,7 @@ import { RecipeRecipe } from './recipes/entities/recipe-recipe.entity';
 import { RecipePreparation } from './recipes/entities/recipe-preparation.entity';
 import { RecipeLabel } from './recipes/entities/recipe-label.entity';
 import { RecipeMedia } from './recipes/entities/recipe-media.entity';
+import { RecipeLocation } from './recipes/entities/recipe-location.entity';
 import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
 import { StockRef } from './external/stock-ref.entity';
@@ -51,7 +52,7 @@ import { PermissionsGuard } from './permissions/permissions.guard';
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
       // Removed ProductRef from entities list
-      entities: [Recipe, RecipeCategory, RecipeProduct, RecipeRecipe, RecipePreparation, RecipeLabel, RecipeMedia, StockRef, StockTransactionRef],
+      entities: [Recipe, RecipeCategory, RecipeProduct, RecipeRecipe, RecipePreparation, RecipeLabel, RecipeMedia, RecipeLocation, StockRef, StockTransactionRef],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -70,7 +71,7 @@ import { PermissionsGuard } from './permissions/permissions.guard';
       },
     }),
     // Removed ProductRef from TypeOrmModule.forFeature
-    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipeRecipe, RecipePreparation, RecipeLabel, RecipeMedia, StockRef, StockTransactionRef]),
+    TypeOrmModule.forFeature([Recipe, RecipeCategory, RecipeProduct, RecipeRecipe, RecipePreparation, RecipeLabel, RecipeMedia, RecipeLocation, StockRef, StockTransactionRef]),
   ],
   controllers: [RecipesMicroController, RecipesHttpController],
   providers: [

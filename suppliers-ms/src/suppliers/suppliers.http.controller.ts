@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
@@ -23,9 +23,25 @@ export class SuppliersHttpController {
 		@Query('limit') _limit?: string, 
 		@Query('search') _search?: string, 
 		@Query('is_active') _is_active?: string,
-		@Query('location_id') location_id?: string
+		@Query('location_id') location_id?: string,
+		@Request() req?: any
 	) {
-		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+		// location_id este OBLIGATORIU - din query sau din user context
+		let locationId: number | undefined;
+		const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
+		if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+			locationId = maybeLid as number;
+		} else {
+			// Încearcă să obțină din user context
+			const user = req?.user;
+			locationId = user?.work_location_id || user?.work_location_default_id;
+		}
+		
+		// Dacă încă nu avem location_id, aruncă eroare
+		if (!locationId) {
+			throw new BadRequestException('Parametrul location_id este obligatoriu pentru a obține furnizorii');
+		}
+		
 		return this.service.findAll(locationId);
 	}
 
@@ -38,15 +54,80 @@ export class SuppliersHttpController {
 
 	@Post()
 	@Permissions('suppliers.create')
-	create(@Body() dto: CreateSupplierDto) { return this.service.create(dto); }
+	create(@Body() dto: CreateSupplierDto, @Request() req?: any) {
+		// Obține location_id din user context
+		const user = req?.user;
+		const location_id = user?.work_location_id || user?.work_location_default_id;
+		
+		if (!location_id) {
+			throw new BadRequestException('Nu se poate crea un furnizor fără o locație asignată. Vă rugăm să selectați o locație.');
+		}
+		
+		return this.service.create(dto, location_id);
+	}
 
 	@Post('with-documents')
 	@Permissions('suppliers.create')
 	createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) { return this.service.createWithDocuments(dto); }
 
+	// === SUPPLIER LOCATIONS ENDPOINTS (trebuie să fie înainte de :id pentru a evita conflictele de rute) ===
+	@Post(':supplierId/locations/:locationId')
+	@Permissions('suppliers.create')
+	@ApiOperation({ summary: 'Atribuie un furnizor la o locație' })
+	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
+	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+	@ApiResponse({ status: 201, description: 'Furnizorul a fost atribuit cu succes la locație' })
+	assignSupplierToLocation(
+		@Param('supplierId') supplierId: string,
+		@Param('locationId') locationId: string,
+	) {
+		return this.service.assignSupplierToLocation(Number(supplierId), Number(locationId));
+	}
+
+	@Get(':supplierId/locations')
+	@Permissions('suppliers.read')
+	@ApiOperation({ summary: 'Listă locațiile unui furnizor' })
+	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
+	@ApiResponse({ status: 200, description: 'Lista locațiilor furnizorului' })
+	findSupplierLocations(@Param('supplierId') supplierId: string) {
+		return this.service.findSupplierLocations(Number(supplierId));
+	}
+
+	@Get('locations/:locationId/suppliers')
+	@Permissions('suppliers.read')
+	@ApiOperation({ summary: 'Listă furnizorii unei locații' })
+	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+	@ApiResponse({ status: 200, description: 'Lista furnizorilor locației' })
+	findLocationSuppliers(@Param('locationId') locationId: string) {
+		return this.service.findLocationSuppliers(Number(locationId));
+	}
+
+	@Delete(':supplierId/locations/:locationId')
+	@Permissions('suppliers.delete')
+	@ApiOperation({ summary: 'Îndepărtează un furnizor dintr-o locație' })
+	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
+	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+	@ApiResponse({ status: 200, description: 'Furnizorul a fost îndepărtat cu succes din locație' })
+	removeSupplierFromLocation(
+		@Param('supplierId') supplierId: string,
+		@Param('locationId') locationId: string,
+	) {
+		return this.service.removeSupplierFromLocation(Number(supplierId), Number(locationId));
+	}
+
 	@Get(':id')
 	@Permissions('suppliers.read')
-	findOne(@Param('id') id: string) { return this.service.findOne(Number(id)); }
+	findOne(@Param('id') id: string, @Request() req?: any) {
+		// Obține location_id din user context
+		const user = req?.user;
+		const location_id = user?.work_location_id || user?.work_location_default_id;
+		
+		if (!location_id) {
+			throw new BadRequestException('Nu se poate accesa un furnizor fără o locație asignată. Vă rugăm să selectați o locație.');
+		}
+		
+		return this.service.findOne(Number(id), location_id);
+	}
 
 	@Patch(':id')
 	@Permissions('suppliers.update')
@@ -314,56 +395,11 @@ export class SuppliersHttpController {
 		return res.send(buffer);
 	}
 
-	// === SUPPLIER LOCATIONS ENDPOINTS ===
-	@Post(':supplierId/locations/:locationId')
-	@Permissions('suppliers.create')
-	@ApiOperation({ summary: 'Atribuie un furnizor la o locație' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 201, description: 'Furnizorul a fost atribuit cu succes la locație' })
-	assignSupplierToLocation(
-		@Param('supplierId') supplierId: string,
-		@Param('locationId') locationId: string,
-	) {
-		return this.service.assignSupplierToLocation(Number(supplierId), Number(locationId));
-	}
-
-	@Get(':supplierId/locations')
-	@Permissions('suppliers.read')
-	@ApiOperation({ summary: 'Listă locațiile unui furnizor' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiResponse({ status: 200, description: 'Lista locațiilor furnizorului' })
-	findSupplierLocations(@Param('supplierId') supplierId: string) {
-		return this.service.findSupplierLocations(Number(supplierId));
-	}
-
-	@Get('locations/:locationId/suppliers')
-	@Permissions('suppliers.read')
-	@ApiOperation({ summary: 'Listă furnizorii unei locații' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 200, description: 'Lista furnizorilor locației' })
-	findLocationSuppliers(@Param('locationId') locationId: string) {
-		return this.service.findLocationSuppliers(Number(locationId));
-	}
-
-	@Delete(':supplierId/locations/:locationId')
-	@Permissions('suppliers.delete')
-	@ApiOperation({ summary: 'Îndepărtează un furnizor dintr-o locație' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 200, description: 'Furnizorul a fost îndepărtat cu succes din locație' })
-	removeSupplierFromLocation(
-		@Param('supplierId') supplierId: string,
-		@Param('locationId') locationId: string,
-	) {
-		return this.service.removeSupplierFromLocation(Number(supplierId), Number(locationId));
-	}
 
 	// Get documents expiring on a specific date
 	@Get('documents/expiring/:targetDate')
 	@Permissions('suppliers.read')
 	getExpiringDocuments(@Param('targetDate') targetDate: string) {
-		console.log(`[SUPPLIERS CONTROLLER] Getting documents expiring on ${targetDate}`);
 		return this.service.findExpiringDocuments(targetDate);
 	}
 
@@ -371,7 +407,6 @@ export class SuppliersHttpController {
 	@Get('documents/expired')
 	@Permissions('suppliers.read')
 	getExpiredDocuments() {
-		console.log(`[SUPPLIERS CONTROLLER] Getting expired documents`);
 		return this.service.findExpiredDocuments();
 	}
 }

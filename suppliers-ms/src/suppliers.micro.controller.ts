@@ -14,16 +14,52 @@ export class SuppliersMicroController {
 
   // Suppliers CRUD
   @MessagePattern('suppliers.create')
-  create(@Payload() dto: CreateSupplierDto) { return this.service.create(dto); }
+  create(@Payload() payload: CreateSupplierDto | { dto: CreateSupplierDto; location_id?: number }) {
+    // Suport pentru payload simplu (doar DTO) sau payload cu DTO și location_id
+    if ('dto' in payload) {
+      return this.service.create(payload.dto, payload.location_id);
+    }
+    // Dacă este doar DTO, nu avem location_id - aruncă eroare sau permite fără (pentru compatibilitate)
+    return this.service.create(payload, undefined);
+  }
 
   @MessagePattern('suppliers.createWithDocuments')
-  createWithDocuments(@Payload() dto: CreateSupplierWithDocumentsDto) { return this.service.createWithDocuments(dto); }
+  createWithDocuments(@Payload() payload: CreateSupplierWithDocumentsDto | { dto: CreateSupplierWithDocumentsDto; location_id?: number }) {
+    // Suport pentru payload simplu (doar DTO) sau payload cu DTO și location_id
+    if ('dto' in payload) {
+      return this.service.createWithDocuments(payload.dto, payload.location_id);
+    }
+    // Dacă este doar DTO, nu avem location_id - aruncă eroare sau permite fără (pentru compatibilitate)
+    return this.service.createWithDocuments(payload, undefined);
+  }
 
   @MessagePattern('suppliers.findAll')
-  findAll() { return this.service.findAll(); }
+  findAll(@Payload() payload: { location_id: number } | number) {
+    // Suport pentru payload simplu (doar location_id ca număr) sau payload cu obiect
+    let locationId: number;
+    if (typeof payload === 'number') {
+      locationId = payload;
+    } else {
+      locationId = payload.location_id;
+    }
+    
+    if (!locationId) {
+      throw new Error('location_id is required for suppliers.findAll');
+    }
+    
+    return this.service.findAll(locationId);
+  }
 
   @MessagePattern('suppliers.findOne')
-  findOne(@Payload() id: number) { return this.service.findOne(id); }
+  findOne(@Payload() payload: number | { id: number; location_id?: number }) {
+    // Suport pentru payload simplu (doar id) sau payload cu id și location_id
+    if (typeof payload === 'number') {
+      // Dacă este doar un număr, nu avem location_id - aruncă eroare sau returnează fără verificare
+      // Pentru compatibilitate, permitem fără location_id în microservice (poate fi folosit intern)
+      return this.service.findOne(payload, undefined);
+    }
+    return this.service.findOne(payload.id, payload.location_id);
+  }
 
   @MessagePattern('suppliers.update')
   update(@Payload() payload: { id: number; dto: UpdateSupplierDto }) { return this.service.update(payload.id, payload.dto); }

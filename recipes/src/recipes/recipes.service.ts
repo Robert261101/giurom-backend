@@ -10,12 +10,14 @@ import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
 import { RecipeRecipe } from './entities/recipe-recipe.entity';
 import { RecipeMedia } from './entities/recipe-media.entity';
+import { RecipeLocation } from './entities/recipe-location.entity';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
+import { CreateRecipeLocationDto } from './dto/create-recipe-location.dto';
 import { RecipeMediaService } from './recipes-media.service';
 import { ProductRef } from '../external/product-ref.entity';
 
@@ -32,6 +34,8 @@ export class RecipeService {
     private recipeProductsRepository: Repository<RecipeProduct>,
     @InjectRepository(RecipeRecipe)
     private recipeRecipesRepository: Repository<RecipeRecipe>,
+    @InjectRepository(RecipeLocation)
+    private recipeLocationRepository: Repository<RecipeLocation>,
     private recipeMediaService: RecipeMediaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -68,9 +72,24 @@ export class RecipeService {
 
   // ==================== RECIPES METHODS ====================
 
-  async create(createRecipeDto: CreateRecipeDto): Promise<Recipe> {
+  async create(createRecipeDto: CreateRecipeDto, location_id?: number): Promise<Recipe> {
     const recipe = this.recipesRepository.create(createRecipeDto);
     const savedRecipe = await this.recipesRepository.save(recipe);
+    
+    // Asignează automat rețeta la locația utilizatorului dacă este furnizată
+    if (location_id) {
+      try {
+        const recipeLocation = this.recipeLocationRepository.create({
+          recipeId: savedRecipe.id,
+          idLocation: location_id,
+        });
+        await this.recipeLocationRepository.save(recipeLocation);
+        console.log(`✅ [RecipesService] Rețeta ${savedRecipe.id} a fost asignată automat la locația ${location_id}`);
+      } catch (error) {
+        // Dacă există deja, nu e problemă (ar trebui să fie imposibil, dar să fie safe)
+        console.warn(`⚠️ [RecipesService] Eroare la asignarea automată a rețetei ${savedRecipe.id} la locația ${location_id}:`, error);
+      }
+    }
     
     // Send notification for new recipe
     await this.sendRecipeNotification(
@@ -90,7 +109,7 @@ export class RecipeService {
     limit?: number; 
     search?: string; 
     category_id?: number;
-    location_id?: number;
+    location_id: number; // OBLIGATORIU
     difficulty?: 'easy' | 'medium' | 'hard';
     max_cooking_time?: number;
   }): Promise<{ recipes: Recipe[]; total: number; totalPages: number }> {
@@ -110,14 +129,11 @@ export class RecipeService {
       queryBuilder.andWhere('recipe.category_id = :category_id', { category_id: params.category_id });
     }
     
-    // FILTRARE OBLIGATORIE - afișează DOAR recipes cu location_id setat
-    queryBuilder.andWhere('recipe.location_id IS NOT NULL');
-    
-    // Add location filter
-    if (params.location_id !== undefined) {
-      queryBuilder.andWhere('recipe.location_id = :location_id', { location_id: params.location_id });
-      console.log('🔍 [RecipesService] Filtrăm recipes după location_id:', params.location_id);
-    }
+    // Add location filter - OBLIGATORIU - folosim recipe_locations pentru many-to-many
+    queryBuilder
+      .leftJoin('recipe.recipeLocations', 'recipe_location')
+      .andWhere('recipe_location.idLocation = :location_id', { location_id: params.location_id });
+    console.log('🔍 [RecipesService] Filtrăm recipes după location_id (prin recipe_locations):', params.location_id);
     
     const offset = (page - 1) * limit;
     const [recipes, total] = await queryBuilder
@@ -155,14 +171,25 @@ export class RecipeService {
     return { recipes, total, totalPages };
   }
 
-  async findOne(id: number): Promise<Recipe> {
+  async findOne(id: number, location_id?: number): Promise<Recipe> {
     const recipe = await this.recipesRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia'],
+      relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia', 'recipeLocations'],
     });
     
     if (!recipe) {
       throw new NotFoundException(`Recipe with ID ${id} not found`);
+    }
+    
+    // Dacă location_id este furnizat, verifică dacă rețeta este asignată la acea locație
+    if (location_id !== undefined) {
+      const isAssignedToLocation = recipe.recipeLocations?.some(
+        (rl) => rl.idLocation === location_id
+      );
+      
+      if (!isAssignedToLocation) {
+        throw new NotFoundException(`Rețeta cu ID ${id} nu este asignată la locația specificată`);
+      }
     }
     
     // Populate product data
@@ -191,7 +218,7 @@ export class RecipeService {
   }
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
-    const recipe = await this.findOne(id);
+    const recipe = await this.findOne(id, undefined); // Nu verificăm location_id la update
     const oldName = recipe.name;
     Object.assign(recipe, updateRecipeDto);
     const updatedRecipe = await this.recipesRepository.save(recipe);
@@ -214,7 +241,7 @@ export class RecipeService {
   }
 
   async remove(id: number): Promise<void> {
-    const recipe = await this.findOne(id);
+    const recipe = await this.findOne(id, undefined); // Nu verificăm location_id la delete
     const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
     
@@ -638,5 +665,65 @@ export class RecipeService {
     }
 
     return result;
+  }
+
+  // ==================== RECIPE LOCATIONS METHODS ====================
+
+  /**
+   * Asignează o rețetă la o locație
+   */
+  async assignRecipeToLocation(assignDto: CreateRecipeLocationDto): Promise<RecipeLocation> {
+    // Verifică dacă rețeta există
+    const recipe = await this.recipesRepository.findOne({ where: { id: assignDto.recipe_id } });
+    if (!recipe) {
+      throw new NotFoundException(`Rețeta cu ID-ul ${assignDto.recipe_id} nu a fost găsită`);
+    }
+
+    // Verifică dacă asocierea există deja
+    const existingAssignment = await this.recipeLocationRepository.findOne({
+      where: {
+        recipeId: assignDto.recipe_id,
+        idLocation: assignDto.id_location,
+      },
+    });
+
+    if (existingAssignment) {
+      throw new BadRequestException(`Rețeta este deja asignată la această locație`);
+    }
+
+    const recipeLocation = this.recipeLocationRepository.create({
+      recipeId: assignDto.recipe_id,
+      idLocation: assignDto.id_location,
+    });
+    
+    return await this.recipeLocationRepository.save(recipeLocation);
+  }
+
+  /**
+   * Obține locațiile unei rețete
+   */
+  async findRecipeLocations(recipe_id: number): Promise<RecipeLocation[]> {
+    return await this.recipeLocationRepository.find({
+      where: { recipeId: recipe_id },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * Elimină asignarea unei rețete de la o locație
+   */
+  async removeRecipeFromLocation(recipe_id: number, location_id: number): Promise<void> {
+    const assignment = await this.recipeLocationRepository.findOne({
+      where: {
+        recipeId: recipe_id,
+        idLocation: location_id,
+      },
+    });
+
+    if (!assignment) {
+      throw new NotFoundException(`Rețeta nu este asignată la această locație`);
+    }
+
+    await this.recipeLocationRepository.remove(assignment);
   }
 }
