@@ -117,16 +117,27 @@ export class SuppliersHttpController {
 
 	@Get(':id')
 	@Permissions('suppliers.read')
-	findOne(@Param('id') id: string, @Request() req?: any) {
-		// Obține location_id din user context
-		const user = req?.user;
-		const location_id = user?.work_location_id || user?.work_location_default_id;
+	findOne(
+		@Param('id') id: string, 
+		@Query('location_id') location_id?: string,
+		@Request() req?: any
+	) {
+		// Obține location_id din query sau din user context
+		let locationId: number | undefined;
+		const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
+		if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+			locationId = maybeLid as number;
+		} else {
+			// Încearcă să obțină din user context
+			const user = req?.user;
+			locationId = user?.work_location_id || user?.work_location_default_id;
+		}
 		
-		if (!location_id) {
+		if (!locationId) {
 			throw new BadRequestException('Nu se poate accesa un furnizor fără o locație asignată. Vă rugăm să selectați o locație.');
 		}
 		
-		return this.service.findOne(Number(id), location_id);
+		return this.service.findOne(Number(id), locationId);
 	}
 
 	@Patch(':id')
