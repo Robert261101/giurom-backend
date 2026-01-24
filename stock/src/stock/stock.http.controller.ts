@@ -51,9 +51,9 @@ export class StockHttpController {
 	// === EMPLOYEE-SPECIFIC ENDPOINTS ===
 	// Consume product for employees (with separate permission)
 	@Post('employee/consume') @Permissions('stock.consume_own')
-	async employeeConsume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number }) {
+	async employeeConsume(@Body() dto: { product_id: number; quantity: number; target?: string; employee_id?: number; location_id?: number; recipe_preparation_id?: number }) {
 	  console.log(`📡 [StockHttpController] Received employee consume request:`, dto);
-	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target || 'employee-consumption', dto.employee_id, dto.location_id);
+	  const result = await this.service.consumeProduct(Number(dto.product_id), Number(dto.quantity), dto.target || 'employee-consumption', dto.employee_id, dto.location_id, dto.recipe_preparation_id);
 	  console.log(`📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`);
 	  return result;
 	}
@@ -65,6 +65,7 @@ export class StockHttpController {
 	  const result = await this.service.createWasteRecord(dto);
 	  
 	  // Also consume the stock when creating waste record
+	  // Use 'waste' as target to skip consumption_records creation (only waste_records will be created)
 	  try {
 	    await this.service.consumeProduct(
 	      dto.product_id,
@@ -73,7 +74,7 @@ export class StockHttpController {
 	      undefined,
 	      dto.location_id
 	    );
-	    console.log(`📡 [StockHttpController] Consumed stock for wasted product ${dto.product_id}`);
+	    console.log(`📡 [StockHttpController] Consumed stock for wasted product ${dto.product_id} (no consumption_records created)`);
 	  } catch (error) {
 	    console.error(`❌ [StockHttpController] Error consuming stock for waste:`, error);
 	    // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat

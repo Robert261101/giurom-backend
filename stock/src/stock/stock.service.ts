@@ -349,21 +349,28 @@ export class StockService {
         );
       }
 
-      // Create consumption record
-      console.log(`📝 [StockService] Creating consumption record for product ${productId}`);
-      const consumptionRecord = consumptionRecordRepo.create({
-        product_id: productId,
-        employee_id: employeeId,
-        recipe_preparation_id: recipePreparationId,
-        quantity,
-        unit: product.unit,
-        location_id: locationId,
-        consumed_at: new Date(),
-        reason: `Consum pentru ${target}`,
-        product,
-      });
-      await consumptionRecordRepo.save(consumptionRecord);
-      console.log(`✅ [StockService] Saved consumption record ID ${consumptionRecord.id}`);
+      // Create consumption record ONLY if it's not waste
+      // Waste records should be created separately in waste_records table
+      const isWaste = target === 'waste' || target?.toLowerCase().includes('waste') || target?.toLowerCase().includes('aruncat');
+      
+      if (!isWaste) {
+        console.log(`📝 [StockService] Creating consumption record for product ${productId}`);
+        const consumptionRecord = consumptionRecordRepo.create({
+          product_id: productId,
+          employee_id: employeeId,
+          recipe_preparation_id: recipePreparationId,
+          quantity,
+          unit: product.unit,
+          location_id: locationId,
+          consumed_at: new Date(),
+          reason: `Consum pentru ${target}`,
+          product,
+        });
+        await consumptionRecordRepo.save(consumptionRecord);
+        console.log(`✅ [StockService] Saved consumption record ID ${consumptionRecord.id}`);
+      } else {
+        console.log(`🚫 [StockService] Skipping consumption record for waste (target: ${target})`);
+      }
       
       // Commit transaction
       await queryRunner.commitTransaction();
