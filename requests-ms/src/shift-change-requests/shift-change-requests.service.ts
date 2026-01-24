@@ -57,8 +57,6 @@ export class ShiftChangeRequestsService {
 
   // Creare cerere de schimb de tură
   async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
-    this.logger.log(`Creating shift change request from employee ${dto.employee_id} to ${dto.replacement_id}`);
-
     // Verifică dacă angajatul care cere schimbul există și obține location_id prin HTTP call
     let locationId: number | undefined = dto.location_id;
     try {
@@ -79,7 +77,6 @@ export class ShiftChangeRequestsService {
       // Dacă location_id nu este furnizat în DTO, îl obținem din employee (work_location_default_id)
       if (!locationId && employeeData.work_location_default_id) {
         locationId = employeeData.work_location_default_id;
-        this.logger.log(`Using default location ${locationId} for employee ${dto.employee_id}`);
       }
     } catch (error) {
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
@@ -173,8 +170,6 @@ export class ShiftChangeRequestsService {
     const shiftChangeRequest: ShiftChangeRequest = this.shiftChangeRepo.create(partial);
 
     const savedRequest: ShiftChangeRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
-
-    this.logger.log(`Shift change request ${savedRequest.id} created successfully`);
     
     // Send notification to admins/managers about new shift change request
     await this.sendShiftChangeNotification(
@@ -197,8 +192,6 @@ export class ShiftChangeRequestsService {
 
   // Listare cereri cu filtrare
   async findAll(filters: FilterShiftChangeRequestsDto, currentUserId?: number): Promise<ShiftChangeRequest[]> {
-    this.logger.log(`Fetching shift change requests with filters: ${JSON.stringify(filters)}`);
-
     const queryBuilder = this.shiftChangeRepo.createQueryBuilder('scr');
       // Employee relations removed - using HTTP calls to employees microservice
 
@@ -250,14 +243,12 @@ export class ShiftChangeRequestsService {
     queryBuilder.orderBy('scr.created_at', 'DESC');
 
     const requests = await queryBuilder.getMany();
-    this.logger.log(`Found ${requests.length} shift change requests`);
     
     return requests;
   }
 
   // Obținere cereri în așteptare
   async findPending(currentUserId?: number): Promise<ShiftChangeRequest[]> {
-    this.logger.log('Fetching pending shift change requests');
     return this.findAll({ status: ShiftChangeStatus.PENDING }, currentUserId);
   }
 
@@ -289,8 +280,6 @@ export class ShiftChangeRequestsService {
 
   // Actualizare status cerere (aprobare/respingere)
   async updateStatus(id: number, dto: UpdateShiftChangeStatusDto, currentUserId?: number): Promise<ShiftChangeRequest> {
-    this.logger.log(`Updating status of shift change request ${id} to ${dto.status} by user ${dto.reviewed_by_id}`);
-
     const shiftChangeRequest = await this.findOne(id);
 
     // Verifică dacă reviewerul există prin HTTP call
@@ -414,12 +403,6 @@ export class ShiftChangeRequestsService {
       this.logger.warn(`Failed to send notification: ${error.message}`);
     }
 
-    // Logare acțiune critică
-    this.logger.log(
-      `CRITICAL ACTION: Shift change request ${id} status changed from ${oldStatus} to ${dto.status} ` +
-      `by manager ${dto.reviewed_by_id} for employee ${shiftChangeRequest.employee_id} -> ${shiftChangeRequest.replacement_id}`
-    );
-
     return this.findOne(updatedRequest.id);
   }
 
@@ -440,8 +423,6 @@ export class ShiftChangeRequestsService {
     }
 
     await this.shiftChangeRepo.remove(shiftChangeRequest);
-
-    this.logger.log(`Shift change request ${id} deleted by employee ${shiftChangeRequest.employee_id}`);
   }
 
   // Obținere statistici pentru un angajat
@@ -479,8 +460,6 @@ export class ShiftChangeRequestsService {
       .andWhere('scr.status = :status', { status: ShiftChangeStatus.REJECTED })
       .getCount();
 
-    this.logger.log(`Generated stats for employee ${employeeId} for year ${currentYear}`);
-
     return {
       year: currentYear,
       total_requests: totalRequests,
@@ -501,8 +480,6 @@ export class ShiftChangeRequestsService {
 
   // Obținere cereri pentru aprobare (pentru manageri)
   async findRequestsForApproval(managerId: number): Promise<ShiftChangeRequest[]> {
-    this.logger.log(`Fetching shift change requests for approval by manager ${managerId}`);
-
     // În implementarea reală, ar trebui să existe o relație între manager și angajați
     // Pentru moment, returnăm toate cererile pending
     return this.findAll({ status: ShiftChangeStatus.PENDING }, managerId);
@@ -510,8 +487,6 @@ export class ShiftChangeRequestsService {
 
   // Obținere cereri pentru un anumit angajat (ca requester sau replacement)
   async findByEmployee(employeeId: number, currentUserId?: number): Promise<ShiftChangeRequest[]> {
-    this.logger.log(`Fetching shift change requests for employee ${employeeId}`);
-
     // Autorizare: angajatul poate vedea doar propriile cereri
     if (currentUserId && !this.isManager(currentUserId) && currentUserId !== employeeId) {
       throw new ForbiddenException('Nu poți vedea cererile altor angajați');
@@ -525,5 +500,34 @@ export class ShiftChangeRequestsService {
       // Employee relations removed - using HTTP calls to employees microservice
       order: { created_at: 'DESC' },
     });
+  }
+
+  /**
+   * Marchează automat cererile de schimb de tură expirate (end_datetime depășit) ca rejected
+   * Trebuie apelată periodic sau la cerere
+   */
+  async rejectExpiredShiftChangeRequests(): Promise<number> {
+    const now = new Date();
+
+    const expiredRequests = await this.shiftChangeRepo
+      .createQueryBuilder('scr')
+      .where('scr.status = :status', { status: ShiftChangeStatus.PENDING })
+      .andWhere('scr.end_datetime < :now', { now })
+      .getMany();
+
+    if (expiredRequests.length === 0) {
+      return 0;
+    }
+
+    // Actualizează statusul la REJECTED pentru toate cererile expirate
+    const updateResult = await this.shiftChangeRepo
+      .createQueryBuilder()
+      .update(ShiftChangeRequest)
+      .set({ status: ShiftChangeStatus.REJECTED })
+      .where('status = :status', { status: ShiftChangeStatus.PENDING })
+      .andWhere('end_datetime < :now', { now })
+      .execute();
+
+    return updateResult.affected || 0;
   }
 }

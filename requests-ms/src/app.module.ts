@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD } from '@nestjs/core';
 import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
 import { ShiftChangeRequestsModule } from './shift-change-requests/shift-change-requests.module';
@@ -11,10 +12,12 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { JwtStrategy } from './auth/jwt.strategy';
 import { InternalServiceGuard } from './auth/internal-service.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
+import { RequestsCronService } from './requests-cron.service';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
+    ScheduleModule.forRoot(),
     ClientsModule.register([
       {
         name: 'NOTIFICATIONS_RMQ',
@@ -57,6 +60,7 @@ import { PermissionsGuard } from './permissions/permissions.guard';
       useClass: PermissionsGuard,
     },
     JwtStrategy,
+    RequestsCronService,
   ],
 })
 export class AppModule {}

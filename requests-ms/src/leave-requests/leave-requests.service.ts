@@ -40,11 +40,7 @@ export class LeaveRequestsService implements OnModuleInit {
     target_url?: string  // Add target_url parameter
   ): Promise<void> {
     try {
-      this.logger.log(`Attempting to send leave notification - Type: ${type}, User ID: ${userId}`);
-      this.logger.log(`Notification details - Title: ${title}, Description: ${description}`);
-      this.logger.log(`Notification metadata: ${JSON.stringify(metadata)}`);
-      
-      const result = await firstValueFrom(
+      await firstValueFrom(
         this.notificationsClient.emit({ cmd: 'leave.notification' }, {
           type,
           title,
@@ -56,9 +52,6 @@ export class LeaveRequestsService implements OnModuleInit {
           target_url,  // Add target_url to notification data
         })
       );
-      
-      this.logger.log(`Successfully sent leave notification - Type: ${type}, User ID: ${userId}`);
-      this.logger.log(`Notification result: ${JSON.stringify(result)}`);
     } catch (error) {
       this.logger.error(`Failed to send leave notification: ${error?.message || error}`);
       this.logger.error(`Error stack: ${error?.stack}`);
@@ -67,13 +60,9 @@ export class LeaveRequestsService implements OnModuleInit {
 
   // Creare cerere de concediu
   async create(dto: CreateLeaveRequestDto, currentUserId?: number): Promise<LeaveRequest> {
-    this.logger.log(`Creating leave request for employee ${dto.employee_id}`);
-    this.logger.log(`Leave request details: ${JSON.stringify(dto)}`);
-
     // Verifică dacă angajatul există și obține location_id prin HTTP call către microserviciul employees
     let locationId: number | undefined = dto.location_id;
     try {
-      this.logger.log(`Checking if employee ${dto.employee_id} exists via HTTP call`);
       const response = await firstValueFrom(
         this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
           headers: {
@@ -87,12 +76,10 @@ export class LeaveRequestsService implements OnModuleInit {
         this.logger.error(`Employee with ID ${dto.employee_id} not found`);
         throw new NotFoundException('Angajatul nu a fost găsit');
       }
-      this.logger.log(`Employee ${dto.employee_id} found: ${JSON.stringify(employeeData)}`);
       
       // Dacă location_id nu este furnizat în DTO, îl obținem din employee (work_location_default_id)
       if (!locationId && employeeData.work_location_default_id) {
         locationId = employeeData.work_location_default_id;
-        this.logger.log(`Using default location ${locationId} for employee ${dto.employee_id}`);
       }
     } catch (error) {
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
@@ -148,15 +135,12 @@ export class LeaveRequestsService implements OnModuleInit {
     });
 
     const savedRequest = await this.leaveRequestRepo.save(leaveRequest);
-
-    this.logger.log(`Leave request ${savedRequest.id} created successfully for employee ${dto.employee_id}`);
     
     // Calculate duration in days
     const durationMs = endDate.getTime() - startDate.getTime();
     const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
 
     // Send notification to admins/managers about new leave request
-    this.logger.log(`Preparing to send leave request created notification for request ID ${savedRequest.id}`);
     await this.sendLeaveNotification(
       'leave_request_created',
       'Cerere de concediu noua',
@@ -178,8 +162,6 @@ export class LeaveRequestsService implements OnModuleInit {
 
   // Listare cereri cu filtrare
   async findAll(filters: FilterLeaveRequestsDto, currentUserId?: number): Promise<LeaveRequest[]> {
-    this.logger.log(`Fetching leave requests with filters: ${JSON.stringify(filters)} for user: ${currentUserId}`);
-
     const queryBuilder = this.leaveRequestRepo.createQueryBuilder('lr');
       // Employee relations removed - using HTTP calls to employees microservice
 
@@ -228,7 +210,6 @@ export class LeaveRequestsService implements OnModuleInit {
     // Autorizare: angajații pot vedea doar propriile cereri (managerii pot vedea toate)
     if (currentUserId) {
       const isUserManager = await this.isManager(currentUserId);
-      this.logger.log(`User ${currentUserId} is manager: ${isUserManager}`);
       
       if (!isUserManager) {
         queryBuilder.andWhere('lr.employee_id = :currentUserId', { currentUserId });
@@ -236,13 +217,11 @@ export class LeaveRequestsService implements OnModuleInit {
     }
 
     const requests = await queryBuilder.getMany();
-    this.logger.log(`Found ${requests.length} leave requests`);
     return requests;
   }
 
   // Obținere cereri în așteptare
   async findPending(currentUserId?: number): Promise<LeaveRequest[]> {
-    this.logger.log('Fetching pending leave requests');
     return this.findAll({ status: LeaveStatus.PENDING }, currentUserId);
   }
 
@@ -269,14 +248,10 @@ export class LeaveRequestsService implements OnModuleInit {
 
   // Actualizare status cerere (aprobare/respingere)
   async updateStatus(id: number, dto: UpdateLeaveRequestStatusDto, currentUserId?: number): Promise<LeaveRequest> {
-    this.logger.log(`Updating status of leave request ${id} to ${dto.status} by user ${dto.reviewed_by_id}`);
-    this.logger.log(`Update details: ${JSON.stringify(dto)}`);
-
     const leaveRequest = await this.findOne(id);
 
     // Verifică dacă reviewerul există prin HTTP call către microserviciul employees
     try {
-      this.logger.log(`Checking if reviewer ${dto.reviewed_by_id} exists via HTTP call`);
       await firstValueFrom(
         this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
           headers: {
@@ -285,7 +260,6 @@ export class LeaveRequestsService implements OnModuleInit {
           }
         })
       );
-      this.logger.log(`Reviewer ${dto.reviewed_by_id} found`);
     } catch (error) {
       this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
@@ -326,9 +300,7 @@ export class LeaveRequestsService implements OnModuleInit {
 
     // Send notification to employee about the decision
     try {
-      this.logger.log(`Preparing to send leave request status update notification for request ID ${updatedRequest.id}`);
       if (dto.status === LeaveStatus.APPROVED) {
-        this.logger.log(`Sending leave request approved notification`);
         await this.sendLeaveNotification(
           'leave_request_approved',
           'Cerere de concediu aprobata',
@@ -344,7 +316,6 @@ export class LeaveRequestsService implements OnModuleInit {
           `/pontaj/${leaveRequest.employee_id}`  // Add target_url
         );
       } else if (dto.status === LeaveStatus.REJECTED) {
-        this.logger.log(`Sending leave request rejected notification`);
         await this.sendLeaveNotification(
           'leave_request_rejected',
           'Cerere de concediu respinsa',
@@ -364,12 +335,6 @@ export class LeaveRequestsService implements OnModuleInit {
     } catch (error) {
       this.logger.warn(`Failed to send notification: ${error.message}`);
     }
-
-    // Logare acțiune critică
-    this.logger.log(
-      `CRITICAL ACTION: Leave request ${id} status changed from ${oldStatus} to ${dto.status} ` +
-      `by manager ${dto.reviewed_by_id} for employee ${leaveRequest.employee_id}`
-    );
 
     return this.findOne(updatedRequest.id);
   }
@@ -391,8 +356,6 @@ export class LeaveRequestsService implements OnModuleInit {
     }
 
     await this.leaveRequestRepo.remove(leaveRequest);
-
-    this.logger.log(`Leave request ${id} deleted by employee ${leaveRequest.employee_id}`);
   }
 
   // Obținere statistici pentru un angajat
@@ -428,8 +391,6 @@ export class LeaveRequestsService implements OnModuleInit {
       .andWhere('lr.status = :status', { status: LeaveStatus.REJECTED })
       .getCount();
 
-    this.logger.log(`Generated stats for employee ${employeeId} for year ${currentYear}`);
-
     return {
       year: currentYear,
       total_requests: totalRequests,
@@ -442,13 +403,39 @@ export class LeaveRequestsService implements OnModuleInit {
 
   // Helper pentru verificarea dacă utilizatorul este manager
   private async isManager(userId: number): Promise<boolean> {
-    this.logger.log(`Checking if user ${userId} is manager`);
     // For testing purposes, consider all users as managers
     // In production, this should check the user's actual roles/permissions
-    const result = true;
-    this.logger.log(`User ${userId} is manager: ${result}`);
-    return result;
+    return true;
   }
 
   // Obținere cereri pentru aprobare (pentru manageri)
+
+  /**
+   * Marchează automat cererile de concediu expirate (end_datetime depășit) ca rejected
+   * Trebuie apelată periodic sau la cerere
+   */
+  async rejectExpiredLeaveRequests(): Promise<number> {
+    const now = new Date();
+
+    const expiredRequests = await this.leaveRequestRepo
+      .createQueryBuilder('lr')
+      .where('lr.status = :status', { status: LeaveStatus.PENDING })
+      .andWhere('lr.end_datetime < :now', { now })
+      .getMany();
+
+    if (expiredRequests.length === 0) {
+      return 0;
+    }
+
+    // Actualizează statusul la REJECTED pentru toate cererile expirate
+    const updateResult = await this.leaveRequestRepo
+      .createQueryBuilder()
+      .update(LeaveRequest)
+      .set({ status: LeaveStatus.REJECTED })
+      .where('status = :status', { status: LeaveStatus.PENDING })
+      .andWhere('end_datetime < :now', { now })
+      .execute();
+
+    return updateResult.affected || 0;
+  }
 }
