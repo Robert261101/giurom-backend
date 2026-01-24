@@ -28,6 +28,9 @@ export class RecipePreparation {
   @Column({ type: 'boolean', default: false })
   is_consumable: boolean;
 
+  @Column({ type: 'varchar', length: 20, default: 'active', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  status: string; // 'active', 'consumed', 'wasted'
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

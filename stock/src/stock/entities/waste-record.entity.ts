@@ -7,8 +7,8 @@ export class WasteRecord {
   id: number;
 
   @Index()
-  @Column({ type: 'int' })
-  product_id: number;
+  @Column({ type: 'int', nullable: true })
+  product_id?: number;
 
   @Column({ nullable: true })
   location_id?: number;
@@ -16,6 +16,10 @@ export class WasteRecord {
   @Index()
   @Column({ type: 'int', nullable: true })
   recipe_id: number | null;
+
+  @Index()
+  @Column({ type: 'int', nullable: true })
+  recipe_preparation_id?: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
@@ -33,9 +37,9 @@ export class WasteRecord {
   updated_at: Date;
 
   // Relationship with Product (within same microservice)
-  @ManyToOne(() => Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+  @ManyToOne(() => Product, { nullable: true, onDelete: 'SET NULL', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'product_id' })
-  product: Product;
+  product?: Product;
 
   // No foreign key relationships to other microservices
   // Location and recipe references are handled via API calls when needed

@@ -1,11 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsString, IsOptional, IsPositive, Min } from 'class-validator';
+import { IsNumber, IsString, IsOptional, IsPositive, Min, ValidateIf } from 'class-validator';
 
 export class CreateWasteRecordDto {
-  @ApiProperty({ description: 'ID of the product that was wasted' })
+  @ApiProperty({ description: 'ID of the product that was wasted (required if recipe_preparation_id is not provided)', required: false })
+  @ValidateIf((o) => !o.recipe_preparation_id)
   @IsNumber()
-  @IsPositive()
-  product_id: number;
+  @IsOptional()
+  product_id?: number;
 
   @ApiProperty({ description: 'Location ID reference (no FK)', required: false })
   @IsNumber()
@@ -16,6 +17,11 @@ export class CreateWasteRecordDto {
   @IsNumber()
   @IsOptional()
   recipe_id?: number;
+
+  @ApiProperty({ description: 'ID of the recipe preparation (if waste occurred when throwing a preparation)', required: false })
+  @IsNumber()
+  @IsOptional()
+  recipe_preparation_id?: number;
 
   @ApiProperty({ description: 'Quantity of product wasted' })
   @IsNumber()

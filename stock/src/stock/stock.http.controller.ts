@@ -61,32 +61,41 @@ export class StockHttpController {
 	// Waste record for employees (with separate permission)
 	@Post('employee/waste') @Permissions('stock.waste_own')
 	async employeeWaste(@Body() dto: CreateWasteRecordDto) {
-	  console.log(`📡 [StockHttpController] Received employee waste request:`, dto);
+	  console.log(`📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || 'null'}, recipe_preparation_id=${dto.recipe_preparation_id || 'null'}, quantity=${dto.quantity}`);
 	  const result = await this.service.createWasteRecord(dto);
 	  
-	  // Also consume the stock when creating waste record
+	  // Also consume the stock when creating waste record (only if product_id is provided)
 	  // Use 'waste' as target to skip consumption_records creation (only waste_records will be created)
-	  try {
-	    await this.service.consumeProduct(
-	      dto.product_id,
-	      dto.quantity,
-	      'waste',
-	      undefined,
-	      dto.location_id
-	    );
-	    console.log(`📡 [StockHttpController] Consumed stock for wasted product ${dto.product_id} (no consumption_records created)`);
-	  } catch (error) {
-	    console.error(`❌ [StockHttpController] Error consuming stock for waste:`, error);
-	    // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat
+	  // If recipe_preparation_id is provided, stock consumption is handled separately in throwPreparation
+	  if (dto.product_id) {
+	    try {
+	      await this.service.consumeProduct(
+	        dto.product_id,
+	        dto.quantity,
+	        'waste',
+	        undefined,
+	        dto.location_id
+	      );
+	    } catch (error) {
+	      // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat
+	    }
 	  }
 	  
-	  console.log(`📡 [StockHttpController] Completed employee waste request for product ${dto.product_id}`);
 	  return result;
 	}
 
 	// === WASTE RECORDS ===
 	@Post('waste-records') @Permissions('stock.create')
-	async createWasteRecord(@Body() dto: CreateWasteRecordDto) { return await this.service.createWasteRecord(dto); }
+	async createWasteRecord(@Body() dto: CreateWasteRecordDto) {
+	  console.log(`📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || 'null'}, recipe_preparation_id=${dto.recipe_preparation_id || 'null'}, quantity=${dto.quantity}`);
+	  try {
+	    const result = await this.service.createWasteRecord(dto);
+	    return result;
+	  } catch (error: any) {
+	    console.error(`❌ [WasteRecord] Error:`, error?.message || error);
+	    throw error;
+	  }
+	}
 
 	@Get('waste-records') @Permissions('stock.read')
 	async getWasteRecords() { return await this.service.findAllWasteRecords(); }

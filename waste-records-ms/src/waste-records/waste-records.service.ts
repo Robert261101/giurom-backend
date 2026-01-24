@@ -7,6 +7,8 @@ import { WasteRecord } from './entities/waste-record.entity';
 export interface CreateWasteRecordDto {
   product_id?: number;
   recipe_id?: number;
+  recipe_preparation_id?: number;
+  location_id?: number;
   quantity: number;
   unit: string;
   reason?: string;

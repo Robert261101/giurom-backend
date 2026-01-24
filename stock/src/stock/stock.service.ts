@@ -214,7 +214,6 @@ export class StockService {
   }
 
   async findAllStocks(locationId?: number, productId?: number): Promise<Stock[]> {
-    console.log(`🔍 [StockService] Finding all stocks, locationId: ${locationId}, productId: ${productId}`);
     const queryBuilder = this.stockRepo.createQueryBuilder('stock')
       .leftJoinAndSelect('stock.product', 'product');
     
@@ -225,13 +224,11 @@ export class StockService {
       if (locationId !== undefined) {
         conditions.push('stock.location_id = :locationId');
         params.locationId = locationId;
-        console.log('🔍 [StockService] Filtering stocks by location_id:', locationId);
       }
       
       if (productId !== undefined) {
         conditions.push('stock.product_id = :productId');
         params.productId = productId;
-        console.log('🔍 [StockService] Filtering stocks by product_id:', productId);
       }
       
       if (conditions.length > 0) {
@@ -240,7 +237,6 @@ export class StockService {
     }
     
     const stocks = await queryBuilder.getMany();
-    console.log(`📦 [StockService] Found ${stocks.length} stock items`);
     return stocks;
   }
 
@@ -262,16 +258,12 @@ export class StockService {
   }
 
   async consumeProduct(productId: number, quantity: number, target: string = 'recipe-preparation', employeeId?: number, locationId?: number, recipePreparationId?: number): Promise<void> {
-    console.log(`🔍 [StockService] Starting consumeProduct for productId: ${productId}, quantity: ${quantity}, target: ${target}, employeeId: ${employeeId}, locationId: ${locationId}, recipePreparationId: ${recipePreparationId}`);
-    
     // Use explicit transaction handling
     const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     
     try {
-      console.log(`🔄 [StockService] Starting database transaction for consumeProduct`);
-      
       let remaining = quantity;
       const stockRepo = queryRunner.manager.getRepository(Stock);
       const txRepo = queryRunner.manager.getRepository(StockTransaction);
@@ -282,19 +274,13 @@ export class StockService {
         order: { expiration_date: 'ASC', entry_date: 'ASC' },
       });
       
-      console.log(`📦 [StockService] Found ${stocks.length} stock entries for product ${productId}`);
-      console.log(`📦 [StockService] Stock entries:`, stocks.map(s => ({ id: s.id, quantity: s.quantity, status: s.status })));
-      
       if (stocks.length === 0) {
-        console.error(`❌ [StockService] No valid stock found for product ${productId}`);
         throw new BadRequestException(`Nu există stoc valid pentru produsul ${productId}`);
       }
       
       const totalAvailable = stocks.reduce((sum, stock) => sum + Number(stock.quantity), 0);
-      console.log(`📊 [StockService] Total available quantity for product ${productId}: ${totalAvailable}`);
       
       if (totalAvailable < quantity) {
-        console.error(`❌ [StockService] Insufficient stock for product ${productId}. Available: ${totalAvailable}, Requested: ${quantity}`);
         throw new BadRequestException(
           `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`,
         );
@@ -304,46 +290,32 @@ export class StockService {
       const productRepo = queryRunner.manager.getRepository(Product);
       const product = await productRepo.findOne({ where: { id: productId } });
       if (!product) {
-        console.error(`❌ [StockService] Product ${productId} not found`);
         throw new NotFoundException(`Produsul cu ID ${productId} nu a fost găsit`);
       }
-      
-      console.log(`📋 [StockService] Processing consumption for product ${productId} (${product.name})`);
       
       for (const stock of stocks) {
         if (remaining <= 0) break;
         const availableInStock = Number(stock.quantity);
         const toConsume = Math.min(availableInStock, remaining);
         
-        console.log(`🔄 [StockService] Processing stock ID ${stock.id}, available: ${availableInStock}, to consume: ${toConsume}, remaining: ${remaining}`);
-        
         const tx = txRepo.create({ stock: stock, stock_id: stock.id, type: TransactionType.EXIT, quantity: toConsume, location: 'production', target });
         await txRepo.save(tx);
-        console.log(`💾 [StockService] Saved transaction for stock ID ${stock.id}`);
         
         stock.quantity = availableInStock - toConsume;
         stock.last_update = new Date();
         
-        console.log(`📉 [StockService] Updated stock ID ${stock.id}, new quantity: ${stock.quantity}`);
-        
         // Update stock status if quantity is zero or below minimum
         if (stock.quantity <= 0) {
           stock.status = StockStatus.EXPIRED;
-          console.log(`⚠️ [StockService] Stock ID ${stock.id} is now EXPIRED (quantity: ${stock.quantity})`);
         } else if (product.min_stock_level && stock.quantity < product.min_stock_level) {
           stock.status = StockStatus.BELOW_MINIMUM;
-          console.log(`⚠️ [StockService] Stock ID ${stock.id} is BELOW_MINIMUM (quantity: ${stock.quantity}, min: ${product.min_stock_level})`);
         }
         
         await stockRepo.save(stock);
-        console.log(`💾 [StockService] Saved updated stock ID ${stock.id}`);
-        
         remaining -= toConsume;
-        console.log(`🔄 [StockService] Remaining to consume: ${remaining}`);
       }
       
       if (remaining > 0) {
-        console.error(`❌ [StockService] Error in consumption logic for product ${productId}. Remaining: ${remaining}`);
         throw new BadRequestException(
           `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`,
         );
@@ -354,7 +326,6 @@ export class StockService {
       const isWaste = target === 'waste' || target?.toLowerCase().includes('waste') || target?.toLowerCase().includes('aruncat');
       
       if (!isWaste) {
-        console.log(`📝 [StockService] Creating consumption record for product ${productId}`);
         const consumptionRecord = consumptionRecordRepo.create({
           product_id: productId,
           employee_id: employeeId,
@@ -367,18 +338,13 @@ export class StockService {
           product,
         });
         await consumptionRecordRepo.save(consumptionRecord);
-        console.log(`✅ [StockService] Saved consumption record ID ${consumptionRecord.id}`);
-      } else {
-        console.log(`🚫 [StockService] Skipping consumption record for waste (target: ${target})`);
       }
       
       // Commit transaction
       await queryRunner.commitTransaction();
-      console.log(`✅ [StockService] Completed consumeProduct for productId: ${productId}, quantity: ${quantity}`);
     } catch (error) {
       // Rollback transaction in case of error
       await queryRunner.rollbackTransaction();
-      console.error(`❌ [StockService] Error in consumeProduct for productId: ${productId}`, error);
       throw error;
     } finally {
       // Release query runner
@@ -494,12 +460,32 @@ export class StockService {
   async updateWasteRecord(id: number, dto: UpdateWasteRecordDto): Promise<WasteRecord> {
     const wasteRecord = await this.findWasteRecord(id);
     
+    // Validate that either product_id or recipe_preparation_id is provided
+    const finalProductId = dto.product_id !== undefined ? dto.product_id : wasteRecord.product_id;
+    const finalRecipePreparationId = dto.recipe_preparation_id !== undefined ? dto.recipe_preparation_id : wasteRecord.recipe_preparation_id;
+    
+    if (!finalProductId && !finalRecipePreparationId) {
+      throw new BadRequestException('Either product_id or recipe_preparation_id must be provided');
+    }
+    
     // If product_id is being updated, verify new product exists
     if (dto.product_id && dto.product_id !== wasteRecord.product_id) {
       await this.findProduct(dto.product_id);
     }
     
-    Object.assign(wasteRecord, dto);
+    // Update product relationship if product_id changed
+    let product: Product | null = null;
+    if (dto.product_id !== undefined) {
+      if (dto.product_id) {
+        product = await this.findProduct(dto.product_id);
+      } else {
+        product = null;
+      }
+    } else if (wasteRecord.product_id) {
+      product = await this.findProduct(wasteRecord.product_id);
+    }
+    
+    Object.assign(wasteRecord, dto, { product: product ?? undefined });
     return await this.wasteRecordRepo.save(wasteRecord);
   }
 
@@ -656,24 +642,41 @@ export class StockService {
   }
 
   async createWasteRecord(dto: CreateWasteRecordDto): Promise<WasteRecord> {
-    // Verify product exists
-    const product = await this.findProduct(dto.product_id);
+    // Validate that either product_id or recipe_preparation_id is provided
+    if (!dto.product_id && !dto.recipe_preparation_id) {
+      throw new BadRequestException('Either product_id or recipe_preparation_id must be provided');
+    }
     
-    const wasteRecord = this.wasteRecordRepo.create({ ...dto, product });
+    // Verify product exists if product_id is provided
+    let product: Product | null = null;
+    if (dto.product_id) {
+      product = await this.findProduct(dto.product_id);
+    }
+    
+    const wasteRecord = this.wasteRecordRepo.create({ 
+      ...dto, 
+      product: product ?? undefined 
+    });
     const savedWasteRecord = await this.wasteRecordRepo.save(wasteRecord);
+    console.log(`✅ [WasteRecord] Created: ID=${savedWasteRecord.id}, product_id=${dto.product_id || 'null'}, recipe_preparation_id=${dto.recipe_preparation_id || 'null'}, quantity=${dto.quantity}`);
     
-    // Send notification for wasted product
+    // Send notification for wasted product/preparation
+    const entityName = dto.recipe_preparation_id 
+      ? `Preparatul (ID: ${dto.recipe_preparation_id})` 
+      : product?.name || 'Produs necunoscut';
+    
     await this.sendStockNotification(
       'stock_wasted',
-      'Produs aruncat',
-      `Produsul ${product.name} a fost inregistrat ca deseu (cantitate: ${dto.quantity} ${dto.unit})`,
-      product.id,
+      'Produs/Preparat aruncat',
+      `${entityName} a fost inregistrat ca deseu (cantitate: ${dto.quantity} ${dto.unit})`,
+      product?.id || 0,
       {
-        productName: product.name,
+        productName: product?.name || 'Preparat',
         quantity: dto.quantity,
         unit: dto.unit,
         reason: dto.reason,
         wasteRecordId: savedWasteRecord.id,
+        recipePreparationId: dto.recipe_preparation_id,
       },
       '/stoc'  // Add target_url
     );

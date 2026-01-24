@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -9,7 +9,7 @@ import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from './entities/recipe.entity';
 
 @Injectable()
-export class RecipePreparationsService {
+export class RecipePreparationsService implements OnModuleInit {
   private readonly stockServiceUrl: string;
 
   constructor(
@@ -20,6 +20,32 @@ export class RecipePreparationsService {
     private readonly configService: ConfigService,
   ) {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
+  }
+
+  /**
+   * Rulează la startup pentru a actualiza preparatele existente care nu au status setat
+   */
+  async onModuleInit() {
+    await this.updateExistingPreparationsStatus();
+  }
+
+  /**
+   * Actualizează preparatele existente care nu au status setat la 'active'
+   */
+  private async updateExistingPreparationsStatus() {
+    try {
+      const result = await this.prepRepo
+        .createQueryBuilder()
+        .update(RecipePreparation)
+        .set({ status: 'active' })
+        .where('status IS NULL OR status = :empty', { empty: '' })
+        .execute();
+      if (result.affected && result.affected > 0) {
+        console.log(`✅ [RecipePreparationsService] Updated ${result.affected} existing preparations with status = "active"`);
+      }
+    } catch (error) {
+      console.error('❌ [RecipePreparationsService] Error updating existing preparations status:', error);
+    }
   }
 
   private async sendPreparationNotification(
@@ -70,6 +96,9 @@ export class RecipePreparationsService {
       queryBuilder.andWhere('preparation.location_id IS NOT NULL');
     }
     
+    // Filtrează doar preparatele active (status = 'active' sau status IS NULL pentru compatibilitate)
+    queryBuilder.andWhere('(preparation.status = :activeStatus OR preparation.status IS NULL)', { activeStatus: 'active' });
+    
     const rows = await queryBuilder
       .orderBy('preparation.created_at', 'DESC')
       .skip((page - 1) * limit)
@@ -98,6 +127,7 @@ export class RecipePreparationsService {
       produced_at: dto.produced_at ? (new Date(dto.produced_at) as any) : (new Date() as any),
       is_labeled: false,
       is_consumable: recipe.is_consumable || false,
+      status: 'active', // Status implicit pentru preparate noi
     } as any);
     const saved: RecipePreparation = (await this.prepRepo.save(p as any)) as RecipePreparation;
 
