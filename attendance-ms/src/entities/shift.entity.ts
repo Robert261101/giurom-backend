@@ -61,6 +61,14 @@ export class Shift {
   end_datetime: Date;
 
   @ApiProperty({
+    description: 'Timp suplimentar pentru checkout (în minute)',
+    example: 30,
+    required: false,
+  })
+  @Column({ type: 'int', nullable: true, default: 0 })
+  time_for_checkout: number;
+
+  @ApiProperty({
     description: 'Note despre schimbul de lucru',
     example: 'Schimb de dimineață cu responsabilități speciale',
     required: false,

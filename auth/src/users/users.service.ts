@@ -624,4 +624,16 @@ export class UsersService {
     const userRole = await this.getUserRoleById(id);
     await this.userRoleRepository.remove(userRole);
   }
+
+  async deleteUserRolesByUserId(userId: number): Promise<void> {
+    const userRoles = await this.userRoleRepository.find({
+      where: { userId }
+    });
+    
+    if (userRoles.length === 0) {
+      throw new NotFoundException(`Nu s-au găsit roluri pentru utilizatorul cu ID-ul ${userId}`);
+    }
+    
+    await this.userRoleRepository.remove(userRoles);
+  }
 } 

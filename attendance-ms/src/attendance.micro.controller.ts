@@ -45,14 +45,15 @@ export class AttendanceMicroController {
   }
 
   @MessagePattern('attendance.presences.findAll')
-  findAllPresences(@Payload() payload: { page?: number; limit?: number; shift_id?: number; status?: string; start_date?: string; end_date?: string }) {
+  findAllPresences(@Payload() payload: { page?: number; limit?: number; shift_id?: number; status?: string; start_date?: string; end_date?: string; work_location_id?: number }) {
     return this.service.findAllPresences(
       payload.page?.toString(), 
       payload.limit?.toString(), 
       payload.shift_id?.toString(), 
       payload.status as any, 
       payload.start_date, 
-      payload.end_date
+      payload.end_date,
+      payload.work_location_id?.toString()
     );
   }
 

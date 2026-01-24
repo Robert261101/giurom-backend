@@ -70,6 +70,14 @@ export class Presence {
   check_out: Date;
 
   @ApiProperty({
+    description: 'Ora de auto-checkout calculată din pontaj',
+    example: '2024-01-15T16:00:00Z',
+    required: false,
+  })
+  @Column({ type: 'datetime', nullable: true })
+  auto_checkout: Date;
+
+  @ApiProperty({
     description: 'Totalul orelor lucrate',
     example: 8.5,
     required: false,

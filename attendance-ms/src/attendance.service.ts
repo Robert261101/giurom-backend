@@ -4,6 +4,7 @@ import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
+import { format } from 'date-fns';
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
 import { PresenceInflexion, InflexionType } from './entities/presence-inflexion.entity';
@@ -305,12 +306,38 @@ export class AttendanceService implements OnModuleInit {
       }
     }
 
+    // Calculează auto_checkout bazat pe ora de sfârșit a shift-ului + time_for_checkout pentru ziua curentă
+    let autoCheckout: Date | null = null;
+    if (check_in && shift.end_datetime) {
+      const shiftEndTime = new Date(shift.end_datetime);
+      const shiftEndHour = shiftEndTime.getHours();
+      const shiftEndMinute = shiftEndTime.getMinutes();
+      
+      // Folosim data din check_in (nu date) pentru a calcula auto_checkout
+      // Astfel funcționează corect și când check_in este după miezul nopții
+      const checkInDate = new Date(check_in);
+      const checkInDay = new Date(checkInDate.getFullYear(), checkInDate.getMonth(), checkInDate.getDate());
+      const todayShiftEnd = new Date(checkInDay);
+      todayShiftEnd.setHours(shiftEndHour, shiftEndMinute, 0, 0);
+      
+      // Adaugă time_for_checkout (în minute) la ora de sfârșit
+      const timeForCheckout = shift.time_for_checkout || 0;
+      if (timeForCheckout > 0) {
+        todayShiftEnd.setMinutes(todayShiftEnd.getMinutes() + timeForCheckout);
+      }
+      
+      autoCheckout = toZonedTime(todayShiftEnd, 'Europe/Bucharest') as any;
+      
+      console.log(`🕐 Auto-checkout calculat: ${autoCheckout.toISOString()} (din shift.end_datetime: ${shift.end_datetime} + ${timeForCheckout} minute, check_in: ${check_in})`);
+    }
+
     const presence = this.presenceRepository.create({
       ...rest,
       shift_id,
       date: new Date(date),
       check_in: check_in ? toZonedTime(new Date(check_in), 'Europe/Bucharest') : null,
       check_out: check_out ? toZonedTime(new Date(check_out), 'Europe/Bucharest') : null,
+      auto_checkout: autoCheckout,
     });
 
     const savedPresence = await this.presenceRepository.save(presence);
@@ -324,9 +351,11 @@ export class AttendanceService implements OnModuleInit {
       const shiftStartHour = shiftStartTime.getHours();
       const shiftStartMinute = shiftStartTime.getMinutes();
 
-      // Creez ora de început pentru ziua curentă (din pontaj)
-      const presenceDate = new Date(date);
-      const todayShiftStart = new Date(presenceDate);
+      // Folosim data din check_in (nu date) pentru a calcula ora de început a shift-ului
+      // Astfel funcționează corect și când check_in este după miezul nopții
+      const checkInDate = new Date(check_in);
+      const checkInDay = new Date(checkInDate.getFullYear(), checkInDate.getMonth(), checkInDate.getDate());
+      const todayShiftStart = new Date(checkInDay);
       todayShiftStart.setHours(shiftStartHour, shiftStartMinute, 0, 0);
 
       // Pragul minim: cel puțin o oră înainte de începutul programului
@@ -373,45 +402,77 @@ export class AttendanceService implements OnModuleInit {
     status?: PresenceStatus,
     start_date?: string,
     end_date?: string,
+    work_location_id?: string,
   ): Promise<{ data: Presence[]; total: number; page: number; limit: number }> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
     const shiftIdNum = shift_id ? parseInt(shift_id, 10) : undefined;
+    const workLocationIdNum = work_location_id ? parseInt(work_location_id, 10) : undefined;
     
-    const where: any = {};
-    if (shiftIdNum) where.shift_id = shiftIdNum;
-    if (status) where.status = status;
+    // Folosim query builder pentru a permite filtrarea după work_location_id prin join
+    const queryBuilder = this.presenceRepository
+      .createQueryBuilder('presence')
+      .leftJoinAndSelect('presence.shift', 'shift')
+      .leftJoinAndSelect('presence.inflexions', 'inflexions');
     
-    console.log('🔍 [findAllPresences] Parametrii primiti:', { page, limit, shift_id, status, start_date, end_date });
-    console.log('🔍 [findAllPresences] Parametrii convertiti:', { pageNum, limitNum, shiftIdNum, status, start_date, end_date });
+    if (shiftIdNum) {
+      queryBuilder.andWhere('presence.shift_id = :shiftId', { shiftId: shiftIdNum });
+    }
+    
+    if (workLocationIdNum) {
+      queryBuilder.andWhere('shift.work_location_id = :workLocationId', { workLocationId: workLocationIdNum });
+    }
+    
+    if (status) {
+      queryBuilder.andWhere('presence.status = :status', { status });
+    }
 
     if (start_date && end_date) {
       if (start_date === end_date) {
         // Când start_date și end_date sunt egale, filtrează doar pentru acea dată
+        // Filtrează după presence.date SAU shift.start_datetime (pentru a include prezențe care au shift-uri în acea zi)
         const targetDate = new Date(start_date);
         const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
         const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999);
-        where.date = Between(startOfDay, endOfDay);
+        const targetDateStr = format(targetDate, 'yyyy-MM-dd');
+        queryBuilder.andWhere(
+          '(presence.date BETWEEN :startOfDay AND :endOfDay OR DATE(shift.start_datetime) = :targetDateStr)',
+          { startOfDay, endOfDay, targetDateStr }
+        );
       } else {
-        where.date = Between(new Date(start_date), new Date(end_date));
+        // Filtrează după presence.date SAU shift.start_datetime
+        const startDateStr = format(new Date(start_date), 'yyyy-MM-dd');
+        const endDateStr = format(new Date(end_date), 'yyyy-MM-dd');
+        queryBuilder.andWhere(
+          '(presence.date BETWEEN :startDate AND :endDate OR DATE(shift.start_datetime) BETWEEN :startDateStr AND :endDateStr)',
+          { 
+            startDate: new Date(start_date), 
+            endDate: new Date(end_date),
+            startDateStr,
+            endDateStr
+          }
+        );
       }
     } else if (start_date) {
-      where.date = MoreThanOrEqual(new Date(start_date));
+      const startDateStr = format(new Date(start_date), 'yyyy-MM-dd');
+      queryBuilder.andWhere(
+        '(presence.date >= :startDate OR DATE(shift.start_datetime) >= :startDateStr)',
+        { startDate: new Date(start_date), startDateStr }
+      );
     } else if (end_date) {
-      where.date = LessThanOrEqual(new Date(end_date));
+      const endDateStr = format(new Date(end_date), 'yyyy-MM-dd');
+      queryBuilder.andWhere(
+        '(presence.date <= :endDate OR DATE(shift.start_datetime) <= :endDateStr)',
+        { endDate: new Date(end_date), endDateStr }
+      );
     }
-
-    console.log('🔍 [findAllPresences] Where clause:', where);
     
-    const [data, total] = await this.presenceRepository.findAndCount({
-      where,
-      relations: ['shift', 'inflexions'],
-      skip: (pageNum - 1) * limitNum,
-      take: limitNum,
-      order: { date: 'DESC' },
-    });
-
-    console.log('🔍 [findAllPresences] Rezultat query:', { dataCount: data.length, total });
+    queryBuilder
+      .orderBy('presence.date', 'DESC')
+      .skip((pageNum - 1) * limitNum)
+      .take(limitNum);
+    
+    const [data, total] = await queryBuilder.getManyAndCount();
     
     return { data, total, page: pageNum, limit: limitNum };
   }

@@ -494,6 +494,16 @@ export class UsersController {
     return this.usersService.updateUserRole(id, updateUserRoleDto);
   }
 
+  @Delete('user-roles')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Șterge toate rolurile pentru un utilizator' })
+  @ApiQuery({ name: 'userId', description: 'ID-ul utilizatorului', required: true, type: Number })
+  @ApiResponse({ status: 204, description: 'Rolurile au fost șterse cu succes' })
+  @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit sau nu are roluri' })
+  async deleteUserRolesByUserId(@Query('userId', ParseIntPipe) userId: number): Promise<void> {
+    return this.usersService.deleteUserRolesByUserId(userId);
+  }
+
   @Delete('user-roles/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge o asociere utilizator-rol' })

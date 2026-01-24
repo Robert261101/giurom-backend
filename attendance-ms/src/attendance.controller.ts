@@ -195,6 +195,7 @@ export class AttendanceController {
   @ApiQuery({ name: 'status', required: false, enum: PresenceStatus, description: 'Filtrare după status' })
   @ApiQuery({ name: 'start_date', required: false, description: 'Data de început (YYYY-MM-DD)', example: '2024-01-01' })
   @ApiQuery({ name: 'end_date', required: false, description: 'Data de sfârșit (YYYY-MM-DD)', example: '2024-01-31' })
+  @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtrare după ID-ul locației de lucru', example: 1 })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista prezențelor a fost returnată cu succes',
@@ -206,8 +207,9 @@ export class AttendanceController {
     @Query('status') status?: PresenceStatus,
     @Query('start_date') start_date?: string,
     @Query('end_date') end_date?: string,
+    @Query('work_location_id') work_location_id?: string,
   ) {
-    return await this.attendanceService.findAllPresences(page, limit, shift_id, status, start_date, end_date);
+    return await this.attendanceService.findAllPresences(page, limit, shift_id, status, start_date, end_date, work_location_id);
   }
 
   @Get('presences/:id')

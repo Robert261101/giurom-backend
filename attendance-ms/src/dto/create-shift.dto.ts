@@ -63,6 +63,15 @@ export class CreateShiftDto {
   end_datetime: string;
 
   @ApiProperty({
+    description: 'Timp suplimentar pentru checkout (în minute)',
+    example: 30,
+    required: false,
+  })
+  @IsNumber({}, { message: 'Timpul pentru checkout trebuie să fie un număr' })
+  @IsOptional()
+  time_for_checkout?: number;
+
+  @ApiProperty({
     description: 'Note despre schimbul de lucru',
     example: 'Schimb de dimineață cu responsabilități speciale',
     required: false,
