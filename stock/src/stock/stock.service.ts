@@ -331,7 +331,6 @@ export class StockService {
           employee_id: employeeId,
           recipe_preparation_id: recipePreparationId,
           quantity,
-          unit: product.unit,
           location_id: locationId,
           consumed_at: new Date(),
           reason: `Consum pentru ${target}`,
@@ -664,16 +663,18 @@ export class StockService {
     const entityName = dto.recipe_preparation_id 
       ? `Preparatul (ID: ${dto.recipe_preparation_id})` 
       : product?.name || 'Produs necunoscut';
+
+    const displayUnit = product?.unit || '';
     
     await this.sendStockNotification(
       'stock_wasted',
       'Produs/Preparat aruncat',
-      `${entityName} a fost inregistrat ca deseu (cantitate: ${dto.quantity} ${dto.unit})`,
+      `${entityName} a fost inregistrat ca deseu (cantitate: ${dto.quantity}${displayUnit ? ` ${displayUnit}` : ''})`,
       product?.id || 0,
       {
         productName: product?.name || 'Preparat',
         quantity: dto.quantity,
-        unit: dto.unit,
+        unit: displayUnit,
         reason: dto.reason,
         wasteRecordId: savedWasteRecord.id,
         recipePreparationId: dto.recipe_preparation_id,
@@ -954,7 +955,6 @@ export class StockService {
         product_id: ingredient.product_id,
         employee_id,
         quantity: ingredient.quantity,
-        unit: product.unit,
         location_id,
         consumed_at: new Date(),
         reason: `Consum pentru prepararea rețetei ${recipe_preparation_id}`,

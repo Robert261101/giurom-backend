@@ -9,6 +9,7 @@ export declare class RecipePreparation {
     produced_at: Date;
     is_labeled: boolean;
     is_consumable: boolean;
+    status: string;
     created_at: Date;
     updated_at: Date;
     recipe: Recipe;

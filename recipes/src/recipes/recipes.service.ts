@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, MoreThan, LessThan } from 'typeorm';
+import { Repository, Like, MoreThan, LessThan, DeepPartial } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
@@ -73,7 +73,9 @@ export class RecipeService {
   // ==================== RECIPES METHODS ====================
 
   async create(createRecipeDto: CreateRecipeDto, location_id?: number): Promise<Recipe> {
-    const recipe = this.recipesRepository.create(createRecipeDto);
+    // `is_consumable` este per-locație (recipe_locations), nu global.
+    const { is_consumable, ...rest } = createRecipeDto as any;
+    const recipe = this.recipesRepository.create(rest as DeepPartial<Recipe>);
     const savedRecipe = await this.recipesRepository.save(recipe);
     
     // Asignează automat rețeta la locația utilizatorului dacă este furnizată
@@ -82,6 +84,7 @@ export class RecipeService {
         const recipeLocation = this.recipeLocationRepository.create({
           recipeId: savedRecipe.id,
           idLocation: location_id,
+          isConsumable: !!is_consumable,
         });
         await this.recipeLocationRepository.save(recipeLocation);
         console.log(`✅ [RecipesService] Rețeta ${savedRecipe.id} a fost asignată automat la locația ${location_id}`);
@@ -101,6 +104,8 @@ export class RecipeService {
       `/retetar/${savedRecipe.id}`  // Add target_url
     );
     
+    // expunem `is_consumable` în payload ca valoare per locația curentă (dacă există)
+    if (location_id) (savedRecipe as any).is_consumable = !!(createRecipeDto as any).is_consumable;
     return savedRecipe;
   }
 
@@ -131,7 +136,7 @@ export class RecipeService {
     
     // Add location filter - OBLIGATORIU - folosim recipe_locations pentru many-to-many
     queryBuilder
-      .leftJoin('recipe.recipeLocations', 'recipe_location')
+      .leftJoinAndSelect('recipe.recipeLocations', 'recipe_location')
       .andWhere('recipe_location.idLocation = :location_id', { location_id: params.location_id });
     console.log('🔍 [RecipesService] Filtrăm recipes după location_id (prin recipe_locations):', params.location_id);
     
@@ -141,6 +146,12 @@ export class RecipeService {
       .take(limit)
       .skip(offset)
       .getManyAndCount();
+
+    // Expune `is_consumable` per locație în payload (pentru compatibilitate cu frontend-ul)
+    for (const r of recipes) {
+      const rl = Array.isArray((r as any).recipeLocations) ? (r as any).recipeLocations[0] : undefined;
+      (r as any).is_consumable = rl?.isConsumable ?? false;
+    }
     
     // Populate product data for each recipe
     for (const recipe of recipes) {
@@ -191,6 +202,12 @@ export class RecipeService {
         throw new NotFoundException(`Rețeta cu ID ${id} nu este asignată la locația specificată`);
       }
     }
+
+    // Expune `is_consumable` per locație în payload (pentru compatibilitate cu frontend-ul)
+    if (location_id !== undefined) {
+      const rl = recipe.recipeLocations?.find((x: any) => x.idLocation === location_id);
+      (recipe as any).is_consumable = (rl as any)?.isConsumable ?? false;
+    }
     
     // Populate product data
     if (recipe.recipe_products && recipe.recipe_products.length > 0) {
@@ -217,11 +234,32 @@ export class RecipeService {
     return recipe;
   }
 
-  async update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe> {
+  async update(id: number, updateRecipeDto: UpdateRecipeDto, location_id?: number): Promise<Recipe> {
     const recipe = await this.findOne(id, undefined); // Nu verificăm location_id la update
     const oldName = recipe.name;
-    Object.assign(recipe, updateRecipeDto);
+    const { is_consumable, ...rest } = updateRecipeDto as any;
+    Object.assign(recipe, rest);
     const updatedRecipe = await this.recipesRepository.save(recipe);
+
+    // Dacă primim `is_consumable` și avem location_id, îl setăm per-locație în recipe_locations
+    if (location_id !== undefined && is_consumable !== undefined) {
+      const existing = await this.recipeLocationRepository.findOne({
+        where: { recipeId: id, idLocation: location_id },
+      });
+      if (existing) {
+        (existing as any).isConsumable = !!is_consumable;
+        await this.recipeLocationRepository.save(existing);
+      } else {
+        // dacă nu există încă asignare, o creăm ca să putem seta flag-ul per locație
+        const rl = this.recipeLocationRepository.create({
+          recipeId: id,
+          idLocation: location_id,
+          isConsumable: !!is_consumable,
+        } as any);
+        await this.recipeLocationRepository.save(rl);
+      }
+      (updatedRecipe as any).is_consumable = !!is_consumable;
+    }
     
     // Send notification for updated recipe
     await this.sendRecipeNotification(
@@ -694,6 +732,7 @@ export class RecipeService {
     const recipeLocation = this.recipeLocationRepository.create({
       recipeId: assignDto.recipe_id,
       idLocation: assignDto.id_location,
+      isConsumable: !!(assignDto as any).is_consumable,
     });
     
     return await this.recipeLocationRepository.save(recipeLocation);

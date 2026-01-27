@@ -77,10 +77,16 @@ export class RecipesHttpController {
   
   @Post('recipes')
   @Permissions('recipes.create')
-  create(@Body() dto: CreateRecipeDto, @Request() req?: any) {
-    // Obține location_id din user context
-    const user = req?.user;
-    const location_id = user?.work_location_id || user?.work_location_default_id;
+  create(@Body() dto: CreateRecipeDto, @Query('location_id') locationId?: string, @Request() req?: any) {
+    // location_id poate veni din query (din UI) sau din user context (JWT)
+    let location_id: number | undefined;
+    const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      location_id = maybeLid as number;
+    } else {
+      const user = req?.user;
+      location_id = user?.work_location_id || user?.work_location_default_id;
+    }
     
     if (!location_id) {
       throw new BadRequestException('Nu se poate crea o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
@@ -211,10 +217,16 @@ export class RecipesHttpController {
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
   @Get('recipes/:id')
   @Permissions('recipes.read')
-  findOne(@Param('id') id: string, @Request() req?: any) {
-    // Obține location_id din user context
-    const user = req?.user;
-    const location_id = user?.work_location_id || user?.work_location_default_id;
+  findOne(@Param('id') id: string, @Query('location_id') locationId?: string, @Request() req?: any) {
+    // location_id poate veni din query (din UI) sau din user context (JWT)
+    let location_id: number | undefined;
+    const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      location_id = maybeLid as number;
+    } else {
+      const user = req?.user;
+      location_id = user?.work_location_id || user?.work_location_default_id;
+    }
     
     if (!location_id) {
       throw new BadRequestException('Nu se poate accesa o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
@@ -224,7 +236,18 @@ export class RecipesHttpController {
   }
   @Patch('recipes/:id')
   @Permissions('recipes.update')
-  update(@Param('id') id: string, @Body() dto: UpdateRecipeDto) { return this.recipes.update(Number(id), dto); }
+  update(@Param('id') id: string, @Body() dto: UpdateRecipeDto, @Query('location_id') locationId?: string, @Request() req?: any) {
+    // location_id poate veni din query (din UI) sau din user context (JWT)
+    let location_id: number | undefined;
+    const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      location_id = maybeLid as number;
+    } else {
+      const user = req?.user;
+      location_id = user?.work_location_id || user?.work_location_default_id;
+    }
+    return this.recipes.update(Number(id), dto, location_id);
+  }
   @Delete('recipes/:id')
   @Permissions('recipes.delete')
   remove(@Param('id') id: string) { return this.recipes.remove(Number(id)); }
@@ -259,6 +282,16 @@ export class RecipesHttpController {
     return this.preps.findAll(Number(page), Number(limit), locationId ? parseInt(locationId, 10) : undefined);
   }
   
+  @Get('recipe-preparations/batch')
+  @Permissions('preparation.read')
+  getPreparationsBatch(@Query('ids') ids?: string) {
+    const list = String(ids || '')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return this.preps.findMany(list);
+  }
+
   @Get('recipe-preparations/:id')
   @Permissions('preparation.read')
   getPreparation(@Param('id') id: string) { return this.preps.findOne(Number(id)); }

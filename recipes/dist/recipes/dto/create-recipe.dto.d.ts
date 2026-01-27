@@ -5,6 +5,7 @@ export declare class CreateRecipeDto {
     location_id?: number;
     expiration_hours: number;
     quantity: number;
+    unit?: string;
     video_link?: string;
     is_consumable?: boolean;
 }

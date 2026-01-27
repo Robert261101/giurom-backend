@@ -33,6 +33,7 @@ const create_recipe_media_dto_1 = require("./recipes/dto/create-recipe-media.dto
 const create_recipe_preparation_dto_1 = require("./recipes/dto/create-recipe-preparation.dto");
 const update_recipe_preparation_dto_1 = require("./recipes/dto/update-recipe-preparation.dto");
 const create_recipe_label_dto_1 = require("./recipes/dto/create-recipe-label.dto");
+const create_recipe_location_dto_1 = require("./recipes/dto/create-recipe-location.dto");
 let RecipesHttpController = class RecipesHttpController {
     constructor(recipes, media, preps, labels, printer, httpService, configService) {
         this.recipes = recipes;
@@ -43,13 +44,23 @@ let RecipesHttpController = class RecipesHttpController {
         this.httpService = httpService;
         this.configService = configService;
     }
-    async findAll(q) {
+    async findAll(q, req) {
         const page = Number.parseInt(q.page, 10);
         const limit = Number.parseInt(q.limit, 10);
         const maybeCid = q.category_id !== undefined ? Number(q.category_id) : undefined;
         const category_id = Number.isFinite(maybeCid) && maybeCid > 0 ? maybeCid : undefined;
+        let location_id;
         const maybeLid = q.location_id !== undefined ? Number(q.location_id) : undefined;
-        const location_id = Number.isFinite(maybeLid) && maybeLid > 0 ? maybeLid : undefined;
+        if (Number.isFinite(maybeLid) && maybeLid > 0) {
+            location_id = maybeLid;
+        }
+        else {
+            const user = req?.user;
+            location_id = user?.work_location_id || user?.work_location_default_id;
+        }
+        if (!location_id) {
+            throw new common_1.BadRequestException('Parametrul location_id este obligatoriu pentru a obține rețetele');
+        }
         const result = await this.recipes.findAll({
             page: Number.isFinite(page) && page > 0 ? page : 1,
             limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
@@ -65,7 +76,21 @@ let RecipesHttpController = class RecipesHttpController {
             limit: limit || 50
         };
     }
-    create(dto) { return this.recipes.create(dto); }
+    create(dto, locationId, req) {
+        let location_id;
+        const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+        if (Number.isFinite(maybeLid) && maybeLid > 0) {
+            location_id = maybeLid;
+        }
+        else {
+            const user = req?.user;
+            location_id = user?.work_location_id || user?.work_location_default_id;
+        }
+        if (!location_id) {
+            throw new common_1.BadRequestException('Nu se poate crea o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
+        }
+        return this.recipes.create(dto, location_id);
+    }
     async categoriesFindAll(q) {
         const page = Number.parseInt(q.page, 10);
         const limit = Number.parseInt(q.limit, 10);
@@ -115,8 +140,37 @@ let RecipesHttpController = class RecipesHttpController {
         return this.recipes.updateRecipeRecipe(Number(id), body.quantity, body.notes);
     }
     removeRecipeIngredient(id) { return this.recipes.removeRecipeRecipe(Number(id)); }
-    findOne(id) { return this.recipes.findOne(Number(id)); }
-    update(id, dto) { return this.recipes.update(Number(id), dto); }
+    getScaledIngredientsWithStock(id, quantity) {
+        const qty = Number(quantity) || 1000;
+        return this.recipes.getScaledIngredientsWithStock(Number(id), qty);
+    }
+    findOne(id, locationId, req) {
+        let location_id;
+        const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+        if (Number.isFinite(maybeLid) && maybeLid > 0) {
+            location_id = maybeLid;
+        }
+        else {
+            const user = req?.user;
+            location_id = user?.work_location_id || user?.work_location_default_id;
+        }
+        if (!location_id) {
+            throw new common_1.BadRequestException('Nu se poate accesa o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
+        }
+        return this.recipes.findOne(Number(id), location_id);
+    }
+    update(id, dto, locationId, req) {
+        let location_id;
+        const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+        if (Number.isFinite(maybeLid) && maybeLid > 0) {
+            location_id = maybeLid;
+        }
+        else {
+            const user = req?.user;
+            location_id = user?.work_location_id || user?.work_location_default_id;
+        }
+        return this.recipes.update(Number(id), dto, location_id);
+    }
     remove(id) { return this.recipes.remove(Number(id)); }
     getPreparations(page = '1', limit = '50', locationId, req) {
         const user = req?.user;
@@ -229,22 +283,35 @@ let RecipesHttpController = class RecipesHttpController {
             message: isConnected ? 'Conexiunea la imprimantă este funcțională' : 'Nu s-a putut conecta la imprimantă. Verifică IP-ul și portul.'
         };
     }
+    async assignRecipeToLocation(assignDto) {
+        return this.recipes.assignRecipeToLocation(assignDto);
+    }
+    async getRecipeLocations(recipeId) {
+        return this.recipes.findRecipeLocations(Number(recipeId));
+    }
+    async removeRecipeFromLocation(recipeId, locationId) {
+        await this.recipes.removeRecipeFromLocation(Number(recipeId), Number(locationId));
+        return { message: 'Rețeta a fost eliminată de la locație cu succes' };
+    }
 };
 exports.RecipesHttpController = RecipesHttpController;
 __decorate([
     (0, common_1.Get)('recipes'),
     (0, permissions_decorator_1.Permissions)('recipes.read'),
     __param(0, (0, common_1.Query)()),
+    __param(1, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], RecipesHttpController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Post)('recipes'),
     (0, permissions_decorator_1.Permissions)('recipes.create'),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Query)('location_id')),
+    __param(2, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_recipe_dto_1.CreateRecipeDto]),
+    __metadata("design:paramtypes", [create_recipe_dto_1.CreateRecipeDto, String, Object]),
     __metadata("design:returntype", void 0)
 ], RecipesHttpController.prototype, "create", null);
 __decorate([
@@ -389,11 +456,22 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], RecipesHttpController.prototype, "removeRecipeIngredient", null);
 __decorate([
+    (0, common_1.Get)('recipes/:id/scaled-ingredients-with-stock'),
+    (0, permissions_decorator_1.Permissions)('preparation.create'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Query)('quantity')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], RecipesHttpController.prototype, "getScaledIngredientsWithStock", null);
+__decorate([
     (0, common_1.Get)('recipes/:id'),
     (0, permissions_decorator_1.Permissions)('recipes.read'),
     __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Query)('location_id')),
+    __param(2, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], RecipesHttpController.prototype, "findOne", null);
 __decorate([
@@ -401,8 +479,10 @@ __decorate([
     (0, permissions_decorator_1.Permissions)('recipes.update'),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Query)('location_id')),
+    __param(3, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, update_recipe_dto_1.UpdateRecipeDto]),
+    __metadata("design:paramtypes", [String, update_recipe_dto_1.UpdateRecipeDto, String, Object]),
     __metadata("design:returntype", void 0)
 ], RecipesHttpController.prototype, "update", null);
 __decorate([
@@ -513,6 +593,31 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], RecipesHttpController.prototype, "testPrinter", null);
+__decorate([
+    (0, common_1.Post)('recipes/locations/assign'),
+    (0, permissions_decorator_1.Permissions)('recipes.update'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_recipe_location_dto_1.CreateRecipeLocationDto]),
+    __metadata("design:returntype", Promise)
+], RecipesHttpController.prototype, "assignRecipeToLocation", null);
+__decorate([
+    (0, common_1.Get)('recipes/:recipeId/locations'),
+    (0, permissions_decorator_1.Permissions)('recipes.read'),
+    __param(0, (0, common_1.Param)('recipeId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], RecipesHttpController.prototype, "getRecipeLocations", null);
+__decorate([
+    (0, common_1.Delete)('recipes/:recipeId/locations/:locationId'),
+    (0, permissions_decorator_1.Permissions)('recipes.update'),
+    __param(0, (0, common_1.Param)('recipeId')),
+    __param(1, (0, common_1.Param)('locationId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], RecipesHttpController.prototype, "removeRecipeFromLocation", null);
 exports.RecipesHttpController = RecipesHttpController = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [recipes_service_1.RecipeService,

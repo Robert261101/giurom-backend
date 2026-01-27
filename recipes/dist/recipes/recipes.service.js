@@ -24,13 +24,15 @@ const recipe_entity_1 = require("./entities/recipe.entity");
 const recipe_category_entity_1 = require("./entities/recipe-category.entity");
 const recipe_product_entity_1 = require("./entities/recipe-product.entity");
 const recipe_recipe_entity_1 = require("./entities/recipe-recipe.entity");
+const recipe_location_entity_1 = require("./entities/recipe-location.entity");
 const recipes_media_service_1 = require("./recipes-media.service");
 let RecipeService = class RecipeService {
-    constructor(recipesRepository, categoriesRepository, recipeProductsRepository, recipeRecipesRepository, recipeMediaService, httpService, configService, notificationsClient) {
+    constructor(recipesRepository, categoriesRepository, recipeProductsRepository, recipeRecipesRepository, recipeLocationRepository, recipeMediaService, httpService, configService, notificationsClient) {
         this.recipesRepository = recipesRepository;
         this.categoriesRepository = categoriesRepository;
         this.recipeProductsRepository = recipeProductsRepository;
         this.recipeRecipesRepository = recipeRecipesRepository;
+        this.recipeLocationRepository = recipeLocationRepository;
         this.recipeMediaService = recipeMediaService;
         this.httpService = httpService;
         this.configService = configService;
@@ -54,10 +56,27 @@ let RecipeService = class RecipeService {
             console.error('Failed to send recipe notification:', error);
         }
     }
-    async create(createRecipeDto) {
-        const recipe = this.recipesRepository.create(createRecipeDto);
+    async create(createRecipeDto, location_id) {
+        const { is_consumable, ...rest } = createRecipeDto;
+        const recipe = this.recipesRepository.create(rest);
         const savedRecipe = await this.recipesRepository.save(recipe);
+        if (location_id) {
+            try {
+                const recipeLocation = this.recipeLocationRepository.create({
+                    recipeId: savedRecipe.id,
+                    idLocation: location_id,
+                    isConsumable: !!is_consumable,
+                });
+                await this.recipeLocationRepository.save(recipeLocation);
+                console.log(`✅ [RecipesService] Rețeta ${savedRecipe.id} a fost asignată automat la locația ${location_id}`);
+            }
+            catch (error) {
+                console.warn(`⚠️ [RecipesService] Eroare la asignarea automată a rețetei ${savedRecipe.id} la locația ${location_id}:`, error);
+            }
+        }
         await this.sendRecipeNotification('recipe_created', 'Reteta noua creata', `A fost creata o noua reteta: ${savedRecipe.name}`, savedRecipe.id, { recipeName: savedRecipe.name }, `/retetar/${savedRecipe.id}`);
+        if (location_id)
+            savedRecipe.is_consumable = !!createRecipeDto.is_consumable;
         return savedRecipe;
     }
     async findAll(params) {
@@ -72,17 +91,20 @@ let RecipeService = class RecipeService {
         if (params.category_id) {
             queryBuilder.andWhere('recipe.category_id = :category_id', { category_id: params.category_id });
         }
-        queryBuilder.andWhere('recipe.location_id IS NOT NULL');
-        if (params.location_id !== undefined) {
-            queryBuilder.andWhere('recipe.location_id = :location_id', { location_id: params.location_id });
-            console.log('🔍 [RecipesService] Filtrăm recipes după location_id:', params.location_id);
-        }
+        queryBuilder
+            .leftJoinAndSelect('recipe.recipeLocations', 'recipe_location')
+            .andWhere('recipe_location.idLocation = :location_id', { location_id: params.location_id });
+        console.log('🔍 [RecipesService] Filtrăm recipes după location_id (prin recipe_locations):', params.location_id);
         const offset = (page - 1) * limit;
         const [recipes, total] = await queryBuilder
             .orderBy('recipe.created_at', 'DESC')
             .take(limit)
             .skip(offset)
             .getManyAndCount();
+        for (const r of recipes) {
+            const rl = Array.isArray(r.recipeLocations) ? r.recipeLocations[0] : undefined;
+            r.is_consumable = rl?.isConsumable ?? false;
+        }
         for (const recipe of recipes) {
             if (recipe.recipe_products && recipe.recipe_products.length > 0) {
                 for (const recipeProduct of recipe.recipe_products) {
@@ -106,13 +128,23 @@ let RecipeService = class RecipeService {
         const totalPages = Math.ceil(total / limit);
         return { recipes, total, totalPages };
     }
-    async findOne(id) {
+    async findOne(id, location_id) {
         const recipe = await this.recipesRepository.findOne({
             where: { id },
-            relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia'],
+            relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia', 'recipeLocations'],
         });
         if (!recipe) {
             throw new common_1.NotFoundException(`Recipe with ID ${id} not found`);
+        }
+        if (location_id !== undefined) {
+            const isAssignedToLocation = recipe.recipeLocations?.some((rl) => rl.idLocation === location_id);
+            if (!isAssignedToLocation) {
+                throw new common_1.NotFoundException(`Rețeta cu ID ${id} nu este asignată la locația specificată`);
+            }
+        }
+        if (location_id !== undefined) {
+            const rl = recipe.recipeLocations?.find((x) => x.idLocation === location_id);
+            recipe.is_consumable = rl?.isConsumable ?? false;
         }
         if (recipe.recipe_products && recipe.recipe_products.length > 0) {
             for (const recipeProduct of recipe.recipe_products) {
@@ -134,11 +166,30 @@ let RecipeService = class RecipeService {
         }
         return recipe;
     }
-    async update(id, updateRecipeDto) {
-        const recipe = await this.findOne(id);
+    async update(id, updateRecipeDto, location_id) {
+        const recipe = await this.findOne(id, undefined);
         const oldName = recipe.name;
-        Object.assign(recipe, updateRecipeDto);
+        const { is_consumable, ...rest } = updateRecipeDto;
+        Object.assign(recipe, rest);
         const updatedRecipe = await this.recipesRepository.save(recipe);
+        if (location_id !== undefined && is_consumable !== undefined) {
+            const existing = await this.recipeLocationRepository.findOne({
+                where: { recipeId: id, idLocation: location_id },
+            });
+            if (existing) {
+                existing.isConsumable = !!is_consumable;
+                await this.recipeLocationRepository.save(existing);
+            }
+            else {
+                const rl = this.recipeLocationRepository.create({
+                    recipeId: id,
+                    idLocation: location_id,
+                    isConsumable: !!is_consumable,
+                });
+                await this.recipeLocationRepository.save(rl);
+            }
+            updatedRecipe.is_consumable = !!is_consumable;
+        }
         await this.sendRecipeNotification('recipe_updated', 'Reteta modificata', `Reteta ${oldName} a fost modificata`, updatedRecipe.id, {
             oldName,
             newName: updatedRecipe.name,
@@ -147,7 +198,7 @@ let RecipeService = class RecipeService {
         return updatedRecipe;
     }
     async remove(id) {
-        const recipe = await this.findOne(id);
+        const recipe = await this.findOne(id, undefined);
         const recipeName = recipe.name;
         await this.recipesRepository.remove(recipe);
         await this.sendRecipeNotification('recipe_deleted', 'Reteta stearsa', `Reteta ${recipeName} a fost stearsa`, id, { recipeName }, `/retetar/${id}`);
@@ -356,6 +407,125 @@ let RecipeService = class RecipeService {
             byCategory,
         };
     }
+    async getScaledIngredientsWithStock(recipeId, quantity) {
+        const recipe = await this.recipesRepository.findOne({
+            where: { id: recipeId },
+            relations: ['recipe_products'],
+        });
+        if (!recipe) {
+            throw new common_1.NotFoundException(`Rețeta cu ID ${recipeId} nu a fost găsită`);
+        }
+        const baseQty = Number(recipe.quantity) || 1;
+        const scalingFactor = Number(quantity) / baseQty;
+        const wholeNumberUnits = ['buc', 'bucati', 'bucăți', 'sticla', 'sticle', 'cutie', 'cutii', 'pachet', 'pachete'];
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const headers = {
+            'x-internal-service': 'recipes',
+            'x-service-secret': serviceSecret
+        };
+        const result = [];
+        if (Array.isArray(recipe.recipe_products)) {
+            for (const rp of recipe.recipe_products) {
+                if (!rp.product_id)
+                    continue;
+                const originalQuantity = Number(rp.quantity) || 0;
+                let scaledQuantity = originalQuantity * scalingFactor;
+                console.log(`🔍 [RecipeService] Ingredient calculation: product_id=${rp.product_id}, originalQuantity=${originalQuantity}, scalingFactor=${scalingFactor}, scaledQuantity=${scaledQuantity}`);
+                let productUnit = 'g';
+                let productName = 'Ingredient necunoscut';
+                try {
+                    const productResponse = await (0, rxjs_1.lastValueFrom)(this.httpService.get(`${this.stockServiceUrl}/stock/products/${rp.product_id}`, {
+                        headers
+                    }));
+                    if (productResponse.data) {
+                        productUnit = productResponse.data.unit || 'g';
+                        productName = productResponse.data.name || 'Ingredient necunoscut';
+                    }
+                }
+                catch (error) {
+                    console.warn(`⚠️ [RecipeService] Nu s-a putut încărca produsul ${rp.product_id}`);
+                }
+                const requiresWholeNumber = wholeNumberUnits.some(unit => productUnit?.toLowerCase().includes(unit.toLowerCase()));
+                const finalQuantity = requiresWholeNumber
+                    ? Math.ceil(scaledQuantity)
+                    : Math.round(scaledQuantity * 100) / 100;
+                let availableQuantity = 0;
+                try {
+                    const stockResponse = await (0, rxjs_1.lastValueFrom)(this.httpService.get(`${this.stockServiceUrl}/stock/items`, {
+                        headers,
+                        params: {
+                            product_id: rp.product_id,
+                            limit: 1000
+                        }
+                    }));
+                    const stockItems = stockResponse.data?.data || stockResponse.data || [];
+                    if (Array.isArray(stockItems)) {
+                        const validStockItems = stockItems.filter((item) => {
+                            const quantity = parseFloat(item.quantity?.toString() || '0') || 0;
+                            const status = item.status?.toLowerCase();
+                            return status === 'valid' && quantity > 0;
+                        });
+                        availableQuantity = validStockItems.reduce((sum, item) => {
+                            return sum + (parseFloat(item.quantity?.toString() || '0') || 0);
+                        }, 0);
+                        console.log(`📊 [RecipeService] Product ${rp.product_id} (${productName}): total stock items=${stockItems.length}, valid items=${validStockItems.length}, availableQuantity=${availableQuantity}${productUnit}`);
+                    }
+                }
+                catch (error) {
+                    console.error(`⚠️ [RecipeService] Eroare la verificarea stocului pentru produs ${rp.product_id}:`, error?.response?.data || error?.message);
+                    availableQuantity = 0;
+                }
+                result.push({
+                    product_id: rp.product_id,
+                    product_name: productName,
+                    unit: productUnit,
+                    required_quantity: finalQuantity,
+                    available_quantity: availableQuantity,
+                    sufficient: availableQuantity >= finalQuantity,
+                });
+            }
+        }
+        return result;
+    }
+    async assignRecipeToLocation(assignDto) {
+        const recipe = await this.recipesRepository.findOne({ where: { id: assignDto.recipe_id } });
+        if (!recipe) {
+            throw new common_1.NotFoundException(`Rețeta cu ID-ul ${assignDto.recipe_id} nu a fost găsită`);
+        }
+        const existingAssignment = await this.recipeLocationRepository.findOne({
+            where: {
+                recipeId: assignDto.recipe_id,
+                idLocation: assignDto.id_location,
+            },
+        });
+        if (existingAssignment) {
+            throw new common_1.BadRequestException(`Rețeta este deja asignată la această locație`);
+        }
+        const recipeLocation = this.recipeLocationRepository.create({
+            recipeId: assignDto.recipe_id,
+            idLocation: assignDto.id_location,
+            isConsumable: !!assignDto.is_consumable,
+        });
+        return await this.recipeLocationRepository.save(recipeLocation);
+    }
+    async findRecipeLocations(recipe_id) {
+        return await this.recipeLocationRepository.find({
+            where: { recipeId: recipe_id },
+            order: { createdAt: 'DESC' },
+        });
+    }
+    async removeRecipeFromLocation(recipe_id, location_id) {
+        const assignment = await this.recipeLocationRepository.findOne({
+            where: {
+                recipeId: recipe_id,
+                idLocation: location_id,
+            },
+        });
+        if (!assignment) {
+            throw new common_1.NotFoundException(`Rețeta nu este asignată la această locație`);
+        }
+        await this.recipeLocationRepository.remove(assignment);
+    }
 };
 exports.RecipeService = RecipeService;
 exports.RecipeService = RecipeService = __decorate([
@@ -364,8 +534,10 @@ exports.RecipeService = RecipeService = __decorate([
     __param(1, (0, typeorm_1.InjectRepository)(recipe_category_entity_1.RecipeCategory)),
     __param(2, (0, typeorm_1.InjectRepository)(recipe_product_entity_1.RecipeProduct)),
     __param(3, (0, typeorm_1.InjectRepository)(recipe_recipe_entity_1.RecipeRecipe)),
-    __param(7, (0, common_1.Inject)('NOTIFICATIONS_RMQ')),
+    __param(4, (0, typeorm_1.InjectRepository)(recipe_location_entity_1.RecipeLocation)),
+    __param(8, (0, common_1.Inject)('NOTIFICATIONS_RMQ')),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

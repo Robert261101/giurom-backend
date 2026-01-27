@@ -10,6 +10,7 @@ import { CreateTaskTemplateAssignmentDto } from './locations/dto/create-task-tem
 import { UpdateTaskTemplateAssignmentDto } from './locations/dto/update-task-template-assignment.dto';
 import { CreateWorkLocationFileDto } from './locations/dto/create-work-location-file.dto';
 import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
+import { WorkLocation } from './locations/entity/work-location.entity';
 
 @Controller('locations')
 @UseGuards(PermissionsGuard)
@@ -104,6 +105,28 @@ export class LocationsHttpController {
 			search,
 			user
 		);
+	}
+
+	/**
+	 * Batch: returnează mai multe locații într-un singur request.
+	 * IMPORTANT: pentru utilizatori fără `locations.read`, service-ul filtrează automat doar locațiile proprii.
+	 *
+	 * Ex: GET /locations/batch?ids=1,2,3
+	 */
+	@Get('batch')
+	@Permissions('locations.read')
+	findBatch(
+		@Query('ids') ids: string,
+		@Request() req?: any,
+	): Promise<WorkLocation[]> {
+		if (!ids) return Promise.resolve([]);
+		const user = req?.user;
+		const idList = ids
+			.split(',')
+			.map((id) => parseInt(id.trim(), 10))
+			.filter((id) => Number.isFinite(id) && id > 0);
+		if (idList.length === 0) return Promise.resolve([]);
+		return this.service.findWorkLocationsByIds(idList, user);
 	}
 
 	@Get('statistics')

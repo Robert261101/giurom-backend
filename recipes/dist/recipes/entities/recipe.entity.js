@@ -16,6 +16,7 @@ const recipe_product_entity_1 = require("./recipe-product.entity");
 const recipe_preparation_entity_1 = require("./recipe-preparation.entity");
 const recipe_media_entity_1 = require("./recipe-media.entity");
 const recipe_recipe_entity_1 = require("./recipe-recipe.entity");
+const recipe_location_entity_1 = require("./recipe-location.entity");
 let Recipe = class Recipe {
 };
 exports.Recipe = Recipe;
@@ -56,13 +57,13 @@ __decorate([
     __metadata("design:type", Number)
 ], Recipe.prototype, "quantity", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 20, default: 'g', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }),
+    __metadata("design:type", String)
+], Recipe.prototype, "unit", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: 'varchar', length: 500, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }),
     __metadata("design:type", Object)
 ], Recipe.prototype, "video_link", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'boolean', default: false }),
-    __metadata("design:type", Boolean)
-], Recipe.prototype, "is_consumable", void 0);
 __decorate([
     (0, typeorm_1.ManyToOne)(() => recipe_category_entity_1.RecipeCategory, (category) => category.recipes, { onDelete: 'CASCADE', onUpdate: 'CASCADE' }),
     (0, typeorm_1.JoinColumn)({ name: 'category_id' }),
@@ -84,6 +85,10 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => recipe_media_entity_1.RecipeMedia, (media) => media.recipe, { cascade: true, eager: false }),
     __metadata("design:type", Array)
 ], Recipe.prototype, "recipeMedia", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => recipe_location_entity_1.RecipeLocation, (rl) => rl.recipe, { cascade: true, eager: false }),
+    __metadata("design:type", Array)
+], Recipe.prototype, "recipeLocations", void 0);
 exports.Recipe = Recipe = __decorate([
     (0, typeorm_1.Entity)('recipes')
 ], Recipe);

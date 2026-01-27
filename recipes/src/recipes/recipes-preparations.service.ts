@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom, lastValueFrom } from 'rxjs';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from './entities/recipe.entity';
+import { RecipeLocation } from './entities/recipe-location.entity';
 
 @Injectable()
 export class RecipePreparationsService implements OnModuleInit {
@@ -15,6 +16,7 @@ export class RecipePreparationsService implements OnModuleInit {
   constructor(
     @InjectRepository(RecipePreparation) private readonly prepRepo: Repository<RecipePreparation>,
     @InjectRepository(Recipe) private readonly recipeRepo: Repository<Recipe>,
+    @InjectRepository(RecipeLocation) private readonly recipeLocationRepo: Repository<RecipeLocation>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -116,9 +118,27 @@ export class RecipePreparationsService implements OnModuleInit {
     return p;
   }
 
+  async findMany(ids: number[]) {
+    const unique = Array.from(new Set((ids || []).map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+    if (unique.length === 0) return [];
+    return await this.prepRepo.find({
+      where: { id: In(unique) } as any,
+      relations: ['recipe', 'recipe.category', 'labels'],
+    });
+  }
+
   async create(dto: { recipe_id: number; employee_id?: number; location_id?: number; quantity: number; produced_at?: string }) {
     const recipe = await this.recipeRepo.findOne({ where: { id: dto.recipe_id } });
     if (!recipe) throw new NotFoundException('Rețeta nu a fost găsită');
+
+    // is_consumable este per-locație (recipe_locations) și se face snapshot pe preparat
+    let isConsumable = false;
+    if (dto.location_id) {
+      const rl = await this.recipeLocationRepo.findOne({
+        where: { recipeId: dto.recipe_id, idLocation: dto.location_id },
+      });
+      isConsumable = rl?.isConsumable ?? false;
+    }
     const p = this.prepRepo.create({
       recipe_id: dto.recipe_id,
       produced_by: dto.employee_id,
@@ -126,7 +146,7 @@ export class RecipePreparationsService implements OnModuleInit {
       quantity: dto.quantity as any,
       produced_at: dto.produced_at ? (new Date(dto.produced_at) as any) : (new Date() as any),
       is_labeled: false,
-      is_consumable: recipe.is_consumable || false,
+      is_consumable: isConsumable,
       status: 'active', // Status implicit pentru preparate noi
     } as any);
     const saved: RecipePreparation = (await this.prepRepo.save(p as any)) as RecipePreparation;
@@ -136,7 +156,7 @@ export class RecipePreparationsService implements OnModuleInit {
     await this.sendPreparationNotification(
       'recipe_preparation_created',
       'Preparat realizat',
-      `S-a creat ${dto.quantity}g de ${recipe.name}${user_id ? ` de către utilizatorul ${user_id}` : ''}`,
+      `S-a creat ${dto.quantity}${(recipe as any).unit || 'g'} de ${recipe.name}${user_id ? ` de către utilizatorul ${user_id}` : ''}`,
       saved.id,
       recipe.id,
       user_id,

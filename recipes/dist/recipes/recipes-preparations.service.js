@@ -22,21 +22,43 @@ const config_1 = require("@nestjs/config");
 const rxjs_1 = require("rxjs");
 const recipe_preparation_entity_1 = require("./entities/recipe-preparation.entity");
 const recipe_entity_1 = require("./entities/recipe.entity");
+const recipe_location_entity_1 = require("./entities/recipe-location.entity");
 let RecipePreparationsService = class RecipePreparationsService {
-    constructor(prepRepo, recipeRepo, notificationsClient, httpService, configService) {
+    constructor(prepRepo, recipeRepo, recipeLocationRepo, notificationsClient, httpService, configService) {
         this.prepRepo = prepRepo;
         this.recipeRepo = recipeRepo;
+        this.recipeLocationRepo = recipeLocationRepo;
         this.notificationsClient = notificationsClient;
         this.httpService = httpService;
         this.configService = configService;
         this.stockServiceUrl = this.configService.get('STOCK_HTTP_URL') || 'http://localhost:3006';
     }
-    async sendPreparationNotification(type, title, description, preparationId, recipeId, metadata, target_url) {
+    async onModuleInit() {
+        await this.updateExistingPreparationsStatus();
+    }
+    async updateExistingPreparationsStatus() {
+        try {
+            const result = await this.prepRepo
+                .createQueryBuilder()
+                .update(recipe_preparation_entity_1.RecipePreparation)
+                .set({ status: 'active' })
+                .where('status IS NULL OR status = :empty', { empty: '' })
+                .execute();
+            if (result.affected && result.affected > 0) {
+                console.log(`✅ [RecipePreparationsService] Updated ${result.affected} existing preparations with status = "active"`);
+            }
+        }
+        catch (error) {
+            console.error('❌ [RecipePreparationsService] Error updating existing preparations status:', error);
+        }
+    }
+    async sendPreparationNotification(type, title, description, preparationId, recipeId, user_id, metadata, target_url) {
         try {
             await (0, rxjs_1.firstValueFrom)(this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
                 type,
                 title,
                 description,
+                user_id,
                 entity_id: preparationId,
                 entity_type: 'recipe_preparation',
                 metadata: {
@@ -63,6 +85,7 @@ let RecipePreparationsService = class RecipePreparationsService {
         else {
             queryBuilder.andWhere('preparation.location_id IS NOT NULL');
         }
+        queryBuilder.andWhere('(preparation.status = :activeStatus OR preparation.status IS NULL)', { activeStatus: 'active' });
         const rows = await queryBuilder
             .orderBy('preparation.created_at', 'DESC')
             .skip((page - 1) * limit)
@@ -83,6 +106,13 @@ let RecipePreparationsService = class RecipePreparationsService {
         const recipe = await this.recipeRepo.findOne({ where: { id: dto.recipe_id } });
         if (!recipe)
             throw new common_1.NotFoundException('Rețeta nu a fost găsită');
+        let isConsumable = false;
+        if (dto.location_id) {
+            const rl = await this.recipeLocationRepo.findOne({
+                where: { recipeId: dto.recipe_id, idLocation: dto.location_id },
+            });
+            isConsumable = rl?.isConsumable ?? false;
+        }
         const p = this.prepRepo.create({
             recipe_id: dto.recipe_id,
             produced_by: dto.employee_id,
@@ -90,10 +120,12 @@ let RecipePreparationsService = class RecipePreparationsService {
             quantity: dto.quantity,
             produced_at: dto.produced_at ? new Date(dto.produced_at) : new Date(),
             is_labeled: false,
-            is_consumable: recipe.is_consumable || false,
+            is_consumable: isConsumable,
+            status: 'active',
         });
         const saved = (await this.prepRepo.save(p));
-        await this.sendPreparationNotification('recipe_preparation_created', 'Preparat realizat', `A fost realizat un nou preparat pentru reteta: ${recipe.name}`, saved.id, recipe.id, {
+        const user_id = dto.employee_id || undefined;
+        await this.sendPreparationNotification('recipe_preparation_created', 'Preparat realizat', `S-a creat ${dto.quantity}${recipe.unit || 'g'} de ${recipe.name}${user_id ? ` de către utilizatorul ${user_id}` : ''}`, saved.id, recipe.id, user_id, {
             recipeName: recipe.name,
             quantity: dto.quantity,
             producedBy: dto.employee_id
@@ -198,8 +230,10 @@ exports.RecipePreparationsService = RecipePreparationsService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(recipe_preparation_entity_1.RecipePreparation)),
     __param(1, (0, typeorm_1.InjectRepository)(recipe_entity_1.Recipe)),
-    __param(2, (0, common_1.Inject)('NOTIFICATIONS_RMQ')),
+    __param(2, (0, typeorm_1.InjectRepository)(recipe_location_entity_1.RecipeLocation)),
+    __param(3, (0, common_1.Inject)('NOTIFICATIONS_RMQ')),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         microservices_1.ClientProxy,
         axios_1.HttpService,

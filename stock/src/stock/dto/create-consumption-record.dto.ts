@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsDateString, IsPositive, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsDateString, IsPositive, Min, IsString } from 'class-validator';
 
 export class CreateConsumptionRecordDto {
   @IsOptional()
@@ -17,9 +17,6 @@ export class CreateConsumptionRecordDto {
   @IsPositive()
   @Min(0.01)
   quantity: number;
-
-  @IsString()
-  unit: string;
 
   @IsNumber()
   location_id: number;

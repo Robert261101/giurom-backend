@@ -1,17 +1,22 @@
+import { OnModuleInit } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
 import { Recipe } from './entities/recipe.entity';
-export declare class RecipePreparationsService {
+import { RecipeLocation } from './entities/recipe-location.entity';
+export declare class RecipePreparationsService implements OnModuleInit {
     private readonly prepRepo;
     private readonly recipeRepo;
+    private readonly recipeLocationRepo;
     private readonly notificationsClient;
     private readonly httpService;
     private readonly configService;
     private readonly stockServiceUrl;
-    constructor(prepRepo: Repository<RecipePreparation>, recipeRepo: Repository<Recipe>, notificationsClient: ClientProxy, httpService: HttpService, configService: ConfigService);
+    constructor(prepRepo: Repository<RecipePreparation>, recipeRepo: Repository<Recipe>, recipeLocationRepo: Repository<RecipeLocation>, notificationsClient: ClientProxy, httpService: HttpService, configService: ConfigService);
+    onModuleInit(): Promise<void>;
+    private updateExistingPreparationsStatus;
     private sendPreparationNotification;
     findAll(page?: number, limit?: number, locationId?: number): Promise<RecipePreparation[]>;
     findOne(id: number): Promise<RecipePreparation>;

@@ -6,32 +6,35 @@ import { Recipe } from './entities/recipe.entity';
 import { RecipeCategory } from './entities/recipe-category.entity';
 import { RecipeProduct } from './entities/recipe-product.entity';
 import { RecipeRecipe } from './entities/recipe-recipe.entity';
+import { RecipeLocation } from './entities/recipe-location.entity';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateRecipeCategoryDto } from './dto/create-recipe-category.dto';
 import { UpdateRecipeCategoryDto } from './dto/update-recipe-category.dto';
 import { CreateRecipeProductDto } from './dto/create-recipe-product.dto';
 import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
+import { CreateRecipeLocationDto } from './dto/create-recipe-location.dto';
 import { RecipeMediaService } from './recipes-media.service';
 export declare class RecipeService {
     private recipesRepository;
     private categoriesRepository;
     private recipeProductsRepository;
     private recipeRecipesRepository;
+    private recipeLocationRepository;
     private recipeMediaService;
     private readonly httpService;
     private readonly configService;
     private readonly notificationsClient;
     private readonly stockServiceUrl;
-    constructor(recipesRepository: Repository<Recipe>, categoriesRepository: Repository<RecipeCategory>, recipeProductsRepository: Repository<RecipeProduct>, recipeRecipesRepository: Repository<RecipeRecipe>, recipeMediaService: RecipeMediaService, httpService: HttpService, configService: ConfigService, notificationsClient: ClientProxy);
+    constructor(recipesRepository: Repository<Recipe>, categoriesRepository: Repository<RecipeCategory>, recipeProductsRepository: Repository<RecipeProduct>, recipeRecipesRepository: Repository<RecipeRecipe>, recipeLocationRepository: Repository<RecipeLocation>, recipeMediaService: RecipeMediaService, httpService: HttpService, configService: ConfigService, notificationsClient: ClientProxy);
     private sendRecipeNotification;
-    create(createRecipeDto: CreateRecipeDto): Promise<Recipe>;
+    create(createRecipeDto: CreateRecipeDto, location_id?: number): Promise<Recipe>;
     findAll(params: {
         page?: number;
         limit?: number;
         search?: string;
         category_id?: number;
-        location_id?: number;
+        location_id: number;
         difficulty?: 'easy' | 'medium' | 'hard';
         max_cooking_time?: number;
     }): Promise<{
@@ -39,8 +42,8 @@ export declare class RecipeService {
         total: number;
         totalPages: number;
     }>;
-    findOne(id: number): Promise<Recipe>;
-    update(id: number, updateRecipeDto: UpdateRecipeDto): Promise<Recipe>;
+    findOne(id: number, location_id?: number): Promise<Recipe>;
+    update(id: number, updateRecipeDto: UpdateRecipeDto, location_id?: number): Promise<Recipe>;
     remove(id: number): Promise<void>;
     createCategory(createCategoryDto: CreateRecipeCategoryDto): Promise<RecipeCategory>;
     findAllCategories(params: {
@@ -64,4 +67,15 @@ export declare class RecipeService {
     updateRecipeRecipe(id: number, quantity: number, notes?: string): Promise<RecipeRecipe>;
     removeRecipeRecipe(id: number): Promise<void>;
     getStatistics(): Promise<any>;
+    getScaledIngredientsWithStock(recipeId: number, quantity: number): Promise<Array<{
+        product_id: number;
+        product_name: string;
+        unit: string;
+        required_quantity: number;
+        available_quantity: number;
+        sufficient: boolean;
+    }>>;
+    assignRecipeToLocation(assignDto: CreateRecipeLocationDto): Promise<RecipeLocation>;
+    findRecipeLocations(recipe_id: number): Promise<RecipeLocation[]>;
+    removeRecipeFromLocation(recipe_id: number, location_id: number): Promise<void>;
 }

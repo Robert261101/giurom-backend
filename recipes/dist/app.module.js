@@ -21,6 +21,7 @@ const recipe_recipe_entity_1 = require("./recipes/entities/recipe-recipe.entity"
 const recipe_preparation_entity_1 = require("./recipes/entities/recipe-preparation.entity");
 const recipe_label_entity_1 = require("./recipes/entities/recipe-label.entity");
 const recipe_media_entity_1 = require("./recipes/entities/recipe-media.entity");
+const recipe_location_entity_1 = require("./recipes/entities/recipe-location.entity");
 const recipes_service_1 = require("./recipes/recipes.service");
 const recipes_media_service_1 = require("./recipes/recipes-media.service");
 const stock_ref_entity_1 = require("./external/stock-ref.entity");
@@ -62,7 +63,7 @@ exports.AppModule = AppModule = __decorate([
                 username: process.env.DB_USERNAME,
                 password: process.env.DB_PASSWORD,
                 database: process.env.DB_DATABASE,
-                entities: [recipe_entity_1.Recipe, recipe_category_entity_1.RecipeCategory, recipe_product_entity_1.RecipeProduct, recipe_recipe_entity_1.RecipeRecipe, recipe_preparation_entity_1.RecipePreparation, recipe_label_entity_1.RecipeLabel, recipe_media_entity_1.RecipeMedia, stock_ref_entity_1.StockRef, stock_transaction_ref_entity_1.StockTransactionRef],
+                entities: [recipe_entity_1.Recipe, recipe_category_entity_1.RecipeCategory, recipe_product_entity_1.RecipeProduct, recipe_recipe_entity_1.RecipeRecipe, recipe_preparation_entity_1.RecipePreparation, recipe_label_entity_1.RecipeLabel, recipe_media_entity_1.RecipeMedia, recipe_location_entity_1.RecipeLocation, stock_ref_entity_1.StockRef, stock_transaction_ref_entity_1.StockTransactionRef],
                 synchronize: process.env.DB_SYNCHRONIZE === 'true',
                 logging: process.env.DB_LOGGING === 'true',
                 charset: 'utf8mb4',
@@ -80,7 +81,7 @@ exports.AppModule = AppModule = __decorate([
                     ],
                 },
             }),
-            typeorm_1.TypeOrmModule.forFeature([recipe_entity_1.Recipe, recipe_category_entity_1.RecipeCategory, recipe_product_entity_1.RecipeProduct, recipe_recipe_entity_1.RecipeRecipe, recipe_preparation_entity_1.RecipePreparation, recipe_label_entity_1.RecipeLabel, recipe_media_entity_1.RecipeMedia, stock_ref_entity_1.StockRef, stock_transaction_ref_entity_1.StockTransactionRef]),
+            typeorm_1.TypeOrmModule.forFeature([recipe_entity_1.Recipe, recipe_category_entity_1.RecipeCategory, recipe_product_entity_1.RecipeProduct, recipe_recipe_entity_1.RecipeRecipe, recipe_preparation_entity_1.RecipePreparation, recipe_label_entity_1.RecipeLabel, recipe_media_entity_1.RecipeMedia, recipe_location_entity_1.RecipeLocation, stock_ref_entity_1.StockRef, stock_transaction_ref_entity_1.StockTransactionRef]),
         ],
         controllers: [recipes_micro_controller_1.RecipesMicroController, recipes_http_controller_1.RecipesHttpController],
         providers: [

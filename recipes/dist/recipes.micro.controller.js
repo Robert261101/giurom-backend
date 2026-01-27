@@ -19,7 +19,6 @@ const recipes_service_1 = require("./recipes/recipes.service");
 const recipes_media_service_1 = require("./recipes/recipes-media.service");
 const recipes_preparations_service_1 = require("./recipes/recipes-preparations.service");
 const recipes_labels_service_1 = require("./recipes/recipes-labels.service");
-const create_recipe_dto_1 = require("./recipes/dto/create-recipe.dto");
 const create_recipe_category_dto_1 = require("./recipes/dto/create-recipe-category.dto");
 const create_recipe_product_dto_1 = require("./recipes/dto/create-recipe-product.dto");
 const create_recipe_media_dto_1 = require("./recipes/dto/create-recipe-media.dto");
@@ -50,22 +49,32 @@ let RecipesMicroController = class RecipesMicroController {
     deleteCategory(id) {
         return this.service.removeCategory(id);
     }
-    create(dto) {
-        return this.service.create(dto);
+    create(payload) {
+        if ('dto' in payload) {
+            return this.service.create(payload.dto, payload.location_id);
+        }
+        return this.service.create(payload, undefined);
     }
     findAllRecipes(payload) {
+        if (!payload.location_id) {
+            throw new Error('location_id is required for recipes.findAll');
+        }
         return this.service.findAll({
             page: payload.page || 1,
             limit: payload.limit || 10,
             search: payload.search,
-            category_id: payload.category_id
+            category_id: payload.category_id,
+            location_id: payload.location_id
         });
     }
-    findOne(id) {
-        return this.service.findOne(id);
+    findOne(payload) {
+        if (typeof payload === 'number') {
+            return this.service.findOne(payload, undefined);
+        }
+        return this.service.findOne(payload.id, payload.location_id);
     }
     update(payload) {
-        return this.service.update(payload.id, payload.dto);
+        return this.service.update(payload.id, payload.dto, payload.location_id);
     }
     delete(id) {
         return this.service.remove(id);
@@ -155,7 +164,7 @@ __decorate([
     (0, microservices_1.MessagePattern)('recipes.create'),
     __param(0, (0, microservices_1.Payload)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_recipe_dto_1.CreateRecipeDto]),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], RecipesMicroController.prototype, "create", null);
 __decorate([
@@ -169,7 +178,7 @@ __decorate([
     (0, microservices_1.MessagePattern)('recipes.findOne'),
     __param(0, (0, microservices_1.Payload)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number]),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], RecipesMicroController.prototype, "findOne", null);
 __decorate([

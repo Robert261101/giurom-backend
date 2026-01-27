@@ -15,6 +15,7 @@ import { CreateRecipeMediaDto } from './recipes/dto/create-recipe-media.dto';
 import { CreateRecipePreparationDto } from './recipes/dto/create-recipe-preparation.dto';
 import { UpdateRecipePreparationDto } from './recipes/dto/update-recipe-preparation.dto';
 import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
+import { CreateRecipeLocationDto } from './recipes/dto/create-recipe-location.dto';
 export declare class RecipesHttpController {
     private readonly recipes;
     private readonly media;
@@ -24,14 +25,14 @@ export declare class RecipesHttpController {
     private readonly httpService;
     private readonly configService;
     constructor(recipes: RecipeService, media: RecipeMediaService, preps: RecipePreparationsService, labels: RecipesLabelsService, printer: RecipesPrinterService, httpService: HttpService, configService: ConfigService);
-    findAll(q: any): Promise<{
+    findAll(q: any, req?: any): Promise<{
         data: import("./recipes/entities/recipe.entity").Recipe[];
         total: number;
         page: number;
         totalPages: number;
         limit: number;
     }>;
-    create(dto: CreateRecipeDto): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    create(dto: CreateRecipeDto, locationId?: string, req?: any): Promise<import("./recipes/entities/recipe.entity").Recipe>;
     categoriesFindAll(q: any): Promise<{
         data: import("./recipes/entities/recipe-category.entity").RecipeCategory[];
         total: number;
@@ -68,10 +69,18 @@ export declare class RecipesHttpController {
         notes?: string;
     }): Promise<import("./recipes/entities/recipe-recipe.entity").RecipeRecipe>;
     removeRecipeIngredient(id: string): Promise<void>;
-    findOne(id: string): Promise<import("./recipes/entities/recipe.entity").Recipe>;
-    update(id: string, dto: UpdateRecipeDto): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    getScaledIngredientsWithStock(id: string, quantity: string): Promise<{
+        product_id: number;
+        product_name: string;
+        unit: string;
+        required_quantity: number;
+        available_quantity: number;
+        sufficient: boolean;
+    }[]>;
+    findOne(id: string, locationId?: string, req?: any): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    update(id: string, dto: UpdateRecipeDto, locationId?: string, req?: any): Promise<import("./recipes/entities/recipe.entity").Recipe>;
     remove(id: string): Promise<void>;
-    getPreparations(page?: string, limit?: string, locationId?: string, req?: any): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation[]> | never[];
+    getPreparations(page?: string, limit?: string, locationId?: string, req?: any): never[] | Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation[]>;
     getPreparation(id: string): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
     createPreparation(dto: CreateRecipePreparationDto): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
     updatePreparation(id: string, dto: UpdateRecipePreparationDto): Promise<import("./recipes/entities/recipe-preparation.entity").RecipePreparation>;
@@ -106,5 +115,10 @@ export declare class RecipesHttpController {
         success: boolean;
         message: string;
         foundPort?: undefined;
+    }>;
+    assignRecipeToLocation(assignDto: CreateRecipeLocationDto): Promise<import("./recipes/entities/recipe-location.entity").RecipeLocation>;
+    getRecipeLocations(recipeId: string): Promise<import("./recipes/entities/recipe-location.entity").RecipeLocation[]>;
+    removeRecipeFromLocation(recipeId: string, locationId: string): Promise<{
+        message: string;
     }>;
 }

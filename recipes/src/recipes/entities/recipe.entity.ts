@@ -20,9 +20,6 @@ export class Recipe {
   @Column()
   category_id: number;
 
-  @Column({ type: 'int', nullable: true })
-  location_id?: number;
-
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 
@@ -35,12 +32,19 @@ export class Recipe {
   @Column({ type: 'int', default: 1 })
   quantity: number;
 
+  /**
+   * Unitatea de măsură pentru cantitatea rețetei (ex: g, ml, buc).
+   * Importantă când o rețetă este folosită ca ingredient în altă rețetă (recipe_recipes).
+   */
+  @Column({ type: 'varchar', length: 20, default: 'g', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  unit: string;
+
   // Add video_link field
   @Column({ type: 'varchar', length: 500, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   video_link: string | null;
 
-  @Column({ type: 'boolean', default: false })
-  is_consumable: boolean;
+  // NOTĂ: `is_consumable` este per-locație (în `recipe_locations.is_consumable`),
+  // nu global pe rețetă. Coloana veche din `recipes` poate fi eliminată din DB.
 
   @ManyToOne(() => RecipeCategory, (category) => category.recipes, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
   @JoinColumn({ name: 'category_id' })

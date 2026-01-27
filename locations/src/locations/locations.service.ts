@@ -35,6 +35,88 @@ export class LocationsService {
     @Inject(DataSource) private readonly dataSource: DataSource,
   ) {}
 
+  private async getEmployeeLocationIdsForAccess(user?: any): Promise<number[]> {
+    const employeeId = user?.id || user?.employee_id || user?.userId;
+    if (!employeeId) return [];
+
+    // 1) Încearcă employees microservice (preferred)
+    try {
+      const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+      const response = await axios.get(`${employeesUrl}/employees/${employeeId}/locations`, {
+        headers: {
+          'x-internal-service': 'locations',
+          'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          'Content-Type': 'application/json',
+        },
+        timeout: 3000,
+      });
+
+      const employeeLocations = Array.isArray(response.data) ? response.data : [];
+      const ids = employeeLocations
+        .map((el: any) => el.idLocation || el.id_location || el.locationId || el.location_id)
+        .filter((id: any) => id != null)
+        .map((id: any) => parseInt(String(id), 10))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+
+      // Include work_location_id / work_location_default_id din JWT dacă există
+      const workLocationId = user?.work_location_id || user?.work_location_default_id;
+      if (workLocationId) {
+        const wl = parseInt(String(workLocationId), 10);
+        if (Number.isFinite(wl) && wl > 0) ids.push(wl);
+      }
+
+      return [...new Set(ids)];
+    } catch (_e: any) {
+      // 2) Fallback: work_location_id din JWT
+      const workLocationId = user?.work_location_id || user?.work_location_default_id;
+      if (workLocationId) {
+        const wl = parseInt(String(workLocationId), 10);
+        if (Number.isFinite(wl) && wl > 0) return [wl];
+      }
+
+      // 3) Fallback: query direct în employees DB (dacă e disponibil)
+      try {
+        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+        const result = await this.dataSource.query(
+          `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
+          [employeeId],
+        );
+        const ids: number[] = (result || [])
+          .map((row: any) => row.id_location || row.idLocation)
+          .filter((id: any) => id != null)
+          .map((id: any) => parseInt(String(id), 10))
+          .filter((id: number) => Number.isFinite(id) && id > 0);
+        return [...new Set(ids)];
+      } catch (_dbErr) {
+        return [];
+      }
+    }
+  }
+
+  async findWorkLocationsByIds(ids: number[], user?: any): Promise<WorkLocation[]> {
+    const uniqueIds = Array.from(new Set((ids || []).map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+    if (uniqueIds.length === 0) return [];
+
+    const hasLocationReadPermission = user?.permissions?.includes('locations.read');
+    if (hasLocationReadPermission) {
+      return this.workLocationRepository.find({
+        where: { id: In(uniqueIds) },
+        order: { id: 'ASC' } as any,
+      });
+    }
+
+    // Fără permisiune locations.read: returnăm doar locațiile proprii
+    const allowedIds = await this.getEmployeeLocationIdsForAccess(user);
+    if (allowedIds.length === 0) return [];
+    const intersection = uniqueIds.filter((id) => allowedIds.includes(id));
+    if (intersection.length === 0) return [];
+
+    return this.workLocationRepository.find({
+      where: { id: In(intersection) },
+      order: { id: 'ASC' } as any,
+    });
+  }
+
   private getLocationsFilesRootDir(): string {
     // Resolve to giurom root (one level above giurom-backend)
     // __dirname is .../giurom-backend/locations/src (dev with ts-node) or .../giurom-backend/locations/dist (prod)
@@ -454,13 +536,34 @@ export class LocationsService {
     }
   }
 
-  async findWorkLocationById(id: number, user?: any): Promise<WorkLocation> {
+  async findWorkLocationById(id: number, user?: any): Promise<WorkLocation & { company_name?: string }> {
     const workLocation = await this.workLocationRepository.findOne({
       where: { id },
       relations: ['task_templates'],
     });
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
+    
+    // Încearcă să obții numele companiei pentru a-l include în răspuns
+    let companyName: string | undefined;
+    if (workLocation.company_id) {
+      try {
+        const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://giurom.bitap.ro:3003';
+        const response = await axios.get(`${companiesUrl}/companies/${workLocation.company_id}`, {
+          headers: {
+            'x-internal-service': 'locations',
+            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+          },
+          timeout: 2000,
+        });
+        companyName = response.data?.company_name || response.data?.name;
+      } catch {
+        // Ignoră eroarea - numele companiei e opțional
+      }
+    }
+    
+    // Adaugă company_name la răspuns
+    const locationWithCompany = { ...workLocation, company_name: companyName } as WorkLocation & { company_name?: string };
     
     // Dacă utilizatorul nu are permisiunea locations.read, verifică dacă locația este în lista sa
     const hasLocationReadPermission = user?.permissions?.includes('locations.read');
@@ -470,7 +573,7 @@ export class LocationsService {
       
       // Verificare 1: Dacă work_location_id se potrivește
       if (userWorkLocationId && userWorkLocationId === id) {
-        return workLocation;
+        return locationWithCompany;
       }
       
       // Verificare 2: Verifică în employees_locations
@@ -493,7 +596,7 @@ export class LocationsService {
           });
           
           if (hasAccess) {
-            return workLocation;
+            return locationWithCompany;
           }
         } catch (error: any) {
           // Dacă microserviciul nu este accesibil, încercăm query direct la baza de date
@@ -502,19 +605,19 @@ export class LocationsService {
               // Verifică work_location_id sau work_location_default_id din JWT
               const workLocationId = user.work_location_id || user.work_location_default_id;
               if (workLocationId && workLocationId === id) {
-                return workLocation;
+                return locationWithCompany;
               }
               
               // Încearcă query direct la baza de date employees
               const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
-              const result = await this.dataSource.query(
+              const dbResult = await this.dataSource.query(
                 `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ? AND id_location = ?`,
                 [employeeId, id]
               );
               
-              if (result && result.length > 0) {
+              if (dbResult && dbResult.length > 0) {
                 console.log(`✅ Found location ${id} in employees_locations via direct DB query for employee ${employeeId}`);
-                return workLocation;
+                return locationWithCompany;
               }
               
               // Dacă nu găsește, aruncă eroare de permisiuni
@@ -524,7 +627,7 @@ export class LocationsService {
               // Dacă query-ul direct eșuează, verifică doar work_location_id
               const workLocationId = user.work_location_id || user.work_location_default_id;
               if (workLocationId && workLocationId === id) {
-                return workLocation;
+                return locationWithCompany;
               }
               throw new ForbiddenException('Nu ai acces la această locație');
             }
@@ -536,7 +639,7 @@ export class LocationsService {
       throw new ForbiddenException('Nu ai acces la această locație');
     }
     
-    return workLocation;
+    return locationWithCompany;
   }
 
   async findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]> {

@@ -26,9 +26,6 @@ export class ConsumptionRecord {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
-  @Column({ type: 'varchar', length: 50, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
-  unit: string;
-
   @Column({ nullable: true })
   location_id?: number;
 

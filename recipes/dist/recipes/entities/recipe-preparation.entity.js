@@ -49,6 +49,10 @@ __decorate([
     __metadata("design:type", Boolean)
 ], RecipePreparation.prototype, "is_consumable", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 20, default: 'active', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }),
+    __metadata("design:type", String)
+], RecipePreparation.prototype, "status", void 0);
+__decorate([
     (0, typeorm_1.CreateDateColumn)({ type: 'datetime' }),
     __metadata("design:type", Date)
 ], RecipePreparation.prototype, "created_at", void 0);

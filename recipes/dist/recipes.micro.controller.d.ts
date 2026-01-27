@@ -34,21 +34,29 @@ export declare class RecipesMicroController {
         dto: UpdateRecipeCategoryDto;
     }): Promise<import("./recipes/entities/recipe-category.entity").RecipeCategory>;
     deleteCategory(id: number): Promise<void>;
-    create(dto: CreateRecipeDto): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    create(payload: CreateRecipeDto | {
+        dto: CreateRecipeDto;
+        location_id?: number;
+    }): Promise<import("./recipes/entities/recipe.entity").Recipe>;
     findAllRecipes(payload: {
         page?: number;
         limit?: number;
         search?: string;
         category_id?: number;
+        location_id: number;
     }): Promise<{
         recipes: import("./recipes/entities/recipe.entity").Recipe[];
         total: number;
         totalPages: number;
     }>;
-    findOne(id: number): Promise<import("./recipes/entities/recipe.entity").Recipe>;
+    findOne(payload: number | {
+        id: number;
+        location_id?: number;
+    }): Promise<import("./recipes/entities/recipe.entity").Recipe>;
     update(payload: {
         id: number;
         dto: UpdateRecipeDto;
+        location_id?: number;
     }): Promise<import("./recipes/entities/recipe.entity").Recipe>;
     delete(id: number): Promise<void>;
     addProduct(dto: CreateRecipeProductDto): Promise<import("./recipes/entities/recipe-product.entity").RecipeProduct>;

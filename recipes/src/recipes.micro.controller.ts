@@ -95,8 +95,8 @@ export class RecipesMicroController {
   }
 
   @MessagePattern('recipes.update')
-  update(@Payload() payload: { id: number; dto: UpdateRecipeDto }) {
-    return this.service.update(payload.id, payload.dto);
+  update(@Payload() payload: { id: number; dto: UpdateRecipeDto; location_id?: number }) {
+    return this.service.update(payload.id, payload.dto, payload.location_id);
   }
 
   @MessagePattern('recipes.delete')

@@ -759,6 +759,47 @@ export class AttendanceService implements OnModuleInit {
     await this.presenceInflexionRepository.remove(inflexion);
   }
 
+  // ACTIVE SHIFT CHECK
+  async getActiveShiftForEmployee(employeeId: number): Promise<{
+    hasActiveShift: boolean;
+    shift: Shift | null;
+    presence: Presence | null;
+  }> {
+    // Găsește tura pentru ziua curentă
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+    // Caută tura angajatului pentru ziua curentă
+    const shift = await this.shiftRepository.findOne({
+      where: {
+        employee_id: employeeId,
+        start_datetime: Between(startOfDay, endOfDay),
+      },
+      relations: ['presences'],
+      order: { start_datetime: 'DESC' },
+    });
+
+    if (!shift) {
+      return { hasActiveShift: false, shift: null, presence: null };
+    }
+
+    // Verifică dacă există o prezență cu check_in setat și fără check_out
+    const activePresence = shift.presences?.find(
+      (p) => p.check_in && !p.check_out
+    );
+
+    if (!activePresence) {
+      return { hasActiveShift: false, shift, presence: null };
+    }
+
+    return {
+      hasActiveShift: true,
+      shift,
+      presence: activePresence,
+    };
+  }
+
   // STATISTICS AND REPORTS
   async getAttendanceStatistics(
     employee_id?: number,

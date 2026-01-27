@@ -19,11 +19,6 @@ export class CreateRecipeDto {
   @IsPositive()
   category_id: number;
 
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  location_id?: number;
-
   @ApiProperty()
   @IsNumber()
   @IsNotEmpty()
@@ -37,6 +32,17 @@ export class CreateRecipeDto {
   @Min(1)
   @Max(50000)
   quantity: number;
+
+  @ApiProperty({
+    description: 'Unitatea de măsură a cantității rețetei (ex: g, ml, buc)',
+    example: 'g',
+    required: false,
+    default: 'g',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 20)
+  unit?: string;
 
   @ApiProperty({
     description: 'Link către un videoclip YouTube cu prepararea rețetei',

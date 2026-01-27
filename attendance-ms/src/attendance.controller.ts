@@ -384,6 +384,24 @@ export class AttendanceController {
     return await this.attendanceService.deletePresenceInflexion(id);
   }
 
+  // MY ACTIVE SHIFT - verifică dacă angajatul curent are tură activă
+  @Get('my-active-shift')
+  @ApiOperation({
+    summary: 'Verifică dacă angajatul curent are tură activă',
+    description: 'Returnează informații despre tura activă (check_in setat, check_out nesetat) pentru angajatul autentificat.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Status tură activă',
+  })
+  async getMyActiveShift(@Request() req: any) {
+    const employeeId = req.user?.userId || req.user?.id || req.user?.employee_id || req.user?.id_employee || req.user?.sub;
+    if (!employeeId) {
+      return { hasActiveShift: false, shift: null, presence: null };
+    }
+    return await this.attendanceService.getActiveShiftForEmployee(Number(employeeId));
+  }
+
   // STATISTICS ENDPOINT
   @Get('statistics')
   @Permissions('attendance.read')

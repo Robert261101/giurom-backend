@@ -12,6 +12,10 @@ export class RecipeLocation {
   @Column({ name: 'id_location' })
   idLocation: number;
 
+  // Flag per-locație: dacă rețeta este consumabilă în această locație
+  @Column({ name: 'is_consumable', type: 'boolean', default: false })
+  isConsumable: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -59,6 +59,18 @@ __decorate([
 ], CreateRecipeDto.prototype, "quantity", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({
+        description: 'Unitatea de măsură a cantității rețetei (ex: g, ml, buc)',
+        example: 'g',
+        required: false,
+        default: 'g',
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Length)(1, 20),
+    __metadata("design:type", String)
+], CreateRecipeDto.prototype, "unit", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
         description: 'Link către un videoclip YouTube cu prepararea rețetei',
         example: 'https://www.youtube.com/watch?v=example',
         required: false,
