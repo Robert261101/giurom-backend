@@ -1,4 +1,14 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+  Index,
+} from 'typeorm';
 import { TaskAssignment } from '../../assignment/entity/task-assignment.entity';
 import { TaskExecutionAnswer } from './task-execution-answer.entity';
 import { EmployeeDailyTaskPoints } from './employee-daily-task-points.entity';
@@ -26,6 +36,9 @@ export class TaskExecution {
   @Column({ type: 'int', nullable: true })
   location_id: number;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  assignment_name: string | null;
+
   @Column({ type: 'datetime' })
   started_at: Date;
 
@@ -34,7 +47,6 @@ export class TaskExecution {
 
   @Column({ type: 'text', nullable: true })
   comment: string;
-
 
   @Column({ type: 'boolean', default: false })
   is_reactivation_compensation: boolean;
@@ -45,9 +57,12 @@ export class TaskExecution {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @OneToMany(() => TaskExecutionAnswer, answer => answer.task_execution)
+  @OneToMany(() => TaskExecutionAnswer, (answer) => answer.task_execution)
   answers: TaskExecutionAnswer[];
 
-  @OneToMany(() => EmployeeDailyTaskPoints, taskPoints => taskPoints.task_execution)
+  @OneToMany(
+    () => EmployeeDailyTaskPoints,
+    (taskPoints) => taskPoints.task_execution,
+  )
   daily_task_points: EmployeeDailyTaskPoints[];
-} 
+}

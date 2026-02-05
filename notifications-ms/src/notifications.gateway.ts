@@ -1,68 +1,71 @@
-import { WebSocketGateway, WebSocketServer, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+} from "@nestjs/websockets";
+import { Server, Socket } from "socket.io";
+import { Injectable, Logger } from "@nestjs/common";
 
-@WebSocketGateway({ 
-  namespace: '/notifications',
-  path: '/notifications/socket.io',
+@WebSocketGateway({
+  namespace: "/notifications",
+  path: "/notifications/socket.io",
   cors: {
     origin: [
-      'http://localhost:3000', 
-      'http://localhost:3001', 
-      'https://giurom.bitap.ro', 
-      'http://giurom.bitap.ro:3000', 
-      'http://giurom.bitap.ro:3001',
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://giurom.bitap.ro",
+      "http://giurom.bitap.ro:3000",
+      "http://giurom.bitap.ro:3001",
       /^https:\/\/.*\.vercel\.app$/,
-      /^https:\/\/.*\.vercel\.app\/.*$/
+      /^https:\/\/.*\.vercel\.app\/.*$/,
     ],
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 })
 @Injectable()
-export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
-  
+
   private readonly logger = new Logger(NotificationsGateway.name);
 
   handleConnection(client: Socket) {
-    this.logger.log(`🔌 WebSocket Client connected: ${client.id}`);
-    this.logger.log(`🔌 Client IP: ${client.handshake.address}`);
-    this.logger.log(`🔌 Client Origin: ${client.handshake.headers.origin}`);
-    this.logger.log(`🔌 Client Headers:`, JSON.stringify(client.handshake.headers));
+    // Connection logging disabled to reduce noise
   }
 
   handleDisconnect(client: Socket) {
     this.logger.log(`🔌 WebSocket Client disconnected: ${client.id}`);
   }
 
-  @SubscribeMessage('join')
+  @SubscribeMessage("join")
   handleJoin(client: Socket, payload: { userId: number | string }) {
     const userId = Number(payload.userId);
     const room = `user:${userId}`;
-    this.logger.log(`✅ Client ${client.id} joining room ${room} for userId ${userId}`);
     client.join(room);
-    this.logger.log(`✅ Client ${client.id} successfully joined room ${room}`);
     // Send confirmation back to client
-    client.emit('joined', { userId, room, socketId: client.id });
+    client.emit("joined", { userId, room, socketId: client.id });
   }
 
   emitUnreadCount(unread: number) {
-    this.server.emit('notifications:unread', { unread });
+    this.server.emit("notifications:unread", { unread });
   }
 
   // Emit new notification to specific user
   async emitNewNotification(userId: number, notification: any) {
     if (!this.server) {
-      this.logger.error('WebSocket server is not initialized');
+      this.logger.error("WebSocket server is not initialized");
       return;
     }
-    
+
     const room = `user:${userId}`;
-    
+
     try {
-      this.server.to(room).emit('notifications:new', notification);
+      this.server.to(room).emit("notifications:new", notification);
     } catch (error) {
       this.logger.error(`Failed to emit notification to room ${room}:`, error);
     }
@@ -71,10 +74,6 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   // Emit unread count to specific user
   emitUnreadCountForUser(userId: number, count: number) {
     const room = `user:${userId}`;
-    this.server.to(room).emit('notifications:unread-update', { userId, count });
+    this.server.to(room).emit("notifications:unread-update", { userId, count });
   }
 }
-
-
-
-

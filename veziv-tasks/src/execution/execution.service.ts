@@ -92,8 +92,24 @@ export class ExecutionService {
     // Extrage answers din DTO
     const { answers, ...executionData } = createExecutionDto;
 
+    // Reload assignment with template to capture template/assignment name
+    const assignmentWithTemplate = await this.taskAssignmentRepository.findOne({
+      where: { id: assignment.id },
+      relations: ['template'],
+    });
+
     // Setează employee_id cu assigned_to_id din assignment (angajatul căruia i s-a atribuit sarcina)
     executionData.employee_id = assignment.assigned_to_id;
+
+    // Păstrează numele task-ului (template_name) în execuție pentru consistență istorică
+    if (assignmentWithTemplate?.template?.template_name) {
+      (executionData as any).assignment_name =
+        assignmentWithTemplate.template.template_name;
+    } else if ((assignment as any).template?.template_name) {
+      (executionData as any).assignment_name = (
+        assignment as any
+      ).template.template_name;
+    }
 
     // Setează location_id din assignment pentru filtrări după locație
     if (assignment.location_id) {
@@ -376,31 +392,107 @@ export class ExecutionService {
       return result;
     }
 
+    // Extrage employee_id din user - poate fi în sub, employeeId sau employee_id
+    const userEmployeeId = user?.employeeId || user?.employee_id || user?.sub;
+    
+    console.log('🔍 [execution.findAll] User info:', {
+      sub: user?.sub,
+      employeeId: user?.employeeId,
+      employee_id: user?.employee_id,
+      resolvedEmployeeId: userEmployeeId,
+      permissions: user?.permissions,
+      hasAssignmentCreate: user?.permissions?.includes('assignment.create'),
+    });
+
     // execution.read_location - vede după work_location
     if (user?.permissions?.includes('execution.read_location')) {
-      // TODO: Implementare când avem legătura cu work_location
-      // Pentru read_location, managerii văd TOATE executions (inclusiv invizibile)
-      const result = await query.getMany();
+      // Verifică dacă este manager (are assignment.create) - vede TOATE executions
+      if (user?.permissions?.includes('assignment.create')) {
+        console.log('🔍 [execution.findAll] Manager cu read_location - returnează toate execuțiile');
+        const result = await query.getMany();
+        return result;
+      }
+      // Dacă NU este manager, vede STRICT doar execuțiile proprii
+      // Construim un nou query pentru a ne asigura că filtrul de employee_id este aplicat corect
+      console.log(`🔍 [execution.findAll] Angajat cu read_location - filtrează pentru employee_id=${userEmployeeId}`);
+      
+      const employeeQuery = this.executionRepository
+        .createQueryBuilder('execution')
+        .leftJoinAndSelect('execution.answers', 'answers')
+        .leftJoinAndSelect('answers.task_element', 'answer_task_element')
+        .leftJoinAndSelect('execution.task_assignment', 'task_assignment')
+        .leftJoinAndSelect('task_assignment.template', 'template')
+        .leftJoinAndSelect('task_assignment.elements', 'elements')
+        .leftJoinAndSelect('elements.task_element', 'element_task_element')
+        .where('execution.employee_id = :userId', { userId: userEmployeeId })
+        .andWhere('task_assignment.is_visible_for_employee = :visible', { visible: true })
+        .andWhere('execution.location_id IS NOT NULL')
+        .orderBy('execution.created_at', 'DESC');
+      
+      // Aplică filtrul de locație dacă există
+      if (locationId !== undefined) {
+        employeeQuery.andWhere('execution.location_id = :locationId', { locationId });
+      }
+      
+      // Aplică filtrul de dată dacă există
+      if (startDate && endDate) {
+        const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+        const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+        employeeQuery.andWhere(
+          `(execution.completed_at IS NOT NULL AND DATE(execution.completed_at) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NOT NULL AND DATE(task_assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NULL AND DATE(task_assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+          { sdStr, edStr },
+        );
+      }
+      
+      const result = await employeeQuery.getMany();
+      console.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
       return result;
     }
 
     // execution.read_own - vede doar execuțiile lui (employee_id = user.sub)
     if (user?.permissions?.includes('execution.read_own')) {
-      // Dacă are și assignment.create (este manager), poate vedea executions invizibile
+      // Dacă are și assignment.create (este manager), poate vedea TOATE executions
       if (user?.permissions?.includes('assignment.create')) {
-        const result = await query
-          .andWhere('execution.employee_id = :userId', { userId: user.sub })
-          .getMany();
+        console.log('🔍 [execution.findAll] Manager cu read_own - returnează toate execuțiile');
+        const result = await query.getMany();
         return result;
       } else {
-        // Dacă nu este manager, filtrează doar executions vizibile
-        // Join-ul cu task_assignment este deja făcut mai sus
-        const result = await query
-          .andWhere('execution.employee_id = :userId', { userId: user.sub })
-          .andWhere('task_assignment.is_visible_for_employee = :visible', {
-            visible: true,
-          })
-          .getMany();
+        // Dacă nu este manager, filtrează STRICT doar executions proprii
+        // IMPORTANT: Folosim where în loc de andWhere pentru a reseta condițiile anterioare
+        // și a ne asigura că filtrul de employee_id este aplicat corect
+        console.log(`🔍 [execution.findAll] Angajat cu read_own - filtrează pentru employee_id=${userEmployeeId}`);
+        
+        // Construim un nou query pentru angajați - doar execuțiile lor
+        const employeeQuery = this.executionRepository
+          .createQueryBuilder('execution')
+          .leftJoinAndSelect('execution.answers', 'answers')
+          .leftJoinAndSelect('answers.task_element', 'answer_task_element')
+          .leftJoinAndSelect('execution.task_assignment', 'task_assignment')
+          .leftJoinAndSelect('task_assignment.template', 'template')
+          .leftJoinAndSelect('task_assignment.elements', 'elements')
+          .leftJoinAndSelect('elements.task_element', 'element_task_element')
+          .where('execution.employee_id = :userId', { userId: userEmployeeId })
+          .andWhere('task_assignment.is_visible_for_employee = :visible', { visible: true })
+          .andWhere('execution.location_id IS NOT NULL')
+          .orderBy('execution.created_at', 'DESC');
+        
+        // Aplică filtrul de locație dacă există
+        if (locationId !== undefined) {
+          employeeQuery.andWhere('execution.location_id = :locationId', { locationId });
+        }
+        
+        // Aplică filtrul de dată dacă există
+        if (startDate && endDate) {
+          const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+          const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+          employeeQuery.andWhere(
+            `(execution.completed_at IS NOT NULL AND DATE(execution.completed_at) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NOT NULL AND DATE(task_assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NULL AND DATE(task_assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+            { sdStr, edStr },
+          );
+        }
+        
+        const result = await employeeQuery.getMany();
+        console.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
         return result;
       }
     }

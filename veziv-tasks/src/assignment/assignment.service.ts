@@ -643,6 +643,24 @@ export class AssignmentService {
       }
     }
 
+    // Dacă task-ul este șablon de recurență, asigurăm că nu are assigned_to_id
+    if (createAssignmentDto.recurrence_settings?.enabled) {
+      if (createAssignmentDto.assigned_to_id) {
+        try {
+          this.logger?.warn?.(
+            `🔒 [ASSIGNMENT SERVICE] Cleared assigned_to_id for recurrence template (was: ${createAssignmentDto.assigned_to_id})`,
+          );
+        } catch (e) {
+          // fallback la console dacă logger nu există
+          console.warn(
+            `🔒 [ASSIGNMENT SERVICE] Cleared assigned_to_id for recurrence template (was: ${createAssignmentDto.assigned_to_id})`,
+          );
+        }
+      }
+      // Forțăm assigned_to_id să fie undefined pentru șabloanele de recurență
+      createAssignmentDto.assigned_to_id = undefined;
+    }
+
     // Creează assignment-ul
     const assignment = this.assignmentRepository.create({
       template_id: createAssignmentDto.template_id,
@@ -1039,19 +1057,13 @@ export class AssignmentService {
         },
       });
 
-      // Șterge task-urile copil
+      // Șterge task-urile copil (elementele lor vor fi șterse în cascada DB / TypeORM)
       for (const childTask of childTasks) {
-        await this.elementRepository.delete({
-          task_assignment_id: childTask.id,
-        });
         await this.assignmentRepository.remove(childTask);
       }
     }
 
-    // Șterge elementele task-ului părinte
-    await this.elementRepository.delete({ task_assignment_id: id });
-
-    // Șterge task-ul părinte
+    // Șterge task-ul părinte (elementele asociate vor fi șterse în cascada DB / TypeORM)
     const assignmentId = assignment.id;
     const templateName = assignment.template?.template_name || 'Necunoscut';
 

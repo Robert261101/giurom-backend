@@ -1,4 +1,14 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+  Index,
+} from 'typeorm';
 import { TaskTemplate } from '../../template/entity/task-template.entity';
 import { TaskAssignmentElement } from './task-assignment-element.entity';
 
@@ -11,19 +21,19 @@ export enum AssignmentStatus {
   OVERDUE = 'overdue',
   SCHEDULED = 'scheduled',
   DEACTIVATED = 'deactivated',
-  WAITING_RESPONSE = 'waiting_response'
+  WAITING_RESPONSE = 'waiting_response',
 }
 
 export enum Priority {
   LOW = 'low',
   MEDIUM = 'medium',
-  HIGH = 'high'
+  HIGH = 'high',
 }
 
 export enum AssignmentMode {
   FIRST_COME_FIRST_SERVED = 'first_come_first_served', // Un singur task pentru grup, primul care acceptă devine proprietar
   EVERYONE_GETS_IT = 'everyone_gets_it', // Toți din grup primesc taskul individual (pentru grupuri)
-  INDIVIDUAL = 'individual' // Task individual atribuit unei singure persoane
+  INDIVIDUAL = 'individual', // Task individual atribuit unei singure persoane
 }
 
 @Entity('Task_Assignment')
@@ -49,7 +59,6 @@ export class TaskAssignment {
   @JoinColumn({ name: 'template_id' })
   template: TaskTemplate;
 
-
   @Column({ type: 'int', nullable: true })
   assigned_to_id: number;
 
@@ -62,13 +71,13 @@ export class TaskAssignment {
   @Column({
     type: 'enum',
     enum: AssignmentStatus,
-    default: AssignmentStatus.ASSIGNED
+    default: AssignmentStatus.ASSIGNED,
   })
   status: AssignmentStatus;
 
   @Column({
     type: 'enum',
-    enum: Priority
+    enum: Priority,
   })
   priority: Priority;
 
@@ -105,7 +114,7 @@ export class TaskAssignment {
   @Column({
     type: 'enum',
     enum: AssignmentMode,
-    default: AssignmentMode.INDIVIDUAL
+    default: AssignmentMode.INDIVIDUAL,
   })
   assignment_mode: AssignmentMode;
 
@@ -121,6 +130,16 @@ export class TaskAssignment {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @OneToMany(() => TaskAssignmentElement, element => element.task_assignment)
+  @OneToMany(
+    () => TaskAssignmentElement,
+    (element) => element.task_assignment,
+    {
+      cascade: ['insert', 'update', 'remove'],
+      orphanedRowAction: 'delete',
+    },
+  )
   elements: TaskAssignmentElement[];
-} 
+
+  @Column({ type: 'date', nullable: true })
+  last_recurrence_generated_date: Date | null;
+}

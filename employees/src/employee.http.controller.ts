@@ -12,7 +12,8 @@ import {
   Res,
   ParseIntPipe,
   Request,
-} from '@nestjs/common';
+  ForbiddenException,
+} from "@nestjs/common";
 import {
   ApiTags,
   ApiOperation,
@@ -20,73 +21,110 @@ import {
   ApiParam,
   ApiQuery,
   ApiBearerAuth,
-} from '@nestjs/swagger';
-import { EmployeeService } from './employee.service';
-import { CreateEmployeeDto } from './dto/create-employee.dto';
-import { UpdateEmployeeDto } from './dto/update-employee.dto';
-import { Employee } from './entities/employee.entity';
-import { EmployeeLocation } from './entities/employee-location.entity';
-import { CreateEmployeeLocationDto } from './dto/create-employee-location.dto';
-import { Response } from 'express';
-import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
-import { Buffer } from 'buffer';
-import { Permissions } from './permissions/permissions.decorator';
-import { InternalServiceGuard } from './auth/internal-service.guard';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
+} from "@nestjs/swagger";
+import { EmployeeService } from "./employee.service";
+import { CreateEmployeeDto } from "./dto/create-employee.dto";
+import { UpdateEmployeeDto } from "./dto/update-employee.dto";
+import { Employee } from "./entities/employee.entity";
+import { EmployeeLocation } from "./entities/employee-location.entity";
+import { CreateEmployeeLocationDto } from "./dto/create-employee-location.dto";
+import { Response } from "express";
+import { CreateEmployeeFileDto } from "./dto/create-employee-file.dto";
+import { Buffer } from "buffer";
+import { Permissions } from "./permissions/permissions.decorator";
+import { InternalServiceGuard } from "./auth/internal-service.guard";
+import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 
-@ApiTags('employees')
-@Controller('employees')
+@ApiTags("employees")
+@Controller("employees")
 @ApiBearerAuth()
 export class EmployeeHttpController {
   constructor(private readonly employeeService: EmployeeService) {}
 
   @Post()
-  @Permissions('employees.create')
+  @Permissions("employees.create")
   @ApiOperation({
-    summary: 'Creează un angajat nou',
-    description: 'Adaugă un nou angajat în sistem cu toate informațiile necesare.',
+    summary: "Creează un angajat nou",
+    description:
+      "Adaugă un nou angajat în sistem cu toate informațiile necesare.",
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
-    description: 'Angajatul a fost creat cu succes',
+    description: "Angajatul a fost creat cu succes",
     type: Employee,
   })
-  async create(@Body() createEmployeeDto: CreateEmployeeDto): Promise<Employee> {
+  async create(
+    @Body() createEmployeeDto: CreateEmployeeDto,
+  ): Promise<Employee> {
     return this.employeeService.create(createEmployeeDto);
   }
 
   @Get()
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions('employees.read')
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Listează toți angajații',
-    description: 'Returnează o listă paginată cu toți angajații din sistem cu opțiuni de filtrare.',
+    summary: "Listează toți angajații",
+    description:
+      "Returnează o listă paginată cu toți angajații din sistem cu opțiuni de filtrare.",
   })
-  @ApiQuery({ name: 'page', required: false, description: 'Numărul paginii (implicit: 1)' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Numărul de angajați per pagină (implicit: 10)' })
-  @ApiQuery({ name: 'is_active', required: false, description: 'Filtrează după status activ' })
-  @ApiQuery({ name: 'department', required: false, description: 'Filtrează după departament' })
-  @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtrează după locația implicită a angajatului' })
-  @ApiQuery({ name: 'location_id', required: false, description: 'Filtrează după locația din employees_locations' })
-  @ApiQuery({ name: 'contract_type', required: false, description: 'Filtrează după tipul contractului' })
-  @ApiQuery({ name: 'department_name', required: false, description: 'Filtrează după numele departamentului' })
+  @ApiQuery({
+    name: "page",
+    required: false,
+    description: "Numărul paginii (implicit: 1)",
+  })
+  @ApiQuery({
+    name: "limit",
+    required: false,
+    description: "Numărul de angajați per pagină (implicit: 10)",
+  })
+  @ApiQuery({
+    name: "is_active",
+    required: false,
+    description: "Filtrează după status activ",
+  })
+  @ApiQuery({
+    name: "department",
+    required: false,
+    description: "Filtrează după departament",
+  })
+  @ApiQuery({
+    name: "work_location_id",
+    required: false,
+    description: "Filtrează după locația implicită a angajatului",
+  })
+  @ApiQuery({
+    name: "location_id",
+    required: false,
+    description: "Filtrează după locația din employees_locations",
+  })
+  @ApiQuery({
+    name: "contract_type",
+    required: false,
+    description: "Filtrează după tipul contractului",
+  })
+  @ApiQuery({
+    name: "department_name",
+    required: false,
+    description: "Filtrează după numele departamentului",
+  })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista angajații a fost returnată cu succes',
+    description: "Lista angajații a fost returnată cu succes",
   })
   async findAll(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-    @Query('is_active') is_active?: string,
-    @Query('department') department?: string,
-    @Query('contract_type') contract_type?: string,
-    @Query('work_location_id') work_location_id?: string,
-    @Query('location_id') location_id?: string,
-    @Query('department_name') department_name?: string,
+    @Query("page") page: string = "1",
+    @Query("limit") limit: string = "10",
+    @Query("is_active") is_active?: string,
+    @Query("department") department?: string,
+    @Query("contract_type") contract_type?: string,
+    @Query("work_location_id") work_location_id?: string,
+    @Query("location_id") location_id?: string,
+    @Query("department_name") department_name?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
-    const isActiveFilter = is_active !== undefined ? is_active === 'true' : undefined;
+    const isActiveFilter =
+      is_active !== undefined ? is_active === "true" : undefined;
     const departmentFilter = department ? parseInt(department, 10) : undefined;
 
     return this.employeeService.findAll(
@@ -101,32 +139,60 @@ export class EmployeeHttpController {
     );
   }
 
-  @Get('batch')
-  @UseGuards(InternalServiceGuard, JwtAuthGuard) // Permite atât apeluri interne cât și JWT
-  @Permissions('employees.read')
+  @Get("batch")
+  @UseGuards(InternalServiceGuard, JwtAuthGuard) // Permite apeluri interne (header secret) OR JWT autentificat
+  // Permite utilizatorilor cu permisiunea completă `employees.read` sau doar `employees.read_own`
+  // (angajați) să apeleze acest endpoint.
+  @Permissions("employees.read", "employees.read_own")
   @ApiOperation({
-    summary: 'Obține mai mulți angajați după ID-uri (batch)',
-    description: 'Returnează informații de bază (id, first_name, last_name, email) pentru o listă de ID-uri de angajați.',
+    summary: "Obține mai mulți angajați după ID-uri (batch)",
+    description:
+      "Returnează informații de bază (id, first_name, last_name, email) pentru o listă de ID-uri de angajați.",
   })
   @ApiQuery({
-    name: 'ids',
+    name: "ids",
     required: true,
-    description: 'Lista de ID-uri de angajați, separate prin virgulă (ex: 1,2,3)',
+    description:
+      "Lista de ID-uri de angajați, separate prin virgulă (ex: 1,2,3)",
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista angajaților a fost returnată cu succes',
+    description: "Lista angajaților a fost returnată cu succes",
     type: [Employee],
   })
   async findBatch(
-    @Query('ids') ids: string,
-  ): Promise<Array<Pick<Employee, 'id' | 'first_name' | 'last_name' | 'email'>>> {
+    @Query("ids") ids: string,
+    @Request() req: any,
+  ): Promise<
+    Array<Pick<Employee, "id" | "first_name" | "last_name" | "email">>
+  > {
     if (!ids) {
       return [];
     }
+    // DEBUG LOGS (temporary) - afișează headerele și user-ul decodat pentru debugging permisiuni
+    try {
+      console.log(`[EMPLOYEES][BATCH] ids=${ids}`);
+      console.log("[EMPLOYEES][BATCH] req.headers =", req?.headers);
+      console.log("[EMPLOYEES][BATCH] req.user =", req?.user);
+    } catch (e) {
+      // ignore logging errors
+    }
+
+    // Permite apelul dacă este un apel intern (InternalServiceGuard) sau dacă user-ul are
+    // permisiunea `employees.read` sau `employees.read_own`.
+    // Verificăm manual aici (guard-urile pot fi diferite în funcție de implementare).
+    const headers = req?.headers || {};
+    const internalHeader =
+      headers["x-internal-service"] || headers["x-service-secret"] || headers["x-api-key"];
+    if (!internalHeader) {
+      const userPermissions = req?.user?.permissions || [];
+      if (!Array.isArray(userPermissions) || !(userPermissions.includes("employees.read") || userPermissions.includes("employees.read_own"))) {
+        throw new ForbiddenException("Forbidden");
+      }
+    }
 
     const idList = ids
-      .split(',')
+      .split(",")
       .map((id) => parseInt(id.trim(), 10))
       .filter((id) => Number.isFinite(id));
 
@@ -137,30 +203,37 @@ export class EmployeeHttpController {
     return this.employeeService.findByIdsBasic(idList);
   }
 
-  @Get('for-own')
-  @Permissions('employees.read_own')
+  @Get("for-own")
+  @Permissions("employees.read_own")
   @ApiOperation({
-    summary: 'Listează angajații pentru utilizatori cu permisiunea employees.read_own',
-    description: 'Returnează doar id, first_name, last_name pentru angajați activi.',
+    summary:
+      "Listează angajații pentru utilizatori cu permisiunea employees.read_own",
+    description:
+      "Returnează doar id, first_name, last_name pentru angajați activi.",
   })
-  @ApiQuery({ name: 'location_id', required: false, description: 'Filtrează după locație' })
+  @ApiQuery({
+    name: "location_id",
+    required: false,
+    description: "Filtrează după locație",
+  })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista angajaților a fost returnată cu succes',
+    description: "Lista angajaților a fost returnată cu succes",
   })
   async findForOwn(
-    @Query('location_id') location_id?: string,
-    @Request() req?: any
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ): Promise<{ id: number; first_name: string; last_name: string }[]> {
     const user = req?.user;
-    const hasEmployeesRead = user?.permissions?.includes('employees.read');
-    
+    const hasEmployeesRead = user?.permissions?.includes("employees.read");
+
     // Dacă utilizatorul nu are permisiunea employees.read, filtrare OBLIGATORIE după locație
     if (!hasEmployeesRead) {
       // Dacă nu are location_id în query, încearcă să obțină din user
       let finalLocationId = location_id ? parseInt(location_id, 10) : undefined;
       if (!finalLocationId) {
-        finalLocationId = user?.work_location_id || user?.work_location_default_id;
+        finalLocationId =
+          user?.work_location_id || user?.work_location_default_id;
       }
       if (!finalLocationId) {
         // Dacă nu are locație, returnează array gol
@@ -168,21 +241,21 @@ export class EmployeeHttpController {
       }
       return this.employeeService.findForOwn(finalLocationId);
     }
-    
+
     // Pentru utilizatori cu employees.read, permitem fără location_id
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     return this.employeeService.findForOwn(locationId);
   }
 
-  @Get('statistics')
-  @Permissions('employees.read')
+  @Get("statistics")
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Statistici angajați',
-    description: 'Returnează statistici detaliate despre angajați.',
+    summary: "Statistici angajați",
+    description: "Returnează statistici detaliate despre angajați.",
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Statisticile au fost returnate cu succes',
+    description: "Statisticile au fost returnate cu succes",
   })
   async getStatistics(): Promise<{
     total: number;
@@ -196,18 +269,18 @@ export class EmployeeHttpController {
   }
 
   // List employee files by employee ID
-  @Get(':employeeId/files')
-  @Permissions('employees.read')
+  @Get(":employeeId/files")
+  @Permissions("employees.read")
   async getEmployeeFiles(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Param("employeeId", ParseIntPipe) employeeId: number,
   ) {
     return this.employeeService.findFilesByEmployee(employeeId);
   }
 
   // Optional: list via query (used by some legacy callers)
-  @Get('files')
-  @Permissions('employees.read')
-  async getFilesByQuery(@Query('employee_id') employee_id?: string) {
+  @Get("files")
+  @Permissions("employees.read")
+  async getFilesByQuery(@Query("employee_id") employee_id?: string) {
     if (!employee_id) {
       return [];
     }
@@ -218,234 +291,255 @@ export class EmployeeHttpController {
     return this.employeeService.findFilesByEmployee(idNum);
   }
 
-  @Get('email/:email')
+  @Get("email/:email")
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions('employees.read')
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Găsește angajat după email',
-    description: 'Returnează detaliile angajatului cu email-ul specificat.',
+    summary: "Găsește angajat după email",
+    description: "Returnează detaliile angajatului cu email-ul specificat.",
   })
-  @ApiParam({ name: 'email', description: 'Email-ul angajatului' })
+  @ApiParam({ name: "email", description: "Email-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost găsit',
+    description: "Angajatul a fost găsit",
     type: Employee,
   })
-  async findByEmail(
-    @Param('email') email: string,
-  ): Promise<Employee> {
+  async findByEmail(@Param("email") email: string): Promise<Employee> {
     return this.employeeService.findByEmail(email);
   }
 
-  @Get('phone/:phone')
+  @Get("phone/:phone")
   @ApiOperation({
-    summary: 'Găsește angajat după telefon',
-    description: 'Returnează detaliile angajatului cu numărul de telefon specificat.',
+    summary: "Găsește angajat după telefon",
+    description:
+      "Returnează detaliile angajatului cu numărul de telefon specificat.",
   })
-  @ApiParam({ name: 'phone', description: 'Numărul de telefon al angajatului' })
+  @ApiParam({ name: "phone", description: "Numărul de telefon al angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost găsit',
+    description: "Angajatul a fost găsit",
     type: Employee,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
-    description: 'Angajatul nu a fost găsit',
+    description: "Angajatul nu a fost găsit",
   })
-  async findByPhone(
-    @Param('phone') phone: string,
-  ): Promise<Employee> {
+  async findByPhone(@Param("phone") phone: string): Promise<Employee> {
     return this.employeeService.findByPhone(phone);
   }
 
-  @Get('cnp/:cnp')
-  @Permissions('employees.read')
+  @Get("cnp/:cnp")
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Găsește angajat după CNP',
-    description: 'Returnează detaliile angajatului cu CNP-ul specificat.',
+    summary: "Găsește angajat după CNP",
+    description: "Returnează detaliile angajatului cu CNP-ul specificat.",
   })
-  @ApiParam({ name: 'cnp', description: 'CNP-ul angajatului' })
+  @ApiParam({ name: "cnp", description: "CNP-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost găsit',
+    description: "Angajatul a fost găsit",
     type: Employee,
   })
-  async findByCNP(@Param('cnp') cnp: string): Promise<Employee> {
+  async findByCNP(@Param("cnp") cnp: string): Promise<Employee> {
     return this.employeeService.findByCNP(cnp);
   }
 
-  @Get('by-user/:userId')
+  @Get("by-user/:userId")
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions('employees.read')
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Găsește angajat după user ID',
-    description: 'Returnează detaliile angajatului asociat cu user_id-ul specificat.',
+    summary: "Găsește angajat după user ID",
+    description:
+      "Returnează detaliile angajatului asociat cu user_id-ul specificat.",
   })
-  @ApiParam({ name: 'userId', description: 'ID-ul utilizatorului (din auth service)' })
+  @ApiParam({
+    name: "userId",
+    description: "ID-ul utilizatorului (din auth service)",
+  })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost găsit',
+    description: "Angajatul a fost găsit",
     type: Employee,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
-    description: 'Angajatul nu a fost găsit pentru acest user_id',
+    description: "Angajatul nu a fost găsit pentru acest user_id",
   })
   async findByUserId(
-    @Param('userId', ParseIntPipe) userId: number,
+    @Param("userId", ParseIntPipe) userId: number,
   ): Promise<Employee> {
     return this.employeeService.findByUserId(userId);
   }
 
-  @Get(':id/name')
-  @Permissions('employees.read_own')
+  @Get(":id/name")
+  @Permissions("employees.read_own")
   @ApiOperation({
-    summary: 'Găsește numele unui angajat după ID',
-    description: 'Returnează doar id, first_name, last_name, full_name pentru utilizatori cu permisiunea employees.read_own.',
+    summary: "Găsește numele unui angajat după ID",
+    description:
+      "Returnează doar id, first_name, last_name, full_name pentru utilizatori cu permisiunea employees.read_own.",
   })
-  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  @ApiParam({ name: "id", description: "ID-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Numele angajatului a fost returnat cu succes',
+    description: "Numele angajatului a fost returnat cu succes",
   })
   async findNameById(
-    @Param('id') id: string,
-  ): Promise<{ id: number; first_name: string; last_name: string; full_name: string }> {
+    @Param("id") id: string,
+  ): Promise<{
+    id: number;
+    first_name: string;
+    last_name: string;
+    full_name: string;
+  }> {
     return this.employeeService.findNameById(+id);
   }
 
-  @Get(':id')
+  @Get(":id")
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions('employees.read')
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Găsește angajat după ID',
-    description: 'Returnează detaliile angajatului cu ID-ul specificat, incluzând toate relațiile.',
+    summary: "Găsește angajat după ID",
+    description:
+      "Returnează detaliile angajatului cu ID-ul specificat, incluzând toate relațiile.",
   })
-  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  @ApiParam({ name: "id", description: "ID-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost găsit',
+    description: "Angajatul a fost găsit",
     type: Employee,
   })
-  async findOne(
-    @Param('id') id: string,
-  ): Promise<Employee> {
+  async findOne(@Param("id") id: string): Promise<Employee> {
     return this.employeeService.findOne(+id);
   }
 
-  @Patch(':id')
-  @Permissions('employees.update')
+  @Patch(":id")
+  @Permissions("employees.update")
   @ApiOperation({
-    summary: 'Actualizează un angajat',
-    description: 'Actualizează informațiile unui angajat existent.',
+    summary: "Actualizează un angajat",
+    description: "Actualizează informațiile unui angajat existent.",
   })
-  @ApiParam({ name: 'id', description: 'ID-ul angajatului de actualizat' })
+  @ApiParam({ name: "id", description: "ID-ul angajatului de actualizat" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost actualizat cu succes',
+    description: "Angajatul a fost actualizat cu succes",
     type: Employee,
   })
   async update(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
   ): Promise<Employee> {
     return this.employeeService.update(+id, updateEmployeeDto);
   }
 
-  @Patch(':id/toggle-active')
-  @Permissions('employees.update')
+  @Patch(":id/toggle-active")
+  @Permissions("employees.update")
   @ApiOperation({
-    summary: 'Activează/dezactivează un angajat',
-    description: 'Schimbă statusul activ al unui angajat (activ ↔ inactiv).',
+    summary: "Activează/dezactivează un angajat",
+    description: "Schimbă statusul activ al unui angajat (activ ↔ inactiv).",
   })
-  @ApiParam({ name: 'id', description: 'ID-ul angajatului' })
+  @ApiParam({ name: "id", description: "ID-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Statusul angajatului a fost schimbat cu succes',
+    description: "Statusul angajatului a fost schimbat cu succes",
     type: Employee,
   })
-  async toggleActive(@Param('id') id: string): Promise<Employee> {
+  async toggleActive(@Param("id") id: string): Promise<Employee> {
     return this.employeeService.toggleActive(+id);
   }
 
-  @Delete(':id')
-  @Permissions('employees.delete')
+  @Delete(":id")
+  @Permissions("employees.delete")
   @ApiOperation({
-    summary: 'Șterge un angajat',
-    description: 'Șterge definitiv un angajat din sistem. Atenție: această operație este ireversibilă!',
+    summary: "Șterge un angajat",
+    description:
+      "Șterge definitiv un angajat din sistem. Atenție: această operație este ireversibilă!",
   })
-  @ApiParam({ name: 'id', description: 'ID-ul angajatului de șters' })
+  @ApiParam({ name: "id", description: "ID-ul angajatului de șters" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost șters cu succes',
+    description: "Angajatul a fost șters cu succes",
   })
-  async remove(@Param('id') id: string): Promise<{ message: string }> {
+  async remove(@Param("id") id: string): Promise<{ message: string }> {
     return this.employeeService.remove(+id);
   }
 
   // Serve employee file (download or inline based on query)
-  @Get('file/:fileId')
-  @Permissions('employees.read')
+  @Get("file/:fileId")
+  @Permissions("employees.read")
   async getEmployeeFile(
-    @Param('fileId', ParseIntPipe) fileId: number,
-    @Query('download') download: string,
+    @Param("fileId", ParseIntPipe) fileId: number,
+    @Query("download") download: string,
     @Res() res: Response,
   ) {
-    const forceDownload = download === 'true';
+    const forceDownload = download === "true";
     const served = await this.employeeService.serveFile(fileId, forceDownload);
-    const buffer = Buffer.from(served.data, 'base64');
-    res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
+    const buffer = Buffer.from(served.data, "base64");
     res.setHeader(
-      'Content-Disposition',
-      `${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
+      "Content-Type",
+      served.mimeType || "application/octet-stream",
     );
-    res.setHeader('Content-Length', buffer.length.toString());
+    res.setHeader(
+      "Content-Disposition",
+      `${forceDownload || served.disposition === "attachment" ? "attachment" : "inline"}; filename="${served.fileName}"`,
+    );
+    res.setHeader("Content-Length", buffer.length.toString());
     return res.send(buffer);
   }
 
   // Delete employee file
-  @Delete('files/:fileId')
-  @Permissions('employees.delete')
+  @Delete("files/:fileId")
+  @Permissions("employees.delete")
   @ApiOperation({
-    summary: 'Șterge un fișier al unui angajat',
-    description: 'Șterge definitiv un fișier al unui angajat din sistem. Atenție: această operație este ireversibilă!',
+    summary: "Șterge un fișier al unui angajat",
+    description:
+      "Șterge definitiv un fișier al unui angajat din sistem. Atenție: această operație este ireversibilă!",
   })
-  @ApiParam({ name: 'fileId', description: 'ID-ul fișierului de șters' })
+  @ApiParam({ name: "fileId", description: "ID-ul fișierului de șters" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Fișierul a fost șters cu succes',
+    description: "Fișierul a fost șters cu succes",
   })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Fișierul nu a fost găsit' })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Fișierul nu a fost găsit",
+  })
   async deleteEmployeeFile(
-    @Param('fileId', ParseIntPipe) fileId: number,
+    @Param("fileId", ParseIntPipe) fileId: number,
   ): Promise<{ message: string }> {
     return this.employeeService.removeFile(fileId);
   }
 
   // Force inline view
-  @Get('file/:fileId/view')
-  @Permissions('employees.read')
+  @Get("file/:fileId/view")
+  @Permissions("employees.read")
   async viewEmployeeFile(
-    @Param('fileId', ParseIntPipe) fileId: number,
+    @Param("fileId", ParseIntPipe) fileId: number,
     @Res() res: Response,
   ) {
     const served = await this.employeeService.serveFile(fileId, false);
-    const buffer = Buffer.from(served.data, 'base64');
-    res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
-    res.setHeader('Content-Length', buffer.length.toString());
+    const buffer = Buffer.from(served.data, "base64");
+    res.setHeader(
+      "Content-Type",
+      served.mimeType || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${served.fileName}"`,
+    );
+    res.setHeader("Content-Length", buffer.length.toString());
     return res.send(buffer);
   }
 
   // Create employee file (metadata or with base64 content)
-  @Post(':employeeId/files')
-  @Permissions('employees.create')
+  @Post(":employeeId/files")
+  @Permissions("employees.create")
   async addEmployeeFile(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Body() body: Omit<CreateEmployeeFileDto, 'employee_id'> & { employee_id?: number },
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Body()
+    body: Omit<CreateEmployeeFileDto, "employee_id"> & { employee_id?: number },
   ) {
-    console.log('📥 Received addEmployeeFile request:', { employeeId, body });
-    
+    console.log("📥 Received addEmployeeFile request:", { employeeId, body });
+
     const dto: CreateEmployeeFileDto = {
       employee_id: employeeId,
       file_name: body.file_name,
@@ -454,168 +548,239 @@ export class EmployeeHttpController {
       file_content: body.file_content,
       note: body.note,
     } as CreateEmployeeFileDto;
-    
-    console.log('📤 Sending to employee service from addEmployeeFile:', { dto });
+
+    console.log("📤 Sending to employee service from addEmployeeFile:", {
+      dto,
+    });
     return this.employeeService.createFile(dto);
   }
 
   // Backwards-compatible route used by frontend add form
-  @Post(':employeeId/documents-with-content')
-  @Permissions('employees.create')
+  @Post(":employeeId/documents-with-content")
+  @Permissions("employees.create")
   async addEmployeeDocumentWithContent(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; expire_date?: string }> },
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Body()
+    body: {
+      documents: Array<{
+        fileName: string;
+        name?: string;
+        size?: number;
+        content: string;
+        type?: string;
+        document_type?: string;
+        note?: string;
+        expire_date?: string;
+      }>;
+    },
   ) {
-    console.log('📥 Received document upload request:', { employeeId, body });
-    
+    console.log("📥 Received document upload request:", { employeeId, body });
+
     if (!body?.documents || body.documents.length === 0) {
-      return { message: 'No documents provided' };
+      return { message: "No documents provided" };
     }
     const first = body.documents[0];
-    const fileName = first.fileName || first.name || 'document.bin';
-    
+    const fileName = first.fileName || first.name || "document.bin";
+
     // Get employee to construct proper file link
     const employee = await this.employeeService.findOne(employeeId);
-    const employeeName = this.employeeService['simplifyEmployeeName'](employee.first_name, employee.last_name);
-    
+    const employeeName = this.employeeService["simplifyEmployeeName"](
+      employee.first_name,
+      employee.last_name,
+    );
+
     // Check if this is a profile picture
-    const isProfilePicture = (first.document_type || first.type) === 'profile_picture';
-    
+    const isProfilePicture =
+      (first.document_type || first.type) === "profile_picture";
+
     // Don't provide file_link - let the service construct the correct path based on employee location binding
     // The service will check if employee is location-bound and construct the appropriate path
-      
+
     const createFileDto = {
       employee_id: employeeId,
       file_name: fileName,
-      file_type: first.document_type || first.type || 'Altele',
+      file_type: first.document_type || first.type || "Altele",
       file_content: first.content,
       expire_date: first.expire_date,
       note: first.note,
     };
-    
-    console.log('📤 Sending to employee service:', { createFileDto });
-    
-    return this.employeeService.createFile(createFileDto as CreateEmployeeFileDto);
+
+    console.log("📤 Sending to employee service:", { createFileDto });
+
+    return this.employeeService.createFile(
+      createFileDto as CreateEmployeeFileDto,
+    );
   }
 
   // ==================== EMPLOYEES LOCATIONS ENDPOINTS ====================
 
-  @Post('locations/assign')
-  @Permissions('employees.update')
+  @Post("locations/assign")
+  @Permissions("employees.update")
   @ApiOperation({
-    summary: 'Asignă un angajat la o locație',
-    description: 'Creează o asociere între un angajat și o locație de lucru.',
+    summary: "Asignă un angajat la o locație",
+    description: "Creează o asociere între un angajat și o locație de lucru.",
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
-    description: 'Angajatul a fost asignat cu succes la locație',
+    description: "Angajatul a fost asignat cu succes la locație",
     type: EmployeeLocation,
   })
-  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Angajatul este deja asignat la această locație' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: "Angajatul este deja asignat la această locație",
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Angajatul nu a fost găsit",
+  })
   async assignEmployeeToLocation(
     @Body() assignDto: CreateEmployeeLocationDto,
   ): Promise<EmployeeLocation> {
     return this.employeeService.assignEmployeeToLocation(assignDto);
   }
 
-  @Get(':employeeId/locations')
-  @Permissions('employees.read')
+  @Get(":employeeId/locations")
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Obține locațiile unui angajat',
-    description: 'Returnează toate locațiile la care este asignat un angajat.',
+    summary: "Obține locațiile unui angajat",
+    description: "Returnează toate locațiile la care este asignat un angajat.",
   })
-  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiParam({ name: "employeeId", description: "ID-ul angajatului" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista locațiilor angajatului',
+    description: "Lista locațiilor angajatului",
     type: [EmployeeLocation],
   })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Angajatul nu a fost găsit' })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Angajatul nu a fost găsit",
+  })
   async getEmployeeLocations(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Param("employeeId", ParseIntPipe) employeeId: number,
   ): Promise<EmployeeLocation[]> {
     return this.employeeService.findEmployeeLocations(employeeId);
   }
 
-  @Get('locations/:locationId/employees')
-  @Permissions('employees.read')
+  @Get("locations/:locationId/employees")
+  @Permissions("employees.read")
   @ApiOperation({
-    summary: 'Obține angajații unei locații',
-    description: 'Returnează toți angajații asignați la o locație de lucru.',
+    summary: "Obține angajații unei locații",
+    description: "Returnează toți angajații asignați la o locație de lucru.",
   })
-  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Lista angajaților de la locație',
+    description: "Lista angajaților de la locație",
     type: [EmployeeLocation],
   })
   async getLocationEmployees(
-    @Param('locationId', ParseIntPipe) locationId: number,
+    @Param("locationId", ParseIntPipe) locationId: number,
   ): Promise<EmployeeLocation[]> {
-    console.log('🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:', locationId);
+    console.log(
+      "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
+      locationId,
+    );
     const result = await this.employeeService.findLocationEmployees(locationId);
-    console.log('🔍 [EMPLOYEES CONTROLLER] Angajați returnați:', result.length);
+    console.log("🔍 [EMPLOYEES CONTROLLER] Angajați returnați:", result.length);
     return result;
   }
 
-  @Get('location/:locationId')
-  @Permissions('employees.read')
-  @ApiOperation({ summary: 'Obține toți angajații din locația specificată' })
-  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-  @ApiResponse({ status: 200, description: 'Lista angajaților din locație' })
-  async getEmployeesByLocation(@Param('locationId', ParseIntPipe) locationId: number) {
-    console.log('🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:', locationId);
-    const employees = await this.employeeService.findAll(1, 1000, undefined, undefined, undefined, undefined, locationId);
-    console.log('🔍 [EMPLOYEES CONTROLLER] Angajați returnați:', employees.employees.length);
+  @Get("location/:locationId")
+  @Permissions("employees.read")
+  @ApiOperation({ summary: "Obține toți angajații din locația specificată" })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
+  @ApiResponse({ status: 200, description: "Lista angajaților din locație" })
+  async getEmployeesByLocation(
+    @Param("locationId", ParseIntPipe) locationId: number,
+  ) {
+    console.log(
+      "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
+      locationId,
+    );
+    const employees = await this.employeeService.findAll(
+      1,
+      1000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      locationId,
+    );
+    console.log(
+      "🔍 [EMPLOYEES CONTROLLER] Angajați returnați:",
+      employees.employees.length,
+    );
     return { employees: employees.employees };
   }
 
-  @Delete(':employeeId/locations/:locationId')
-  @Permissions('employees.update')
+  @Delete(":employeeId/locations/:locationId")
+  @Permissions("employees.update")
   @ApiOperation({
-    summary: 'Elimină angajatul de la locație',
-    description: 'Șterge asocierea dintre un angajat și o locație de lucru.',
+    summary: "Elimină angajatul de la locație",
+    description: "Șterge asocierea dintre un angajat și o locație de lucru.",
   })
-  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
-  @ApiParam({ name: 'locationId', description: 'ID-ul locației' })
+  @ApiParam({ name: "employeeId", description: "ID-ul angajatului" })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Angajatul a fost eliminat cu succes de la locație',
+    description: "Angajatul a fost eliminat cu succes de la locație",
   })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Asocierea nu a fost găsită' })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Asocierea nu a fost găsită",
+  })
   async removeEmployeeFromLocation(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Param('locationId', ParseIntPipe) locationId: number,
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Param("locationId", ParseIntPipe) locationId: number,
   ): Promise<{ message: string }> {
-    return this.employeeService.removeEmployeeFromLocation(employeeId, locationId);
+    return this.employeeService.removeEmployeeFromLocation(
+      employeeId,
+      locationId,
+    );
   }
 
-  @Get('company/:companyId')
-  @Permissions('employees.read')
-  @ApiOperation({ summary: 'Obține toți angajații companiei' })
-  @ApiParam({ name: 'companyId', description: 'ID-ul companiei' })
-  @ApiResponse({ status: 200, description: 'Lista angajaților companiei' })
-  async getEmployeesByCompany(@Param('companyId', ParseIntPipe) companyId: number) {
+  @Get("company/:companyId")
+  @Permissions("employees.read")
+  @ApiOperation({ summary: "Obține toți angajații companiei" })
+  @ApiParam({ name: "companyId", description: "ID-ul companiei" })
+  @ApiResponse({ status: 200, description: "Lista angajaților companiei" })
+  async getEmployeesByCompany(
+    @Param("companyId", ParseIntPipe) companyId: number,
+  ) {
     return this.employeeService.findAllByCompany(companyId);
   }
 
   // Get files expiring on a specific date
-  @Get('files/expiring/:targetDate')
-  @Permissions('employees.read')
-  @ApiOperation({ summary: 'Obține fișierele angajaților care expiră la o anumită dată' })
-  @ApiParam({ name: 'targetDate', description: 'Data la care expiră fișierele (format: YYYY-MM-DD)' })
-  @ApiResponse({ status: 200, description: 'Lista fișierelor care expiră la data specificată' })
-  async getExpiringFiles(@Param('targetDate') targetDate: string) {
-    console.log(`[EMPLOYEES CONTROLLER] Getting files expiring on ${targetDate}`);
+  @Get("files/expiring/:targetDate")
+  @Permissions("employees.read")
+  @ApiOperation({
+    summary: "Obține fișierele angajaților care expiră la o anumită dată",
+  })
+  @ApiParam({
+    name: "targetDate",
+    description: "Data la care expiră fișierele (format: YYYY-MM-DD)",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Lista fișierelor care expiră la data specificată",
+  })
+  async getExpiringFiles(@Param("targetDate") targetDate: string) {
+    console.log(
+      `[EMPLOYEES CONTROLLER] Getting files expiring on ${targetDate}`,
+    );
     return this.employeeService.findExpiringFiles(targetDate);
   }
 
   // Get files that have already expired
-  @Get('files/expired')
-  @Permissions('employees.read')
-  @ApiOperation({ summary: 'Obține fișierele angajaților care au expirat deja' })
-  @ApiResponse({ status: 200, description: 'Lista fișierelor care au expirat deja' })
+  @Get("files/expired")
+  @Permissions("employees.read")
+  @ApiOperation({
+    summary: "Obține fișierele angajaților care au expirat deja",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Lista fișierelor care au expirat deja",
+  })
   async getExpiredFiles() {
     console.log(`[EMPLOYEES CONTROLLER] Getting expired files`);
     return this.employeeService.findExpiredFiles();

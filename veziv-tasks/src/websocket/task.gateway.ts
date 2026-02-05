@@ -26,13 +26,11 @@ export class TaskGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private logger = new Logger(TaskGateway.name);
 
   handleConnection(client: Socket) {
-    this.logger.log(`🔌 WebSocket Client conectat: ${client.id}`);
-    this.logger.log(`🔌 Client IP: ${client.handshake.address}`);
-    this.logger.log(`🔌 Client Origin: ${client.handshake.headers.origin}`);
+    // Connection logging disabled to reduce noise
   }
 
   handleDisconnect(client: Socket) {
-    this.logger.log(`🔌 WebSocket Client deconectat: ${client.id}`);
+    // Disconnection logging disabled to reduce noise
   }
 
   // Emite task nou către toți utilizatorii
