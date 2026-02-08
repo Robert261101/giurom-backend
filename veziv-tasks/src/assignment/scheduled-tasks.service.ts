@@ -497,42 +497,83 @@ export class ScheduledTasksService {
         `🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ - Data: ${dateStr} (${todayName}), Ora: ${timeStr}, Task părinte ID: ${parentTask.id}`,
       );
 
-      // Extrage department ID pentru a genera un ID de grup consistent
-      let departmentIdForGroup: number | null = null;
+      // Extrage department ID(s) din department_group_id
+      // Format un singur grup: dept_3_timestamp_random
+      // Format mai multe grupuri: depts_4_9_timestamp_random (aceeași recurență pentru toate)
+      let departmentIdsForGroup: number[] = [];
 
       if (parentTask.department_group_id) {
-        const match = parentTask.department_group_id.match(/^dept_(\d+)_/);
-        if (match) {
-          departmentIdForGroup = parseInt(match[1]);
+        const groupId = parentTask.department_group_id;
+        // Mai multe departamente: depts_4_9_timestamp_random (ID-uri 1-6 cifre, apoi timestamp 10+ cifre)
+        const deptsMatch = groupId.match(/^depts_((?:\d{1,6}_)*\d{1,6})_\d{10,}_/);
+        if (deptsMatch) {
+          const idsStr = deptsMatch[1];
+          departmentIdsForGroup = idsStr
+            .split('_')
+            .map((s) => parseInt(s, 10))
+            .filter((n) => !Number.isNaN(n) && n > 0 && n < 100000);
+          console.log(
+            `🔄 [RECURENTA] Mai multe grupuri (aceeași recurență): department_ids=${departmentIdsForGroup.join(', ')}`,
+          );
+        } else {
+          const singleMatch = groupId.match(/^dept_(\d+)_/);
+          if (singleMatch) {
+            departmentIdsForGroup = [parseInt(singleMatch[1], 10)];
+          }
         }
       }
 
-      // Fallback la assigned_to_id dacă nu se găsește în department_group_id
-      if (!departmentIdForGroup && parentTask.assigned_to_id) {
-        departmentIdForGroup = parentTask.assigned_to_id;
+      // Fallback la assigned_to_id dacă nu s-a găsit în department_group_id
+      if (departmentIdsForGroup.length === 0 && parentTask.assigned_to_id) {
+        departmentIdsForGroup = [parentTask.assigned_to_id];
       }
 
-      // Generează un ID unic pentru această recurență (păstrează formatul dept_X_timestamp pentru FCFS)
-      const recurrenceId = departmentIdForGroup
-        ? `dept_${departmentIdForGroup}_${Date.now()}_rec${parentTask.id}`
-        : `recurrence_${parentTask.id}_${Date.now()}`;
-
-      // Toate task-urile sunt pentru persoane individuale
       // Logica de grup se face prin department_group_id
-      if (parentTask.department_group_id) {
-        console.log(
-          `🔄 [RECURENTA] Grup: Departament cu ID ${parentTask.assigned_to_id} - Toate persoanele din grup vor primi sarcina`,
-        );
-
-        // Pentru grupuri, obține toate persoanele din grup și creează task-uri individuale
+      if (parentTask.department_group_id && departmentIdsForGroup.length > 0) {
+        if (departmentIdsForGroup.length === 1) {
+          const departmentIdForGroup = departmentIdsForGroup[0];
+          const recurrenceId = `dept_${departmentIdForGroup}_${Date.now()}_rec${parentTask.id}`;
+          console.log(
+            `🔄 [RECURENTA] Grup: Departament ID ${departmentIdForGroup} - Toate persoanele din grup vor primi sarcina`,
+          );
+          await this.createRecurringTasksForGroup(
+            parentTask,
+            assignedAt,
+            recurrenceId,
+            departmentIdForGroup,
+          );
+        } else {
+          // Aceeași recurență pentru mai multe grupuri: creează task-uri pentru fiecare departament (dacă există angajați la postare)
+          for (const departmentId of departmentIdsForGroup) {
+            try {
+              const recurrenceId = `dept_${departmentId}_${Date.now()}_rec${parentTask.id}`;
+              console.log(
+                `🔄 [RECURENTA] Grup ${departmentId}/${departmentIdsForGroup.join(',')} - Creez task-uri recurente`,
+              );
+              await this.createRecurringTasksForGroup(
+                parentTask,
+                assignedAt,
+                recurrenceId,
+                departmentId,
+              );
+            } catch (err) {
+              console.warn(
+                `⚠️ [RECURENTA] Skip departament ${departmentId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
+      } else if (parentTask.department_group_id) {
+        // department_group_id setat dar nu dept/depts (ex: loc_3_...) – un singur apel
+        const recurrenceIdLoc = `recurrence_${parentTask.id}_${Date.now()}`;
         await this.createRecurringTasksForGroup(
           parentTask,
           assignedAt,
-          recurrenceId,
+          recurrenceIdLoc,
         );
       } else {
-        // Verifică dacă task-ul părinte este pentru un grup (FCFS sau everyone_gets_it)
-        // Dacă da, nu folosim assigned_to_id din părinte, ci creăm task-uri pentru grup
+        // Fără department_group_id
+        const recurrenceId = `recurrence_${parentTask.id}_${Date.now()}`;
         const isGroupTask =
           parentTask.assignment_mode === 'first_come_first_served' ||
           parentTask.assignment_mode === 'everyone_gets_it';
@@ -667,17 +708,18 @@ export class ScheduledTasksService {
     parentTask: TaskAssignment,
     assignedAt: Date,
     recurrenceId: string,
+    departmentIdOverride?: number,
   ): Promise<void> {
     try {
-      // Extrage department ID sau location ID din department_group_id
-      // Format pentru departament: dept_3_timestamp_random
-      // Format pentru locație (toți angajații pontați): loc_3_timestamp_random
-      let departmentId: number | null = null;
+      // Extrage department ID sau location ID din department_group_id (sau folosește override pentru depts_4_9_)
+      // Format un departament: dept_3_timestamp_random
+      // Format mai multe: depts_4_9_timestamp_random (override trimis din createRecurringTasksForDepartment)
+      // Format locație: loc_3_timestamp_random
+      let departmentId: number | null = departmentIdOverride ?? null;
       let locationId: number | null = null;
       let isLocationBased = false;
 
-      if (parentTask.department_group_id) {
-        // Verifică dacă este bazat pe locație (toți angajații pontați)
+      if (departmentIdOverride == null && parentTask.department_group_id) {
         const locMatch = parentTask.department_group_id.match(/^loc_(\d+)_/);
         if (locMatch) {
           locationId = parseInt(locMatch[1]);
@@ -686,7 +728,6 @@ export class ScheduledTasksService {
             `🔍 [RECURENTA] Location ID extras din group_id: ${locationId} (toți angajații pontați)`,
           );
         } else {
-          // Verifică dacă este bazat pe departament
           const deptMatch = parentTask.department_group_id.match(/^dept_(\d+)_/);
           if (deptMatch) {
             departmentId = parseInt(deptMatch[1]);
@@ -716,11 +757,18 @@ export class ScheduledTasksService {
         );
         workingEmployees = await this.getLocationEmployees(locationId, assignedAt);
       } else if (departmentId) {
-        // Obține doar angajații care lucrează în ziua respectivă din departamentul specific
+        // Obține angajații din departament pentru data respectivă (la postare); dacă nu există, nu creăm task – fără eroare
         console.log(
           `🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId} pentru data ${assignedAt.toISOString().split('T')[0]}`,
         );
-        workingEmployees = await this.getDepartmentEmployees(departmentId, assignedAt);
+        try {
+          workingEmployees = await this.getDepartmentEmployees(departmentId, assignedAt);
+        } catch (err) {
+          console.warn(
+            `⚠️ [RECURENTA] Nu s-au putut obține angajații pentru departamentul ${departmentId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
       } else {
         console.error(
           `❌ [RECURENTA] Nu s-a putut extrage department ID sau location ID din task-ul ${parentTask.id}`,
@@ -736,7 +784,7 @@ export class ScheduledTasksService {
 
       if (departmentEmployees.length === 0) {
         console.log(
-          `⚠️ [RECURENTA] Nu s-au găsit persoane în departamentul ${departmentId}`,
+          `⚠️ [RECURENTA] Nu s-au găsit persoane în departamentul ${departmentId} – skip (fără eroare)`,
         );
         return;
       }

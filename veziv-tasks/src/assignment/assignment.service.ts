@@ -36,6 +36,27 @@ export class AssignmentService {
     private readonly notificationsClient: ClientProxy,
   ) {}
 
+  /**
+   * Verifică dacă department_group_id corespunde departamentului user-ului.
+   * Suportă: dept_X_... (un grup) și depts_X_Y_... (mai multe grupuri).
+   */
+  private userBelongsToDepartmentGroup(
+    departmentGroupId: string | null | undefined,
+    userDepartmentId: number,
+  ): boolean {
+    if (!departmentGroupId) return false;
+    if (departmentGroupId.startsWith(`dept_${userDepartmentId}_`)) return true;
+    if (!departmentGroupId.startsWith('depts_')) return false;
+    const rest = departmentGroupId.slice(6);
+    const parts = rest.split('_');
+    for (const p of parts) {
+      const n = parseInt(p, 10);
+      if (Number.isNaN(n) || n < 0 || n > 999999) break;
+      if (n === userDepartmentId) return true;
+    }
+    return false;
+  }
+
   private async sendAssignmentNotification(
     type: string,
     title: string,
@@ -1429,7 +1450,10 @@ export class AssignmentService {
               assignment.assigned_to_id IS NULL 
               AND assignment.parent_recurrence_id IS NULL
               AND (assignment.assignment_mode = :fcfsMode OR assignment.assignment_mode = :everyoneMode)
-              AND assignment.department_group_id LIKE :departmentPattern
+              AND (
+                assignment.department_group_id LIKE :departmentPattern
+                OR assignment.department_group_id LIKE :deptsPattern
+              )
             )
           )`,
           {
@@ -1437,6 +1461,7 @@ export class AssignmentService {
             fcfsMode: 'first_come_first_served',
             everyoneMode: 'everyone_gets_it',
             departmentPattern: `dept_${userDepartmentId}_%`,
+            deptsPattern: `depts_%`,
           },
         );
       } else {
@@ -1548,10 +1573,11 @@ export class AssignmentService {
           }
 
           if (userDepartmentId) {
-            // Pentru utilizatorii cu department_id, trebuie să aibă department_group_id corect
             if (
-              !departmentGroupId ||
-              !departmentGroupId.startsWith(`dept_${userDepartmentId}_`)
+              !this.userBelongsToDepartmentGroup(
+                departmentGroupId,
+                userDepartmentId,
+              )
             ) {
               return false; // Exclude task neatribuit fără department_group_id corect
             }
@@ -1635,8 +1661,10 @@ export class AssignmentService {
           }
           if (
             userDepartmentId &&
-            (!departmentGroupId ||
-              !departmentGroupId.startsWith(`dept_${userDepartmentId}_`))
+            !this.userBelongsToDepartmentGroup(
+              departmentGroupId,
+              userDepartmentId,
+            )
           ) {
             return true; // Task neatribuit fără department_group_id corect - INCORECT
           }

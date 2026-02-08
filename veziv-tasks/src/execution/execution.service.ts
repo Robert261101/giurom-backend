@@ -1527,9 +1527,11 @@ export class ExecutionService {
   ): Promise<number> {
     let totalPointsDeducted = 0;
 
-    // Pentru fiecare element cu puncte, scade punctele posibile
+    // Pentru fiecare element cu puncte, scade punctele posibile (nefinalizat = pierde punctele)
     for (const element of assignment.elements || []) {
-      if (element.task_element.element_type === 'scoring_boolean') {
+      if (element.task_element.element_type === 'scoring_simple') {
+        totalPointsDeducted += element.task_element.simple_score_points || 0;
+      } else if (element.task_element.element_type === 'scoring_boolean') {
         const scoringOptions = element.task_element.scoring_options
           ? JSON.parse(element.task_element.scoring_options)
           : [];
@@ -1657,6 +1659,8 @@ export class ExecutionService {
     });
 
     // Calculează punctajul pentru fiecare element cu puncte
+    // Reguli: finalizat în timp util → +puncte; finalizat după termen sau nefinalizat → -puncte
+    // scoring_boolean: puncte = (opțiuni bifate) - (opțiuni nebifate), ex. doar opt2 (2 pct) → +2 -1 -3 = -2
 
     for (const element of scoringElements) {
       const answer = execution.answers?.find(
@@ -1667,43 +1671,29 @@ export class ExecutionService {
         const scoringOptions = element.task_element.scoring_options
           ? JSON.parse(element.task_element.scoring_options)
           : [];
-
-        if (answer && answer.score_awarded > 0) {
-          // Elementul a fost completat - adaugă punctele câștigate
-          if (wasPostponed) {
-            // Dacă task-ul a fost amânat, acordă doar punctele bifate efectiv (nu toate punctele)
-            totalPoints += answer.score_awarded || 0;
-          } else if (isOverdue) {
-            // Dacă este finalizat după deadline, scade punctele din toate opțiunile
-            const totalPossiblePoints = scoringOptions.reduce(
-              (sum: number, option: any) => sum + (option.points || 0),
-              0,
-            );
-            totalPoints -= totalPossiblePoints;
-          } else {
-            // Punctaj normal - doar ce a fost bifat
-            totalPoints += answer.score_awarded || 0;
-          }
-        }
-        // Nu mai scădem punctele dacă nu este completat - scoring_boolean funcționează ca scoring_simple
+        const totalPossiblePoints = scoringOptions.reduce(
+          (sum: number, option: any) => sum + (option.points || 0),
+          0,
+        );
+        const selectedPoints = answer?.score_awarded ?? 0;
+        const nonSelectedPoints = totalPossiblePoints - selectedPoints;
+        // Puncte = ce a bifat minus ce nu a bifat (ex: opt2=2 bifat, opt1=1 și opt3=3 nebifate → 2 - 1 - 3 = -2)
+        totalPoints += selectedPoints - nonSelectedPoints;
       } else if (element.task_element.element_type === 'scoring_simple') {
         const simpleScorePoints = element.task_element.simple_score_points || 0;
+        const completed = answer && (answer.score_awarded ?? 0) > 0;
 
-        if (answer && answer.score_awarded > 0) {
-          // Elementul a fost completat - adaugă punctele fixe
+        if (completed) {
           if (wasPostponed) {
-            // Dacă task-ul a fost amânat, acordă punctele maxime pentru amânare
             totalPoints += simpleScorePoints;
           } else if (isOverdue) {
-            // Dacă este finalizat după deadline, scade punctele fixe
             totalPoints -= simpleScorePoints;
           } else {
-            // Punctaj normal - punctele fixe
             totalPoints += simpleScorePoints;
           }
         } else {
+          totalPoints -= simpleScorePoints;
         }
-        // Nu mai scădem punctele dacă nu este completat - scoring_simple este întotdeauna bifat
       }
     }
 
