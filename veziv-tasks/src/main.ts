@@ -46,29 +46,11 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  // Setăm prefix global pentru toate rutele - necesar pentru API Gateway
   app.setGlobalPrefix('tasks');
 
-  // Configurare body parser pentru a permite payload-uri mari (ex: imagini base64)
-  // Acceptăm până la 100MB în body pentru upload-uri mari
-  try {
-    const express = await import('express');
-    app.use(express.json({ limit: process.env.BODY_PARSER_LIMIT || '100mb' }));
-    app.use(
-      express.urlencoded({
-        limit: process.env.BODY_PARSER_LIMIT || '100mb',
-        extended: true,
-      }),
-    );
-    console.log(
-      `🔧 [MAIN] Body parser limit set to ${process.env.BODY_PARSER_LIMIT || '100mb'}`,
-    );
-  } catch (e) {
-    console.warn(
-      '⚠️ [MAIN] Could not configure express body parser limits:',
-      e,
-    );
-  }
+  const express = await import('express');
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
   // Configurare Swagger
   const config = new DocumentBuilder()

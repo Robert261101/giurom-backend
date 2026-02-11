@@ -3,13 +3,16 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const net = require('net');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-// Increase payload size limit for image uploads (base64 can be ~33% larger)
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+// Target-uri din env (pentru Docker/PM2/alt host); fallback la localhost
+const target = (defaultUrl, envKey) => (process.env[envKey] || defaultUrl).replace(/\/$/, '');
+
+app.use(bodyParser.json({ limit: '100mb' }));
+app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
 
 // Enable CORS
 app.use(cors({
@@ -121,41 +124,41 @@ app.use((req, res, next) => {
 const microservices = {
   // Employees microservice
   '/employees': {
-    target: 'http://localhost:3012',
+    target: target('http://localhost:3012', 'EMPLOYEES_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Attendance microservice
   '/attendance': {
-    target: 'http://localhost:3016',
+    target: target('http://localhost:3016', 'ATTENDANCE_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
   
   // Calendar microservice  
   '/calendar': {
-    target: 'http://localhost:3010',
+    target: target('http://localhost:3010', 'CALENDAR_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
   
   // Requests microservice (leave-requests and shift-change-requests)
   '/leave-requests': {
-    target: 'http://localhost:3013',
+    target: target('http://localhost:3013', 'REQUESTS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
   
   '/shift-change-requests': {
-    target: 'http://localhost:3013', 
+    target: target('http://localhost:3013', 'REQUESTS_SERVICE_URL'), 
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Notifications microservice
   '/notifications': {
-    target: 'http://localhost:3020',
+    target: target('http://localhost:3020', 'NOTIFICATIONS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug',
     ws: true
@@ -163,102 +166,99 @@ const microservices = {
 
   // Company HTTP
   '/companies': {
-    target: 'http://localhost:3003',
+    target: target('http://localhost:3003', 'COMPANIES_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Locations HTTP
   '/locations': {
-    target: 'http://localhost:3004',
+    target: target('http://localhost:3004', 'LOCATIONS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Recipes HTTP
   '/recipes': {
-    target: 'http://localhost:3005',
+    target: target('http://localhost:3005', 'RECIPES_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Recipe Preparations HTTP
   '/recipe-preparations': {
-    target: 'http://localhost:3005',
+    target: target('http://localhost:3005', 'RECIPES_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Recipe Labels HTTP
   '/recipe-labels': {
-    target: 'http://localhost:3005',
+    target: target('http://localhost:3005', 'RECIPES_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Stock HTTP
   '/stock': {
-    target: 'http://localhost:3006',
+    target: target('http://localhost:3006', 'STOCK_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Categories (part of stock microservice)
   '/categories': {
-    target: 'http://localhost:3006',
+    target: target('http://localhost:3006', 'STOCK_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Suppliers HTTP
   '/suppliers': {
-    target: 'http://localhost:3007',
+    target: target('http://localhost:3007', 'SUPPLIERS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Waste Records HTTP
   '/waste-records': {
-    target: 'http://localhost:3014',
+    target: target('http://localhost:3014', 'WASTE_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Waste HTTP (alias)
   '/waste': {
-    target: 'http://localhost:3014',
+    target: target('http://localhost:3014', 'WASTE_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
-  }
-  ,
+  },
   // Veziv Tasks Service
   '/tasks': {
-    target: 'http://localhost:3008',
+    target: target('http://localhost:3008', 'TASKS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug',
     ws: true
-    // NU mai folosim pathRewrite - microserviciul expune deja rutele cu /tasks
   },
 
   // Templates Service (parte din veziv-tasks2)
   '/templates': {
-    target: 'http://localhost:3008',
+    target: target('http://localhost:3008', 'TASKS_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug',
     pathRewrite: { '^/templates': '/tasks/templates' }
-    // Rewrites /templates -> /tasks/templates pentru veziv-tasks2
   },
 
   // Auth Service
   '/auth': {
-    target: 'http://localhost:3021',
+    target: target('http://localhost:3021', 'AUTH_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   },
 
   // Users Service (part of auth)
   '/users': {
-    target: 'http://localhost:3021',
+    target: target('http://localhost:3021', 'AUTH_SERVICE_URL'),
     changeOrigin: true,
     logLevel: 'debug'
   }
@@ -314,8 +314,9 @@ Object.keys(microservices).forEach(path => {
       console.log(`[${new Date().toISOString()}] Response ${proxyRes.statusCode} for ${req.method} ${req.originalUrl}`);
     },
     onError: (err, req, res) => {
-      console.error(`[${new Date().toISOString()}] Proxy error for ${req.method} ${req.originalUrl}:`, err.message);
-      const isWebSocket = req.headers?.upgrade === 'websocket';
+      const url = (req && (req.originalUrl || req.url)) || 'unknown';
+      console.error(`[${new Date().toISOString()}] Proxy error for ${req && req.method} ${url} -> ${config.target}:`, err.message);
+      const isWebSocket = req && req.headers && req.headers.upgrade === 'websocket';
 
       if (!isWebSocket && res && typeof res.writeHead === 'function') {
         res.status(502).json({
@@ -347,13 +348,62 @@ app.use('*', (req, res) => {
   });
 });
 
+// Verificare la pornire: care microservicii sunt accesibile
+function checkTarget(url, pathName) {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const port = parseInt(u.port || (u.protocol === 'https:' ? 443 : 80), 10);
+      const socket = new net.Socket();
+      const timeout = 1500;
+      socket.setTimeout(timeout);
+      socket.once('connect', () => {
+        socket.destroy();
+        resolve({ path: pathName, target: url, ok: true });
+      });
+      socket.once('error', () => {
+        resolve({ path: pathName, target: url, ok: false });
+      });
+      socket.once('timeout', () => {
+        socket.destroy();
+        resolve({ path: pathName, target: url, ok: false });
+      });
+      socket.connect(port, u.hostname);
+    } catch (e) {
+      resolve({ path: pathName, target: url, ok: false });
+    }
+  });
+}
+
 // Start the gateway
 const server = app.listen(PORT, () => {
   console.log(`🚀 API Gateway is running on http://localhost:${PORT}`);
   console.log(`📋 Health check: http://localhost:${PORT}/health`);
   console.log('🔀 Routing configuration:');
-  Object.keys(microservices).forEach(path => {
-    console.log(`   ${path} -> ${microservices[path].target}`);
+  Object.keys(microservices).forEach(p => {
+    console.log(`   ${p} -> ${microservices[p].target}`);
+  });
+
+  // Verificare microservicii (target-uri unice)
+  const seen = new Set();
+  const checks = [];
+  Object.keys(microservices).forEach(p => {
+    const url = microservices[p].target;
+    if (!seen.has(url)) {
+      seen.add(url);
+      checks.push(checkTarget(url, p));
+    }
+  });
+  Promise.all(checks).then((results) => {
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) {
+      console.log('\n⚠️  MICROSERVICII INACCESIBILE (ECONNREFUSED = serviciul nu rulează pe acel port):');
+      failed.forEach((r) => {
+        console.log(`   - ${r.path} -> ${r.target}`);
+        console.log(`     Pornește microserviciul sau setează variabila de mediu corespunzătoare.`);
+      });
+      console.log('');
+    }
   });
 });
 

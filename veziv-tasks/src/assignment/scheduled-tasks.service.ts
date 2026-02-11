@@ -13,6 +13,7 @@ import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { JwtService } from '@nestjs/jwt';
+import { TaskGateway } from '../websocket/task.gateway';
 
 @Injectable()
 export class ScheduledTasksService {
@@ -22,6 +23,7 @@ export class ScheduledTasksService {
     private assignmentService: AssignmentService,
     private httpService: HttpService,
     private jwtService: JwtService,
+    private taskGateway: TaskGateway,
   ) {}
 
   /**
@@ -131,6 +133,16 @@ export class ScheduledTasksService {
             status: AssignmentStatus.ASSIGNED,
           },
         );
+
+        // Emit WebSocket pentru fiecare task activat (programat -> activ)
+        for (const t of scheduledTasks) {
+          try {
+            const updated = await this.assignmentService.findOne(t.id);
+            if (updated) this.taskGateway.notifyTaskUpdate(updated);
+          } catch (e) {
+            // ignoră erori la emit
+          }
+        }
 
         console.log(
           `✅ [ScheduledTasksService] ${updateResult.affected || 0} sarcini au fost activate`,
@@ -1436,6 +1448,14 @@ export class ScheduledTasksService {
                 { id: assignment.id },
                 { is_visible_for_employee: true },
               );
+
+              // Emit WebSocket (invizibil -> vizibil)
+              try {
+                const updated = await this.assignmentService.findOne(assignment.id);
+                if (updated) this.taskGateway.notifyTaskUpdate(updated);
+              } catch (e) {
+                // ignoră erori la emit
+              }
 
               console.log(
                 `✅ [ScheduledTasksService] Task ${assignment.id} este acum vizibil pentru angajați`,

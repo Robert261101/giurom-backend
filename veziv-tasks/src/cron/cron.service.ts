@@ -872,8 +872,15 @@ export class CronService {
         first_name: 'N/A',
         last_name: ''
       }));
-    } catch (error) {
-      this.logger.error(`❌ Error getting employees working on date ${date}:`, error.message);
+    } catch (error: any) {
+      const status = error?.response?.status ?? error?.status ?? error?.code;
+      const msg = (error?.message ?? error?.response?.data?.message ?? '') + '';
+      const is401 = status === 401 || msg.includes('401');
+      if (is401) {
+        this.logger.warn(`⚠️ Attendance API 401 for date ${date} – cron continuă fără angajați din shifts`);
+      } else {
+        this.logger.error(`❌ Error getting employees working on date ${date}:`, error?.message ?? error);
+      }
       return null;
     }
   }

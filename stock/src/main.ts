@@ -8,9 +8,8 @@ async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
   const httpPort = parseInt(process.env.STOCK_HTTP_PORT || '3006', 10);
   
-  // Increase payload size limit for image uploads (base64 can be ~33% larger)
-  httpApp.use(bodyParser.json({ limit: '10mb' }));
-  httpApp.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+  httpApp.use(bodyParser.json({ limit: '100mb' }));
+  httpApp.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
   
   // Serve images from the images directory (products, waste, consume)
   const imagesDir = join(__dirname, '..', '..', '..', 'images');

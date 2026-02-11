@@ -248,8 +248,8 @@ export class AssignmentController {
 
   @Post(':id/accept')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('execution.create', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
-  @ApiOperation({ summary: 'Acceptă un task și șterge complet celelalte din același grup de departament' })
+  @Permissions('execution.create', 'assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @ApiOperation({ summary: 'Acceptă un task (angajat preia taskul FCFS/loc sau manager atribuie)' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de acceptat' })
   @ApiResponse({ 
     status: 200, 

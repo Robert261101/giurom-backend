@@ -118,6 +118,10 @@ export class TaskAssignment {
   })
   assignment_mode: AssignmentMode;
 
+  /** Pentru FCFS: câți „primii” pot accepta (1 = doar primul, 2+ = primii 2, 3, etc.). Default 1. */
+  @Column({ name: 'max_acceptances', type: 'int', nullable: true, default: 1 })
+  max_acceptances: number | null;
+
   @Column({ type: 'boolean', default: true })
   is_visible_for_employee: boolean;
 

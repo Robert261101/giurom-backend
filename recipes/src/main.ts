@@ -8,9 +8,8 @@ async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
   const httpPort = parseInt(process.env.RECIPES_HTTP_PORT || '3005', 10);
   
-  // Increase payload size limit for file uploads
-  httpApp.use(bodyParser.json({ limit: '10mb' }));
-  httpApp.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+  httpApp.use(bodyParser.json({ limit: '100mb' }));
+  httpApp.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
   
   // Serve static files from the files directory (in the project root, not in backend)
   const filesDir = join(__dirname, '..', '..', '..', 'files');

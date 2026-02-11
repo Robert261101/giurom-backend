@@ -4,6 +4,10 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const httpApp = await NestFactory.create(AppModule);
+  // body-parser 100mb (express vine din @nestjs/platform-express)
+  const express = require('express');
+  httpApp.use(express.json({ limit: '100mb' }));
+  httpApp.use(express.urlencoded({ limit: '100mb', extended: true }));
   
   // Enable CORS for frontend communication
   httpApp.enableCors({

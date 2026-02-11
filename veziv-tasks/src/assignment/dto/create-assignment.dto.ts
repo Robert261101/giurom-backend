@@ -186,6 +186,16 @@ export class CreateAssignmentDto {
   assignment_mode?: AssignmentMode;
 
   @ApiProperty({
+    description: 'Pentru FCFS: câți „primii” pot accepta (1 = doar primul, 2+ = primii 2, 3, etc.). Default 1.',
+    example: 1,
+    required: false
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  max_acceptances?: number;
+
+  @ApiProperty({
     description: 'Dacă taskul este vizibil pentru angajați (false = doar pentru manageri)',
     example: true,
     required: false
