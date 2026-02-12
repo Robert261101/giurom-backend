@@ -139,10 +139,23 @@ export class AssignmentService {
     workLocationId: number,
     startDate: Date,
     endDate: Date,
-  ): Promise<Array<{ start_datetime: string; end_datetime: string }>> {
+  ): Promise<
+    Array<{
+      start_datetime: string;
+      end_datetime: string;
+      department_id?: number;
+    }>
+  > {
     try {
-      const start = startDate.toISOString().split('T')[0];
-      const end = endDate.toISOString().split('T')[0];
+      // Folosește date în fus local ca interval (evită UTC vs local)
+      const toLocalDateStr = (d: Date) => {
+        const y = d.getFullYear(),
+          m = d.getMonth(),
+          day = d.getDate();
+        return `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      };
+      const start = toLocalDateStr(startDate);
+      const end = toLocalDateStr(endDate);
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
           `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
@@ -162,15 +175,27 @@ export class AssignmentService {
       else if (shiftsResponse.data?.shifts)
         allShifts = shiftsResponse.data.shifts;
 
-      const startT = new Date(start).getTime();
-      const endT = new Date(end + 'T23:59:59.999Z').getTime();
-      return allShifts.filter((shift: any) => {
-        if (!shift.start_datetime || !shift.end_datetime) return false;
-        if (Number(shift.employee_id) !== userId) return false;
-        const s = new Date(shift.start_datetime).getTime();
-        const e = new Date(shift.end_datetime).getTime();
-        return e >= startT && s <= endT;
-      });
+      // Interval în fus local: începutul zilei start, sfârșitul zilei end
+      const [sy, sm, sd] = start.split('-').map(Number);
+      const [ey, em, ed] = end.split('-').map(Number);
+      const startT = new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime();
+      const endT = new Date(ey, em - 1, ed, 23, 59, 59, 999).getTime();
+      return allShifts
+        .filter((shift: any) => {
+          if (!shift.start_datetime || !shift.end_datetime) return false;
+          if (Number(shift.employee_id) !== userId) return false;
+          const s = new Date(shift.start_datetime).getTime();
+          const e = new Date(shift.end_datetime).getTime();
+          return e >= startT && s <= endT;
+        })
+        .map((shift: any) => ({
+          start_datetime: shift.start_datetime,
+          end_datetime: shift.end_datetime,
+          department_id:
+            shift.department_id != null
+              ? Number(shift.department_id)
+              : undefined,
+        }));
     } catch (e) {
       this.logger.warn(
         `getShiftsForUserAtLocationInRange failed (ex: 401): ${e?.message || e}`,
@@ -841,7 +866,8 @@ export class AssignmentService {
         createAssignmentDto.assignment_mode || AssignmentMode.INDIVIDUAL,
       max_acceptances:
         createAssignmentDto.max_acceptances ??
-        (createAssignmentDto.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED
+        (createAssignmentDto.assignment_mode ===
+        AssignmentMode.FIRST_COME_FIRST_SERVED
           ? 1
           : null),
       is_visible_for_employee: shouldBeVisible,
@@ -1245,10 +1271,7 @@ export class AssignmentService {
    * Verifică dacă o dată se potrivește cu setările de recurență.
    * Logică aliniată cu ScheduledTasksService.shouldCreateTasksForToday.
    */
-  private dateMatchesRecurrence(
-    recurrenceSettings: any,
-    date: Date,
-  ): boolean {
+  private dateMatchesRecurrence(recurrenceSettings: any, date: Date): boolean {
     if (!recurrenceSettings?.enabled) return false;
     const dayOfWeek = date.getDay();
     const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1551,10 +1574,25 @@ export class AssignmentService {
     if (user?.permissions?.includes('assignment.read_own')) {
       // Obține grupul angajatului din shift-ul zilei curente (pentru task-urile FCFS)
       let userDepartmentId = null;
+      let userWorkLocationId: number | null = null;
 
       // 1. PRIORITATE: Încearcă să obții department_id din shift (attendance-ms) - CEL MAI RELEVANT pentru task-uri FCFS
       try {
-        const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+        // Ziua curentă în timezone România (Europe/Bucharest) pentru filtrare corectă
+        const now = new Date();
+        const toDateStrRO = (d: Date): string => {
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Bucharest',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).formatToParts(d);
+          const y = parts.find((p) => p.type === 'year')?.value ?? '';
+          const m = parts.find((p) => p.type === 'month')?.value ?? '';
+          const day = parts.find((p) => p.type === 'day')?.value ?? '';
+          return `${y}-${m}-${day}`;
+        };
+        const todayStrRO = toDateStrRO(now);
 
         // Apelează microserviciul attendance pentru a obține shift-ul angajatului astăzi
         const shiftsResponse = await firstValueFrom(
@@ -1587,26 +1625,34 @@ export class AssignmentService {
           allShifts = shiftsResponse.data.shifts;
         }
 
-        // Filtrează shift-urile pentru ziua curentă
-        const todayDate = new Date(today);
-        todayDate.setHours(0, 0, 0, 0);
-
+        // Filtrează shift-urile pentru ziua curentă în timezone România
         const shifts = allShifts.filter((shift: any) => {
-          const shiftStart = new Date(shift.start_datetime);
-          shiftStart.setHours(0, 0, 0, 0);
-          return shiftStart.getTime() === todayDate.getTime();
+          if (!shift.start_datetime) return false;
+          const shiftDateStr = toDateStrRO(new Date(shift.start_datetime));
+          return shiftDateStr === todayStrRO;
         });
 
-        // Găsește shift-ul pentru angajatul curent
+        // Găsește shift-ul pentru angajatul curent (comparare numerică: employee_id poate fi string sau number)
         const userShift = shifts.find(
-          (shift: any) => shift.employee_id === user.sub,
+          (shift: any) => Number(shift.employee_id) === Number(user.sub),
         );
 
         if (userShift && userShift.department_id) {
           userDepartmentId = userShift.department_id;
-        } else {
         }
-      } catch (error) {}
+        if (userShift?.work_location_id != null) {
+          userWorkLocationId = Number(userShift.work_location_id);
+        }
+        if (!userDepartmentId && allShifts.length > 0) {
+          this.logger.warn(
+            `[read_own] user.sub=${user.sub}: shift-uri găsite=${allShifts.length}, shifts azi=${shifts.length}, userShift=${userShift ? 'da' : 'nu'} → userDepartmentId rămâne null`,
+          );
+        }
+      } catch (error: any) {
+        this.logger.warn(
+          `[read_own] Apel attendance pentru userDepartmentId eșuat (user.sub=${user.sub}): ${error?.message || error} → userDepartmentId rămâne null`,
+        );
+      }
 
       // 2. Fallback: Dacă nu lucrează astăzi, încearcă din employees-ms (department_default_id)
       if (!userDepartmentId) {
@@ -1628,13 +1674,37 @@ export class AssignmentService {
           if (employeeResponse.data?.department_id) {
             userDepartmentId = employeeResponse.data.department_id;
           }
-        } catch (error) {}
+          if (
+            userWorkLocationId == null &&
+            employeeResponse.data?.work_location_default_id != null
+          ) {
+            userWorkLocationId = Number(
+              employeeResponse.data.work_location_default_id,
+            );
+          }
+          if (!userDepartmentId && employeeResponse.data) {
+            this.logger.warn(
+              `[read_own] employees/${user.sub} nu are department_id (are: ${JSON.stringify(employeeResponse.data?.department_id ?? 'null')}) → task-uri dept_X_ nu vor apărea`,
+            );
+          }
+        } catch (error: any) {
+          this.logger.warn(
+            `[read_own] Apel employees pentru userDepartmentId eșuat (user.sub=${user.sub}): ${error?.message || error}`,
+          );
+        }
       }
 
-      // 3. Fallback final: folosește department_id din JWT payload
+      // 3. Fallback final: folosește department_id și work_location din JWT payload
       if (!userDepartmentId && user.department_id) {
         userDepartmentId = user.department_id;
       }
+      if (userWorkLocationId == null && user?.work_location_id != null) {
+        userWorkLocationId = Number(user.work_location_id);
+      }
+
+      this.logger.log(
+        `[read_own] user.sub=${user.sub} → userDepartmentId=${userDepartmentId ?? 'null'}, userWorkLocationId=${userWorkLocationId ?? 'null'}`,
+      );
 
       const queryBuilder = query
         .where('assignment.is_visible_for_employee = :visible', {
@@ -1675,63 +1745,30 @@ export class AssignmentService {
       }
 
       // 🔒 FILTRARE STRICTĂ: Task-ul este vizibil DOAR dacă:
-      // 1. assigned_to_id = userId (pentru toate modurile: individual, everyone_gets_it acceptat, FCFS acceptat)
-      // 2. assignment_mode = 'first_come_first_served' AND assigned_to_id IS NULL AND department_group_id corespunde departamentului user-ului
-      // 3. assignment_mode = 'everyone_gets_it' AND assigned_to_id IS NULL AND department_group_id corespunde departamentului user-ului
-      // IMPORTANT:
-      // - Taskurile individual cu assigned_to_id != userId trebuie excluse COMPLET
-      // - Taskurile everyone_gets_it cu assigned_to_id != userId și assigned_to_id != NULL trebuie excluse COMPLET
-      // - Taskurile FCFS/everyone_gets_it neatribuite trebuie să fie din departamentul user-ului (dept_${userDepartmentId}_%)
-      // - Taskurile recurente copiate (cu parent_recurrence_id) trebuie să fie atribuite direct user-ului
-      if (userDepartmentId) {
-        // Pentru utilizatorii cu department_id:
-        // - Taskuri atribuite direct user-ului (assigned_to_id = userId) - pentru TOATE modurile
-        // - Taskuri FCFS/everyone_gets_it neatribuite din departamentul user-ului (dept_${userDepartmentId}_%) - DOAR părinți (parent_recurrence_id IS NULL)
-        // - Taskuri recurente copiate (parent_recurrence_id IS NOT NULL) DOAR dacă sunt atribuite user-ului
-        // - NU permite taskuri fără department_group_id (acestea sunt pentru utilizatorii fără department_id)
-        queryBuilder.andWhere(
-          `(
-            assignment.assigned_to_id = :userId
-            OR 
-            (
-              assignment.assigned_to_id IS NULL 
-              AND assignment.parent_recurrence_id IS NULL
-              AND (assignment.assignment_mode = :fcfsMode OR assignment.assignment_mode = :everyoneMode)
-              AND (
-                assignment.department_group_id LIKE :departmentPattern
-                OR assignment.department_group_id LIKE :deptsPattern
-                OR assignment.department_group_id LIKE 'loc_%'
-              )
+      // 1. assigned_to_id = userId (pentru toate modurile)
+      // 2. SAU unassigned FCFS/everyone cu department_group_id NULL, loc_% sau dept_%
+      // Pentru FCFS dept_X_: vizibilitatea se stabilește DOAR la pontaj (user are shift la scheduled_datetime în departamentul X)
+      queryBuilder.andWhere(
+        `(
+          assignment.assigned_to_id = :userId
+          OR 
+          (
+            assignment.assigned_to_id IS NULL 
+            AND assignment.parent_recurrence_id IS NULL
+            AND (assignment.assignment_mode = :fcfsMode OR assignment.assignment_mode = :everyoneMode)
+            AND (
+              assignment.department_group_id IS NULL 
+              OR assignment.department_group_id LIKE 'loc_%'
+              OR assignment.department_group_id LIKE 'dept_%'
             )
-          )`,
-          {
-            userId: user.sub,
-            fcfsMode: 'first_come_first_served',
-            everyoneMode: 'everyone_gets_it',
-            departmentPattern: `dept_${userDepartmentId}_%`,
-            deptsPattern: `depts_%`,
-          },
-        );
-      } else {
-        // Pentru utilizatorii fără department_id: taskuri atribuite lor SAU FCFS/everyone fără grup SAU loc_ (locație)
-        queryBuilder.andWhere(
-          `(
-            assignment.assigned_to_id = :userId
-            OR 
-            (
-              assignment.assigned_to_id IS NULL 
-              AND assignment.parent_recurrence_id IS NULL
-              AND (assignment.assignment_mode = :fcfsMode OR assignment.assignment_mode = :everyoneMode)
-              AND (assignment.department_group_id IS NULL OR assignment.department_group_id LIKE 'loc_%')
-            )
-          )`,
-          {
-            userId: user.sub,
-            fcfsMode: 'first_come_first_served',
-            everyoneMode: 'everyone_gets_it',
-          },
-        );
-      }
+          )
+        )`,
+        {
+          userId: user.sub,
+          fcfsMode: 'first_come_first_served',
+          everyoneMode: 'everyone_gets_it',
+        },
+      );
 
       // 🔍 DEBUG: Log query-ul SQL generat pentru debugging
       const sqlQuery = queryBuilder.getQuery();
@@ -1815,11 +1852,7 @@ export class AssignmentService {
           const isLocGroup =
             departmentGroupId && departmentGroupId.startsWith('loc_');
 
-          if (
-            !isFCFSOrEveryone &&
-            !isParentRecurring &&
-            !isLocGroup
-          ) {
+          if (!isFCFSOrEveryone && !isParentRecurring && !isLocGroup) {
             return false; // Exclude task neatribuit care nu este FCFS/everyone/loc_
           }
 
@@ -1828,34 +1861,46 @@ export class AssignmentService {
           }
 
           if (isLocGroup) {
-            // Pentru loc_: task-ul e pentru o locație; vizibilitatea se va filtra după pontaj (pasul următor)
+            // Pentru loc_: vizibilitatea se filtrează la pontaj
             return true;
           }
 
-          if (userDepartmentId) {
-            if (
-              !this.userBelongsToDepartmentGroup(
-                departmentGroupId,
-                userDepartmentId,
-              )
-            ) {
-              return false; // Exclude task neatribuit fără department_group_id corect (dept/depts)
-            }
-          } else {
-            // Pentru utilizatorii fără department_id, doar taskuri fără department_group_id sau loc_
-            if (
-              departmentGroupId !== null &&
-              departmentGroupId !== undefined &&
-              !isLocGroup
-            ) {
-              return false; // Exclude task neatribuit cu dept/depts setat
-            }
+          // FCFS/everyone cu dept_X_ (un singur departament): vizibilitatea DOAR la pontaj (user are shift la scheduled_datetime în departamentul X)
+          if (
+            departmentGroupId?.startsWith('dept_') &&
+            !departmentGroupId?.startsWith('depts_')
+          ) {
+            return true; // Nu filtrăm aici; pontaj păstrează doar pe cei cu shift în acel departament la ora sarcinii
+          }
+
+          // depts_X_Y_ (mai multe departamente): verificăm dacă user-ul e în unul dintre grupuri
+          if (
+            userDepartmentId &&
+            departmentGroupId?.startsWith('depts_') &&
+            !this.userBelongsToDepartmentGroup(
+              departmentGroupId,
+              userDepartmentId,
+            )
+          ) {
+            return false;
           }
           return true; // Task neatribuit valid - OK
         }
 
         return false; // Exclude orice alt caz
       });
+
+      const fcfsOrUnassignedIds = filteredResult
+        .filter(
+          (r) =>
+            (r.assigned_to_id == null || r.assigned_to_id === undefined) &&
+            (r.assignment_mode === 'first_come_first_served' ||
+              r.assignment_mode === 'everyone_gets_it'),
+        )
+        .map((r) => r.id);
+      this.logger.log(
+        `[read_own] După filtrare departament: ${filteredResult.length} taskuri, FCFS/everyone neatribuite ids=${JSON.stringify(fcfsOrUnassignedIds)}`,
+      );
 
       // 🔒 FILTRARE PONTATI: FCFS/everyone_gets_it/loc_ neatribuite apar DOAR celor pontați la locația și la ora sarcinii
       // Dacă attendance-ms răspunde cu 401/eroare, păstrăm task-urile (fail-open) ca angajații să le vadă
@@ -1865,17 +1910,18 @@ export class AssignmentService {
           (r.assigned_to_id == null || r.assigned_to_id === undefined) &&
           (r.assignment_mode === 'first_come_first_served' ||
             r.assignment_mode === 'everyone_gets_it' ||
-            (r.department_group_id && r.department_group_id.startsWith('loc_'))),
+            (r.department_group_id &&
+              r.department_group_id.startsWith('loc_'))),
       );
-      const locationIdsForPontati = unassignedNeedingPontati
-        .map((r) => this.getWorkLocationIdForPontati(r))
-        .filter((id): id is number => id != null && id !== undefined);
-      if (
-        unassignedNeedingPontati.length > 0 &&
-        locationIdsForPontati.length > 0
-      ) {
+      const locationIdsForPontati = [
+        ...unassignedNeedingPontati.map((r) =>
+          this.getWorkLocationIdForPontati(r),
+        ),
+        userWorkLocationId,
+      ].filter((id): id is number => id != null && id !== undefined);
+      const locationIds = [...new Set(locationIdsForPontati)];
+      if (unassignedNeedingPontati.length > 0 && locationIds.length > 0) {
         try {
-          const locationIds = [...new Set(locationIdsForPontati)];
           const rangeStart =
             startDate && endDate
               ? startDate
@@ -1898,7 +1944,11 @@ export class AssignmentService {
                 );
           const shiftsByLocation = new Map<
             number,
-            Array<{ start_datetime: string; end_datetime: string }>
+            Array<{
+              start_datetime: string;
+              end_datetime: string;
+              department_id?: number;
+            }>
           >();
           for (const locId of locationIds) {
             const shifts = await this.getShiftsForUserAtLocationInRange(
@@ -1917,18 +1967,57 @@ export class AssignmentService {
                 (r.department_group_id &&
                   r.department_group_id.startsWith('loc_')));
             if (!needsPontati) return true;
+            const taskDateTime = new Date(
+              r.scheduled_datetime || r.assigned_at,
+            );
+            const deptMatch = r.department_group_id?.match(/^dept_(\d+)_/);
+            if (deptMatch) {
+              const taskDeptId = parseInt(deptMatch[1], 10);
+              const allShifts = Array.from(shiftsByLocation.values()).flat();
+              const shiftsInDept = allShifts.filter(
+                (s) =>
+                  s.department_id != null && s.department_id === taskDeptId,
+              );
+              const covered = this.dateTimeCoveredByShifts(
+                taskDateTime,
+                shiftsInDept,
+              );
+              this.logger.log(
+                `[read_own FCFS dept] user=${user.sub} task=${r.id} dept_${taskDeptId}_ → shift-uri în dept: ${shiftsInDept.length}, total shift-uri: ${allShifts.length}, acoperă scheduled_datetime: ${covered} ${!covered ? '(task exclus)' : ''}`,
+              );
+              return covered;
+            }
             const workLocId = this.getWorkLocationIdForPontati(r);
-            if (workLocId == null) return true; // fără locație clară, păstrăm task-ul
-            const taskDateTime = new Date(r.scheduled_datetime || r.assigned_at);
+            if (workLocId == null) return true;
             const shifts = shiftsByLocation.get(workLocId) || [];
             return this.dateTimeCoveredByShifts(taskDateTime, shifts);
           });
+          const beforeCount = filteredResult.length;
+          const afterCount = finalFiltered.length;
+          if (
+            unassignedNeedingPontati.length > 0 &&
+            beforeCount !== afterCount
+          ) {
+            this.logger.log(
+              `[read_own pontati] După filtrare pontaj: ${beforeCount} → ${finalFiltered.length} (eliminate ${beforeCount - afterCount})`,
+            );
+          }
         } catch (pontatiError) {
           this.logger.warn(
-            'Filtru pontati eșuat (ex: 401 de la attendance) – afișăm task-urile FCFS/loc fără verificare pontaj:',
+            'Filtru pontati eșuat (ex: 401 de la attendance):',
             pontatiError?.message || pontatiError,
           );
-          finalFiltered = filteredResult;
+          // FCFS dept_X_: când nu putem verifica pontajul (401), nu afișăm task-ul (fail-closed). Asigură-te că attendance acceptă apeluri interne (x-internal-service + x-service-secret).
+          finalFiltered = filteredResult.filter((r) => {
+            const unassigned =
+              r.assigned_to_id == null || r.assigned_to_id === undefined;
+            const fcfsDeptSingle =
+              r.assignment_mode === 'first_come_first_served' &&
+              r.department_group_id?.startsWith('dept_') &&
+              !r.department_group_id?.startsWith('depts_');
+            if (unassigned && fcfsDeptSingle) return false;
+            return true;
+          });
         }
       }
 
@@ -1997,6 +2086,13 @@ export class AssignmentService {
           }
           if (parentRecurrenceId !== null && parentRecurrenceId !== undefined) {
             return true; // Task neatribuit cu parent_recurrence_id - INCORECT (ar trebui să fie atribuit user-ului)
+          }
+          // FCFS dept_X_ (un singur departament): vizibilitatea e dată de pontaj, nu de userDepartmentId
+          if (
+            departmentGroupId?.startsWith('dept_') &&
+            !departmentGroupId?.startsWith('depts_')
+          ) {
+            return false; // Corect dacă a trecut de filtrare pontaj
           }
           if (
             userDepartmentId &&
@@ -2367,8 +2463,9 @@ export class AssignmentService {
             ? this.expandRecurringParentsInRange(result, startDate, endDate)
             : result;
         // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
-        const enrichedResults =
-          await this.enrichAssignmentsWithDetailsBatch(toEnrichReadAllManager);
+        const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(
+          toEnrichReadAllManager,
+        );
         return enrichedResults;
       } else {
         // Dacă nu este manager, filtrează doar sarcinile vizibile
@@ -2423,8 +2520,9 @@ export class AssignmentService {
             ? this.expandRecurringParentsInRange(result, startDate, endDate)
             : result;
         // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
-        const enrichedResults =
-          await this.enrichAssignmentsWithDetailsBatch(toEnrichReadAllNonManager);
+        const enrichedResults = await this.enrichAssignmentsWithDetailsBatch(
+          toEnrichReadAllNonManager,
+        );
         return enrichedResults;
       }
     }
@@ -2439,7 +2537,14 @@ export class AssignmentService {
   async acceptTask(id: number, userId: number): Promise<TaskAssignment> {
     const row = await this.assignmentRepository.findOne({
       where: { id },
-      select: ['id', 'assigned_to_id', 'status', 'assignment_mode', 'max_acceptances', 'department_group_id'],
+      select: [
+        'id',
+        'assigned_to_id',
+        'status',
+        'assignment_mode',
+        'max_acceptances',
+        'department_group_id',
+      ],
     });
     if (!row) {
       throw new NotFoundException(`Task assignment ${id} not found`);
@@ -2449,7 +2554,8 @@ export class AssignmentService {
     }
 
     const maxAcc = row.max_acceptances ?? 1;
-    const isFCFS = row.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED;
+    const isFCFS =
+      row.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED;
     const isUnassigned = row.assigned_to_id == null;
 
     if (isFCFS && isUnassigned && maxAcc > 1 && row.department_group_id) {
@@ -2467,7 +2573,8 @@ export class AssignmentService {
         created_by_employee_id: full.created_by_employee_id,
         status: AssignmentStatus.ASSIGNED,
         priority: full.priority,
-        assigned_at: full.assigned_at?.toISOString?.() ?? new Date().toISOString(),
+        assigned_at:
+          full.assigned_at?.toISOString?.() ?? new Date().toISOString(),
         due_date: full.due_date?.toISOString?.() ?? new Date().toISOString(),
         requires_manager_check: full.requires_manager_check,
         department_group_id: full.department_group_id,
@@ -2480,7 +2587,9 @@ export class AssignmentService {
         })),
       };
       if (full.scheduled_datetime) {
-        createDto.scheduled_datetime = new Date(full.scheduled_datetime).toISOString();
+        createDto.scheduled_datetime = new Date(
+          full.scheduled_datetime,
+        ).toISOString();
       }
       const clone = await this.create(createDto);
       const acceptedCount = await this.assignmentRepository.count({
@@ -2494,21 +2603,38 @@ export class AssignmentService {
           { id: full.id },
           { status: AssignmentStatus.DEACTIVATED },
         );
-        this.logger.log(`✅ [ACCEPT] Original ${full.id} dezactivat (${acceptedCount} >= ${maxAcc})`);
+        this.logger.log(
+          `✅ [ACCEPT] Original ${full.id} dezactivat (${acceptedCount} >= ${maxAcc})`,
+        );
       }
       const minimal = await this.assignmentRepository.findOne({
         where: { id: clone.id },
         select: [
-          'id', 'template_id', 'location_id', 'assigned_to_id', 'status', 'priority',
-          'assigned_at', 'due_date', 'scheduled_datetime', 'notes', 'requires_manager_check',
-          'department_group_id', 'assignment_mode', 'is_visible_for_employee', 'created_at', 'updated_at',
+          'id',
+          'template_id',
+          'location_id',
+          'assigned_to_id',
+          'status',
+          'priority',
+          'assigned_at',
+          'due_date',
+          'scheduled_datetime',
+          'notes',
+          'requires_manager_check',
+          'department_group_id',
+          'assignment_mode',
+          'is_visible_for_employee',
+          'created_at',
+          'updated_at',
         ],
       });
       if (!minimal) {
         throw new NotFoundException(`Clone ${clone.id} not found after create`);
       }
       setImmediate(() => void this.taskGateway.notifyTaskUpdate(minimal));
-      this.logger.log(`✅ [ACCEPT] Task ${id} → clone ${clone.id} preluat de user ${userId} (FCFS max=${maxAcc})`);
+      this.logger.log(
+        `✅ [ACCEPT] Task ${id} → clone ${clone.id} preluat de user ${userId} (FCFS max=${maxAcc})`,
+      );
       return minimal as TaskAssignment;
     }
 
@@ -2524,13 +2650,28 @@ export class AssignmentService {
     const minimal = await this.assignmentRepository.findOne({
       where: { id },
       select: [
-        'id', 'template_id', 'location_id', 'assigned_to_id', 'status', 'priority',
-        'assigned_at', 'due_date', 'scheduled_datetime', 'notes', 'requires_manager_check',
-        'department_group_id', 'assignment_mode', 'is_visible_for_employee', 'created_at', 'updated_at',
+        'id',
+        'template_id',
+        'location_id',
+        'assigned_to_id',
+        'status',
+        'priority',
+        'assigned_at',
+        'due_date',
+        'scheduled_datetime',
+        'notes',
+        'requires_manager_check',
+        'department_group_id',
+        'assignment_mode',
+        'is_visible_for_employee',
+        'created_at',
+        'updated_at',
       ],
     });
     if (!minimal) {
-      throw new NotFoundException(`Task assignment ${id} not found after update`);
+      throw new NotFoundException(
+        `Task assignment ${id} not found after update`,
+      );
     }
     setImmediate(() => void this.taskGateway.notifyTaskUpdate(minimal));
     this.logger.log(`✅ [ACCEPT] Task ${id} preluat de user ${userId}`);

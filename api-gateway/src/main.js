@@ -21,6 +21,8 @@ app.use(cors({
     'http://localhost:3001',
     'https://giurom.bitap.ro',
     'http://giurom.bitap.ro',
+    'http://89.46.6.45:3000',
+    'http://89.46.6.45',
     // Permite toate domeniile Vercel
     /^https:\/\/.*\.vercel\.app$/
   ],

@@ -10,6 +10,9 @@ export class PermissionsGuard implements CanActivate {
     private readonly attendanceService: AttendanceService
   ) {}
 
+  /** Permisiuni permise pentru apeluri interne (x-internal-service + x-service-secret). Doar read. */
+  private static readonly INTERNAL_ALLOWED_PERMISSIONS = ['attendance.read'];
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
@@ -21,6 +24,17 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
+    if (request.internalService) {
+      const allowed = PermissionsGuard.INTERNAL_ALLOWED_PERMISSIONS;
+      const hasAllAllowed = requiredPermissions.every((p) => allowed.includes(p));
+      if (!hasAllAllowed) {
+        throw new ForbiddenException(
+          'Apeluri interne: doar permisiunea attendance.read este permisă',
+        );
+      }
+      return true;
+    }
+
     const user = request?.user;
     if (!user?.permissions) {
       throw new ForbiddenException('Fără permisiuni');

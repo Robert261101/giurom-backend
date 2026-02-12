@@ -18,6 +18,8 @@ import { Injectable, Logger } from "@nestjs/common";
       "https://giurom.bitap.ro",
       "http://giurom.bitap.ro:3000",
       "http://giurom.bitap.ro:3001",
+      "http://89.46.6.45:3000",
+      "http://89.46.6.45",
       /^https:\/\/.*\.vercel\.app$/,
       /^https:\/\/.*\.vercel\.app\/.*$/,
     ],
