@@ -42,14 +42,25 @@ export class ScheduledTasksService {
   }
 
   /**
-   * Returnează string-ul YYYY-MM-DD corespunzător datei în timezone-ul Europe/Bucharest
+   * Returnează string-ul YYYY-MM-DD corespunzător datei în timezone-ul Europe/Bucharest.
+   * Folosește Intl.formatToParts pentru a evita parsing invalid (en-GB toLocaleString în Node poate da Invalid Date).
+   * Returnează '' dacă data este invalidă.
    */
-  private toRomaniaDate(d: Date): string {
-    if (!d) return '';
-    const ro = new Date(
-      d.toLocaleString('en-GB', { timeZone: 'Europe/Bucharest' }),
-    );
-    return ro.toISOString().split('T')[0];
+  private toRomaniaDate(d: Date | string | null | undefined): string {
+    if (d == null) return '';
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Bucharest',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(dt);
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    if (year && month && day) return `${year}-${month}-${day}`;
+    return '';
   }
 
   /**
@@ -630,15 +641,26 @@ export class ScheduledTasksService {
 
       // Actualizează parent cu data ultimei generări pentru a preveni recreate în aceeași zi
       try {
-        // Salvăm data în timezone-ul României (YYYY-MM-DD) pentru consistență
         const assignedDateStr = this.toRomaniaDate(assignedAt);
-        const assignedDateOnly = new Date(assignedDateStr);
-        await this.assignmentRepository.update(parentTask.id, {
-          last_recurrence_generated_date: assignedDateOnly,
-        });
-        console.log(
-          `✅ [RECURENTA] parent.last_recurrence_generated_date set pentru ${parentTask.id} -> ${assignedDateStr}`,
-        );
+        if (!assignedDateStr) {
+          console.warn(
+            `⚠️ [RECURENTA] assignedAt invalid pentru parent ${parentTask.id}, nu se actualizează last_recurrence_generated_date`,
+          );
+        } else {
+          const assignedDateOnly = new Date(assignedDateStr);
+          if (Number.isNaN(assignedDateOnly.getTime())) {
+            console.warn(
+              `⚠️ [RECURENTA] assignedDateStr invalid pentru parent ${parentTask.id}, nu se actualizează last_recurrence_generated_date`,
+            );
+          } else {
+            await this.assignmentRepository.update(parentTask.id, {
+              last_recurrence_generated_date: assignedDateOnly,
+            });
+            console.log(
+              `✅ [RECURENTA] parent.last_recurrence_generated_date set pentru ${parentTask.id} -> ${assignedDateStr}`,
+            );
+          }
+        }
       } catch (e) {
         console.warn(
           `⚠️ [RECURENTA] Nu s-a putut actualiza last_recurrence_generated_date pentru parent ${parentTask.id}:`,
