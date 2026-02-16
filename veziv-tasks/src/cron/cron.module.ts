@@ -10,6 +10,8 @@ import { TaskAssignment } from '../assignment/entity/task-assignment.entity';
 import { TaskExecution } from '../execution/entity/task-execution.entity';
 import { TaskExecutionAnswer } from '../execution/entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from '../execution/entity/employee-daily-points.entity';
+import { EmployeeDailyTaskPoints } from '../execution/entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from '../execution/entity/manager-daily-payout.entity';
 import { ExecutionModule } from '../execution/execution.module';
 
 @Module({
@@ -20,7 +22,9 @@ import { ExecutionModule } from '../execution/execution.module';
       TaskAssignment,
       TaskExecution,
       TaskExecutionAnswer,
-      EmployeeDailyPoints
+      EmployeeDailyPoints,
+      EmployeeDailyTaskPoints,
+      ManagerDailyPayout
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

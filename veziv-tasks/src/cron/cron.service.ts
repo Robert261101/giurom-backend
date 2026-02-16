@@ -6,6 +6,8 @@ import { TaskAssignment, AssignmentStatus } from '../assignment/entity/task-assi
 import { TaskExecution } from '../execution/entity/task-execution.entity';
 import { TaskExecutionAnswer } from '../execution/entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from '../execution/entity/employee-daily-points.entity';
+import { EmployeeDailyTaskPoints } from '../execution/entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from '../execution/entity/manager-daily-payout.entity';
 import { ExecutionService } from '../execution/execution.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -23,6 +25,10 @@ export class CronService {
     private answerRepository: Repository<TaskExecutionAnswer>,
     @InjectRepository(EmployeeDailyPoints)
     private employeeDailyPointsRepository: Repository<EmployeeDailyPoints>,
+    @InjectRepository(EmployeeDailyTaskPoints)
+    private employeeDailyTaskPointsRepository: Repository<EmployeeDailyTaskPoints>,
+    @InjectRepository(ManagerDailyPayout)
+    private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private executionService: ExecutionService,
     private httpService: HttpService,
   ) {}
@@ -1248,5 +1254,132 @@ export class CronService {
       this.logger.error(`❌ Error reassigning task ${assignment.id}:`, error);
       return false;
     }
+  }
+
+  /**
+   * Cron zilnic: calculează și înregistrează plățile managerilor pe baza punctelor angajaților.
+   * Rulează la 01:00 pentru ziua anterioară.
+   * Pentru fiecare locație cu puncte: sumă puncte din employee_daily_task_points, găsește managerul
+   * pontat în departamentul "Manager", aplică manager_percent din WorkLocation_ManagerConfig.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async processManagerDailyPayouts() {
+    const workDate = new Date();
+    workDate.setDate(workDate.getDate() - 1);
+    const dateStr = workDate.toISOString().split('T')[0];
+    this.logger.log(`📋 [Manager Payout] Start pentru data ${dateStr}`);
+
+    const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3002';
+    const attendanceBase = process.env.ATTENDANCE_HTTP_URL || 'http://giurom.bitap.ro:3016';
+    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const headers = {
+      'x-internal-service': 'veziv-tasks',
+      'x-service-secret': secret,
+      'x-api-key': secret,
+      'Content-Type': 'application/json',
+    } as Record<string, string>;
+
+    const locationIds = await this.executionRepository
+      .createQueryBuilder('te')
+      .innerJoin(EmployeeDailyTaskPoints, 'edtp', 'edtp.task_execution_id = te.id')
+      .innerJoin(EmployeeDailyPoints, 'edp', 'edtp.employee_daily_points_id = edp.id')
+      .where('edp.work_date = :date', { date: dateStr })
+      .andWhere('te.location_id IS NOT NULL')
+      .select('te.location_id')
+      .distinct(true)
+      .getRawMany()
+      .then((rows) => rows.map((r) => r.te_location_id ?? (r as any).location_id).filter(Boolean));
+
+    for (const workLocationId of locationIds) {
+      try {
+        const existing = await this.managerDailyPayoutRepository.findOne({
+          where: { work_location_id: workLocationId, work_date: workDate } as any,
+        });
+        if (existing) {
+          this.logger.log(`⏭️ [Manager Payout] Locația ${workLocationId} – deja procesat pentru ${dateStr}`);
+          continue;
+        }
+
+        const totalPointsResult = await this.employeeDailyTaskPointsRepository
+          .createQueryBuilder('edtp')
+          .innerJoin(EmployeeDailyPoints, 'edp', 'edtp.employee_daily_points_id = edp.id')
+          .innerJoin(TaskExecution, 'te', 'edtp.task_execution_id = te.id')
+          .where('edp.work_date = :date', { date: dateStr })
+          .andWhere('te.location_id = :locId', { locId: workLocationId })
+          .select('COALESCE(SUM(edtp.points_awarded), 0)', 'total')
+          .getRawOne();
+        const totalPoints = Number(totalPointsResult?.total ?? 0);
+        if (totalPoints <= 0) continue;
+
+        let managerConfig: { manager_percent?: number } | null = null;
+        try {
+          const res = await firstValueFrom(
+            this.httpService.get(`${locationsUrl}/locations/${workLocationId}/manager-config`, { headers }),
+          );
+          managerConfig = res?.data ?? null;
+        } catch (e) {
+          this.logger.warn(`⚠️ [Manager Payout] Locația ${workLocationId} – manager-config: ${e?.message || e}`);
+          continue;
+        }
+        const managerPercent = Number(managerConfig?.manager_percent ?? 0);
+        if (managerPercent <= 0) continue;
+
+        let departments: Array<{ id: number; name: string }> = [];
+        try {
+          const res = await firstValueFrom(
+            this.httpService.get(`${locationsUrl}/locations/${workLocationId}/departments`, { headers }),
+          );
+          departments = Array.isArray(res?.data) ? res.data : [];
+        } catch (e) {
+          this.logger.warn(`⚠️ [Manager Payout] Locația ${workLocationId} – departments: ${e?.message || e}`);
+          continue;
+        }
+        const managerDept = departments.find((d) => String(d?.name ?? '').toLowerCase().trim() === 'manager');
+        if (!managerDept) {
+          this.logger.log(`⏭️ [Manager Payout] Locația ${workLocationId} – nu există departament Manager`);
+          continue;
+        }
+
+        let managerEmployeeId: number | null = null;
+        try {
+          const shiftsRes = await firstValueFrom(
+            this.httpService.get(`${attendanceBase}/attendance/shifts?work_location_id=${workLocationId}&limit=1000`, {
+              headers,
+            }),
+          );
+          let allShifts: any[] = [];
+          if (Array.isArray(shiftsRes.data)) allShifts = shiftsRes.data;
+          else if (shiftsRes.data?.data && Array.isArray(shiftsRes.data.data)) allShifts = shiftsRes.data.data;
+          const dayShifts = allShifts.filter((s: any) => {
+            const d = s.start_datetime ? new Date(s.start_datetime).toISOString().split('T')[0] : '';
+            return d === dateStr && Number(s.department_id) === Number(managerDept.id);
+          });
+          if (dayShifts.length > 0) {
+            managerEmployeeId = Number(dayShifts[0].employee_id) || null;
+          }
+        } catch (e) {
+          this.logger.warn(`⚠️ [Manager Payout] Locația ${workLocationId} – shifts: ${e?.message || e}`);
+        }
+        if (!managerEmployeeId) {
+          this.logger.log(`⏭️ [Manager Payout] Locația ${workLocationId} – niciun manager pontat pe ${dateStr}`);
+          continue;
+        }
+
+        const amount = totalPoints * (managerPercent / 100);
+        await this.managerDailyPayoutRepository.save({
+          work_location_id: workLocationId,
+          work_date: workDate,
+          manager_employee_id: managerEmployeeId,
+          total_points: totalPoints,
+          amount,
+        } as any);
+        this.logger.log(
+          `✅ [Manager Payout] Locația ${workLocationId} – ${dateStr}: puncte=${totalPoints}, ${managerPercent}% → ${amount.toFixed(2)} → angajat ${managerEmployeeId}`,
+        );
+      } catch (err) {
+        this.logger.error(`❌ [Manager Payout] Locația ${workLocationId}: ${err?.message || err}`);
+      }
+    }
+    this.logger.log(`📋 [Manager Payout] Finalizat pentru ${dateStr}`);
   }
 }

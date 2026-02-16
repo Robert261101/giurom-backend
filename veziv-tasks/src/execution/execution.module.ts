@@ -9,6 +9,7 @@ import { TaskExecution } from './entity/task-execution.entity';
 import { TaskExecutionAnswer } from './entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
 import { EmployeeDailyTaskPoints } from './entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from './entity/manager-daily-payout.entity';
 import { TaskAssignment } from '../assignment/entity/task-assignment.entity';
 import { TaskElement } from '../template/entity/task-element.entity';
 import { AssignmentExistsValidator } from './validators/assignment-exists.validator';
@@ -21,6 +22,7 @@ import { ElementsExistInTemplateValidator } from './validators/elements-exist-in
       TaskExecutionAnswer,
       EmployeeDailyPoints,
       EmployeeDailyTaskPoints,
+      ManagerDailyPayout,
       TaskAssignment,
       TaskElement
     ]),

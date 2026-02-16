@@ -16,6 +16,7 @@ import { TaskExecution } from './execution/entity/task-execution.entity';
 import { TaskExecutionAnswer } from './execution/entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from './execution/entity/employee-daily-points.entity';
 import { EmployeeDailyTaskPoints } from './execution/entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from './execution/entity/manager-daily-payout.entity';
 import { TaskAssignment } from './assignment/entity/task-assignment.entity';
 import { TaskAssignmentElement } from './assignment/entity/task-assignment-element.entity';
 import { TemplateExistsValidator } from './assignment/validators/template-exists.validator';
@@ -42,6 +43,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         TaskExecutionAnswer,
         EmployeeDailyPoints,
         EmployeeDailyTaskPoints,
+        ManagerDailyPayout,
         TaskAssignment,
         TaskAssignmentElement
       ],
