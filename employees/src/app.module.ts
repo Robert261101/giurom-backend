@@ -16,6 +16,7 @@ import { EmployeeWorkLocationHistory } from './entities/employee-work-location-h
 import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeLocation } from './entities/employee-location.entity';
+import { EmployeeFolder } from './entities/employee-folder.entity';
 import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Module({
@@ -41,7 +42,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments, EmployeeLocation],
+      entities: [Employee, EmployeeWorkLocationHistory, EmployeeFiles, GeneratedDocuments, EmployeeLocation, EmployeeFolder],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
     }),
@@ -51,6 +52,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       EmployeeFiles,
       GeneratedDocuments,
       EmployeeLocation,
+      EmployeeFolder,
     ]),
   ],
   controllers: [EmployeeMicroController, EmployeeHttpController],

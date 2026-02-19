@@ -1,10 +1,12 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { json, urlencoded } from 'express';
 
 async function bootstrap() {
-  // Create HTTP app
-  const httpApp = await NestFactory.create(AppModule);
-  
+  const httpApp = await NestFactory.create(AppModule, { bodyParser: false });
+  httpApp.use(json({ limit: '50mb' }));
+  httpApp.use(urlencoded({ extended: true, limit: '50mb' }));
+
   // Enable CORS for frontend communication
   httpApp.enableCors({
     origin: ['http://localhost:3000', 'http://localhost:3001'],

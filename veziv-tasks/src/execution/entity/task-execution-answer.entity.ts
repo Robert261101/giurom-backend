@@ -3,8 +3,7 @@ import { TaskExecution } from './task-execution.entity';
 import { TaskElement } from '../../template/entity/task-element.entity';
 
 @Entity('Task_Execution_Answers')
-@Index(['task_execution_id']) // Index pentru join-uri eficiente
-@Index(['task_element_id']) // Index pentru filtrare după element
+@Index('idx_task_execution_answer_element_id', ['task_element_id']) // nume fix ca în DB, folosit de FK
 export class TaskExecutionAnswer {
   @PrimaryGeneratedColumn()
   id: number;

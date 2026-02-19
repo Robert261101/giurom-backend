@@ -5,6 +5,9 @@ const app_module_1 = require("./app.module");
 const swagger_1 = require("@nestjs/swagger");
 async function bootstrap() {
     const httpApp = await core_1.NestFactory.create(app_module_1.AppModule);
+    const express = require('express');
+    httpApp.use(express.json({ limit: '100mb' }));
+    httpApp.use(express.urlencoded({ limit: '100mb', extended: true }));
     httpApp.enableCors({
         origin: [
             'http://localhost:3000',

@@ -29,7 +29,9 @@ export declare class LocationsMicroController {
         active_assignments: number;
     }>;
     findByCompany(companyId: number): Promise<import("./locations/entity/work-location.entity").WorkLocation[]>;
-    findById(id: number): Promise<import("./locations/entity/work-location.entity").WorkLocation>;
+    findById(id: number): Promise<import("./locations/entity/work-location.entity").WorkLocation & {
+        company_name?: string;
+    }>;
     update(payload: {
         id: number;
         dto: UpdateWorkLocationDto;

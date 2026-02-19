@@ -1,424 +1,581 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, BadRequestException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiQuery } from '@nestjs/swagger';
-import { SuppliersService } from './suppliers.service';
-import { CreateSupplierDto } from './dto/create-supplier.dto';
-import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
-import { ApproveReceptionDto, RejectReceptionDto } from './dto/approve-reception.dto';
-import { CancelRemainingDto } from './dto/cancel-remaining.dto';
-import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
-import { Response } from 'express';
-import { Permissions } from '../permissions/permissions.decorator';
-import { PermissionsGuard } from '../permissions/permissions.guard';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Res,
+  ParseIntPipe,
+  UseGuards,
+  Request,
+  BadRequestException,
+  Logger,
+} from "@nestjs/common";
+import {
+  ApiTags,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiQuery,
+} from "@nestjs/swagger";
+import { SuppliersService } from "./suppliers.service";
+import { CreateSupplierDto } from "./dto/create-supplier.dto";
+import { CreateSupplierWithDocumentsDto } from "./dto/create-supplier-with-documents.dto";
+import {
+  ApproveReceptionDto,
+  RejectReceptionDto,
+} from "./dto/approve-reception.dto";
+import { CancelRemainingDto } from "./dto/cancel-remaining.dto";
+import { CancelOrderItemsDto } from "./dto/cancel-order-items.dto";
+import { Response } from "express";
+import { Permissions } from "../permissions/permissions.decorator";
+import { PermissionsGuard } from "../permissions/permissions.guard";
 
-@ApiTags('suppliers')
-@Controller('suppliers')
+@ApiTags("suppliers")
+@Controller("suppliers")
 @UseGuards(PermissionsGuard)
 export class SuppliersHttpController {
-	constructor(private readonly service: SuppliersService) {}
+  private readonly logger = new Logger(SuppliersHttpController.name);
 
-	@Get()
-	@Permissions('suppliers.read')
-	getSuppliers(
-		@Query('page') _page?: string, 
-		@Query('limit') _limit?: string, 
-		@Query('search') _search?: string, 
-		@Query('is_active') _is_active?: string,
-		@Query('location_id') location_id?: string,
-		@Request() req?: any
-	) {
-		// location_id este OBLIGATORIU - din query sau din user context
-		let locationId: number | undefined;
-		const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
-		if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
-			locationId = maybeLid as number;
-		} else {
-			// Încearcă să obțină din user context
-			const user = req?.user;
-			locationId = user?.work_location_id || user?.work_location_default_id;
-		}
-		
-		// Dacă încă nu avem location_id, aruncă eroare
-		if (!locationId) {
-			throw new BadRequestException('Parametrul location_id este obligatoriu pentru a obține furnizorii');
-		}
-		
-		return this.service.findAll(locationId);
-	}
+  constructor(private readonly service: SuppliersService) {}
 
-	@Get('for-orders')
-	@Permissions('order.read')
-	getSuppliersForOrders(@Query('location_id') location_id?: string) {
-		const locationId = location_id ? parseInt(location_id, 10) : undefined;
-		return this.service.findForOrders(locationId);
-	}
+  @Get()
+  @Permissions("suppliers.read")
+  getSuppliers(
+    @Query("page") _page?: string,
+    @Query("limit") _limit?: string,
+    @Query("search") _search?: string,
+    @Query("is_active") _is_active?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ) {
+    // location_id este OBLIGATORIU - din query sau din user context
+    let locationId: number | undefined;
+    const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      locationId = maybeLid as number;
+    } else {
+      // Încearcă să obțină din user context
+      const user = req?.user;
+      locationId = user?.work_location_id || user?.work_location_default_id;
+    }
 
-	@Post()
-	@Permissions('suppliers.create')
-	create(@Body() dto: CreateSupplierDto, @Request() req?: any) {
-		// Obține location_id din user context
-		const user = req?.user;
-		const location_id = user?.work_location_id || user?.work_location_default_id;
-		
-		if (!location_id) {
-			throw new BadRequestException('Nu se poate crea un furnizor fără o locație asignată. Vă rugăm să selectați o locație.');
-		}
-		
-		return this.service.create(dto, location_id);
-	}
+    // Dacă încă nu avem location_id, aruncă eroare
+    if (!locationId) {
+      throw new BadRequestException(
+        "Parametrul location_id este obligatoriu pentru a obține furnizorii",
+      );
+    }
 
-	@Post('with-documents')
-	@Permissions('suppliers.create')
-	createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) { return this.service.createWithDocuments(dto); }
+    return this.service.findAll(locationId);
+  }
 
-	// === SUPPLIER LOCATIONS ENDPOINTS (trebuie să fie înainte de :id pentru a evita conflictele de rute) ===
-	@Post(':supplierId/locations/:locationId')
-	@Permissions('suppliers.create')
-	@ApiOperation({ summary: 'Atribuie un furnizor la o locație' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 201, description: 'Furnizorul a fost atribuit cu succes la locație' })
-	assignSupplierToLocation(
-		@Param('supplierId') supplierId: string,
-		@Param('locationId') locationId: string,
-	) {
-		return this.service.assignSupplierToLocation(Number(supplierId), Number(locationId));
-	}
+  @Get("for-orders")
+  @Permissions("order.read")
+  getSuppliersForOrders(@Query("location_id") location_id?: string) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.findForOrders(locationId);
+  }
 
-	@Get(':supplierId/locations')
-	@Permissions('suppliers.read')
-	@ApiOperation({ summary: 'Listă locațiile unui furnizor' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiResponse({ status: 200, description: 'Lista locațiilor furnizorului' })
-	findSupplierLocations(@Param('supplierId') supplierId: string) {
-		return this.service.findSupplierLocations(Number(supplierId));
-	}
+  @Post()
+  @Permissions("suppliers.create")
+  create(@Body() dto: CreateSupplierDto, @Request() req?: any) {
+    // Obține location_id din user context
+    const user = req?.user;
+    const location_id =
+      user?.work_location_id || user?.work_location_default_id;
 
-	@Get('locations/:locationId/suppliers')
-	@Permissions('suppliers.read')
-	@ApiOperation({ summary: 'Listă furnizorii unei locații' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 200, description: 'Lista furnizorilor locației' })
-	findLocationSuppliers(@Param('locationId') locationId: string) {
-		return this.service.findLocationSuppliers(Number(locationId));
-	}
+    if (!location_id) {
+      throw new BadRequestException(
+        "Nu se poate crea un furnizor fără o locație asignată. Vă rugăm să selectați o locație.",
+      );
+    }
 
-	@Delete(':supplierId/locations/:locationId')
-	@Permissions('suppliers.delete')
-	@ApiOperation({ summary: 'Îndepărtează un furnizor dintr-o locație' })
-	@ApiParam({ name: 'supplierId', description: 'ID-ul furnizorului' })
-	@ApiParam({ name: 'locationId', description: 'ID-ul locației' })
-	@ApiResponse({ status: 200, description: 'Furnizorul a fost îndepărtat cu succes din locație' })
-	removeSupplierFromLocation(
-		@Param('supplierId') supplierId: string,
-		@Param('locationId') locationId: string,
-	) {
-		return this.service.removeSupplierFromLocation(Number(supplierId), Number(locationId));
-	}
+    return this.service.create(dto, location_id);
+  }
 
-	@Get(':id')
-	@Permissions('suppliers.read')
-	findOne(
-		@Param('id') id: string, 
-		@Query('location_id') location_id?: string,
-		@Request() req?: any
-	) {
-		// Obține location_id din query sau din user context
-		let locationId: number | undefined;
-		const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
-		if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
-			locationId = maybeLid as number;
-		} else {
-			// Încearcă să obțină din user context
-			const user = req?.user;
-			locationId = user?.work_location_id || user?.work_location_default_id;
-		}
-		
-		if (!locationId) {
-			throw new BadRequestException('Nu se poate accesa un furnizor fără o locație asignată. Vă rugăm să selectați o locație.');
-		}
-		
-		return this.service.findOne(Number(id), locationId);
-	}
+  @Post("with-documents")
+  @Permissions("suppliers.create")
+  createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) {
+    return this.service.createWithDocuments(dto);
+  }
 
-	@Patch(':id')
-	@Permissions('suppliers.update')
-	update(@Param('id') id: string, @Body() dto: any) { return this.service.update(Number(id), dto); }
+  // === SUPPLIER LOCATIONS ENDPOINTS (trebuie să fie înainte de :id pentru a evita conflictele de rute) ===
+  @Post(":supplierId/locations/:locationId")
+  @Permissions("suppliers.create")
+  @ApiOperation({ summary: "Atribuie un furnizor la o locație" })
+  @ApiParam({ name: "supplierId", description: "ID-ul furnizorului" })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
+  @ApiResponse({
+    status: 201,
+    description: "Furnizorul a fost atribuit cu succes la locație",
+  })
+  assignSupplierToLocation(
+    @Param("supplierId") supplierId: string,
+    @Param("locationId") locationId: string,
+  ) {
+    return this.service.assignSupplierToLocation(
+      Number(supplierId),
+      Number(locationId),
+    );
+  }
 
-	@Delete(':id')
-	@Permissions('suppliers.delete')
-	remove(@Param('id') id: string) { return this.service.remove(Number(id)); }
+  @Get(":supplierId/locations")
+  @Permissions("suppliers.read")
+  @ApiOperation({ summary: "Listă locațiile unui furnizor" })
+  @ApiParam({ name: "supplierId", description: "ID-ul furnizorului" })
+  @ApiResponse({ status: 200, description: "Lista locațiilor furnizorului" })
+  findSupplierLocations(@Param("supplierId") supplierId: string) {
+    return this.service.findSupplierLocations(Number(supplierId));
+  }
 
-	// Products
-	@Get(':supplierId/products') 
-	@Permissions('suppliers.read')
-	getProducts(@Param('supplierId') supplierId: string) { return this.service.getSupplierProducts(Number(supplierId)); }
-	
-	@Post('products') 
-	@Permissions('suppliers.create')
-	addProduct(@Body() dto: any) { return this.service.addProduct(dto); }
-	
-	@Patch('products/:productId') 
-	@Permissions('suppliers.update')
-	updateProduct(@Param('productId') productId: string, @Body() dto: any) { return this.service.updateSupplierProduct(Number(productId), dto); }
-	
-	@Delete('products/:productId') 
-	@Permissions('suppliers.delete')
-	removeProduct(@Param('productId') productId: string) { return this.service.removeSupplierProduct(Number(productId)); }
+  @Get("locations/:locationId/suppliers")
+  @Permissions("suppliers.read")
+  @ApiOperation({ summary: "Listă furnizorii unei locații" })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
+  @ApiResponse({ status: 200, description: "Lista furnizorilor locației" })
+  findLocationSuppliers(@Param("locationId") locationId: string) {
+    return this.service.findLocationSuppliers(Number(locationId));
+  }
 
-	// Orders
-	@Get(':supplierId/orders') 
-	@Permissions('order.read')
-	getOrders(
-		@Param('supplierId') supplierId: string,
-		@Query('location_id') location_id?: string
-	) { 
-		const locationId = location_id ? parseInt(location_id, 10) : undefined;
-		return this.service.getSupplierOrders(Number(supplierId), locationId); 
-	}
+  @Delete(":supplierId/locations/:locationId")
+  @Permissions("suppliers.delete")
+  @ApiOperation({ summary: "Îndepărtează un furnizor dintr-o locație" })
+  @ApiParam({ name: "supplierId", description: "ID-ul furnizorului" })
+  @ApiParam({ name: "locationId", description: "ID-ul locației" })
+  @ApiResponse({
+    status: 200,
+    description: "Furnizorul a fost îndepărtat cu succes din locație",
+  })
+  removeSupplierFromLocation(
+    @Param("supplierId") supplierId: string,
+    @Param("locationId") locationId: string,
+  ) {
+    return this.service.removeSupplierFromLocation(
+      Number(supplierId),
+      Number(locationId),
+    );
+  }
 
-	/**
-	 * Batch: toate comenzile pentru mai mulți furnizori, cu filtre opționale de perioadă și locație.
-	 * Ex: GET /suppliers/orders/batch?supplier_ids=1,2,3&date_from=2025-01-01&date_to=2025-01-31&location_id=10
-	 */
-	@Get('orders/batch')
-	@Permissions('order.read')
-	getOrdersBatch(
-		@Query('supplier_ids') supplierIdsRaw: string,
-		@Query('date_from') dateFrom?: string,
-		@Query('date_to') dateTo?: string,
-		@Query('location_id') location_id?: string,
-	) {
-		if (!supplierIdsRaw) {
-			return [];
-		}
+  @Get(":id")
+  @Permissions("suppliers.read")
+  findOne(
+    @Param("id") id: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ) {
+    this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
+    // Obține location_id din query sau din user context
+    let locationId: number | undefined;
+    const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      locationId = maybeLid as number;
+    } else {
+      const user = req?.user;
+      locationId = user?.work_location_id || user?.work_location_default_id;
+    }
+    // location_id opțional: dacă lipsește, returnăm furnizorul fără verificare locație (ex. pentru documente / sync)
+    return this.service.findOne(Number(id), locationId);
+  }
 
-		const supplierIds = supplierIdsRaw
-			.split(',')
-			.map(id => parseInt(id.trim(), 10))
-			.filter(id => Number.isFinite(id));
+  @Patch(":id")
+  @Permissions("suppliers.update")
+  update(@Param("id") id: string, @Body() dto: any) {
+    return this.service.update(Number(id), dto);
+  }
 
-		if (supplierIds.length === 0) {
-			return [];
-		}
+  @Delete(":id")
+  @Permissions("suppliers.delete")
+  remove(@Param("id") id: string) {
+    return this.service.remove(Number(id));
+  }
 
-		const locationId = location_id ? parseInt(location_id, 10) : undefined;
+  // Products
+  @Get(":supplierId/products")
+  @Permissions("suppliers.read")
+  getProducts(@Param("supplierId") supplierId: string) {
+    return this.service.getSupplierProducts(Number(supplierId));
+  }
 
-		return this.service.getSupplierOrdersBatch(supplierIds, {
-			dateFrom,
-			dateTo,
-			locationId,
-		});
-	}
-	
-	@Post('orders') 
-	@Permissions('order.create')
-	createOrder(@Body() dto: any) { return this.service.createOrder(dto); }
-	
-	@Patch('orders/:orderId/deliver') 
-	@Permissions('order.update')
-	deliver(@Param('orderId') orderId: string) { return this.service.markOrderAsDelivered(Number(orderId)); }
-	
-	@Post('orders/partial-reception')
-	@Permissions('order.reception')
-	partialReception(@Body() dto: any) { return this.service.markOrderAsPartiallyReceived(dto); }
-	
-	@Post('orders/receptions/approve')
-	@Permissions('order.approve')
-	@ApiOperation({ summary: 'Aprobă recepțiile și creează stock items' })
-	approveReceptions(@Body() dto: ApproveReceptionDto) { 
-		return this.service.approveReceptions(dto.orderId, dto.receptionIds); 
-	}
-	
-	@Post('orders/receptions/reject')
-	@Permissions('order.approve')
-	@ApiOperation({ summary: 'Respinge recepțiile' })
-	rejectReceptions(@Body() dto: RejectReceptionDto) { 
-		return this.service.rejectReceptions(dto.orderId, dto.receptionIds, dto.reason); 
-	}
-	
-	@Get('orders/reception-report')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Raport recepții și returnări pe perioadă' })
-	getReceptionReport(
-		@Query('start_date') startDate: string,
-		@Query('end_date') endDate: string
-	) { 
-		if (!startDate || !endDate) {
-			throw new Error('start_date și end_date sunt obligatorii');
-		}
-		return this.service.getReceptionReport(startDate, endDate); 
-	}
-	
-	@Get('orders/reception-report/events')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Evenimente individuale de recepție/returnare pe perioadă (cronologic)' })
-	getReceptionEvents(
-		@Query('start_date') startDate: string,
-		@Query('end_date') endDate: string,
-		@Query('order_id') orderId?: string,
-		@Query('order_item_id') orderItemId?: string,
-		@Query('product_id') productId?: string,
-		@Query('user_id') userId?: string,
-	) {
-		if (!startDate || !endDate) {
-			throw new Error('start_date și end_date sunt obligatorii');
-		}
-		return this.service.getReceptionEvents(
-			startDate,
-			endDate,
-			orderId ? Number(orderId) : undefined,
-			orderItemId ? Number(orderItemId) : undefined,
-			productId ? Number(productId) : undefined,
-			userId ? Number(userId) : undefined,
-		);
-	}
-	
-	@Get('orders/receptions/batch')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Obține recepțiile pentru mai multe comenzi (batch)' })
-	@ApiQuery({
-		name: 'order_ids',
-		required: true,
-		description: 'Lista de ID-uri de comenzi, separate prin virgulă (ex: 1,2,3)',
-	})
-	getOrderReceptionsBatch(@Query('order_ids') orderIdsRaw: string) {
-		if (!orderIdsRaw) {
-			return [];
-		}
+  @Post("products")
+  @Permissions("suppliers.create")
+  addProduct(@Body() dto: any) {
+    return this.service.addProduct(dto);
+  }
 
-		const orderIds = orderIdsRaw
-			.split(',')
-			.map(id => parseInt(id.trim(), 10))
-			.filter(id => Number.isFinite(id));
+  @Patch("products/:productId")
+  @Permissions("suppliers.update")
+  updateProduct(@Param("productId") productId: string, @Body() dto: any) {
+    return this.service.updateSupplierProduct(Number(productId), dto);
+  }
 
-		if (orderIds.length === 0) {
-			return [];
-		}
+  @Delete("products/:productId")
+  @Permissions("suppliers.delete")
+  removeProduct(@Param("productId") productId: string) {
+    return this.service.removeSupplierProduct(Number(productId));
+  }
 
-		return this.service.getOrderReceptionsBatch(orderIds);
-	}
+  // Orders
+  @Get(":supplierId/orders")
+  @Permissions("order.read")
+  getOrders(
+    @Param("supplierId") supplierId: string,
+    @Query("location_id") location_id?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getSupplierOrders(Number(supplierId), locationId);
+  }
 
-	@Get('orders/:orderId/receptions')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Obține recepțiile pentru o comandă' })
-	getOrderReceptions(@Param('orderId') orderId: string) {
-		return this.service.getOrderReceptions(Number(orderId));
-	}
+  /**
+   * Batch: toate comenzile pentru mai mulți furnizori, cu filtre opționale de perioadă și locație.
+   * Ex: GET /suppliers/orders/batch?supplier_ids=1,2,3&date_from=2025-01-01&date_to=2025-01-31&location_id=10
+   */
+  @Get("orders/batch")
+  @Permissions("order.read")
+  getOrdersBatch(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("date_from") dateFrom?: string,
+    @Query("date_to") dateTo?: string,
+    @Query("location_id") location_id?: string,
+  ) {
+    if (!supplierIdsRaw) {
+      return [];
+    }
 
-	@Get('orders/:orderId/cancelled-items')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Obține item-urile anulate pentru o comandă' })
-	getOrderCancelledItems(@Param('orderId') orderId: string) {
-		return this.service.getOrderCancelledItems(Number(orderId));
-	}
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
 
-	/**
-	 * Batch: item-uri anulate pentru mai multe comenzi.
-	 * Ex: GET /suppliers/orders/cancelled-items/batch?order_ids=1,2,3
-	 */
-	@Get('orders/cancelled-items/batch')
-	@Permissions('order.read')
-	@ApiOperation({ summary: 'Obține item-urile anulate pentru mai multe comenzi (batch)' })
-	getOrderCancelledItemsBatch(
-		@Query('order_ids') orderIdsRaw: string,
-	) {
-		if (!orderIdsRaw) {
-			return [];
-		}
+    if (supplierIds.length === 0) {
+      return [];
+    }
 
-		const orderIds = orderIdsRaw
-			.split(',')
-			.map(id => parseInt(id.trim(), 10))
-			.filter(id => Number.isFinite(id));
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
 
-		if (orderIds.length === 0) {
-			return [];
-		}
+    return this.service.getSupplierOrdersBatch(supplierIds, {
+      dateFrom,
+      dateTo,
+      locationId,
+    });
+  }
 
-		return this.service.getOrderCancelledItemsBatch(orderIds);
-	}
-	
-	@Patch('orders/:orderId/status') 
-	@Permissions('order.update')
-	updateStatus(@Param('orderId') orderId: string, @Body() body: any) { return this.service.updateOrderStatus(Number(orderId), body.status); }
-	
-	@Post('orders/:orderId/cancel-remaining')
-	@Permissions('order.cancel')
-	@ApiOperation({ summary: '[DEPRECATED] Anulează partea rămasă de recepționat pentru o comandă' })
-	cancelRemaining(@Param('orderId') orderId: string, @Body() dto: CancelRemainingDto) { 
-		return this.service.cancelRemainingQuantity(Number(orderId), dto.reason); 
-	}
+  @Post("orders")
+  @Permissions("order.create")
+  createOrder(@Body() dto: any) {
+    return this.service.createOrder(dto);
+  }
 
-	@Post('orders/cancel-items')
-	@Permissions('order.cancel')
-	@ApiOperation({ summary: 'Anulează item-uri dintr-o comandă (nouă abordare)' })
-	cancelOrderItems(@Body() dto: CancelOrderItemsDto) {
-		return this.service.cancelOrderItems(dto);
-	}
-	@Get(':supplierId/orders/:orderId/email-link') 
-	@Permissions('order.read')
-	emailLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { emailLink: this.service.generateEmailLink(Number(supplierId), Number(orderId)) }; }
-	
-	@Get(':supplierId/orders/:orderId/whatsapp-link') 
-	@Permissions('order.read')
-	whatsappLink(@Param('supplierId') supplierId: string, @Param('orderId') orderId: string) { return { whatsappLink: this.service.generateWhatsAppLink(Number(supplierId), Number(orderId)) }; }
+  @Patch("orders/:orderId/deliver")
+  @Permissions("order.update")
+  deliver(@Param("orderId") orderId: string) {
+    return this.service.markOrderAsDelivered(Number(orderId));
+  }
 
-	// Documents
-	@Post(':supplierId/documents') 
-	@Permissions('suppliers.create')
-	addDocument(@Param('supplierId') supplierId: string, @Body() body: any) { return this.service.addDocument(Number(supplierId), body); }
-	
-	@Delete('documents/:documentId') 
-	@Permissions('suppliers.delete')
-	removeDocument(@Param('documentId') documentId: string) { return this.service.removeDocument(Number(documentId)); }
+  @Post("orders/partial-reception")
+  @Permissions("order.reception")
+  partialReception(@Body() dto: any) {
+    return this.service.markOrderAsPartiallyReceived(dto);
+  }
 
-	// Serve supplier document (download or inline)
-	@Get('file/:fileId')
-	@Permissions('suppliers.read')
-	async getSupplierFile(
-		@Param('fileId', ParseIntPipe) fileId: number,
-		@Query('download') download: string,
-		@Res() res: Response,
-	) {
-		const forceDownload = download === 'true';
-		const served = await this.service.serveDocument(fileId, forceDownload);
-		const buffer = Buffer.from(served.data, 'base64');
-		res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
-		res.setHeader(
-			'Content-Disposition',
-			`${forceDownload || served.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${served.fileName}"`
-		);
-		res.setHeader('Content-Length', buffer.length.toString());
-		return res.send(buffer);
-	}
+  @Post("orders/receptions/approve")
+  @Permissions("order.approve")
+  @ApiOperation({ summary: "Aprobă recepțiile și creează stock items" })
+  approveReceptions(@Body() dto: ApproveReceptionDto) {
+    return this.service.approveReceptions(dto.orderId, dto.receptionIds);
+  }
 
-	@Get('file/:fileId/view')
-	@Permissions('suppliers.read')
-	async viewSupplierFile(
-		@Param('fileId', ParseIntPipe) fileId: number,
-		@Res() res: Response,
-	) {
-		const served = await this.service.serveDocument(fileId, false);
-		const buffer = Buffer.from(served.data, 'base64');
-		res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
-		res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
-		res.setHeader('Content-Length', buffer.length.toString());
-		return res.send(buffer);
-	}
+  @Post("orders/receptions/reject")
+  @Permissions("order.approve")
+  @ApiOperation({ summary: "Respinge recepțiile" })
+  rejectReceptions(@Body() dto: RejectReceptionDto) {
+    return this.service.rejectReceptions(
+      dto.orderId,
+      dto.receptionIds,
+      dto.reason,
+    );
+  }
 
+  @Get("orders/reception-report")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Raport recepții și returnări pe perioadă" })
+  getReceptionReport(
+    @Query("start_date") startDate: string,
+    @Query("end_date") endDate: string,
+  ) {
+    if (!startDate || !endDate) {
+      throw new Error("start_date și end_date sunt obligatorii");
+    }
+    return this.service.getReceptionReport(startDate, endDate);
+  }
 
-	// Get documents expiring on a specific date
-	@Get('documents/expiring/:targetDate')
-	@Permissions('suppliers.read')
-	getExpiringDocuments(@Param('targetDate') targetDate: string) {
-		return this.service.findExpiringDocuments(targetDate);
-	}
+  @Get("orders/reception-report/events")
+  @Permissions("order.read")
+  @ApiOperation({
+    summary:
+      "Evenimente individuale de recepție/returnare pe perioadă (cronologic)",
+  })
+  getReceptionEvents(
+    @Query("start_date") startDate: string,
+    @Query("end_date") endDate: string,
+    @Query("order_id") orderId?: string,
+    @Query("order_item_id") orderItemId?: string,
+    @Query("product_id") productId?: string,
+    @Query("user_id") userId?: string,
+  ) {
+    if (!startDate || !endDate) {
+      throw new Error("start_date și end_date sunt obligatorii");
+    }
+    return this.service.getReceptionEvents(
+      startDate,
+      endDate,
+      orderId ? Number(orderId) : undefined,
+      orderItemId ? Number(orderItemId) : undefined,
+      productId ? Number(productId) : undefined,
+      userId ? Number(userId) : undefined,
+    );
+  }
 
-	// Get documents that have already expired
-	@Get('documents/expired')
-	@Permissions('suppliers.read')
-	getExpiredDocuments() {
-		return this.service.findExpiredDocuments();
-	}
+  @Get("orders/receptions/batch")
+  @Permissions("order.read")
+  @ApiOperation({
+    summary: "Obține recepțiile pentru mai multe comenzi (batch)",
+  })
+  @ApiQuery({
+    name: "order_ids",
+    required: true,
+    description:
+      "Lista de ID-uri de comenzi, separate prin virgulă (ex: 1,2,3)",
+  })
+  getOrderReceptionsBatch(@Query("order_ids") orderIdsRaw: string) {
+    if (!orderIdsRaw) {
+      return [];
+    }
+
+    const orderIds = orderIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+
+    if (orderIds.length === 0) {
+      return [];
+    }
+
+    return this.service.getOrderReceptionsBatch(orderIds);
+  }
+
+  @Get("orders/:orderId/receptions")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Obține recepțiile pentru o comandă" })
+  getOrderReceptions(@Param("orderId") orderId: string) {
+    return this.service.getOrderReceptions(Number(orderId));
+  }
+
+  @Get("orders/:orderId/cancelled-items")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Obține item-urile anulate pentru o comandă" })
+  getOrderCancelledItems(@Param("orderId") orderId: string) {
+    return this.service.getOrderCancelledItems(Number(orderId));
+  }
+
+  /**
+   * Batch: item-uri anulate pentru mai multe comenzi.
+   * Ex: GET /suppliers/orders/cancelled-items/batch?order_ids=1,2,3
+   */
+  @Get("orders/cancelled-items/batch")
+  @Permissions("order.read")
+  @ApiOperation({
+    summary: "Obține item-urile anulate pentru mai multe comenzi (batch)",
+  })
+  getOrderCancelledItemsBatch(@Query("order_ids") orderIdsRaw: string) {
+    if (!orderIdsRaw) {
+      return [];
+    }
+
+    const orderIds = orderIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+
+    if (orderIds.length === 0) {
+      return [];
+    }
+
+    return this.service.getOrderCancelledItemsBatch(orderIds);
+  }
+
+  @Patch("orders/:orderId/status")
+  @Permissions("order.update")
+  updateStatus(@Param("orderId") orderId: string, @Body() body: any) {
+    return this.service.updateOrderStatus(Number(orderId), body.status);
+  }
+
+  @Post("orders/:orderId/cancel-remaining")
+  @Permissions("order.cancel")
+  @ApiOperation({
+    summary:
+      "[DEPRECATED] Anulează partea rămasă de recepționat pentru o comandă",
+  })
+  cancelRemaining(
+    @Param("orderId") orderId: string,
+    @Body() dto: CancelRemainingDto,
+  ) {
+    return this.service.cancelRemainingQuantity(Number(orderId), dto.reason);
+  }
+
+  @Post("orders/cancel-items")
+  @Permissions("order.cancel")
+  @ApiOperation({
+    summary: "Anulează item-uri dintr-o comandă (nouă abordare)",
+  })
+  cancelOrderItems(@Body() dto: CancelOrderItemsDto) {
+    return this.service.cancelOrderItems(dto);
+  }
+  @Get(":supplierId/orders/:orderId/email-link")
+  @Permissions("order.read")
+  emailLink(
+    @Param("supplierId") supplierId: string,
+    @Param("orderId") orderId: string,
+  ) {
+    return {
+      emailLink: this.service.generateEmailLink(
+        Number(supplierId),
+        Number(orderId),
+      ),
+    };
+  }
+
+  @Get(":supplierId/orders/:orderId/whatsapp-link")
+  @Permissions("order.read")
+  whatsappLink(
+    @Param("supplierId") supplierId: string,
+    @Param("orderId") orderId: string,
+  ) {
+    return {
+      whatsappLink: this.service.generateWhatsAppLink(
+        Number(supplierId),
+        Number(orderId),
+      ),
+    };
+  }
+
+  // Documents
+  @Post(":supplierId/documents")
+  @Permissions("suppliers.create")
+  addDocument(@Param("supplierId") supplierId: string, @Body() body: any) {
+    if (!body || typeof body !== 'object') {
+      throw new BadRequestException('Body invalid sau lipsă (verifică că request-ul este JSON cu Content-Type: application/json).');
+    }
+    return this.service.addDocument(Number(supplierId), body);
+  }
+
+  /** Creează un folder nou pentru furnizor (în DB și pe disk). Body: { description, parent_id? }. */
+  @Post(":supplierId/folders")
+  @Permissions("suppliers.create")
+  createFolder(
+    @Param("supplierId") supplierId: string,
+    @Body() body: { description: string; parent_id?: number },
+    @Query("location_id") location_id?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.createFolder(Number(supplierId), body || {}, locationId);
+  }
+
+  /** Actualizează numele unui folder (nu permite duplicate). */
+  @Patch(":supplierId/folders/:folderId")
+  @Permissions("suppliers.update")
+  updateFolder(
+    @Param("supplierId") supplierId: string,
+    @Param("folderId") folderId: string,
+    @Body() body: { description: string },
+  ) {
+    return this.service.updateFolder(Number(supplierId), Number(folderId), body || {});
+  }
+
+  /** Șterge un folder al furnizorului (și documentele asociate). */
+  @Delete(":supplierId/folders/:folderId")
+  @Permissions("suppliers.delete")
+  removeFolder(
+    @Param("supplierId") supplierId: string,
+    @Param("folderId") folderId: string,
+  ) {
+    return this.service.removeFolder(Number(supplierId), Number(folderId));
+  }
+
+  /** Sincronizează documentele unui folder din disk în DB (creează înregistrări pentru fișiere existente pe disk). */
+  @Post(":supplierId/folders/:folderId/sync-from-disk")
+  @Permissions("suppliers.read")
+  syncFolderFromDisk(
+    @Param("supplierId") supplierId: string,
+    @Param("folderId") folderId: string,
+  ) {
+    this.logger.log(`[DOCUMENTE] POST /suppliers/${supplierId}/folders/${folderId}/sync-from-disk`);
+    return this.service.syncFolderFromDisk(Number(supplierId), Number(folderId));
+  }
+
+  @Delete("documents/:documentId")
+  @Permissions("suppliers.delete")
+  removeDocument(@Param("documentId") documentId: string) {
+    return this.service.removeDocument(Number(documentId));
+  }
+
+  // Serve supplier document (download or inline)
+  @Get("file/:fileId")
+  @Permissions("suppliers.read")
+  async getSupplierFile(
+    @Param("fileId", ParseIntPipe) fileId: number,
+    @Query("download") download: string,
+    @Res() res: Response,
+  ) {
+    const forceDownload = download === "true";
+    const served = await this.service.serveDocument(fileId, forceDownload);
+    const buffer = Buffer.from(served.data, "base64");
+    res.setHeader(
+      "Content-Type",
+      served.mimeType || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `${forceDownload || served.disposition === "attachment" ? "attachment" : "inline"}; filename="${served.fileName}"`,
+    );
+    res.setHeader("Content-Length", buffer.length.toString());
+    return res.send(buffer);
+  }
+
+  @Get("file/:fileId/view")
+  @Permissions("suppliers.read")
+  async viewSupplierFile(
+    @Param("fileId", ParseIntPipe) fileId: number,
+    @Res() res: Response,
+  ) {
+    const served = await this.service.serveDocument(fileId, false);
+    const buffer = Buffer.from(served.data, "base64");
+    res.setHeader(
+      "Content-Type",
+      served.mimeType || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${served.fileName}"`,
+    );
+    res.setHeader("Content-Length", buffer.length.toString());
+    return res.send(buffer);
+  }
+
+  // Get documents expiring on a specific date
+  @Get("documents/expiring/:targetDate")
+  @Permissions("suppliers.read")
+  getExpiringDocuments(@Param("targetDate") targetDate: string) {
+    return this.service.findExpiringDocuments(targetDate);
+  }
+
+  // Get documents that have already expired
+  @Get("documents/expired")
+  @Permissions("suppliers.read")
+  getExpiredDocuments() {
+    return this.service.findExpiredDocuments();
+  }
 }
-

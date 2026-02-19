@@ -1,0 +1,1 @@
+{"version":3,"file":"cancel-remaining.dto.js","sourceRoot":"","sources":["../../../src/suppliers/dto/cancel-remaining.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,6CAA8C;AAC9C,qDAAuD;AAEvD,MAAa,kBAAkB;CAS9B;AATD,gDASC;AADC;IAPC,IAAA,qBAAW,EAAC;QACX,WAAW,EAAE,6BAA6B;QAC1C,QAAQ,EAAE,KAAK;QACf,OAAO,EAAE,uCAAuC;KACjD,CAAC;IACD,IAAA,0BAAQ,GAAE;IACV,IAAA,4BAAU,GAAE;;kDACG"}

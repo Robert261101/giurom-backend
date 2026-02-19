@@ -1,4 +1,4 @@
-import { Controller, Post, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { CronService } from './cron.service';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -11,6 +11,31 @@ import { Permissions } from '../permissions/permissions.decorator';
 @ApiBearerAuth()
 export class CronController {
   constructor(private readonly cronService: CronService) {}
+
+  @Post('complete-day')
+  @Permissions('execution.read_all', 'assignment.read_all')
+  @ApiOperation({
+    summary: 'Închide ziua pentru o dată (la introducerea încasării)',
+    description:
+      'Finalizează toate sarcinile active din ziua respectivă ca nefinalizate și scade punctele. Apelat când se introduce încasarea pentru acea zi.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Zi închisă',
+    schema: {
+      type: 'object',
+      properties: {
+        completedCount: { type: 'number' },
+        totalPointsDeducted: { type: 'number' },
+      },
+    },
+  })
+  async completeDay(@Body() body: { date?: string; location_id?: number }) {
+    const dateStr = body?.date;
+    const locationId = body?.location_id != null ? Number(body.location_id) : undefined;
+    const forDate = dateStr ? new Date(dateStr) : undefined;
+    return this.cronService.processActiveTasksForDate(forDate, locationId);
+  }
 
   @Post('run-daily-task-completion')
   @Permissions('execution.read_all', 'assignment.read_all')

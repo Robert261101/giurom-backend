@@ -20,6 +20,7 @@ const work_location_revenue_entity_1 = require("./locations/entity/work-location
 const work_location_revenue_points_entity_1 = require("./locations/entity/work-location-revenue-points.entity");
 const work_location_manager_config_entity_1 = require("./locations/entity/work-location-manager-config.entity");
 const work_location_files_entity_1 = require("./locations/entity/work-location-files.entity");
+const work_location_folder_entity_1 = require("./locations/entity/work-location-folder.entity");
 const locations_service_1 = require("./locations/locations.service");
 const locations_micro_controller_1 = require("./locations.micro.controller");
 const locations_http_controller_1 = require("./locations.http.controller");
@@ -63,6 +64,7 @@ exports.AppModule = AppModule = __decorate([
                     work_location_revenue_points_entity_1.WorkLocationRevenuePoints,
                     work_location_manager_config_entity_1.WorkLocationManagerConfig,
                     work_location_files_entity_1.WorkLocationFiles,
+                    work_location_folder_entity_1.WorkLocationFolder,
                 ],
                 synchronize: process.env.DB_SYNCHRONIZE === 'true',
                 logging: process.env.DB_LOGGING === 'true',
@@ -78,6 +80,7 @@ exports.AppModule = AppModule = __decorate([
                 work_location_revenue_points_entity_1.WorkLocationRevenuePoints,
                 work_location_manager_config_entity_1.WorkLocationManagerConfig,
                 work_location_files_entity_1.WorkLocationFiles,
+                work_location_folder_entity_1.WorkLocationFolder,
             ]),
         ],
         controllers: [locations_micro_controller_1.LocationsMicroController, locations_http_controller_1.LocationsHttpController],

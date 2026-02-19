@@ -20,41 +20,35 @@ export class CompanyService {
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
-  // Get the root directory for company files (corrected path to match project structure)
-  private getCompanyFilesRootDir(): string {
-    // Resolve repo root relative to this file location
-    // __dirname is .../giurom-backend/company/src (dev with ts-node) or .../giurom-backend/company/dist (prod)
-    // We need to go up 3 levels to reach giurom-backend, then up one more to reach giurom root
-    let repoRoot = path.resolve(__dirname, '../../../..');
-    if (path.basename(repoRoot) === 'giurom-backend') {
-      // In case resolution ended at giurom-backend due to different runtime path depth
-      repoRoot = path.dirname(repoRoot);
-    }
-    return path.join(repoRoot, 'files', 'companies');
+  /** Același mod ca locations: getRepoRoot() + files/companies. */
+  private getRepoRoot(): string {
+    return path.resolve(__dirname, '../../..');
   }
 
-  // Get repo root directory (helper method)
-  private getRepoRoot(): string {
-    let repoRoot = path.resolve(__dirname, '../../../..');
-    if (path.basename(repoRoot) === 'giurom-backend') {
-      // In case resolution ended at giurom-backend due to different runtime path depth
-      repoRoot = path.dirname(repoRoot);
-    }
-    return repoRoot;
+  private getCompanyFilesRootDir(): string {
+    return path.join(this.getRepoRoot(), 'files', 'companies');
   }
-  // Create the required folder structure for a new company
+  /**
+   * Creează pe server structura obligatorie: files/companies/[nume companie]/ și Locații/.
+   * La crearea unei locații se vor crea obligatoriu sub Locații/[nume locație]/ folderele Angajați și Furnizori.
+   */
   private async createCompanyFolderStructure(company: Company): Promise<void> {
     try {
-      // Create company folder with only company name
+      // Obligatoriu: folder cu numele companiei în files/companies
       const companyRootDir = path.join(this.getCompanyFilesRootDir(), company.company_name);
-      
-      // Create company folder
       if (!fs.existsSync(companyRootDir)) {
         fs.mkdirSync(companyRootDir, { recursive: true });
         console.log(`📁 Created company root directory: ${companyRootDir}`);
       }
+
+      // Obligatoriu: folder Locații în care vor apărea folderele per locație (Angajați, Furnizori)
+      const locationsDir = path.join(companyRootDir, 'Locații');
+      if (!fs.existsSync(locationsDir)) {
+        fs.mkdirSync(locationsDir, { recursive: true });
+        console.log(`📁 Created locations directory: ${locationsDir}`);
+      }
       
-      // Create "Companie" folder with all subfolders
+      // Create "Companie" folder with all subfolders (documente firme)
       const companyDir = path.join(companyRootDir, 'Companie');
       if (!fs.existsSync(companyDir)) {
         fs.mkdirSync(companyDir, { recursive: true });
@@ -90,13 +84,6 @@ export class CompanyService {
           fs.mkdirSync(subfolderPath, { recursive: true });
           console.log(`📁 Created company subfolder: ${subfolderPath}`);
         }
-      }
-      
-      // Create "Locații" folder (empty initially)
-      const locationsDir = path.join(companyRootDir, 'Locații');
-      if (!fs.existsSync(locationsDir)) {
-        fs.mkdirSync(locationsDir, { recursive: true });
-        console.log(`📁 Created locations directory: ${locationsDir}`);
       }
       
       console.log(`✅ Folder structure created successfully for company ${company.id}`);
@@ -516,21 +503,81 @@ export class CompanyService {
     return mimeTypes[extension || ''] || 'application/octet-stream';
   }
 
+  /**
+   * Returnează lista de foldere: din DB (cu documente) + de pe disk (directoare din Companie/).
+   * Astfel după refresh în UI apar și folderele goale create cu createCompanyFolder.
+   */
   async getCompanyFolders(companyId: number): Promise<string[]> {
-    await this.findCompanyById(companyId);
-    const documents = await this.companyDocumentRepository.find({ 
+    const company = await this.findCompanyById(companyId);
+    const fromDb = await this.companyDocumentRepository.find({
       where: { company_id: companyId },
-      select: ['folder']
+      select: ['folder'],
     });
-    
-    // Extract unique folder names, filtering out null/undefined values
-    const folders = documents
-      .map(doc => doc.folder)
-      .filter((folder, index, self) => 
-        folder && self.indexOf(folder) === index
-      ) as string[];
-      
-    return folders;
+    const dbFolders = fromDb
+      .map((doc) => doc.folder)
+      .filter((f): f is string => !!f && !!f.trim());
+    const uniqueDb = [...new Set(dbFolders)];
+
+    const rootDir = path.resolve(this.getCompanyFilesRootDir());
+    const companieDir = path.join(rootDir, company.company_name, 'Companie');
+    const diskFolders: string[] = [];
+    if (fs.existsSync(companieDir)) {
+      const collect = (dir: string, prefix: string) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isDirectory()) continue;
+          const name = e.name;
+          const relPath = prefix ? `${prefix}/${name}` : name;
+          diskFolders.push(relPath);
+          const fullPath = path.join(dir, name);
+          collect(fullPath, relPath);
+        }
+      };
+      collect(companieDir, '');
+    }
+
+    const combined = [...new Set([...uniqueDb, ...diskFolders])].sort();
+    return combined;
+  }
+
+  /**
+   * Creează pe disk un folder în Companie (pentru documente firmă).
+   * @param companyId ID companie
+   * @param folder Cale folder (ex: "Folder nou" sau "Parent/Child"); se creează sub files/companies/{nume}/Companie/
+   */
+  async createCompanyFolder(companyId: number, folder: string): Promise<void> {
+    if (!folder || !folder.trim()) return;
+    const company = await this.findCompanyById(companyId);
+    const rootDir = path.resolve(this.getCompanyFilesRootDir());
+    const companyDir = path.join(rootDir, company.company_name);
+    const companieDir = path.join(companyDir, 'Companie');
+    const folderPath = path.resolve(path.join(companieDir, folder.trim()));
+
+    try {
+      if (!fs.existsSync(companyDir)) fs.mkdirSync(companyDir, { recursive: true });
+      if (!fs.existsSync(companieDir)) fs.mkdirSync(companieDir, { recursive: true });
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true });
+        if (!fs.existsSync(folderPath)) throw new Error(`Nu s-a putut crea: ${folderPath}`);
+      }
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  /**
+   * Șterge pe disk un folder din Companie (și subfoldere). Documentele din DB cu folder=X rămân; poți adăuga ștergere lor dacă e nevoie.
+   */
+  async deleteCompanyFolder(companyId: number, folder: string): Promise<void> {
+    if (!folder || !folder.trim()) return;
+    const company = await this.findCompanyById(companyId);
+    const rootDir = path.resolve(this.getCompanyFilesRootDir());
+    const companyDir = path.join(rootDir, company.company_name);
+    const companieDir = path.join(companyDir, 'Companie');
+    const folderPath = path.resolve(path.join(companieDir, folder.trim()));
+    if (!folderPath.startsWith(companieDir)) throw new Error('Cale invalidă');
+    if (!fs.existsSync(folderPath)) return;
+    fs.rmSync(folderPath, { recursive: true });
   }
 
   // Get file system structure from files/company directory

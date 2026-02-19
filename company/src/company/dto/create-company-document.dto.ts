@@ -19,11 +19,11 @@ export class CreateCompanyDocumentDto {
   @IsIn(['Certificat de înmatriculare','Act constitutiv','Hotărâre ANAF','Contract de închiriere','Procură','Certificat fiscal','Alte documente'])
   document_type: string;
 
-  @ApiProperty({ description: 'Calea către document', example: '/uploads/documents/2023/12/certificat_1.pdf' })
+  @ApiProperty({ description: 'Calea către document (opțional dacă se trimite file_content)', example: '/uploads/documents/2023/12/certificat_1.pdf' })
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @Length(5, 500)
-  location_path: string;
+  location_path?: string;
 
   @ApiProperty({ description: 'Folderul în care este stocat documentul', example: 'Contracte', required: false })
   @IsString()

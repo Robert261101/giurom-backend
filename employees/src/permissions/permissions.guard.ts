@@ -11,21 +11,14 @@ export class PermissionsGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
     
-    // If bypassAuth is set by InternalServiceGuard, allow the request
-    if (request.bypassAuth) {
-      this.logger.log('Bypassing permissions check for internal service request');
-      return true;
-    }
+    if (request.bypassAuth) return true;
 
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
 
-    if (!requiredPermissions || requiredPermissions.length === 0) {
-      this.logger.log('No permissions required for this endpoint');
-      return true;
-    }
+    if (!requiredPermissions || requiredPermissions.length === 0) return true;
 
     const user = request?.user;
     if (!user?.permissions) {
@@ -43,16 +36,11 @@ export class PermissionsGuard implements CanActivate {
       const requestId = request.params?.id || request.params?.employeeId;
       const userEmployeeId = user.id || user.userId; // id_employee din JWT
       
-      if (requestId && userEmployeeId && String(requestId) === String(userEmployeeId)) {
-        this.logger.log(`User accessing own data (employee ID ${userEmployeeId}), allowing access`);
-        return true;
-      }
+      if (requestId && userEmployeeId && String(requestId) === String(userEmployeeId)) return true;
       
       this.logger.warn(`User missing required permissions: ${requiredPermissions.join(', ')}`);
       throw new ForbiddenException('Permisiuni insuficiente');
     }
-    
-    this.logger.log(`User has all required permissions: ${requiredPermissions.join(', ')}`);
     return true;
   }
 }

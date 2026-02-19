@@ -10,6 +10,7 @@ import { TaskAssignment } from './entity/task-assignment.entity';
 import { TaskAssignmentElement } from './entity/task-assignment-element.entity';
 import { TaskTemplate } from '../template/entity/task-template.entity';
 import { TaskElement } from '../template/entity/task-element.entity';
+import { TaskExecution } from '../execution/entity/task-execution.entity';
 import { ExecutionModule } from '../execution/execution.module';
 import { TaskGateway } from '../websocket/task.gateway';
 
@@ -19,7 +20,8 @@ import { TaskGateway } from '../websocket/task.gateway';
       TaskAssignment,
       TaskAssignmentElement,
       TaskTemplate,
-      TaskElement
+      TaskElement,
+      TaskExecution,
     ]),
     HttpModule,
     NotificationsModule,

@@ -277,6 +277,40 @@ export class EmployeeHttpController {
     return this.employeeService.findFilesByEmployee(employeeId);
   }
 
+  /** Creează un folder pentru angajat (body: description, parent_id opțional). */
+  @Post(":employeeId/folders")
+  @Permissions("employees.update")
+  @ApiOperation({ summary: "Creează folder angajat" })
+  async createFolder(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Body() body: { description: string; parent_id?: number },
+  ) {
+    return this.employeeService.createFolder(employeeId, body || { description: '' });
+  }
+
+  /** Actualizează numele unui folder (body: description). */
+  @Patch(":employeeId/folders/:folderId")
+  @Permissions("employees.update")
+  @ApiOperation({ summary: "Actualizează folder angajat" })
+  async updateFolder(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Param("folderId", ParseIntPipe) folderId: number,
+    @Body() body: { description: string },
+  ) {
+    return this.employeeService.updateFolder(employeeId, folderId, body || { description: '' });
+  }
+
+  /** Șterge un folder și descendenții (inclusiv pe disk). */
+  @Delete(":employeeId/folders/:folderId")
+  @Permissions("employees.delete")
+  @ApiOperation({ summary: "Șterge folder angajat" })
+  async removeFolder(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Param("folderId", ParseIntPipe) folderId: number,
+  ) {
+    return this.employeeService.removeFolder(employeeId, folderId);
+  }
+
   // Optional: list via query (used by some legacy callers)
   @Get("files")
   @Permissions("employees.read")
@@ -572,6 +606,7 @@ export class EmployeeHttpController {
         note?: string;
         expire_date?: string;
       }>;
+      folder_id?: number;
     },
   ) {
     console.log("📥 Received document upload request:", { employeeId, body });
@@ -584,18 +619,12 @@ export class EmployeeHttpController {
 
     // Get employee to construct proper file link
     const employee = await this.employeeService.findOne(employeeId);
-    const employeeName = this.employeeService["simplifyEmployeeName"](
-      employee.first_name,
-      employee.last_name,
-    );
 
     // Check if this is a profile picture
     const isProfilePicture =
       (first.document_type || first.type) === "profile_picture";
 
-    // Don't provide file_link - let the service construct the correct path based on employee location binding
-    // The service will check if employee is location-bound and construct the appropriate path
-
+    // Don't provide file_link - let the service construct the correct path based on employee location binding or folder_id
     const createFileDto = {
       employee_id: employeeId,
       file_name: fileName,
@@ -603,6 +632,7 @@ export class EmployeeHttpController {
       file_content: first.content,
       expire_date: first.expire_date,
       note: first.note,
+      ...(body.folder_id != null && { folder_id: body.folder_id }),
     };
 
     console.log("📤 Sending to employee service:", { createFileDto });

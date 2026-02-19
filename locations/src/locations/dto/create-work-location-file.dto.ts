@@ -75,6 +75,16 @@ export class CreateWorkLocationFileDto {
   expire_date?: string;
 
   @ApiProperty({
+    description: 'ID-ul folderului (opțional)',
+    example: 1,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'ID-ul folderului trebuie să fie un număr' })
+  @Transform(({ value }) => (value != null ? parseInt(value, 10) : undefined))
+  folder_id?: number;
+
+  @ApiProperty({
     description: 'Note despre fișier (poate include informații despre folder etc.)',
     example: '|folder:Contract de Închiriere locație| Document încărcat la 15.11.2023',
     required: false

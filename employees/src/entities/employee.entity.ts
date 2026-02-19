@@ -2,6 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateCol
 import { ApiProperty } from '@nestjs/swagger';
 import { EmployeeWorkLocationHistory } from './employee-work-location-history.entity';
 import { EmployeeFiles } from './employee-files.entity';
+import { EmployeeFolder } from './employee-folder.entity';
 import { GeneratedDocuments } from './generated-documents.entity';
 import { EmployeeLocation } from './employee-location.entity';
 
@@ -225,6 +226,13 @@ export class Employee {
   })
   @OneToMany(() => EmployeeFiles, file => file.employee)
   employeeFiles: EmployeeFiles[];
+
+  @ApiProperty({
+    description: 'Folderele angajatului (ierarhice)',
+    type: () => [EmployeeFolder],
+  })
+  @OneToMany(() => EmployeeFolder, folder => folder.employee)
+  folders: EmployeeFolder[];
 
   @ApiProperty({
     description: 'Documentele generate pentru angajat',

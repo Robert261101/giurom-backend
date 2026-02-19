@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Employee } from './employee.entity';
+import { EmployeeFolder } from './employee-folder.entity';
 
 @Entity('employee_files')
 export class EmployeeFiles {
@@ -79,6 +80,14 @@ export class EmployeeFiles {
   note: string | null;
 
   @ApiProperty({
+    description: 'ID-ul folderului (opțional)',
+    example: 1,
+    required: false,
+  })
+  @Column({ type: 'int', nullable: true })
+  folder_id: number | null;
+
+  @ApiProperty({
     description: 'Data ultimei actualizări',
     example: '2023-12-15T14:30:00Z',
   })
@@ -93,4 +102,12 @@ export class EmployeeFiles {
   @ManyToOne(() => Employee, employee => employee.employeeFiles)
   @JoinColumn({ name: 'employee_id' })
   employee: Employee;
+
+  @ApiProperty({
+    description: 'Folderul asociat (opțional)',
+    type: () => EmployeeFolder,
+  })
+  @ManyToOne(() => EmployeeFolder, folder => folder.documents, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'folder_id' })
+  folder: EmployeeFolder | null;
 }

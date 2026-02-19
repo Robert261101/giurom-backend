@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Inject } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
-import { Repository, Connection, In } from 'typeorm';
+import { Repository, Connection, In, IsNull } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
@@ -249,7 +249,8 @@ export class SuppliersService {
             // Create location-specific path
             const locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
             basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
-            supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+            const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+            supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
             
             this.logger.log(`📍 Using location-specific path for supplier folders: ${basePath}`);
           } else {
@@ -258,13 +259,15 @@ export class SuppliersService {
             this.logger.warn(`⚠️ Location ${locationId} not found, using placeholder location-specific path`);
             const locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
             basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
-            supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+            const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+            supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
           }
         } catch (error) {
           this.logger.warn(`⚠️ Error fetching location details, using placeholder location-specific path:`, error);
           const locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
           basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
-          supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+          const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+          supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
         }
       } else {
         // Default path for non-location-bound suppliers
@@ -406,7 +409,8 @@ export class SuppliersService {
     }
     
     const repoRoot = this.getRepoRoot();
-    const absolutePath = path.join(repoRoot, filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`);
+    const filePathRel = (filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`).replace(/^\//, '');
+    const absolutePath = path.join(repoRoot, filePathRel);
     this.logger.log(`📄 Absolute file path: ${absolutePath}`);
     
     // If file is not found at the specified path, check in subfolders
@@ -519,26 +523,42 @@ export class SuppliersService {
   }
 
   async findOne(id: number, location_id?: number): Promise<Supplier> {
-    const supplier = await this.supplierRepo.findOne({ 
-      where: { id }, 
-      relations: ['folders', 'folders.documents', 'products', 'orders', 'orders.items', 'orders.documents', 'locations'] 
-    });
-    
+    // Încărcare explicită folders + documents cu QueryBuilder pentru a evita relațiile nested neîncărcate
+    const qb = this.supplierRepo
+      .createQueryBuilder('supplier')
+      .leftJoinAndSelect('supplier.folders', 'folders')
+      .leftJoinAndSelect('folders.documents', 'documents')
+      .leftJoinAndSelect('supplier.products', 'products')
+      .leftJoinAndSelect('supplier.orders', 'orders')
+      .leftJoinAndSelect('orders.items', 'items')
+      .leftJoinAndSelect('orders.documents', 'orders_documents')
+      .leftJoinAndSelect('supplier.locations', 'locations')
+      .where('supplier.id = :id', { id });
+
+    const supplier = await qb.getOne();
+
     if (!supplier) {
       throw new NotFoundException('Furnizorul nu a fost găsit');
     }
-    
+
     // Dacă location_id este furnizat, verifică dacă furnizorul este asignat la acea locație
     if (location_id !== undefined) {
       const isAssignedToLocation = supplier.locations?.some(
         (loc: any) => loc.id_location === location_id
       );
-      
+
       if (!isAssignedToLocation) {
         throw new NotFoundException(`Furnizorul cu ID ${id} nu este asignat la locația specificată`);
       }
     }
-    
+
+    const folders = (supplier as any).folders || [];
+    this.logger.log(`📂 [findOne] Furnizor ${id}: ${folders.length} foldere returnate`);
+    folders.forEach((f: any, i: number) => {
+      const docs = f.documents || [];
+      this.logger.log(`📂 [findOne]   folder[${i}] id=${f.id} description="${f.description}" folder_path="${f.folder_path}" documents=${docs.length}`);
+    });
+
     return supplier;
   }
 
@@ -2656,13 +2676,14 @@ export class SuppliersService {
 
   async addDocument(
     supplierId: number,
-    documentData: { fileName: string; folderId: number; notes?: string; content?: string; file_content?: string; expire_date?: string },
+    documentData: { fileName: string; folderId?: number; folderName?: string; notes?: string; content?: string; file_content?: string; expire_date?: string },
   ) {
     try {
       console.log(`📥 [addDocument] Starting document upload for supplier ${supplierId}`);
       console.log(`📄 [addDocument] Document data:`, {
         fileName: documentData.fileName,
         folderId: documentData.folderId,
+        folderName: documentData.folderName,
         hasContent: !!(documentData.content || documentData.file_content),
         notes: documentData.notes,
         expire_date: documentData.expire_date
@@ -2671,18 +2692,11 @@ export class SuppliersService {
       const supplier = await this.findOne(supplierId);
       console.log(`✅ [addDocument] Found supplier: ${supplier.supplier_name} (ID: ${supplier.id})`);
 
-      const folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
-      if (!folder) {
-        console.error(`❌ [addDocument] Folder not found for ID ${documentData.folderId} and supplier ${supplierId}`);
-        throw new NotFoundException('Folderul nu a fost găsit');
-      }
-      console.log(`✅ [addDocument] Found folder: ${folder.description} (ID: ${folder.id})`);
-
-      // Get the supplier name simplified
+      // Get the supplier name simplified (needed for path and folder resolution)
       const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
       console.log(`📝 [addDocument] Simplified supplier name: ${supplierNameSimplified}`);
 
-      // Check if supplier is bound to any locations
+      // Check if supplier is bound to any locations (compute basePath first, needed for find-or-create folder)
       let locationPath: string | null = null;
       let isBoundToLocation = false;
 
@@ -2695,18 +2709,15 @@ export class SuppliersService {
 
         if (supplierLocations && supplierLocations.length > 0) {
           console.log(`📍 [addDocument] Supplier is bound to ${supplierLocations.length} locations`);
-          // Get the first location (assuming supplier is primarily bound to one location)
           const locationId = supplierLocations[0].id_location;
           console.log(`📍 [addDocument] Checking details for location ID: ${locationId}`);
           
-          // Add more detailed logging for location fetching
           try {
             const location = await this.fetchLocation(locationId);
             console.log(`📍 [addDocument] Location details:`, location);
             
             if (location) {
               console.log(`📍 [addDocument] Location data is valid`);
-              // Get company name for the location
               let companyName = 'UnknownCompany';
               try {
                 const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
@@ -2732,29 +2743,17 @@ export class SuppliersService {
                 console.warn(`⚠️ [addDocument] Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
               }
 
-              // Create location-specific path
               locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
               isBoundToLocation = true;
               console.log(`📍 [addDocument] Location-specific path constructed: ${locationPath}`);
-              
-              // Verify that the location path components are valid
-              console.log(`📍 [addDocument] Location path components:`, {
-                companyName: companyName,
-                locationName: location.location_name,
-                companyId: location.company_id
-              });
             } else {
               console.log(`⚠️ [addDocument] Location details not found for location ID: ${locationId}`);
-              // Even if we can't fetch location details, we still want to use the location-specific structure
-              // We'll use a placeholder for company name and location name
               locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
               isBoundToLocation = true;
               console.log(`📍 [addDocument] Using placeholder location-specific path: ${locationPath}`);
             }
           } catch (locationError) {
             console.error(`❌ [addDocument] Error fetching location details for location ID ${locationId}:`, locationError);
-            // Even if we get an error fetching location details, we still want to use the location-specific structure
-            // We'll use a placeholder for company name and location name
             locationPath = `/files/companies/UnknownCompany/Locații/UnknownLocation`;
             isBoundToLocation = true;
             console.log(`📍 [addDocument] Using placeholder location-specific path due to error: ${locationPath}`);
@@ -2767,11 +2766,53 @@ export class SuppliersService {
       }
 
       console.log(`📍 [addDocument] Final location binding status - isBoundToLocation: ${isBoundToLocation}, locationPath: ${locationPath}`);
+
+      // Rezolvă folder: după id, sau după nume (find-or-create pe server)
+      let folder: SupplierFolder | null = null;
+      if (documentData.folderId) {
+        folder = await this.folderRepo.findOne({ where: { id: documentData.folderId, supplier_id: supplierId } });
+        if (folder) console.log(`✅ [addDocument] Found folder by ID: ${folder.description} (ID: ${folder.id})`);
+      }
+      if (!folder) {
+        const folderName = documentData.folderName
+          || (documentData.notes?.match(/\|folder:([^|]+)\|/)?.[1]?.trim())
+          || 'Alte documente';
+        folder = await this.folderRepo.findOne({ where: { supplier_id: supplierId, description: folderName } });
+        if (folder) {
+          console.log(`✅ [addDocument] Found folder by name: ${folder.description} (ID: ${folder.id})`);
+        } else {
+          // Creează folderul pe server (DB + path)
+          const basePath = isBoundToLocation && locationPath
+            ? `${locationPath}/Furnizori/${supplierNameSimplified}`
+            : `/files/suppliers/${supplierNameSimplified}`;
+          const folderPath = basePath.endsWith('/') ? basePath : `${basePath}/`;
+          const newFolder = this.folderRepo.create({
+            supplier_id: supplierId,
+            description: folderName,
+            folder_path: folderPath,
+          });
+          folder = await this.folderRepo.save(newFolder);
+          console.log(`✅ [addDocument] Created folder on server: ${folder.description} (ID: ${folder.id}), path: ${folderPath}`);
+          const repoRoot = this.getRepoRoot();
+          const basePathRel = basePath.startsWith('/') ? basePath.slice(1) : basePath;
+          const absoluteDir = path.join(repoRoot, basePathRel, folderName);
+          if (!fs.existsSync(absoluteDir)) {
+            fs.mkdirSync(absoluteDir, { recursive: true });
+            console.log(`📁 [addDocument] Created directory on disk: ${absoluteDir}`);
+          }
+        }
+      }
+      if (!folder) {
+        console.error(`❌ [addDocument] Could not resolve or create folder for supplier ${supplierId}`);
+        throw new NotFoundException('Folderul nu a putut fi găsit sau creat.');
+      }
+      console.log(`✅ [addDocument] Using folder: ${folder.description} (ID: ${folder.id})`);
       
       // If bound to location, verify the path can be constructed
       if (isBoundToLocation && locationPath) {
         const repoRoot = this.getRepoRoot();
-        const absoluteLocationPath = path.join(repoRoot, locationPath);
+        const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+        const absoluteLocationPath = path.join(repoRoot, locationPathRel);
         console.log(`📁 [addDocument] Absolute location path: ${absoluteLocationPath}`);
         
         // Check if the location directory exists
@@ -2789,15 +2830,18 @@ export class SuppliersService {
         const repoRoot = this.getRepoRoot();
         console.log(`📁 [addDocument] Repository root: ${repoRoot}`);
 
-        // Determine the correct file path based on location binding
+        // Determine the correct file path: păstrăm ierarhia (folder în folder), nu doar baza
         let folderPathToUse = folder.folder_path;
-        console.log(`📁 [addDocument] Original folder path: ${folderPathToUse}`);
 
         if (isBoundToLocation && locationPath) {
-          // Use location-specific path - create supplier folder within Furnizori
-          folderPathToUse = `${locationPath}/Furnizori/${supplierNameSimplified}`;
-          console.log(`📍 [addDocument] Using location-specific folder path: ${folderPathToUse}`);
-        } else {
+          if (folder.folder_path.startsWith(locationPath)) {
+            folderPathToUse = folder.folder_path;
+          } else {
+            const supplierBase = `/files/suppliers/${supplierNameSimplified}`;
+            const rel = folder.folder_path.replace(supplierBase, '').replace(/^\/+/, '').replace(/\/+$/, '');
+            folderPathToUse = rel ? `${locationPath}/Furnizori/${supplierNameSimplified}/${rel}` : `${locationPath}/Furnizori/${supplierNameSimplified}`;
+          }
+        } else if (!isBoundToLocation) {
           // Handle both old and new folder path structures
           // Check if the folder path follows the old structure (with ID)
           if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
@@ -2811,20 +2855,11 @@ export class SuppliersService {
           }
         }
 
-        // Determine the correct subfolder based on notes
-        let subfolderPath = folderPathToUse;
-        if (documentData.notes) {
-          // Extract folder name from notes if available (same logic as in locations service)
-          const folderMatch = documentData.notes.match(/\|folder:([^|]+)\|/);
-          if (folderMatch && folderMatch[1]) {
-            const designatedFolder = folderMatch[1];
-            subfolderPath = path.join(folderPathToUse, designatedFolder);
-            console.log(`📂 [addDocument] Using designated subfolder: ${designatedFolder}`);
-          }
-        }
-        console.log(`📁 [addDocument] Final subfolder path: ${subfolderPath}`);
+        // Calea finală: folderPathToUse conține deja ierarhia (ex. .../Certificat de Înregistrare/Folder nou2/)
+        const subfolderPath = folderPathToUse.replace(/\/+$/, '') + (folderPathToUse.endsWith('/') ? '' : '/');
 
-        const absoluteDir = path.join(repoRoot, subfolderPath);
+        const subfolderPathRel = subfolderPath.startsWith('/') ? subfolderPath.slice(1) : subfolderPath;
+        const absoluteDir = path.join(repoRoot, subfolderPathRel);
         const absolutePath = path.join(absoluteDir, documentData.fileName);
         console.log(`📁 [addDocument] Absolute directory: ${absoluteDir}`);
         console.log(`📄 [addDocument] Absolute file path: ${absolutePath}`);
@@ -2846,7 +2881,8 @@ export class SuppliersService {
 
         // If using location-specific path, also ensure the supplier folder exists and create subfolders
         if (isBoundToLocation && locationPath) {
-          const supplierDir = path.join(repoRoot, locationPath, 'Furnizori', supplierNameSimplified);
+          const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+          const supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
           console.log(`📍 [addDocument] Checking location-specific supplier directory: ${supplierDir}`);
 
           try {
@@ -2951,7 +2987,7 @@ export class SuppliersService {
       }
       
       const document = this.supplierDocumentRepo.create({
-        folder_id: documentData.folderId,
+        folder_id: folder.id,
         document_type: DocumentType.OTHER,
         file_name: documentData.fileName,
         file_path: `${filePathToUse}/${subfolderForDb}/${documentData.fileName}`,
@@ -2966,6 +3002,307 @@ export class SuppliersService {
     } catch (error) {
       console.error(`❌ [addDocument] Unexpected error during document upload:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Sincronizează documentele unui folder din disk în baza de date: citește fișierele din
+   * folder_path + description și creează înregistrări în supplier_documents pentru fișierele
+   * care nu există deja. Util când fișierele au fost puse pe disk de alt flux (ex. locații).
+   */
+  async syncFolderFromDisk(supplierId: number, folderId: number): Promise<{ folder: SupplierFolder; documents: SupplierDocument[] }> {
+    const folder = await this.folderRepo.findOne({
+      where: { id: folderId, supplier_id: supplierId },
+      relations: ['documents'],
+    });
+    if (!folder) {
+      throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru furnizorul ${supplierId}`);
+    }
+    const repoRoot = this.getRepoRoot();
+    const folderPathRel = (folder.folder_path || '').replace(/^\//, '').replace(/\/$/, '');
+    const subfolderRel = folderPathRel ? `${folderPathRel}/${folder.description}` : folder.description;
+    const absoluteDir = path.join(repoRoot, subfolderRel.split('/').join(path.sep));
+    this.logger.log(`📂 [syncFolderFromDisk] Furnizor ${supplierId}, folder ${folderId} (${folder.description})`);
+    this.logger.log(`📂 [syncFolderFromDisk] folder_path="${folder.folder_path}" → subfolderRel="${subfolderRel}"`);
+    this.logger.log(`📂 [syncFolderFromDisk] absoluteDir="${absoluteDir}" exists=${fs.existsSync(absoluteDir)} repoRoot="${repoRoot}"`);
+    const existingNames = new Set((folder.documents || []).map((d) => d.file_name));
+    let created = 0;
+    if (fs.existsSync(absoluteDir)) {
+      const entries = fs.readdirSync(absoluteDir, { withFileTypes: true });
+      this.logger.log(`📂 [syncFolderFromDisk] Fișiere pe disk: ${entries.filter((e) => e.isFile()).map((e) => e.name).join(', ') || '(niciunul)'}`);
+      for (const ent of entries) {
+        if (!ent.isFile()) continue;
+        const fileName = ent.name;
+        if (existingNames.has(fileName)) continue;
+        const filePathForDb = subfolderRel.startsWith('files') ? `/${subfolderRel}/${fileName}` : `/files/${subfolderRel}/${fileName}`;
+        const doc = this.supplierDocumentRepo.create({
+          folder_id: folder.id,
+          document_type: DocumentType.OTHER,
+          file_name: fileName,
+          file_path: filePathForDb,
+          notes: `|folder:${folder.description}| Sincronizat de pe disk`,
+        });
+        await this.supplierDocumentRepo.save(doc);
+        existingNames.add(fileName);
+        created++;
+        this.logger.log(`✅ [syncFolderFromDisk] Creat în DB: ${fileName} (folder ${folderId})`);
+      }
+    } else {
+      this.logger.warn(`⚠️ [syncFolderFromDisk] Directorul nu există: ${absoluteDir}. Încerc path după locație...`);
+      const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
+      if (supplier) {
+        const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+        const supplierLocations = await this.supplierLocationsRepo.find({ where: { supplier_id: supplierId } });
+        for (const sl of supplierLocations || []) {
+          try {
+            const location = await this.fetchLocation(sl.id_location);
+            if (!location) continue;
+            let companyName = 'UnknownCompany';
+            try {
+              const companiesUrl = this.configService.get<string>('COMPANIES_HTTP_URL') || 'http://localhost:3003';
+              const serviceSecret = this.configService.get<string>('SERVICE_SECRET') || 'default-service-secret';
+              const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+                headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
+                timeout: 3000,
+              }));
+              if (response?.data?.company_name) companyName = response.data.company_name;
+            } catch {
+              // ignore
+            }
+            const locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+            const locationSubfolderRel = `${locationPath.replace(/^\//, '')}/Furnizori/${supplierNameSimplified}/${folder.description}`;
+            const locationAbsoluteDir = path.join(repoRoot, locationSubfolderRel.split('/').join(path.sep));
+            this.logger.log(`📂 [syncFolderFromDisk] Încerc path locație: ${locationAbsoluteDir} exists=${fs.existsSync(locationAbsoluteDir)}`);
+            if (fs.existsSync(locationAbsoluteDir)) {
+              const entries = fs.readdirSync(locationAbsoluteDir, { withFileTypes: true });
+              this.logger.log(`📂 [syncFolderFromDisk] Fișiere pe disk (locație): ${entries.filter((e) => e.isFile()).map((e) => e.name).join(', ') || '(niciunul)'}`);
+              for (const ent of entries) {
+                if (!ent.isFile()) continue;
+                const fileName = ent.name;
+                if (existingNames.has(fileName)) continue;
+                const filePathForDb = `/${locationSubfolderRel}/${fileName}`;
+                const doc = this.supplierDocumentRepo.create({
+                  folder_id: folder.id,
+                  document_type: DocumentType.OTHER,
+                  file_name: fileName,
+                  file_path: filePathForDb,
+                  notes: `|folder:${folder.description}| Sincronizat de pe disk`,
+                });
+                await this.supplierDocumentRepo.save(doc);
+                existingNames.add(fileName);
+                created++;
+                this.logger.log(`✅ [syncFolderFromDisk] Creat în DB (locație): ${fileName} (folder ${folderId})`);
+              }
+              break;
+            }
+          } catch (locErr: any) {
+            this.logger.warn(`⚠️ [syncFolderFromDisk] Eroare path locație: ${locErr?.message || locErr}`);
+          }
+        }
+      }
+    }
+    const updatedFolder = await this.folderRepo.findOne({
+      where: { id: folderId },
+      relations: ['documents'],
+    });
+    const documents = updatedFolder?.documents ?? [];
+    this.logger.log(`✅ [syncFolderFromDisk] Furnizor ${supplierId}, folder ${folderId}: ${documents.length} documente (${created} noi de pe disk)`);
+    return { folder: updatedFolder || folder, documents };
+  }
+
+  /**
+   * Creează un folder nou pentru un furnizor (în DB și pe disk).
+   * @param supplierId ID furnizor
+   * @param body { description: string, parent_id?: number } numele folderului și opțional părintele
+   * @param locationId opțional – dacă e setat, se folosește path-ul specific locației
+   */
+  async createFolder(supplierId: number, body: { description: string; parent_id?: number }, locationId?: number): Promise<SupplierFolder> {
+    const description = (body?.description || '').trim();
+    if (!description) {
+      throw new BadRequestException('description este obligatoriu');
+    }
+    const parentId = body?.parent_id ?? null;
+    const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
+    if (!supplier) {
+      throw new NotFoundException(`Furnizorul cu ID ${supplierId} nu a fost găsit`);
+    }
+    const existing = await this.folderRepo.findOne({
+      where: { supplier_id: supplierId, description, parent_id: parentId != null ? parentId : IsNull() },
+    });
+    if (existing) {
+      this.logger.log(`[createFolder] Folder deja există: ${description} (ID: ${existing.id})`);
+      return existing;
+    }
+    const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
+    let basePath: string;
+    const repoRoot = this.getRepoRoot();
+
+    let locationPath: string | null = null;
+    let isBoundToLocation = false;
+    if (locationId) {
+      try {
+        const location = await this.fetchLocation(locationId);
+        if (location) {
+          let companyName = 'UnknownCompany';
+          try {
+            const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+            const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+            const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+              headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
+              timeout: 3000,
+            }));
+            if (response?.data?.company_name) companyName = response.data.company_name;
+          } catch {
+            // ignore
+          }
+          locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+          isBoundToLocation = true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!isBoundToLocation || !locationPath) {
+      const supplierLocations = await this.supplierLocationsRepo.find({ where: { supplier_id: supplierId } });
+      if (supplierLocations?.length > 0) {
+        try {
+          const location = await this.fetchLocation(supplierLocations[0].id_location);
+          if (location) {
+            let companyName = 'UnknownCompany';
+            try {
+              const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
+                headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
+                timeout: 3000,
+              }));
+              if (response?.data?.company_name) companyName = response.data.company_name;
+            } catch {
+              // ignore
+            }
+            locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+            isBoundToLocation = true;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (isBoundToLocation && locationPath) {
+      basePath = `${locationPath}/Furnizori/${supplierNameSimplified}`;
+    } else {
+      basePath = `/files/suppliers/${supplierNameSimplified}`;
+    }
+
+    let folderPath: string;
+    if (parentId) {
+      const parent = await this.folderRepo.findOne({ where: { id: parentId, supplier_id: supplierId } });
+      if (!parent) {
+        throw new NotFoundException(`Folderul părinte cu ID ${parentId} nu a fost găsit`);
+      }
+      const parentPath = (parent.folder_path || '').replace(/\/+$/, '');
+      const parentDesc = (parent.description || '').trim();
+      folderPath = parentPath ? `${parentPath}/${parentDesc}/` : `${basePath.replace(/\/+$/, '')}/${parentDesc}/`;
+    } else {
+      folderPath = basePath.endsWith('/') ? basePath : `${basePath}/`;
+    }
+
+    const folder = this.folderRepo.create({
+      supplier_id: supplierId,
+      description,
+      folder_path: folderPath,
+      parent_id: parentId,
+    });
+    const saved = await this.folderRepo.save(folder);
+    const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
+    const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), description);
+    if (!fs.existsSync(absoluteDir)) {
+      fs.mkdirSync(absoluteDir, { recursive: true });
+      this.logger.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+    }
+    this.logger.log(`[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? 'null'})`);
+    return saved;
+  }
+
+  /**
+   * Actualizează numele unui folder (în DB și pe disk).
+   * Nu permite duplicate: dacă există deja un folder cu același nume pentru același furnizor, aruncă BadRequest.
+   */
+  async updateFolder(supplierId: number, folderId: number, body: { description: string }): Promise<SupplierFolder> {
+    const newDescription = (body?.description || '').trim();
+    if (!newDescription) {
+      throw new BadRequestException('description este obligatoriu');
+    }
+    const folder = await this.folderRepo.findOne({ where: { id: folderId, supplier_id: supplierId } });
+    if (!folder) {
+      throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru furnizorul ${supplierId}`);
+    }
+    if (folder.description === newDescription) {
+      return folder;
+    }
+    const parentId = folder.parent_id ?? null;
+    const existing = await this.folderRepo.findOne({
+      where: { supplier_id: supplierId, description: newDescription, parent_id: parentId != null ? parentId : IsNull() },
+    });
+    if (existing && existing.id !== folderId) {
+      throw new BadRequestException('Există deja un folder cu acest nume.');
+    }
+    const oldDescription = folder.description;
+    folder.description = newDescription;
+    const saved = await this.folderRepo.save(folder);
+    const repoRoot = this.getRepoRoot();
+    const folderPathRel = (folder.folder_path || '').replace(/^\//, '').replace(/\/$/, '');
+    const oldDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), oldDescription);
+    const newDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), newDescription);
+    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+      try {
+        fs.renameSync(oldDir, newDir);
+        this.logger.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
+      } catch (err: any) {
+        this.logger.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+      }
+    } else if (!fs.existsSync(newDir)) {
+      fs.mkdirSync(newDir, { recursive: true });
+      this.logger.log(`[updateFolder] Creat director pe disk: ${newDir}`);
+    }
+    this.logger.log(`[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`);
+    return saved;
+  }
+
+  /**
+   * Șterge un folder al furnizorului și toți descendenții (recursiv).
+   */
+  async removeFolder(supplierId: number, folderId: number): Promise<void> {
+    const folder = await this.folderRepo.findOne({ where: { id: folderId, supplier_id: supplierId } });
+    if (!folder) {
+      throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru furnizorul ${supplierId}`);
+    }
+    await this.removeFolderRecursive(supplierId, folderId);
+    this.logger.log(`[removeFolder] Șters folder ${folderId} (${folder.description}) și descendenții pentru furnizor ${supplierId}`);
+  }
+
+  private async removeFolderRecursive(supplierId: number, folderId: number): Promise<void> {
+    const children = await this.folderRepo.find({ where: { supplier_id: supplierId, parent_id: folderId } });
+    for (const child of children) {
+      await this.removeFolderRecursive(supplierId, child.id);
+    }
+    const folder = await this.folderRepo.findOne({ where: { id: folderId, supplier_id: supplierId } });
+    if (folder) {
+      const folderPathToDelete = folder.folder_path;
+      await this.folderRepo.remove(folder);
+      try {
+        const repoRoot = this.getRepoRoot();
+        const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
+        const absolutePath = path.join(repoRoot, pathRel);
+        if (fs.existsSync(absolutePath)) {
+          fs.rmSync(absolutePath, { recursive: true, force: true });
+          this.logger.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
+        } else {
+          this.logger.warn(`[removeFolder] Directorul pe disk nu există: ${absolutePath}`);
+        }
+      } catch (e) {
+        this.logger.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
+      }
     }
   }
 
@@ -3000,7 +3337,8 @@ export class SuppliersService {
         }
       }
       
-      const absolutePath = path.join(repoRoot, filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`);
+      const filePathRel = (filePathToUse.startsWith('/files') ? filePathToUse : `/files${filePathToUse}`).replace(/^\//, '');
+      const absolutePath = path.join(repoRoot, filePathRel);
       this.logger.log(`📄 Absolute file path for removal: ${absolutePath}`);
       
       if (fs.existsSync(absolutePath)) {

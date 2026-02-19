@@ -83,4 +83,14 @@ export class CreateEmployeeFileDto {
   @IsOptional()
   @IsString({ message: 'Nota trebuie să fie un string' })
   note?: string;
+
+  @ApiProperty({
+    description: 'ID-ul folderului în care se încarcă fișierul (opțional)',
+    example: 1,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'folder_id trebuie să fie un număr' })
+  @Transform(({ value }) => (value === undefined || value === null ? undefined : parseInt(value, 10)))
+  folder_id?: number;
 }

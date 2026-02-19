@@ -31,7 +31,7 @@ export class SupplierDocument {
   @Column({ type: 'varchar', length: 255, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   file_name: string;
 
-  @Column({ type: 'varchar', length: 500 })
+  @Column({ type: 'varchar', length: 500, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   file_path: string;
 
   @Column({ type: 'datetime', nullable: true, default: null })

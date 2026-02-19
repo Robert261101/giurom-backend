@@ -31,11 +31,23 @@ let PermissionsGuard = PermissionsGuard_1 = class PermissionsGuard {
             this.logger.log('Bypassing permissions check for internal service request');
             return true;
         }
+        const handler = context.getHandler();
+        const controller = context.getClass();
+        const handlerName = handler.name;
+        this.logger.log(`🔍 [PermissionsGuard] Handler name: ${handlerName}, Controller: ${controller.name}`);
         const requiredPermissions = this.reflector.getAllAndOverride(permissions_decorator_1.PERMISSIONS_KEY, [
-            context.getHandler(),
-            context.getClass(),
+            handler,
+            controller,
         ]);
+        const handlerPermissions = this.reflector.get(permissions_decorator_1.PERMISSIONS_KEY, handler);
+        const classPermissions = this.reflector.get(permissions_decorator_1.PERMISSIONS_KEY, controller);
+        this.logger.log(`🔍 [PermissionsGuard] Handler permissions: ${JSON.stringify(handlerPermissions)}`);
+        this.logger.log(`🔍 [PermissionsGuard] Class permissions: ${JSON.stringify(classPermissions)}`);
+        this.logger.log(`🔍 [PermissionsGuard] Final required permissions (getAllAndOverride): ${JSON.stringify(requiredPermissions)}`);
         if (!requiredPermissions || requiredPermissions.length === 0) {
+            return true;
+        }
+        if (request.bypassAuth === true) {
             return true;
         }
         const user = request?.user;
@@ -43,13 +55,21 @@ let PermissionsGuard = PermissionsGuard_1 = class PermissionsGuard {
             this.logger.warn('User not authenticated');
             throw new common_1.ForbiddenException('Fără permisiuni');
         }
+        const path = request.path || request.url?.split('?')[0] || '';
+        const isGetRequest = request.method === 'GET';
         const hasAll = user.permissions && requiredPermissions.every((perm) => user.permissions.includes(perm));
+        this.logger.log(`🔍 [PermissionsGuard] Checking permissions for ${request.method} ${path}`);
+        this.logger.log(`🔍 [PermissionsGuard] Required permissions: ${JSON.stringify(requiredPermissions)}`);
+        this.logger.log(`🔍 [PermissionsGuard] User permissions count: ${user.permissions?.length || 0}`);
+        this.logger.log(`🔍 [PermissionsGuard] User has cashing.create: ${user.permissions?.includes('cashing.create') || false}`);
+        if (user.permissions && user.permissions.length > 0) {
+            this.logger.log(`🔍 [PermissionsGuard] First 10 user permissions: ${JSON.stringify(user.permissions.slice(0, 10))}`);
+        }
+        this.logger.log(`🔍 [PermissionsGuard] Has all required permissions: ${hasAll}`);
         if (hasAll) {
-            this.logger.log(`User has all required permissions: ${requiredPermissions.join(', ')}`);
+            this.logger.log(`✅ User has all required permissions: ${requiredPermissions.join(', ')}`);
             return true;
         }
-        const isGetRequest = request.method === 'GET';
-        const path = request.path || request.url?.split('?')[0] || '';
         const isRevenueEndpoint = path.includes('/revenue/') && (request.method === 'PATCH' || request.method === 'DELETE');
         if (isRevenueEndpoint) {
             if (!user.permissions) {

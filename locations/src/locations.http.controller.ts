@@ -146,6 +146,12 @@ export class LocationsHttpController {
 		return this.service.findWorkLocationById(parseInt(id, 10), user);
 	}
 
+	@Get('company/:companyId/with-documents')
+	@Permissions('locations.read')
+	findByCompanyWithDocuments(@Param('companyId') companyId: string) {
+		return this.service.findWorkLocationsByCompanyWithDocuments(parseInt(companyId, 10));
+	}
+
 	@Get('company/:companyId')
 	@Permissions('locations.read')
 	findByCompany(@Param('companyId') companyId: string) { return this.service.findWorkLocationsByCompany(parseInt(companyId, 10)); }
@@ -284,6 +290,44 @@ export class LocationsHttpController {
 
 	// ==================== LOCATION FILES ENDPOINTS ====================
 
+	// List location folders by location ID
+	@Get(':locationId/folders')
+	@Permissions('locations.read')
+	async getLocationFolders(
+		@Param('locationId', ParseIntPipe) locationId: number,
+	) {
+		return this.service.findFoldersByLocation(locationId);
+	}
+
+	@Post(':locationId/folders')
+	@Permissions('locations.create')
+	async createLocationFolder(
+		@Param('locationId', ParseIntPipe) locationId: number,
+		@Body() body: { description: string; parent_id?: number | null },
+	) {
+		return this.service.createFolder(locationId, body);
+	}
+
+	@Patch(':locationId/folders/:folderId')
+	@Permissions('locations.update')
+	async updateLocationFolder(
+		@Param('locationId', ParseIntPipe) locationId: number,
+		@Param('folderId', ParseIntPipe) folderId: number,
+		@Body() body: { description: string },
+	) {
+		return this.service.updateFolder(locationId, folderId, body);
+	}
+
+	@Delete(':locationId/folders/:folderId')
+	@Permissions('locations.delete')
+	async deleteLocationFolder(
+		@Param('locationId', ParseIntPipe) locationId: number,
+		@Param('folderId', ParseIntPipe) folderId: number,
+	) {
+		await this.service.removeFolder(locationId, folderId);
+		return { success: true };
+	}
+
 	// List location files by location ID
 	@Get(':locationId/files')
 	@Permissions('locations.read')
@@ -341,7 +385,7 @@ export class LocationsHttpController {
 	@Permissions('locations.create')
 	async addLocationFile(
 		@Param('locationId', ParseIntPipe) locationId: number,
-		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number, notes?: string },
+		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number; notes?: string; folder_id?: number },
 	) {
 		const dto: CreateWorkLocationFileDto & { notes?: string } = {
 			work_location_id: locationId,
@@ -350,6 +394,7 @@ export class LocationsHttpController {
 			file_link: body.file_link,
 			file_content: body.file_content,
 			notes: body.notes,
+			folder_id: body.folder_id,
 		} as CreateWorkLocationFileDto & { notes?: string };
 		return this.service.createFile(dto);
 	}

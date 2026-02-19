@@ -1,14 +1,14 @@
-
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, urlencoded } from 'express';
 // import rateLimit from 'express-rate-limit'; // Rate limiting dezactivat
 
 async function bootstrap() {
-  // Create HTTP application
-  const app = await NestFactory.create(AppModule);
-  
-  // Enable CORS
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
+
   app.enableCors({
     origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',

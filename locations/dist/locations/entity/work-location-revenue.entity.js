@@ -60,9 +60,17 @@ __decorate([
 ], WorkLocationRevenue.prototype, "image_url", void 0);
 __decorate([
     (0, typeorm_1.Index)(),
-    (0, typeorm_1.Column)({ type: 'int', nullable: true, name: 'user_id' }),
+    (0, typeorm_1.Column)({ type: 'int', nullable: false, name: 'employee_id' }),
     __metadata("design:type", Number)
-], WorkLocationRevenue.prototype, "user_id", void 0);
+], WorkLocationRevenue.prototype, "employee_id", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'datetime', nullable: true, name: 'created_at', default: () => 'CURRENT_TIMESTAMP' }),
+    __metadata("design:type", String)
+], WorkLocationRevenue.prototype, "created_at", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'datetime', nullable: true, name: 'updated_at', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' }),
+    __metadata("design:type", String)
+], WorkLocationRevenue.prototype, "updated_at", void 0);
 exports.WorkLocationRevenue = WorkLocationRevenue = __decorate([
     (0, typeorm_1.Entity)('WorkLocation_Revenue')
 ], WorkLocationRevenue);

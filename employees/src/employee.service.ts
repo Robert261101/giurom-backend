@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
-import { Repository, MoreThanOrEqual, LessThan, In } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThan, In, IsNull } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Employee } from './entities/employee.entity';
@@ -9,6 +9,7 @@ import { EmployeeFiles } from './entities/employee-files.entity';
 import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
 import { EmployeeLocation } from './entities/employee-location.entity';
+import { EmployeeFolder } from './entities/employee-folder.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateEmployeeFileDto } from './dto/create-employee-file.dto';
@@ -35,15 +36,37 @@ export class EmployeeService {
     private workLocationHistoryRepository: Repository<EmployeeWorkLocationHistory>,
     @InjectRepository(EmployeeLocation)
     private employeeLocationRepository: Repository<EmployeeLocation>,
+    @InjectRepository(EmployeeFolder)
+    private folderRepository: Repository<EmployeeFolder>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
     private httpService: HttpService,
   ) {}
 
+  /**
+   * Rădăcina pentru toate fișierele – același arbore ca company/locations/furnizori.
+   * Prioritate: FILES_BASE_PATH (env) > rezolvare din __dirname > fallback (parent al cwd când rulăm în container employees).
+   */
+  private getFilesRepoRoot(): string {
+    if (process.env.FILES_BASE_PATH) {
+      return path.resolve(process.env.FILES_BASE_PATH);
+    }
+    // Aceeași logică ca company/furnizori: .../giurom-backend/employees/dist -> ../../.. = employees, ../../../.. = giurom-backend -> dirname = rădăcina proiectului
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      repoRoot = path.dirname(repoRoot);
+    }
+    const fsRoot = path.parse(repoRoot).root || path.sep;
+    if (repoRoot === fsRoot || repoRoot === path.sep || repoRoot.length <= 1) {
+      // În Docker/runtime __dirname poate da / – folosim același truc ca la furnizori: rădăcina e parent față de directorul serviciului
+      const cwd = process.cwd();
+      repoRoot = (path.basename(cwd) === 'employees' ? path.join(cwd, '..') : cwd);
+      console.warn(`[getFilesRepoRoot] Repo root rezolvat la rădăcină, folosesc: ${repoRoot}`);
+    }
+    return repoRoot;
+  }
+
   private getEmployeesFilesRootDir(): string {
-    // Resolve repo root relative to this file location to be robust for different cwd
-    // __dirname is .../giurom-backend/employees/src (dev with ts-node) or .../giurom-backend/employees/dist (prod)
-    const repoRoot = path.resolve(__dirname, '../../..');
-    return path.join(repoRoot, 'files', 'employees');
+    return path.join(this.getFilesRepoRoot(), 'files', 'employees');
   }
 
   private simplifyEmployeeName(firstName: string, lastName: string): string {
@@ -248,6 +271,17 @@ export class EmployeeService {
       .take(limit)
       .skip(offset)
       .getManyAndCount();
+
+    // Încarcă folderele separat (evită dependența de relația TypeORM employee.folders)
+    if (employees.length > 0) {
+      const ids = employees.map(e => e.id);
+      const folders = await this.folderRepository.find({
+        where: { employee_id: In(ids) },
+      });
+      for (const emp of employees) {
+        (emp as any).folders = folders.filter((f: any) => f.employee_id === emp.id);
+      }
+    }
 
     console.log('🔍 [EMPLOYEES] Query result:', {
       totalEmployees: total,
@@ -798,14 +832,26 @@ export class EmployeeService {
       'profile_picture': 'profile_picture'
     };
 
-    // Extract folder from note field if provided (for organized document uploads)
     let subfolder = fileTypeToFolderMap[createFileDto.file_type] || 'Alte documente';
     console.log('📁 Initial subfolder from file_type:', { file_type: createFileDto.file_type, subfolder });
-    
-    if (createFileDto.note) {
-      console.log('📝 Note field present:', createFileDto.note);
+
+    // Dacă e specificat folder_id, folosim calea folderului (folder_path) pentru subfolder
+    if (createFileDto.folder_id != null) {
+      const folder = await this.folderRepository.findOne({
+        where: { id: createFileDto.folder_id, employee_id: createFileDto.employee_id },
+      });
+      if (!folder) {
+        throw new NotFoundException(`Folderul cu ID ${createFileDto.folder_id} nu a fost găsit pentru acest angajat`);
+      }
+      const employeeNameForPath = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+      const prefix = `/files/employees/${employeeNameForPath}/`;
+      const folderPathNorm = (folder.folder_path || '').replace(/\/+$/, '');
+      subfolder = folderPathNorm.startsWith(prefix)
+        ? folderPathNorm.slice(prefix.length).replace(/\/+$/, '')
+        : folder.description || subfolder;
+      console.log('📁 Subfolder din folder_id:', { folder_id: createFileDto.folder_id, subfolder });
+    } else if (createFileDto.note) {
       const folderMatch = createFileDto.note.match(/\|folder:([^|]+)\|/);
-      console.log('🔍 Folder match result:', folderMatch);
       if (folderMatch && folderMatch[1]) {
         subfolder = folderMatch[1];
         console.log('📁 Updated subfolder from note:', subfolder);
@@ -1016,7 +1062,8 @@ export class EmployeeService {
       file_name: uniqueFileName,
       file_link: updatedFileLink,
       expire_date: createFileDto.expire_date ? new Date(createFileDto.expire_date) : null,
-      note: createFileDto.note || null
+      note: createFileDto.note || null,
+      folder_id: createFileDto.folder_id ?? null,
     });
 
     const savedFile = await this.filesRepository.save(file);
@@ -1253,27 +1300,15 @@ export class EmployeeService {
     // We need to join it with the root directory to get the actual file path
     // Since file_link starts with /files, we need to be careful not to double the 'files' part
     let filePath;
-    console.log('🔍 File link analysis:', { rootDir, fileLink: file.file_link });
     if (file.file_link.startsWith('/files/companies/')) {
-      // For location-specific paths, join rootDir with the path after /files
       filePath = path.join(rootDir, file.file_link.replace(/^\/files\//, ''));
-      console.log('📁 Using location-specific path logic:', filePath);
     } else if (file.file_link.startsWith('/files/employees/')) {
-      // For default paths (including profile pictures), remove /files/ part
       filePath = path.join(rootDir, file.file_link.replace(/^\/files\//, ''));
-      console.log('📁 Using default path logic:', filePath);
     } else {
-      // Fallback - remove leading slash and join with root
       filePath = path.join(rootDir, file.file_link.replace(/^\//, ''));
-      console.log('📁 Using fallback path logic:', filePath);
     }
-    
-    console.log(`📁 Using stored file path: ${filePath}`);
-    
-    // If file is not found at the exact path, try to find it in subfolders
-    // This is for backward compatibility with files that might have been saved in subfolders
+
     if (!fs.existsSync(filePath)) {
-      console.log(`📁 File not found at exact path, checking subfolders`);
       
       // Extract the directory part and filename
       const fileDir = path.dirname(filePath);
@@ -1288,17 +1323,13 @@ export class EmployeeService {
             const possiblePath = path.join(itemPath, fileName);
             if (fs.existsSync(possiblePath)) {
               filePath = possiblePath;
-              console.log(`📁 File found in subdirectory: ${filePath}`);
               break;
             }
           }
         }
       }
       
-      // If still not found, try the old reconstruction method as a last resort
       if (!fs.existsSync(filePath)) {
-        console.log(`📁 File not found in subdirectories, trying reconstruction method`);
-        
         const employee = await this.employeeRepository.findOne({
           where: { id: file.employee_id }
         });
@@ -1327,7 +1358,7 @@ export class EmployeeService {
               const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3005';
               const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
               
-              const response = await axios.get(`${locationsUrl}/work-locations/${locationId}`, {
+              const response = await axios.get(`${locationsUrl}/locations/${locationId}`, {
                 headers: {
                   'x-internal-service': 'employees',
                   'x-service-secret': serviceSecret,
@@ -1366,7 +1397,7 @@ export class EmployeeService {
                 isBoundToLocation = true;
               }
             } catch (error: any) {
-              console.warn(`Could not fetch location details for location ID ${locationId}:`, error?.message || error);
+              // Locația poate să nu existe sau URL-ul serviciului să fie greșit
             }
           }
         } catch (error: any) {
@@ -1383,12 +1414,8 @@ export class EmployeeService {
           filePath = isProfilePicture
             ? path.join(employeeDir, 'profile_picture', file.file_name)
             : path.join(employeeDir, file.file_name);
-          
-          console.log(`📁 Trying location-specific structure path: ${filePath}`);
-          
-          // If file is not found at the root level, check in subfolders
+
           if (!fs.existsSync(filePath)) {
-            console.log(`📁 File not found at root level, checking subfolders`);
             
             // Get all subfolders in the employee directory
             if (fs.existsSync(employeeDir)) {
@@ -1401,26 +1428,18 @@ export class EmployeeService {
                 const possiblePath = path.join(employeeDir, subfolder, file.file_name);
                 if (fs.existsSync(possiblePath)) {
                   filePath = possiblePath;
-                  console.log(`📁 File found in subfolder ${subfolder}: ${filePath}`);
                   break;
                 }
               }
             }
           }
         } else {
-          // Use default path
           const employeeDir = path.join(baseDir, employeeName);
-          
-          // Încearcă mai întâi structura nouă (bazată pe nume)
           filePath = isProfilePicture
             ? path.join(employeeDir, 'profile_picture', file.file_name)
             : path.join(employeeDir, file.file_name);
-            
-          console.log(`📁 Trying new structure path: ${filePath}`);
-          
-          // If file is not found at the root level, check in subfolders
+
           if (!fs.existsSync(filePath)) {
-            console.log(`📁 File not found at root level, checking subfolders`);
             
             // Get all subfolders in the employee directory
             if (fs.existsSync(employeeDir)) {
@@ -1433,40 +1452,28 @@ export class EmployeeService {
                 const possiblePath = path.join(employeeDir, subfolder, file.file_name);
                 if (fs.existsSync(possiblePath)) {
                   filePath = possiblePath;
-                  console.log(`📁 File found in subfolder ${subfolder}: ${filePath}`);
                   break;
                 }
               }
             }
           }
-          
-          // Dacă nu este găsit, încearcă structura veche (bazată pe ID) pentru compatibilitate
+
           if (!fs.existsSync(filePath)) {
-            console.log(`📁 File not found at new path, trying old structure`);
             filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
-            console.log(`📁 Trying old structure path: ${filePath}`);
           }
-          
-          // Dacă nici acum nu este găsit, încearcă și în subfolderul profile_picture pentru structura veche
           if (!fs.existsSync(filePath) && isProfilePicture) {
-            console.log(`📁 File not found at old path, trying old structure with profile_picture folder`);
             filePath = path.join(baseDir, file.employee_id.toString(), 'profile_picture', file.file_name);
-            console.log(`📁 Trying old structure with profile_picture folder: ${filePath}`);
           }
         }
       }
     }
-    
+
     if (!fs.existsSync(filePath)) {
-      console.error(`❌ File not found on disk: ${filePath}`);
       throw new NotFoundException('Fișierul nu a fost găsit pe disk');
     }
-    
+
     const mimeType = this.getMimeType(file.file_name);
-    console.log(`📋 MIME type determined: ${mimeType}`);
-    
     const fileBuffer = fs.readFileSync(filePath);
-    console.log(`✅ File read successfully: ${file.file_name} (${fileBuffer.length} bytes)`);
 
     return {
       data: fileBuffer.toString('base64'),
@@ -2024,5 +2031,207 @@ export class EmployeeService {
     
     console.log(`[EMPLOYEES SERVICE] Found ${files.length} expired files`);
     return files;
+  }
+
+  /**
+   * Creează un folder pentru un angajat (în DB și pe disk).
+   * Dacă angajatul e asignat la o locație, folderul se creează sub companies/[Companie]/Locații/[Locație]/Angajați/[Nume].
+   * parent_id opțional; dacă e setat, folderul este subfolder.
+   */
+  async createFolder(employeeId: number, body: { description: string; parent_id?: number }): Promise<EmployeeFolder> {
+    const description = (body?.description || '').trim();
+    if (!description) {
+      throw new BadRequestException('description este obligatoriu');
+    }
+    const employee = await this.employeeRepository.findOne({ where: { id: employeeId } });
+    if (!employee) {
+      throw new NotFoundException(`Angajatul cu ID ${employeeId} nu a fost găsit`);
+    }
+    const parentId = body?.parent_id ?? null;
+    const existing = await this.folderRepository.findOne({
+      where: {
+        employee_id: employeeId,
+        description,
+        parent_id: parentId != null ? parentId : IsNull(),
+      },
+    });
+    if (existing) {
+      throw new BadRequestException('Există deja un folder cu acest nume.');
+    }
+    const employeeSlug = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+    const defaultBasePath = `/files/employees/${employeeSlug}`;
+
+    // Verifică dacă angajatul e asignat la o locație (employee_locations sau work_location_default_id) – atunci folosim calea companies/.../Locații/.../Angajați
+    let locationPath: string | null = null;
+    let locationId: number | null = null;
+    try {
+      const employeeLocations = await this.employeeLocationRepository.find({
+        where: { employeeId: employeeId },
+      });
+      if (employeeLocations?.length > 0) {
+        locationId = employeeLocations[0].idLocation;
+      } else if (employee.work_location_default_id != null) {
+        locationId = employee.work_location_default_id;
+        console.log(`[createFolder] Folosesc work_location_default_id: ${locationId} (angajat ${employeeId})`);
+      }
+      if (locationId != null) {
+        try {
+          // Apel direct către serviciul locations (cu headere interne), nu prin API Gateway, ca să nu primim 401
+          const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+          const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+          const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+          const locResponse = await axios.get(`${locationsUrl}/locations/${locationId}`, {
+            headers: { 'x-internal-service': 'employees', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
+            timeout: 3000,
+          });
+          const location = locResponse.data;
+          if (location) {
+            let companyName = 'UnknownCompany';
+            try {
+              const companyResponse = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
+                headers: { 'x-internal-service': 'employees', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
+                timeout: 3000,
+              });
+              if (companyResponse.data?.company_name) companyName = companyResponse.data.company_name;
+            } catch (err: any) {
+              console.warn(`[createFolder] Nu s-a putut obține compania pentru locația ${locationId}:`, err?.message);
+            }
+            locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
+            console.log(`[createFolder] Cale locație: ${locationPath}`);
+          } else {
+            console.warn(`[createFolder] Răspuns gol de la locations/${locationId}`);
+          }
+        } catch (err: any) {
+          console.warn(`[createFolder] Eroare la obținerea locației ${locationId}, folosesc calea default:`, err?.message);
+        }
+      } else {
+        console.log(`[createFolder] Angajat ${employeeId} fără locație (employee_locations goale, work_location_default_id: ${employee.work_location_default_id ?? 'null'}), folosesc files/employees/`);
+      }
+    } catch (err: any) {
+      console.warn(`[createFolder] Eroare la verificarea locației:`, err?.message);
+    }
+
+    const basePath = locationPath ? `${locationPath}/Angajați/${employeeSlug}` : defaultBasePath;
+    let folderPath: string;
+    if (parentId) {
+      const parent = await this.folderRepository.findOne({ where: { id: parentId, employee_id: employeeId } });
+      if (!parent) {
+        throw new NotFoundException(`Folderul părinte cu ID ${parentId} nu a fost găsit`);
+      }
+      const parentPath = (parent.folder_path || '').replace(/\/+$/, '');
+      folderPath = parentPath ? `${parentPath}/${description}/` : `${basePath}/${description}/`;
+    } else {
+      folderPath = `${basePath}/${description}/`;
+    }
+
+    const folder = this.folderRepository.create({
+      employee_id: employeeId,
+      description,
+      folder_path: folderPath,
+      parent_id: parentId,
+    });
+    const saved = await this.folderRepository.save(folder);
+
+    // Creare pe disk: același repo root ca company/locations (FILES_BASE_PATH sau parent of giurom-backend)
+    const repoRoot = this.getFilesRepoRoot();
+    const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
+    const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep));
+    if (!fs.existsSync(absoluteDir)) {
+      fs.mkdirSync(absoluteDir, { recursive: true });
+      console.log(`[createFolder] Repo root: ${repoRoot}`);
+      console.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+    }
+    console.log(`[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? 'null'}, path: ${folderPath})`);
+    return saved;
+  }
+
+  /**
+   * Actualizează numele unui folder (în DB și pe disk).
+   */
+  async updateFolder(employeeId: number, folderId: number, body: { description: string }): Promise<EmployeeFolder> {
+    const newDescription = (body?.description || '').trim();
+    if (!newDescription) {
+      throw new BadRequestException('description este obligatoriu');
+    }
+    const folder = await this.folderRepository.findOne({ where: { id: folderId, employee_id: employeeId } });
+    if (!folder) {
+      throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru angajatul ${employeeId}`);
+    }
+    if (folder.description === newDescription) {
+      return folder;
+    }
+    const parentId = folder.parent_id ?? null;
+    const existing = await this.folderRepository.findOne({
+      where: {
+        employee_id: employeeId,
+        description: newDescription,
+        parent_id: parentId != null ? parentId : IsNull(),
+      },
+    });
+    if (existing && existing.id !== folderId) {
+      throw new BadRequestException('Există deja un folder cu acest nume.');
+    }
+    const oldDescription = folder.description;
+    const oldFolderPath = folder.folder_path || '';
+    folder.description = newDescription;
+    if (folder.folder_path) {
+      folder.folder_path = folder.folder_path.replace(new RegExp(`/${ oldDescription.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }/?$`), `/${newDescription}/`);
+    }
+    const saved = await this.folderRepository.save(folder);
+    const repoRoot = this.getFilesRepoRoot();
+    const oldPathRel = oldFolderPath.replace(/^\//, '').replace(/\/+$/, '');
+    const newPathRel = (saved.folder_path || '').replace(/^\//, '').replace(/\/+$/, '');
+    const oldDir = path.join(repoRoot, oldPathRel.split('/').join(path.sep));
+    const newDir = path.join(repoRoot, newPathRel.split('/').join(path.sep));
+    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+      try {
+        fs.renameSync(oldDir, newDir);
+        console.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
+      } catch (err: any) {
+        console.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+      }
+    } else if (!fs.existsSync(newDir)) {
+      fs.mkdirSync(newDir, { recursive: true });
+      console.log(`[updateFolder] Creat director pe disk: ${newDir}`);
+    }
+    console.log(`[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`);
+    return saved;
+  }
+
+  /**
+   * Șterge un folder și toți descendenții (recursiv), inclusiv pe disk.
+   */
+  async removeFolder(employeeId: number, folderId: number): Promise<void> {
+    const folder = await this.folderRepository.findOne({ where: { id: folderId, employee_id: employeeId } });
+    if (!folder) {
+      throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru angajatul ${employeeId}`);
+    }
+    await this.removeFolderRecursive(employeeId, folderId);
+    console.log(`[removeFolder] Șters folder ${folderId} (${folder.description}) și descendenții pentru angajat ${employeeId}`);
+  }
+
+  private async removeFolderRecursive(employeeId: number, folderId: number): Promise<void> {
+    const children = await this.folderRepository.find({ where: { employee_id: employeeId, parent_id: folderId } });
+    for (const child of children) {
+      await this.removeFolderRecursive(employeeId, child.id);
+    }
+    const folder = await this.folderRepository.findOne({ where: { id: folderId, employee_id: employeeId } });
+    if (folder) {
+      const folderPathToDelete = folder.folder_path;
+      await this.folderRepository.remove(folder);
+      try {
+        const repoRoot = this.getFilesRepoRoot();
+        const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
+        const absolutePath = path.join(repoRoot, pathRel.split('/').join(path.sep));
+        if (fs.existsSync(absolutePath)) {
+          fs.rmSync(absolutePath, { recursive: true, force: true });
+          console.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
+        } else {
+          console.warn(`[removeFolder] Directorul pe disk nu există: ${absolutePath}`);
+        }
+      } catch (e) {
+        console.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
+      }
+    }
   }
 }

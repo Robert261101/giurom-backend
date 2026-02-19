@@ -76,4 +76,36 @@ __decorate([
     (0, class_validator_1.IsString)({ message: 'Conținutul fișierului trebuie să fie un string' }),
     __metadata("design:type", String)
 ], CreateWorkLocationFileDto.prototype, "file_content", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'Data expirării documentului',
+        example: '2023-12-31T23:59:59Z',
+        required: false
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)({ message: 'Data expirării trebuie să fie un string' }),
+    __metadata("design:type", String)
+], CreateWorkLocationFileDto.prototype, "expire_date", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'ID-ul folderului (opțional)',
+        example: 1,
+        required: false,
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)({}, { message: 'ID-ul folderului trebuie să fie un număr' }),
+    (0, class_transformer_1.Transform)(({ value }) => (value != null ? parseInt(value, 10) : undefined)),
+    __metadata("design:type", Number)
+], CreateWorkLocationFileDto.prototype, "folder_id", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'Note despre fișier (poate include informații despre folder etc.)',
+        example: '|folder:Contract de Închiriere locație| Document încărcat la 15.11.2023',
+        required: false
+    }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)({ message: 'Notele trebuie să fie un string' }),
+    (0, class_validator_1.Length)(0, 1000, { message: 'Notele trebuie să aibă între 0 și 1000 de caractere' }),
+    __metadata("design:type", String)
+], CreateWorkLocationFileDto.prototype, "notes", void 0);
 //# sourceMappingURL=create-work-location-file.dto.js.map

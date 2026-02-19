@@ -97,6 +97,18 @@ export class CompanyHttpController {
 		return this.service.getCompanyFolders(parseInt(companyId, 10));
 	}
 
+	@Post(':companyId/documents/folders')
+	@Permissions('companies.create')
+	async createCompanyFolder(@Param('companyId') companyId: string, @Body() body: { folder: string }) {
+		await this.service.createCompanyFolder(parseInt(companyId, 10), body?.folder ?? '');
+	}
+
+	@Delete(':companyId/documents/folders')
+	@Permissions('companies.delete')
+	async deleteCompanyFolder(@Param('companyId') companyId: string, @Query('folder') folder: string) {
+		await this.service.deleteCompanyFolder(parseInt(companyId, 10), folder ?? '');
+	}
+
 	@Get(':companyId/documents/structure')
 	@Permissions('companies.read')
 	getCompanyFileStructure(@Param('companyId') companyId: string) {

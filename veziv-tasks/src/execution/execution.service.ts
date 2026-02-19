@@ -1568,6 +1568,17 @@ export class ExecutionService {
     return totalPointsDeducted;
   }
 
+  /**
+   * Public wrapper: scade punctele pentru un assignment nefinalizat (folosit la realocare).
+   * Assignment trebuie încărcat cu relations: elements, elements.task_element.
+   */
+  async deductPointsForUncompletedAssignment(
+    assignment: TaskAssignment,
+    targetDate: Date,
+  ): Promise<number> {
+    return this.deductPointsForUncompletedTask(assignment, targetDate);
+  }
+
   // ===== METODĂ PENTRU CALCULAREA PUNCTAJULUI TASK-ULUI =====
 
   private calculateTaskPoints(

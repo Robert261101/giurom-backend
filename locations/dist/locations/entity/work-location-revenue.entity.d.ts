@@ -13,5 +13,7 @@ export declare class WorkLocationRevenue {
     total_amount: number;
     status?: RevenueStatus;
     image_url?: string;
-    user_id?: number;
+    employee_id: number;
+    created_at?: string;
+    updated_at?: string;
 }

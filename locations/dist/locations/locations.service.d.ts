@@ -1,18 +1,19 @@
-import { DeepPartial, Repository, DataSource } from 'typeorm';
-import { ClientProxy } from '@nestjs/microservices';
-import { WorkLocation } from '../locations/entity/work-location.entity';
-import { WorkLocationTaskTemplate } from '../locations/entity/work-location-task-template.entity';
-import { WorkLocationDepartments } from '../locations/entity/work-location-departments.entity';
-import { WorkLocationDepartmentPositions } from '../locations/entity/work-location-department-positions.entity';
-import { CreateWorkLocationDto } from './dto/create-work-location.dto';
-import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
-import { CreateTaskTemplateAssignmentDto } from './dto/create-task-template-assignment.dto';
-import { UpdateTaskTemplateAssignmentDto } from './dto/update-task-template-assignment.dto';
-import { WorkLocationRevenue, RevenueStatus } from './entity/work-location-revenue.entity';
-import { WorkLocationRevenuePoints } from './entity/work-location-revenue-points.entity';
-import { WorkLocationManagerConfig } from './entity/work-location-manager-config.entity';
-import { WorkLocationFiles } from './entity/work-location-files.entity';
-import { CreateWorkLocationFileDto } from './dto/create-work-location-file.dto';
+import { DeepPartial, Repository, DataSource } from "typeorm";
+import { ClientProxy } from "@nestjs/microservices";
+import { WorkLocation } from "../locations/entity/work-location.entity";
+import { WorkLocationTaskTemplate } from "../locations/entity/work-location-task-template.entity";
+import { WorkLocationDepartments } from "../locations/entity/work-location-departments.entity";
+import { WorkLocationDepartmentPositions } from "../locations/entity/work-location-department-positions.entity";
+import { CreateWorkLocationDto } from "./dto/create-work-location.dto";
+import { UpdateWorkLocationDto } from "./dto/update-work-location.dto";
+import { CreateTaskTemplateAssignmentDto } from "./dto/create-task-template-assignment.dto";
+import { UpdateTaskTemplateAssignmentDto } from "./dto/update-task-template-assignment.dto";
+import { WorkLocationRevenue, RevenueStatus } from "./entity/work-location-revenue.entity";
+import { WorkLocationRevenuePoints } from "./entity/work-location-revenue-points.entity";
+import { WorkLocationManagerConfig } from "./entity/work-location-manager-config.entity";
+import { WorkLocationFiles } from "./entity/work-location-files.entity";
+import { WorkLocationFolder } from "./entity/work-location-folder.entity";
+import { CreateWorkLocationFileDto } from "./dto/create-work-location-file.dto";
 export declare class LocationsService {
     private readonly workLocationRepository;
     private readonly taskTemplateRepository;
@@ -22,10 +23,18 @@ export declare class LocationsService {
     private readonly revenuePointsRepository;
     private readonly managerConfigRepository;
     private readonly filesRepository;
+    private readonly folderRepository;
     private readonly notificationsClient;
     private readonly dataSource;
-    constructor(workLocationRepository: Repository<WorkLocation>, taskTemplateRepository: Repository<WorkLocationTaskTemplate>, departmentsRepository: Repository<WorkLocationDepartments>, positionsRepository: Repository<WorkLocationDepartmentPositions>, revenueRepository: Repository<WorkLocationRevenue>, revenuePointsRepository: Repository<WorkLocationRevenuePoints>, managerConfigRepository: Repository<WorkLocationManagerConfig>, filesRepository: Repository<WorkLocationFiles>, notificationsClient: ClientProxy, dataSource: DataSource);
+    constructor(workLocationRepository: Repository<WorkLocation>, taskTemplateRepository: Repository<WorkLocationTaskTemplate>, departmentsRepository: Repository<WorkLocationDepartments>, positionsRepository: Repository<WorkLocationDepartmentPositions>, revenueRepository: Repository<WorkLocationRevenue>, revenuePointsRepository: Repository<WorkLocationRevenuePoints>, managerConfigRepository: Repository<WorkLocationManagerConfig>, filesRepository: Repository<WorkLocationFiles>, folderRepository: Repository<WorkLocationFolder>, notificationsClient: ClientProxy, dataSource: DataSource);
+    private getEmployeeLocationIdsForAccess;
+    findWorkLocationsByIds(ids: number[], user?: any): Promise<WorkLocation[]>;
     private getLocationsFilesRootDir;
+    private getRepoRoot;
+    private getFilesCompaniesRoot;
+    private getCompanyNameForLocation;
+    private getLocationBasePath;
+    private createLocationFolderStructure;
     private sendLocationNotification;
     createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation>;
     findAllWorkLocations(page?: number, limit?: number, companyId?: number, city?: string, search?: string, user?: any): Promise<{
@@ -37,7 +46,9 @@ export declare class LocationsService {
         id: number;
         company_name: string;
     }>>;
-    findWorkLocationById(id: number, user?: any): Promise<WorkLocation>;
+    findWorkLocationById(id: number, user?: any): Promise<WorkLocation & {
+        company_name?: string;
+    }>;
     findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]>;
     updateWorkLocation(id: number, dto: UpdateWorkLocationDto): Promise<WorkLocation>;
     removeWorkLocation(id: number): Promise<void>;
@@ -108,14 +119,26 @@ export declare class LocationsService {
     }): Promise<WorkLocationRevenue>;
     private calculateEmployeeBonusesForDate;
     getManagerPointsForDate(workLocationId: number, revenueDate: string): Promise<any>;
-    createFile(createFileDto: CreateWorkLocationFileDto): Promise<WorkLocationFiles>;
+    createFile(createFileDto: CreateWorkLocationFileDto & {
+        expire_date?: string;
+        notes?: string;
+    }): Promise<WorkLocationFiles>;
     findOneFile(id: number): Promise<WorkLocationFiles>;
     findFilesByLocation(work_location_id: number): Promise<WorkLocationFiles[]>;
+    findFoldersByLocation(work_location_id: number): Promise<WorkLocationFolder[]>;
+    createFolder(locationId: number, body: {
+        description: string;
+        parent_id?: number | null;
+    }): Promise<WorkLocationFolder>;
+    updateFolder(locationId: number, folderId: number, body: {
+        description: string;
+    }): Promise<WorkLocationFolder>;
+    removeFolder(locationId: number, folderId: number): Promise<void>;
     serveFile(file_id: number, forceDownload?: boolean): Promise<{
         data: string;
         mimeType: string;
         fileName: string;
-        disposition: 'inline' | 'attachment';
+        disposition: "inline" | "attachment";
     }>;
     private getMimeType;
     removeFile(id: number): Promise<{
@@ -123,4 +146,10 @@ export declare class LocationsService {
     }>;
     findExpiringFiles(targetDate: string): Promise<WorkLocationFiles[]>;
     findExpiredFiles(): Promise<WorkLocationFiles[]>;
+    uploadCashingImage(fileName: string, base64Content: string): Promise<string>;
+    serveCashingImage(fileName: string): Promise<{
+        buffer: Buffer;
+        mimeType: string;
+    }>;
+    deleteCashingImage(imageUrl: string): Promise<void>;
 }

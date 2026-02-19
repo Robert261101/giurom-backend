@@ -11,11 +11,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocationsHttpController = void 0;
 const common_1 = require("@nestjs/common");
-const express_1 = require("express");
 const permissions_decorator_1 = require("./permissions/permissions.decorator");
 const permissions_guard_1 = require("./permissions/permissions.guard");
 const locations_service_1 = require("./locations/locations.service");
@@ -27,10 +25,58 @@ let LocationsHttpController = class LocationsHttpController {
     constructor(service) {
         this.service = service;
     }
+    recordRevenue(id, body, req) {
+        const user = req?.user;
+        if (!user) {
+            throw new Error('User not authenticated');
+        }
+        const userIdFromJWT = user?.id || user?.employee_id || user?.userId || user?.sub;
+        const userIdFromBody = body?.employee_id;
+        const userId = userIdFromJWT || userIdFromBody;
+        console.log('🔍 [recordRevenue Controller] Extracting employee ID:', {
+            hasUser: !!user,
+            userId: userId,
+            userIdFromJWT: userIdFromJWT,
+            userIdFromBody: userIdFromBody,
+            user_id: user?.id,
+            user_employee_id: user?.employee_id,
+            user_userId: user?.userId,
+            user_sub: user?.sub,
+            body_employee_id: body?.employee_id,
+            allUserKeys: Object.keys(user)
+        });
+        if (!userId || userId === 0 || isNaN(Number(userId))) {
+            console.error('❌ [recordRevenue Controller] Invalid employee ID!', {
+                userId,
+                userIdFromJWT,
+                userIdFromBody,
+                user_id: user?.id,
+                user_employee_id: user?.employee_id,
+                user_userId: user?.userId,
+                user_sub: user?.sub,
+                body_employee_id: body?.employee_id
+            });
+            throw new Error('Employee ID is required and must be a valid number');
+        }
+        console.log('✅ [recordRevenue Controller] Using employee_id:', userId);
+        return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, userId);
+    }
     create(dto) { return this.service.createWorkLocation(dto); }
     findAll(page = '1', limit = '10', companyId, city, search, req) {
         const user = req?.user;
         return this.service.findAllWorkLocations(parseInt(page, 10), parseInt(limit, 10), companyId ? parseInt(companyId, 10) : undefined, city, search, user);
+    }
+    findBatch(ids, req) {
+        if (!ids)
+            return Promise.resolve([]);
+        const user = req?.user;
+        const idList = ids
+            .split(',')
+            .map((id) => parseInt(id.trim(), 10))
+            .filter((id) => Number.isFinite(id) && id > 0);
+        if (idList.length === 0)
+            return Promise.resolve([]);
+        return this.service.findWorkLocationsByIds(idList, user);
     }
     stats() { return this.service.getLocationStatistics(); }
     findMyCompanies(req) {
@@ -79,11 +125,6 @@ let LocationsHttpController = class LocationsHttpController {
     getManagerConfig(id) {
         return this.service.getManagerConfig(parseInt(id, 10));
     }
-    recordRevenue(id, body, req) {
-        const user = req?.user;
-        const userId = user?.id || user?.employee_id || user?.userId || null;
-        return this.service.recordRevenue(parseInt(id, 10), body.revenue_date, body.online_amount, body.cash_amount, body.card_amount, body.total_amount, body.status, body.image_url, userId);
-    }
     listRevenue(id, startDate, endDate, page = '1', limit = '50') {
         return this.service.listRevenue(parseInt(id, 10), { startDate, endDate, page: parseInt(page, 10), limit: parseInt(limit, 10) });
     }
@@ -95,6 +136,19 @@ let LocationsHttpController = class LocationsHttpController {
     }
     updateRevenue(revenueId, body) {
         return this.service.updateRevenue(parseInt(revenueId, 10), body);
+    }
+    async getLocationFolders(locationId) {
+        return this.service.findFoldersByLocation(locationId);
+    }
+    async createLocationFolder(locationId, body) {
+        return this.service.createFolder(locationId, body);
+    }
+    async updateLocationFolder(locationId, folderId, body) {
+        return this.service.updateFolder(locationId, folderId, body);
+    }
+    async deleteLocationFolder(locationId, folderId) {
+        await this.service.removeFolder(locationId, folderId);
+        return { success: true };
     }
     async getLocationFiles(locationId) {
         return this.service.findFilesByLocation(locationId);
@@ -132,6 +186,8 @@ let LocationsHttpController = class LocationsHttpController {
             file_type: body.file_type,
             file_link: body.file_link,
             file_content: body.file_content,
+            notes: body.notes,
+            folder_id: body.folder_id,
         };
         return this.service.createFile(dto);
     }
@@ -141,6 +197,7 @@ let LocationsHttpController = class LocationsHttpController {
         }
         const first = body.documents[0];
         const fileName = first.fileName || first.name || 'document.bin';
+        const notes = first.notes || first.note || undefined;
         const file_link = `/files/locations/${locationId}/${fileName}`;
         return this.service.createFile({
             work_location_id: locationId,
@@ -148,13 +205,47 @@ let LocationsHttpController = class LocationsHttpController {
             file_type: first.document_type || first.type || 'Altele',
             file_link,
             file_content: first.content,
+            expire_date: first.expire_date,
+            notes: notes,
         });
     }
     async deleteLocationFile(fileId) {
         return this.service.removeFile(fileId);
     }
+    getExpiringFiles(targetDate) {
+        console.log(`[LOCATIONS CONTROLLER] Getting files expiring on ${targetDate}`);
+        return this.service.findExpiringFiles(targetDate);
+    }
+    getExpiredFiles() {
+        console.log(`[LOCATIONS CONTROLLER] Getting expired files`);
+        return this.service.findExpiredFiles();
+    }
+    async uploadCashingImage(payload) {
+        const imageUrl = await this.service.uploadCashingImage(payload.fileName, payload.content);
+        return { imageUrl };
+    }
+    async serveCashingImage(fileName, res) {
+        const { buffer, mimeType } = await this.service.serveCashingImage(fileName);
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+        res.send(buffer);
+    }
+    async deleteCashingImage(payload) {
+        await this.service.deleteCashingImage(payload.imageUrl);
+        return { success: true, message: 'Imaginea a fost ștearsă cu succes' };
+    }
 };
 exports.LocationsHttpController = LocationsHttpController;
+__decorate([
+    (0, common_1.Post)(':id/revenue'),
+    (0, permissions_decorator_1.Permissions)('cashing.create'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], LocationsHttpController.prototype, "recordRevenue", null);
 __decorate([
     (0, common_1.Post)(),
     (0, permissions_decorator_1.Permissions)('locations.create'),
@@ -176,6 +267,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object, String, String, String, Object]),
     __metadata("design:returntype", void 0)
 ], LocationsHttpController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Get)('batch'),
+    (0, permissions_decorator_1.Permissions)('locations.read'),
+    __param(0, (0, common_1.Query)('ids')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "findBatch", null);
 __decorate([
     (0, common_1.Get)('statistics'),
     (0, permissions_decorator_1.Permissions)('locations.read'),
@@ -359,16 +459,6 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], LocationsHttpController.prototype, "getManagerConfig", null);
 __decorate([
-    (0, common_1.Post)(':id/revenue'),
-    (0, permissions_decorator_1.Permissions)('cashing.create'),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Body)()),
-    __param(2, (0, common_1.Request)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, Object]),
-    __metadata("design:returntype", void 0)
-], LocationsHttpController.prototype, "recordRevenue", null);
-__decorate([
     (0, common_1.Get)(':id/revenue'),
     (0, permissions_decorator_1.Permissions)('locations.read'),
     __param(0, (0, common_1.Param)('id')),
@@ -407,6 +497,42 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], LocationsHttpController.prototype, "updateRevenue", null);
 __decorate([
+    (0, common_1.Get)(':locationId/folders'),
+    (0, permissions_decorator_1.Permissions)('locations.read'),
+    __param(0, (0, common_1.Param)('locationId', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "getLocationFolders", null);
+__decorate([
+    (0, common_1.Post)(':locationId/folders'),
+    (0, permissions_decorator_1.Permissions)('locations.create'),
+    __param(0, (0, common_1.Param)('locationId', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "createLocationFolder", null);
+__decorate([
+    (0, common_1.Patch)(':locationId/folders/:folderId'),
+    (0, permissions_decorator_1.Permissions)('locations.update'),
+    __param(0, (0, common_1.Param)('locationId', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Param)('folderId', common_1.ParseIntPipe)),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number, Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "updateLocationFolder", null);
+__decorate([
+    (0, common_1.Delete)(':locationId/folders/:folderId'),
+    (0, permissions_decorator_1.Permissions)('locations.delete'),
+    __param(0, (0, common_1.Param)('locationId', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Param)('folderId', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "deleteLocationFolder", null);
+__decorate([
     (0, common_1.Get)(':locationId/files'),
     (0, permissions_decorator_1.Permissions)('locations.read'),
     __param(0, (0, common_1.Param)('locationId', common_1.ParseIntPipe)),
@@ -421,7 +547,7 @@ __decorate([
     __param(1, (0, common_1.Query)('download')),
     __param(2, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, String, typeof (_a = typeof express_1.Response !== "undefined" && express_1.Response) === "function" ? _a : Object]),
+    __metadata("design:paramtypes", [Number, String, Object]),
     __metadata("design:returntype", Promise)
 ], LocationsHttpController.prototype, "getLocationFile", null);
 __decorate([
@@ -430,7 +556,7 @@ __decorate([
     __param(0, (0, common_1.Param)('fileId', common_1.ParseIntPipe)),
     __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, typeof (_b = typeof express_1.Response !== "undefined" && express_1.Response) === "function" ? _b : Object]),
+    __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", Promise)
 ], LocationsHttpController.prototype, "viewLocationFile", null);
 __decorate([
@@ -457,6 +583,46 @@ __decorate([
     __metadata("design:paramtypes", [Number]),
     __metadata("design:returntype", Promise)
 ], LocationsHttpController.prototype, "deleteLocationFile", null);
+__decorate([
+    (0, common_1.Get)('files/expiring/:targetDate'),
+    (0, permissions_decorator_1.Permissions)('locations.read'),
+    __param(0, (0, common_1.Param)('targetDate')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], LocationsHttpController.prototype, "getExpiringFiles", null);
+__decorate([
+    (0, common_1.Get)('files/expired'),
+    (0, permissions_decorator_1.Permissions)('locations.read'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], LocationsHttpController.prototype, "getExpiredFiles", null);
+__decorate([
+    (0, common_1.Post)('cashing/upload-image'),
+    (0, permissions_decorator_1.Permissions)('cashing.create'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "uploadCashingImage", null);
+__decorate([
+    (0, common_1.Get)('cashing/image/:fileName'),
+    (0, permissions_decorator_1.Permissions)('cashing.read'),
+    __param(0, (0, common_1.Param)('fileName')),
+    __param(1, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "serveCashingImage", null);
+__decorate([
+    (0, common_1.Post)('cashing/delete-image'),
+    (0, permissions_decorator_1.Permissions)('cashing.update'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], LocationsHttpController.prototype, "deleteCashingImage", null);
 exports.LocationsHttpController = LocationsHttpController = __decorate([
     (0, common_1.Controller)('locations'),
     (0, common_1.UseGuards)(permissions_guard_1.PermissionsGuard),

@@ -11,6 +11,7 @@ import { WorkLocationRevenue } from './locations/entity/work-location-revenue.en
 import { WorkLocationRevenuePoints } from './locations/entity/work-location-revenue-points.entity';
 import { WorkLocationManagerConfig } from './locations/entity/work-location-manager-config.entity';
 import { WorkLocationFiles } from './locations/entity/work-location-files.entity';
+import { WorkLocationFolder } from './locations/entity/work-location-folder.entity';
 import { LocationsService } from './locations/locations.service';
 import { LocationsMicroController } from './locations.micro.controller';
 import { LocationsHttpController } from './locations.http.controller';
@@ -51,6 +52,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         WorkLocationRevenuePoints,
         WorkLocationManagerConfig,
         WorkLocationFiles,
+        WorkLocationFolder,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -66,6 +68,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       WorkLocationRevenuePoints,
       WorkLocationManagerConfig,
       WorkLocationFiles,
+      WorkLocationFolder,
     ]),
   ],
   controllers: [LocationsMicroController, LocationsHttpController],

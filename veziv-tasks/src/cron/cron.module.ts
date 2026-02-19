@@ -13,38 +13,42 @@ import { EmployeeDailyPoints } from '../execution/entity/employee-daily-points.e
 import { EmployeeDailyTaskPoints } from '../execution/entity/employee-daily-task-points.entity';
 import { ManagerDailyPayout } from '../execution/entity/manager-daily-payout.entity';
 import { ExecutionModule } from '../execution/execution.module';
+import { AssignmentModule } from '../assignment/assignment.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     HttpModule,
+    AssignmentModule,
     TypeOrmModule.forFeature([
       TaskAssignment,
       TaskExecution,
       TaskExecutionAnswer,
       EmployeeDailyPoints,
       EmployeeDailyTaskPoints,
-      ManagerDailyPayout
+      ManagerDailyPayout,
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET') || 'your-secret-key';
-        const expiresIn = configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '24h';
+        const secret =
+          configService.get<string>('JWT_SECRET') || 'your-secret-key';
+        const expiresIn =
+          configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '24h';
         return {
           global: true,
           secret: secret,
-          signOptions: { 
-            expiresIn: expiresIn
+          signOptions: {
+            expiresIn: expiresIn,
           },
         };
       },
       inject: [ConfigService],
     }),
-    ExecutionModule
+    ExecutionModule,
   ],
   controllers: [CronController],
   providers: [CronService],
-  exports: [CronService]
+  exports: [CronService],
 })
 export class CronModule {}

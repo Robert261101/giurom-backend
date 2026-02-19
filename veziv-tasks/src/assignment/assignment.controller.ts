@@ -74,6 +74,14 @@ export class AssignmentController {
     return this.assignmentService.findAllWithPermissions(req.user, locationId, sd, ed);
   }
 
+  @Get('stats/efficiency')
+  @ApiOperation({ summary: 'Eficiență angajat: câte task-uri finalizate din total (doar count-uri)' })
+  @ApiQuery({ name: 'employee_id', required: true, description: 'ID angajat' })
+  @ApiResponse({ status: 200, description: 'total_count, completed_count, percentage' })
+  getEfficiency(@Query('employee_id', ParseIntPipe) employeeId: number) {
+    return this.assignmentService.getEfficiencyForEmployee(employeeId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Obține un assignment specific cu elementele sale' })
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
@@ -103,6 +111,24 @@ export class AssignmentController {
     @Body() updateAssignmentDto: UpdateAssignmentDto,
   ): Promise<TaskAssignment> {
     return this.assignmentService.update(id, updateAssignmentDto);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('assignment.update')
+  @Post(':id/reallocate')
+  @ApiOperation({ summary: 'Realochează sarcina: scade puncte la assignee curent, creează copie pentru alt angajat (sau alege automat unul pontat)' })
+  @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
+  @ApiResponse({ status: 200, description: 'Realocare reușită' })
+  @ApiResponse({ status: 400, description: 'Sarcina nu poate fi realocată' })
+  reallocate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { new_assignee_id?: number; deduct_points?: boolean },
+  ) {
+    return this.assignmentService.reallocateAssignment(
+      id,
+      body?.new_assignee_id,
+      body?.deduct_points !== false,
+    );
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)

@@ -3,8 +3,7 @@ import { TaskAssignment } from './task-assignment.entity';
 import { TaskElement } from '../../template/entity/task-element.entity';
 
 @Entity('Task_Assignment_Elements')
-@Index(['task_assignment_id']) // Index pentru join-uri eficiente
-@Index(['task_element_id']) // Index pentru filtrare după element
+@Index('idx_task_assignment_element_element_id', ['task_element_id']) // nume fix ca în DB, folosit de FK – nu șterge
 export class TaskAssignmentElement {
   @PrimaryGeneratedColumn()
   id: number;

@@ -13,6 +13,7 @@ exports.WorkLocationFiles = void 0;
 const typeorm_1 = require("typeorm");
 const swagger_1 = require("@nestjs/swagger");
 const work_location_entity_1 = require("./work-location.entity");
+const work_location_folder_entity_1 = require("./work-location-folder.entity");
 let WorkLocationFiles = class WorkLocationFiles {
 };
 exports.WorkLocationFiles = WorkLocationFiles;
@@ -32,6 +33,15 @@ __decorate([
     (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], WorkLocationFiles.prototype, "work_location_id", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'ID-ul folderului (opțional)',
+        example: 1,
+        required: false,
+    }),
+    (0, typeorm_1.Column)({ type: 'int', nullable: true }),
+    __metadata("design:type", Number)
+], WorkLocationFiles.prototype, "folder_id", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({
         description: 'Numele fișierului',
@@ -75,6 +85,25 @@ __decorate([
     __metadata("design:type", String)
 ], WorkLocationFiles.prototype, "file_link", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'datetime', nullable: true, default: null }),
+    __metadata("design:type", Date)
+], WorkLocationFiles.prototype, "expire_date", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({
+        description: 'Note despre fișier',
+        example: '|folder:Contract de Închiriere locație| Document încărcat la 15.11.2023',
+        required: false
+    }),
+    (0, typeorm_1.Column)({
+        type: 'varchar',
+        length: 1000,
+        nullable: true,
+        charset: 'utf8mb4',
+        collation: 'utf8mb4_unicode_ci'
+    }),
+    __metadata("design:type", String)
+], WorkLocationFiles.prototype, "notes", void 0);
+__decorate([
     (0, swagger_1.ApiProperty)({
         description: 'Data ultimei actualizări',
         example: '2023-12-15T14:30:00Z',
@@ -83,14 +112,15 @@ __decorate([
     __metadata("design:type", Date)
 ], WorkLocationFiles.prototype, "updated_at", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({
-        description: 'Locația asociată cu acest fișier',
-        type: () => work_location_entity_1.WorkLocation,
-    }),
     (0, typeorm_1.ManyToOne)(() => work_location_entity_1.WorkLocation, location => location.location_files),
     (0, typeorm_1.JoinColumn)({ name: 'work_location_id' }),
     __metadata("design:type", work_location_entity_1.WorkLocation)
 ], WorkLocationFiles.prototype, "workLocation", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => work_location_folder_entity_1.WorkLocationFolder, { onDelete: 'SET NULL', nullable: true }),
+    (0, typeorm_1.JoinColumn)({ name: 'folder_id' }),
+    __metadata("design:type", work_location_folder_entity_1.WorkLocationFolder)
+], WorkLocationFiles.prototype, "folder", void 0);
 exports.WorkLocationFiles = WorkLocationFiles = __decorate([
     (0, typeorm_1.Entity)('work_location_files')
 ], WorkLocationFiles);

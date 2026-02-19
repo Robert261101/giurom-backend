@@ -22,6 +22,8 @@ export enum AssignmentStatus {
   SCHEDULED = 'scheduled',
   DEACTIVATED = 'deactivated',
   WAITING_RESPONSE = 'waiting_response',
+  /** Sarcină nefinalizată care a fost realocată (pentru angajatul anterior = Nefinalizat 2) */
+  REALLOCATED = 'reallocated',
 }
 
 export enum Priority {
@@ -146,4 +148,16 @@ export class TaskAssignment {
 
   @Column({ type: 'date', nullable: true })
   last_recurrence_generated_date: Date | null;
+
+  /** ID-ul assignment-ului din care a fost copiat (la realocare). */
+  @Column({ name: 'reallocated_from_id', type: 'int', nullable: true })
+  reallocated_from_id: number | null;
+
+  /** ID-uri angajați care au avut deja această sarcină (sau lanțul ei) – nu se realochează la ei. */
+  @Column({ type: 'json', nullable: true })
+  previous_assignee_ids: number[] | null;
+
+  /** La ce dată/ora s-a încercat realocarea (cron). După prima încercare (reușită sau eșuată) nu se mai încearcă. */
+  @Column({ name: 'reallocation_attempted_at', type: 'datetime', nullable: true })
+  reallocation_attempted_at: Date | null;
 }
