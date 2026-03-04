@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request, Res } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ExecutionService } from './execution.service';
 import { CreateExecutionDto } from './dto/create-execution.dto';
@@ -9,6 +9,7 @@ import { CreateEmployeeDailyTaskPointsDto } from './dto/create-employee-daily-ta
 import { TaskExecution } from './entity/task-execution.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
 import { EmployeeDailyTaskPoints } from './entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from './entity/manager-daily-payout.entity';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { Permissions } from '../permissions/permissions.decorator';
@@ -104,6 +105,67 @@ export class ExecutionController {
     const ed = endDate ? new Date(endDate) : undefined;
     const assignmentId = assignment_id ? parseInt(assignment_id, 10) : undefined;
     return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed, assignmentId);
+  }
+
+  @Get('daily-task-points-list')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
+  @ApiOperation({ summary: 'Listă înregistrări Employee Daily Task Points pentru rapoarte' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'employee_id', required: false, description: 'Filtru angajat' })
+  @ApiQuery({ name: 'location_id', required: false, description: 'Filtru locație (rapoarte pe locație)' })
+  getDailyTaskPointsList(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('employee_id') employeeId?: string,
+    @Query('location_id') locationId?: string,
+  ) {
+    const empId = employeeId ? parseInt(employeeId, 10) : undefined;
+    const locId = locationId ? parseInt(locationId, 10) : undefined;
+    return this.executionService.listDailyTaskPoints(
+      startDate,
+      endDate,
+      Number.isFinite(empId) ? empId : undefined,
+      Number.isFinite(locId) ? locId : undefined,
+    );
+  }
+
+  @Get('manager-daily-payouts')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
+  @ApiOperation({ summary: 'Listă înregistrări punctaj manager (manager_daily_payout) pentru rapoarte' })
+  @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtru locație' })
+  @ApiQuery({ name: 'start_date', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'end_date', required: false, description: 'YYYY-MM-DD' })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista înregistrărilor manager_daily_payout',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'number' },
+          work_location_id: { type: 'number' },
+          work_date: { type: 'string', format: 'date' },
+          manager_employee_id: { type: 'number' },
+          total_points: { type: 'number' },
+          manager_points: { type: 'number' },
+          amount: { type: 'number' },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+  })
+  getManagerDailyPayouts(
+    @Query('work_location_id') workLocationId?: string,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
+  ): Promise<ManagerDailyPayout[]> {
+    const locId = workLocationId != null && workLocationId !== '' ? parseInt(workLocationId, 10) : undefined;
+    const validLocId = locId != null && !isNaN(locId) ? locId : undefined;
+    return this.executionService.findManagerDailyPayouts(validLocId, startDate, endDate);
   }
 
   @Get(':id')

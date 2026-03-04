@@ -1,22 +1,29 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { NotificationsGateway } from './notifications.gateway';
+import { UserResolutionService } from './user-resolution.service';
 import { NotificationEntity } from './notification.entity';
+import { PushService } from './push/push.service';
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
   // Cache pentru roluri și user-roles (TTL: 5 minute)
   private rolesCache: { data: any[], timestamp: number } | null = null;
   private userRolesCache: { data: any[], timestamp: number } | null = null;
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minute
+  /** Pentru notificări "document expirat" nu duplicăm dacă există deja una în ultimele 7 zile */
+  private readonly EXPIRED_DOC_DEDUPE_DAYS = 7;
 
   constructor(
     private readonly gateway: NotificationsGateway,
     private readonly httpService: HttpService,
+    private readonly userResolution: UserResolutionService,
+    private readonly pushService: PushService,
     @InjectRepository(NotificationEntity) private readonly repo: Repository<NotificationEntity>,
   ) {}
 
@@ -81,23 +88,18 @@ export class NotificationsService {
   }
 
   async getUnreadCount(userId?: number, currentUser?: any) {
-    // Always return count only for the authenticated user, not for all admins
-    // This ensures each user sees only their own unread count
     const authenticatedUserId = currentUser?.userId;
-    const targetUserId = userId || authenticatedUserId;
-    
-    if (targetUserId) {
-      const count = await this.repo.count({ 
-        where: { 
-          status: 'unread',
-          user_id: targetUserId 
-        } as any 
-      });
-      return { count };
-    }
-    
-    // Fallback: return 0 if no user ID provided
-    return { count: 0 };
+    const rawUserId = userId ?? authenticatedUserId;
+    if (rawUserId == null) return { count: 0 };
+    const resolvedUserId = await this.userResolution.resolveToUserId(rawUserId);
+    const userIds = [resolvedUserId, rawUserId].filter((id, i, a) => id != null && a.indexOf(id) === i);
+    if (userIds.length === 0) return { count: 0 };
+    const count = await this.repo
+      .createQueryBuilder('n')
+      .where('n.status = :status', { status: 'unread' })
+      .andWhere('n.user_id IN (:...userIds)', { userIds })
+      .getCount();
+    return { count };
   }
 
   async onExpiringLabel(event: { labelId: number; labelCode: string; preparationId: number; expiresAt: string }) {
@@ -696,12 +698,173 @@ export class NotificationsService {
           // Skip users that can't be fetched
         }
       }
-      
-      return users;
+
+      // Un singur user poate avea mai multe roluri (manager + admin) – asigură un rezultat per user_id
+      const byId = new Map<number, { id: number; email: string; roles: string[] }>();
+      for (const u of users) {
+        if (!byId.has(u.id)) byId.set(u.id, u);
+      }
+      const uniqueUsers = [...byId.values()];
+      if (uniqueUsers.length !== users.length) {
+        this.logger.log(`🔢 [NOTIFICATIONS SERVICE] Deduplicat manageri/admins: ${users.length} -> ${uniqueUsers.length} utilizatori unici`);
+      }
+      return uniqueUsers;
     } catch (error) {
       // Return empty array if there's an error
       return [];
     }
+  }
+
+  /**
+   * Notificări pentru sarcini (tasks): trimise către angajatul asignat (assigned_to_id -> user_id).
+   * Payload: type, title, description, entity_id, entity_type, metadata (assignedToId = employee_id), priority, target_url.
+   * Opțional: user_id (dacă e deja rezolvat în veziv-tasks).
+   */
+  async onTaskNotification(event: {
+    type: string;
+    title: string;
+    description: string;
+    entity_id?: number;
+    entity_type?: string;
+    metadata?: { assignedToId?: number; [k: string]: any };
+    priority?: 'low' | 'medium' | 'high';
+    target_url?: string;
+    user_id?: number;
+  }) {
+    this.logger.log(
+      `📥 [tasks.notification] Primit: type=${event.type}, entity_id=${event.entity_id}, assignedToId=${event.metadata?.assignedToId ?? 'null'}, user_id=${event.user_id ?? 'null'}`,
+    );
+
+    // Notificare doar pentru manageri/admins (fără assignedToId): reatribuire – fiecare manager/admin primește
+    if (event.type === 'assignment.reassigned_manager_info') {
+      const entityType = event.entity_type ?? 'task_assignment';
+      const targetUrl = event.target_url ?? (event.entity_id ? `/sarcini/${event.entity_id}` : '/sarcini');
+      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      for (const user of managerAndAdminUsers) {
+        await this.create({
+          type: event.type,
+          title: event.title,
+          description: event.description,
+          user_id: user.id,
+          entity_id: event.entity_id ?? null,
+          entity_type: entityType,
+          metadata: event.metadata ?? null,
+          priority: (event.priority as any) ?? 'medium',
+          status: 'unread',
+          target_url: targetUrl,
+        } as any);
+      }
+      return;
+    }
+
+    let userId = event.user_id;
+    if (userId == null && event.metadata?.assignedToId != null) {
+      try {
+        const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+        const url = `${apiGatewayUrl}/users/employee/${event.metadata.assignedToId}`;
+        this.logger.log(`🔍 [tasks.notification] Rezolv user_id pentru employee ${event.metadata.assignedToId}: GET ${url}`);
+        const res = await firstValueFrom(
+          this.httpService.get(url, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          })
+        );
+        // API Gateway poate returna { success, data: { id, id_employee, ... } } sau direct user
+        const user = res.data?.data ?? res.data;
+        if (user?.id) {
+          userId = user.id;
+          this.logger.log(`✅ [tasks.notification] Rezolvat: employee ${event.metadata.assignedToId} -> user_id=${userId}`);
+        } else {
+          this.logger.warn(`[tasks.notification] Răspuns fără user.id: ${JSON.stringify(res.data)}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`[tasks.notification] Could not resolve user_id for employee ${event.metadata.assignedToId}: ${e?.message || e}`);
+        return;
+      }
+    }
+    const entityType = event.entity_type ?? (event.type?.startsWith?.('template.') ? 'task_template' : 'task_assignment');
+    const targetUrl = event.target_url ?? (entityType === 'task_template' ? '/sarcini/new' : (event.entity_id ? `/sarcini/${event.entity_id}` : '/sarcini'));
+
+    if (userId != null) {
+      this.logger.log(`📝 [tasks.notification] Creez notificare pentru user_id=${userId}, title="${event.title}"`);
+      await this.create({
+        type: event.type,
+        title: event.title,
+        description: event.description,
+        user_id: userId,
+        entity_id: event.entity_id ?? null,
+        entity_type: entityType,
+        metadata: event.metadata ?? null,
+        priority: (event.priority as any) ?? 'medium',
+        status: 'unread',
+        target_url: targetUrl,
+      } as any);
+      // La finalizare task (execution.created): notificare și pentru admin/manager
+      if (event.type === 'execution.created') {
+        const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+        for (const user of managerAndAdminUsers) {
+          if (user.id === userId) continue;
+          await this.create({
+            type: event.type,
+            title: 'Task finalizat',
+            description: event.description,
+            user_id: user.id,
+            entity_id: event.entity_id ?? null,
+            entity_type: entityType,
+            metadata: event.metadata ?? null,
+            priority: (event.priority as any) ?? 'medium',
+            status: 'unread',
+            target_url: targetUrl,
+          } as any);
+        }
+      }
+      // La amânare automată (assignment.auto_postponed): notificare și pentru fiecare manager/admin
+      if (event.type === 'assignment.auto_postponed') {
+        const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+        for (const user of managerAndAdminUsers) {
+          if (user.id === userId) continue;
+          await this.create({
+            type: event.type,
+            title: event.title,
+            description: event.description,
+            user_id: user.id,
+            entity_id: event.entity_id ?? null,
+            entity_type: entityType,
+            metadata: event.metadata ?? null,
+            priority: (event.priority as any) ?? 'medium',
+            status: 'unread',
+            target_url: targetUrl,
+          } as any);
+        }
+      }
+      return;
+    }
+
+    // Fără angajat asignat: pentru task_template trimitem către manageri/admins
+    if (entityType === 'task_template') {
+      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      for (const user of managerAndAdminUsers) {
+        await this.create({
+          type: event.type,
+          title: event.title,
+          description: event.description,
+          user_id: user.id,
+          entity_id: event.entity_id ?? null,
+          entity_type: entityType,
+          metadata: event.metadata ?? null,
+          priority: (event.priority as any) ?? 'medium',
+          status: 'unread',
+          target_url: '/sarcini/new',
+        } as any);
+      }
+      return;
+    }
+
+    this.logger.warn(
+      `[tasks.notification] Skip: nici user_id nici assignedToId în metadata (type=${event.type}, entity_id=${event.entity_id})`,
+    );
   }
 
   async onEmployeeNotification(event: { 
@@ -782,29 +945,26 @@ export class NotificationsService {
 
   // --- Minimal HTTP helpers to satisfy frontend ---
   async findAll(userId?: number, currentUser?: any) {
-    // Always check the authenticated user's roles (from req.user), not the userId from query params
+    const rawUserId = userId ?? currentUser?.userId;
+    let resolvedUserId: number | null = rawUserId != null ? await this.userResolution.resolveToUserId(rawUserId) : null;
+    const userIdsForQuery = [resolvedUserId, rawUserId].filter((id): id is number => id != null && id !== undefined);
+    const uniqueUserIds = [...new Set(userIdsForQuery)];
+
     let isAdminOrManager = false;
-    const authenticatedUserId = currentUser?.userId;
-    
-    // Calculate date 48 hours ago (48 * 60 * 60 * 1000 milliseconds)
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    
-    if (authenticatedUserId) {
-      const userRoles = await this.getUserRoles(authenticatedUserId);
+
+    if (resolvedUserId) {
+      const userRoles = await this.getUserRoles(resolvedUserId);
       isAdminOrManager = userRoles.some((role: string) => 
         role.toLowerCase() === 'admin' || role.toLowerCase() === 'manager'
       );
     }
 
     if (isAdminOrManager) {
-      // Get all admin/manager user IDs
       const adminManagerUsers = await this.getUsersWithRoles(['admin', 'manager']);
       const adminManagerUserIds = adminManagerUsers.map(u => u.id);
       
       if (adminManagerUserIds.length > 0) {
-        // Use query builder for IN clause with filtering:
-        // - All unread notifications
-        // - Read notifications only from last 48 hours
         return this.repo
           .createQueryBuilder('notification')
           .where('notification.user_id IN (:...userIds)', { userIds: adminManagerUserIds })
@@ -821,13 +981,11 @@ export class NotificationsService {
       }
     }
 
-    // If not admin/manager, return notifications only for the authenticated user (or userId from query if provided)
-    const targetUserId = userId || authenticatedUserId;
-    if (targetUserId) {
-      // Filter: all unread + read from last 48 hours
+    // Notificările pot fi stocate cu user_id = users.id (rezolvat) sau = employee_id (raw) – căutăm pe ambele
+    if (uniqueUserIds.length > 0) {
       return this.repo
         .createQueryBuilder('notification')
-        .where('notification.user_id = :targetUserId', { targetUserId })
+        .where('notification.user_id IN (:...userIds)', { userIds: uniqueUserIds })
         .andWhere(
           '(notification.status = :unreadStatus OR (notification.status = :readStatus AND notification.created_at >= :fortyEightHoursAgo))',
           {
@@ -899,6 +1057,24 @@ export class NotificationsService {
           } as any 
         });
         this.gateway.emitUnreadCountForUser(saved.user_id, count);
+
+        // Web Push: trimite și pe FCM ca să ajungă și când app-ul e închis
+        try {
+          const baseUrl = process.env.FRONTEND_BASE_URL || '';
+          const targetUrl = saved.target_url ? `${baseUrl}${saved.target_url.startsWith('/') ? '' : '/'}${saved.target_url}` : '';
+          await this.pushService.sendToUser(saved.user_id, {
+            title: saved.title,
+            body: saved.description ?? undefined,
+            data: {
+              notificationId: String(saved.id),
+              type: saved.type,
+              target_url: saved.target_url ?? '',
+              url: targetUrl,
+            },
+          });
+        } catch (pushErr: any) {
+          this.logger.warn(`Web Push send failed: ${pushErr?.message || pushErr}`);
+        }
       } catch (error) {
         // Don't throw - notification is saved in DB, WebSocket is just a bonus
       }
@@ -915,24 +1091,30 @@ export class NotificationsService {
   }
 
   async markAllAsRead(userId?: number) {
-    if (userId) {
-      await this.repo.createQueryBuilder()
-        .update(NotificationEntity)
-        .set({ status: 'read' } as any)
-        .where("status = 'unread' AND user_id = :userId", { userId })
-        .execute();
-      const count = await this.repo.count({ 
-        where: { 
-          status: 'unread',
-          user_id: userId 
-        } as any 
-      });
-      this.gateway.emitUnreadCount(count);
-      return { message: 'All notifications marked as read' };
+    if (userId == null || userId === undefined) {
+      return { message: 'User ID required' };
     }
-    await this.repo.createQueryBuilder().update(NotificationEntity).set({ status: 'read' } as any).where("status = 'unread'").execute();
-    const count = await this.repo.count({ where: { status: 'unread' } as any });
-    this.gateway.emitUnreadCount(count);
+    const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+    const userIds = [resolvedUserId, userId].filter((id, i, a) => id != null && a.indexOf(id) === i);
+    const unreadCountBefore = await this.repo
+      .createQueryBuilder('n')
+      .where('n.status = :status', { status: 'unread' })
+      .andWhere('n.user_id IN (:...userIds)', { userIds })
+      .getCount();
+    this.logger.log(`markAllAsRead: raw=${userId}, resolved=${resolvedUserId}, user_id IN (${userIds.join(',')}), unread in DB before update=${unreadCountBefore}`);
+    const result = await this.repo.createQueryBuilder()
+      .update(NotificationEntity)
+      .set({ status: 'read' } as any)
+      .where("status = 'unread' AND user_id IN (:...userIds)", { userIds })
+      .execute();
+    const affected = result.affected ?? 0;
+    this.logger.log(`markAllAsRead: rows updated=${affected}`);
+    const count = await this.repo
+      .createQueryBuilder('n')
+      .where('n.status = :status', { status: 'unread' })
+      .andWhere('n.user_id IN (:...userIds)', { userIds })
+      .getCount();
+    this.gateway.emitUnreadCountForUser(resolvedUserId, count);
     return { message: 'All notifications marked as read' };
   }
 
@@ -946,83 +1128,77 @@ export class NotificationsService {
     } as any);
   }
 
-  // Cron job to check for expiring and expired files at 12:00 AM daily
-  @Cron('0 0 0 * * *') // Runs at 12:00 AM every day
+  // Cron job: verificare documente expirate/expirând – rulează la 6:00 și 18:00 (la zi)
+  @Cron('0 0 6,18 * * *')
   async checkExpiringFiles() {
+    this.logger.log('📋 [DOCUMENTE CRON] Start verificare documente expirate / expirând (angajati, firme, locatii, furnizori)');
     try {
-      // Get users with manager and admin roles
       const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-      
       if (managerAndAdminUsers.length === 0) {
+        this.logger.warn('📋 [DOCUMENTE CRON] Niciun utilizator manager/admin găsit – nu se trimit notificări');
         return;
       }
-      
-      // Check for files expiring in 7 days
+      this.logger.log(`📋 [DOCUMENTE CRON] ${managerAndAdminUsers.length} manageri/admins vor primi notificări`);
+
       await this.checkFilesExpiringInDays(7, managerAndAdminUsers);
-      
-      // Check for already expired files
       await this.checkExpiredFiles(managerAndAdminUsers);
-    } catch (error) {
-      // Silent error handling
+
+      this.logger.log('📋 [DOCUMENTE CRON] Verificare documente încheiată');
+    } catch (error: any) {
+      this.logger.error(`📋 [DOCUMENTE CRON] Eroare: ${error?.message || error}`, error?.stack);
     }
   }
   
   // Check for files expiring in a specific number of days
   private async checkFilesExpiringInDays(days: number, users: Array<{id: number, email: string, roles: string[]}>) {
-    
     const targetDate = new Date();
     targetDate.setDate(targetDate.getDate() + days);
-    
-    // Format date as YYYY-MM-DD for comparison
     const targetDateString = targetDate.toISOString().split('T')[0];
-    
+    const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+
     try {
-      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-      
-      // Check company documents
       await this.checkCompanyDocumentsExpiring(targetDateString, days, users, apiGatewayUrl);
-      
-      // Check location files
       await this.checkLocationFilesExpiring(targetDateString, days, users, apiGatewayUrl);
-      
-      // Check employee files
       await this.checkEmployeeFilesExpiring(targetDateString, days, users, apiGatewayUrl);
-      
-      // Check supplier documents
       await this.checkSupplierDocumentsExpiring(targetDateString, days, users, apiGatewayUrl);
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] checkFilesExpiringInDays: ${error?.message || error}`);
     }
   }
-  
-  // Check for already expired files
+
+  /** Returnează true dacă există deja o notificare expirat pentru acest entity în ultimele EXPIRED_DOC_DEDUPE_DAYS zile (pentru a nu duplica). */
+  private async hasRecentExpiredNotification(entityId: number, entityType: string, type: string): Promise<boolean> {
+    const since = new Date();
+    since.setDate(since.getDate() - this.EXPIRED_DOC_DEDUPE_DAYS);
+    const existing = await this.repo.findOne({
+      where: {
+        entity_id: entityId,
+        entity_type: entityType,
+        type,
+        created_at: MoreThanOrEqual(since) as any,
+      } as any,
+    });
+    return !!existing;
+  }
+
+  // Check for already expired files – trimite notificări manageri/admins
   private async checkExpiredFiles(users: Array<{id: number, email: string, roles: string[]}>) {
-    
     const today = new Date().toISOString().split('T')[0];
-    
+    const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+
     try {
-      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-      
-      // Check expired company documents
       await this.checkCompanyDocumentsExpired(today, users, apiGatewayUrl);
-      
-      // Check expired location files
       await this.checkLocationFilesExpired(today, users, apiGatewayUrl);
-      
-      // Check expired employee files
       await this.checkEmployeeFilesExpired(today, users, apiGatewayUrl);
-      
-      // Check expired supplier documents
       await this.checkSupplierDocumentsExpired(today, users, apiGatewayUrl);
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] checkExpiredFiles: ${error?.message || error}`);
     }
   }
   
   // Check company documents expiring
   private async checkCompanyDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to company service to get documents expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expiring/${targetDate}`, {
           headers: {
@@ -1031,8 +1207,7 @@ export class NotificationsService {
           }
         })
       );
-      
-      const documents = response.data;
+      const documents = Array.isArray(response.data) ? response.data : [];
       
       // Create notifications for each expiring document
       for (const document of documents) {
@@ -1060,15 +1235,14 @@ export class NotificationsService {
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Firme (expiră în ${days} zile): ${error?.message || error}`);
     }
   }
-  
+
   // Check location files expiring
   private async checkLocationFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to locations service to get files expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/locations/files/expiring/${targetDate}`, {
           headers: {
@@ -1077,8 +1251,7 @@ export class NotificationsService {
           }
         })
       );
-      
-      const files = response.data;
+      const files = Array.isArray(response.data) ? response.data : [];
       
       // Create notifications for each expiring file
       for (const file of files) {
@@ -1106,15 +1279,14 @@ export class NotificationsService {
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Locații (expiră în ${days} zile): ${error?.message || error}`);
     }
   }
-  
+
   // Check employee files expiring
   private async checkEmployeeFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to employees service to get files expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/employees/files/expiring/${targetDate}`, {
           headers: {
@@ -1123,8 +1295,7 @@ export class NotificationsService {
           }
         })
       );
-      
-      const files = response.data;
+      const files = Array.isArray(response.data) ? response.data : [];
       
       // Create notifications for each expiring file
       for (const file of files) {
@@ -1152,15 +1323,14 @@ export class NotificationsService {
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Angajați (expiră în ${days} zile): ${error?.message || error}`);
     }
   }
-  
+
   // Check supplier documents expiring
   private async checkSupplierDocumentsExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to suppliers service to get documents expiring on target date
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expiring/${targetDate}`, {
           headers: {
@@ -1169,8 +1339,7 @@ export class NotificationsService {
           }
         })
       );
-      
-      const documents = response.data;
+      const documents = Array.isArray(response.data) ? response.data : [];
       
       // Create notifications for each expiring document
       for (const document of documents) {
@@ -1198,15 +1367,14 @@ export class NotificationsService {
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Furnizori (expiră în ${days} zile): ${error?.message || error}`);
     }
   }
-  
+
   // Check company documents expired
   private async checkCompanyDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to company service to get expired documents
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expired`, {
           headers: {
@@ -1215,14 +1383,13 @@ export class NotificationsService {
           }
         })
       );
-      
-      const documents = response.data;
-      
-      // Create notifications for each expired document
+      const documents = Array.isArray(response.data) ? response.data : [];
+      this.logger.log(`[DOCUMENTE CRON] Firme: ${documents.length} documente expirate`);
+
       for (const document of documents) {
+        const alreadyNotified = await this.hasRecentExpiredNotification(document.id, 'company_document', 'company_document_expired');
+        if (alreadyNotified) continue;
         const companyName = document.company?.company_name || 'N/A';
-        
-        // Create notification for each manager/admin user
         for (const user of users) {
           await this.create({
             type: 'company_document_expired',
@@ -1231,27 +1398,21 @@ export class NotificationsService {
             user_id: user.id,
             entity_id: document.id,
             entity_type: 'company_document',
-            metadata: { 
-              companyId: document.company_id,
-              companyName,
-              documentName: document.document_name,
-              expireDate: document.expire_date
-            },
+            metadata: { companyId: document.company_id, companyName, documentName: document.document_name, expireDate: document.expire_date },
             priority: 'high',
             status: 'unread',
-            target_url: `/firme/${document.company_id}`,
+            target_url: `/setari/documente?tab=firme`,
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Firme (expirate): ${error?.message || error}`);
     }
   }
   
   // Check location files expired
   private async checkLocationFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to locations service to get expired files
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/locations/files/expired`, {
           headers: {
@@ -1260,43 +1421,36 @@ export class NotificationsService {
           }
         })
       );
-      
-      const files = response.data;
-      
-      // Create notifications for each expired file
+      const files = Array.isArray(response.data) ? response.data : [];
+      this.logger.log(`[DOCUMENTE CRON] Locații: ${files.length} documente expirate`);
+
       for (const file of files) {
+        const alreadyNotified = await this.hasRecentExpiredNotification(file.id, 'location_file', 'location_file_expired');
+        if (alreadyNotified) continue;
         const locationName = file.workLocation?.location_name || 'N/A';
-        
-        // Create notification for each manager/admin user
         for (const user of users) {
           await this.create({
             type: 'location_file_expired',
-            title: 'Document locatie expirat',
-            description: `Documentul "${file.file_name}" al locatiei "${locationName}" a expirat`,
+            title: 'Document locație expirat',
+            description: `Documentul "${file.file_name}" al locației "${locationName}" a expirat`,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'location_file',
-            metadata: { 
-              locationId: file.work_location_id,
-              locationName,
-              fileName: file.file_name,
-              expireDate: file.expire_date
-            },
+            metadata: { locationId: file.work_location_id, locationName, fileName: file.file_name, expireDate: file.expire_date },
             priority: 'high',
             status: 'unread',
-            target_url: `/locatii/${file.work_location_id}`,
+            target_url: `/setari/documente?tab=locatii`,
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Locații (expirate): ${error?.message || error}`);
     }
   }
   
   // Check employee files expired
   private async checkEmployeeFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to employees service to get expired files
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/employees/files/expired`, {
           headers: {
@@ -1305,14 +1459,13 @@ export class NotificationsService {
           }
         })
       );
-      
-      const files = response.data;
-      
-      // Create notifications for each expired file
+      const files = Array.isArray(response.data) ? response.data : [];
+      this.logger.log(`[DOCUMENTE CRON] Angajați: ${files.length} documente expirate`);
+
       for (const file of files) {
+        const alreadyNotified = await this.hasRecentExpiredNotification(file.id, 'employee_file', 'employee_file_expired');
+        if (alreadyNotified) continue;
         const employeeName = file.employee ? `${file.employee.first_name} ${file.employee.last_name}` : 'N/A';
-        
-        // Create notification for each manager/admin user
         for (const user of users) {
           await this.create({
             type: 'employee_file_expired',
@@ -1321,27 +1474,21 @@ export class NotificationsService {
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'employee_file',
-            metadata: { 
-              employeeId: file.employee_id,
-              employeeName,
-              fileName: file.file_name,
-              expireDate: file.expire_date
-            },
+            metadata: { employeeId: file.employee_id, employeeName, fileName: file.file_name, expireDate: file.expire_date },
             priority: 'high',
             status: 'unread',
-            target_url: `/angajati/${file.employee_id}`,
+            target_url: `/setari/documente?tab=angajati`,
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Angajați (expirate): ${error?.message || error}`);
     }
   }
   
   // Check supplier documents expired
   private async checkSupplierDocumentsExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
-      // Make HTTP request to suppliers service to get expired documents
       const response = await firstValueFrom(
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expired`, {
           headers: {
@@ -1350,14 +1497,13 @@ export class NotificationsService {
           }
         })
       );
-      
-      const documents = response.data;
-      
-      // Create notifications for each expired document
+      const documents = Array.isArray(response.data) ? response.data : [];
+      this.logger.log(`[DOCUMENTE CRON] Furnizori: ${documents.length} documente expirate`);
+
       for (const document of documents) {
+        const alreadyNotified = await this.hasRecentExpiredNotification(document.id, 'supplier_document', 'supplier_document_expired');
+        if (alreadyNotified) continue;
         const supplierName = document.folder?.supplier?.supplier_name || 'N/A';
-        
-        // Create notification for each manager/admin user
         for (const user of users) {
           await this.create({
             type: 'supplier_document_expired',
@@ -1366,20 +1512,15 @@ export class NotificationsService {
             user_id: user.id,
             entity_id: document.id,
             entity_type: 'supplier_document',
-            metadata: { 
-              supplierId: document.folder?.supplier_id,
-              supplierName,
-              fileName: document.file_name,
-              expireDate: document.expire_date
-            },
+            metadata: { supplierId: document.folder?.supplier_id, supplierName, fileName: document.file_name, expireDate: document.expire_date },
             priority: 'high',
             status: 'unread',
-            target_url: `/furnizori/${document.folder?.supplier_id}`,
+            target_url: `/setari/documente?tab=furnizori`,
           } as any);
         }
       }
-    } catch (error) {
-      // Silent error handling
+    } catch (error: any) {
+      this.logger.warn(`[DOCUMENTE CRON] Furnizori (expirate): ${error?.message || error}`);
     }
   }
 

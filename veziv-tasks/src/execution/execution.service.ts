@@ -8,13 +8,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, defaultIfEmpty } from 'rxjs';
 import * as fs from 'fs';
 import * as path from 'path';
 import { TaskExecution } from './entity/task-execution.entity';
 import { TaskExecutionAnswer } from './entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
 import { EmployeeDailyTaskPoints } from './entity/employee-daily-task-points.entity';
+import { ManagerDailyPayout } from './entity/manager-daily-payout.entity';
 import {
   TaskAssignment,
   AssignmentStatus,
@@ -40,6 +41,8 @@ export class ExecutionService {
     private taskAssignmentRepository: Repository<TaskAssignment>,
     @InjectRepository(TaskElement)
     private taskElementRepository: Repository<TaskElement>,
+    @InjectRepository(ManagerDailyPayout)
+    private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private httpService: HttpService,
     @Inject('NOTIFICATIONS_RMQ')
     private readonly notificationsClient: ClientProxy,
@@ -54,18 +57,21 @@ export class ExecutionService {
   ): Promise<void> {
     try {
       await firstValueFrom(
-        this.notificationsClient.emit(
-          { cmd: 'tasks.notification' },
-          {
-            type,
-            title,
-            description,
-            entity_id: executionId,
-            entity_type: 'task_execution',
-            metadata,
-            priority: 'medium',
-          },
-        ),
+        this.notificationsClient
+          .emit(
+            { cmd: 'tasks.notification' },
+            {
+              type,
+              title,
+              description,
+              entity_id: executionId,
+              entity_type: 'task_execution',
+              metadata,
+              priority: 'medium',
+              target_url: `/sarcini/${metadata?.task_assignment_id ?? ''}`,
+            },
+          )
+          .pipe(defaultIfEmpty(undefined)),
       );
     } catch (error) {
       console.error('Failed to send execution notification:', error);
@@ -268,7 +274,7 @@ export class ExecutionService {
       await this.handleTaskCompletion(executionWithRelations);
     }
 
-    // Trimite notificare RabbitMQ pentru creare execution
+    // Trimite notificare RabbitMQ pentru creare execution (angajatul care a completat)
     await this.sendExecutionNotification(
       'execution.created',
       'Execuție creată',
@@ -276,6 +282,7 @@ export class ExecutionService {
       executionWithRelations.id,
       {
         assignmentId: executionWithRelations.task_assignment_id,
+        assignedToId: executionWithRelations.employee_id ?? assignment.assigned_to_id,
         points,
         isOverdue,
       },
@@ -976,7 +983,7 @@ export class ExecutionService {
       await this.handleTaskCompletion(updatedExecution);
     }
 
-    // Trimite notificare RabbitMQ pentru actualizare execution
+    // Trimite notificare RabbitMQ pentru actualizare execution (angajatul asignat)
     await this.sendExecutionNotification(
       'execution.updated',
       'Execuție actualizată',
@@ -984,6 +991,7 @@ export class ExecutionService {
       updatedExecution.id,
       {
         assignmentId: updatedExecution.task_assignment_id,
+        assignedToId: updatedExecution.employee_id,
         completedAt: updatedExecution.completed_at,
       },
     );
@@ -1030,13 +1038,13 @@ export class ExecutionService {
     await this.handleTaskRemoval(execution);
     await this.executionRepository.remove(execution);
 
-    // Trimite notificare RabbitMQ pentru ștergere execution
+    // Trimite notificare RabbitMQ pentru ștergere execution (angajatul asignat)
     await this.sendExecutionNotification(
       'execution.deleted',
       'Execuție ștearsă',
       `Execuția task-ului a fost ștearsă`,
       executionId,
-      { assignmentId },
+      { assignmentId, assignedToId: assignment.assigned_to_id },
     );
 
     // Reactivează assignment-ul (schimbă status-ul în 'assigned')
@@ -1063,6 +1071,30 @@ export class ExecutionService {
     assignment.rejecting_times = (assignment.rejecting_times || 0) + 1;
 
     await this.taskAssignmentRepository.save(assignment);
+
+    // Notificare pentru angajat: sarcina a fost reactivată
+    try {
+      const templateName = (assignment as any).template?.template_name || 'Nou';
+      await firstValueFrom(
+        this.notificationsClient
+          .emit(
+            { cmd: 'tasks.notification' },
+            {
+              type: 'assignment.reactivated',
+              title: 'Sarcină reactivată',
+              description: `Sarcina "${templateName}" a fost reactivată și poate fi completată din nou.`,
+              entity_id: assignmentId,
+              entity_type: 'task_assignment',
+              metadata: { assignedToId: assignment.assigned_to_id },
+              priority: 'medium',
+              target_url: `/sarcini/${assignmentId}`,
+            },
+          )
+          .pipe(defaultIfEmpty(undefined)),
+      );
+    } catch (err) {
+      console.error('Failed to send reactivation notification:', err);
+    }
 
     return {
       message:
@@ -1227,6 +1259,7 @@ export class ExecutionService {
       employee_id: createDto.employee_id,
       work_date: new Date(createDto.work_date),
       total_points: createDto.total_points || 0,
+      location_id: createDto.location_id ?? null,
     });
 
     return await this.employeeDailyPointsRepository.save(dailyPoints);
@@ -1303,6 +1336,13 @@ export class ExecutionService {
     const savedTaskPoints =
       await this.employeeDailyTaskPointsRepository.save(taskPoints);
 
+    // Setează location_id pe daily_points din execuție dacă lipsește (pentru rapoarte pe locație)
+    const execLocId = (taskExecution as any).location_id;
+    if (execLocId != null && (dailyPoints as any).location_id == null) {
+      (dailyPoints as any).location_id = execLocId;
+      await this.employeeDailyPointsRepository.save(dailyPoints);
+    }
+
     // Actualizează punctajul total zilnic
     const totalPoints = await this.employeeDailyTaskPointsRepository
       .createQueryBuilder('taskPoints')
@@ -1318,6 +1358,119 @@ export class ExecutionService {
     return savedTaskPoints;
   }
 
+  /**
+   * Listă înregistrările din Employee_Daily_Task_Points pentru rapoarte (perioadă și opțional angajat).
+   */
+  async listDailyTaskPoints(
+    startDate?: string,
+    endDate?: string,
+    employeeId?: number,
+    locationId?: number,
+  ): Promise<
+    Array<{
+      id: number;
+      employee_id: number;
+      work_date: string;
+      points_awarded: number;
+      task_execution_id: number | null;
+      created_at: Date;
+      employee_daily_points_id: number;
+    }>
+  > {
+    const qb = this.employeeDailyTaskPointsRepository
+      .createQueryBuilder('tp')
+      .innerJoin('tp.employee_daily_points', 'edp')
+      .select('tp.id', 'id')
+      .addSelect('edp.employee_id', 'employee_id')
+      .addSelect('DATE(edp.work_date)', 'work_date')
+      .addSelect('tp.points_awarded', 'points_awarded')
+      .addSelect('tp.task_execution_id', 'task_execution_id')
+      .addSelect('tp.created_at', 'created_at')
+      .addSelect('tp.employee_daily_points_id', 'employee_daily_points_id')
+      .orderBy('edp.work_date', 'DESC')
+      .addOrderBy('tp.created_at', 'DESC');
+
+    if (employeeId != null) {
+      qb.andWhere('edp.employee_id = :employeeId', { employeeId });
+    }
+    if (locationId != null) {
+      qb.andWhere('edp.location_id = :locationId', { locationId });
+    }
+    if (startDate && endDate) {
+      qb.andWhere('DATE(edp.work_date) >= :startDate', {
+        startDate: startDate.replace(/T.*/, ''),
+      });
+      qb.andWhere('DATE(edp.work_date) <= :endDate', {
+        endDate: endDate.replace(/T.*/, ''),
+      });
+    }
+
+    const rows = await qb.getRawMany<{
+      id: number;
+      employee_id: number;
+      work_date: string;
+      points_awarded: string;
+      task_execution_id: number | null;
+      created_at: Date;
+      employee_daily_points_id: number;
+    }>();
+    const list = rows.map((r) => {
+      const pointsAwarded = parseFloat(r.points_awarded || '0');
+      return {
+        id: r.id,
+        employee_id: r.employee_id,
+        work_date: r.work_date,
+        points_awarded: Number.isFinite(pointsAwarded) ? pointsAwarded : 0,
+        task_execution_id: r.task_execution_id,
+        created_at: r.created_at,
+        employee_daily_points_id: r.employee_daily_points_id,
+      };
+    });
+
+    // Includem și deducerile care există doar în total_points (fără rând în Employee_Daily_Task_Points)
+    const edpQb = this.employeeDailyPointsRepository
+      .createQueryBuilder('edp')
+      .select('edp.id', 'id')
+      .addSelect('edp.employee_id', 'employee_id')
+      .addSelect('DATE(edp.work_date)', 'work_date')
+      .addSelect('edp.total_points', 'total_points')
+      .addSelect('edp.updated_at', 'updated_at')
+      .where('edp.total_points < 0');
+    if (locationId != null) edpQb.andWhere('edp.location_id = :locationId', { locationId });
+    if (employeeId != null) edpQb.andWhere('edp.employee_id = :employeeId', { employeeId });
+    if (startDate && endDate) {
+      edpQb
+        .andWhere('DATE(edp.work_date) >= :startDate', { startDate: startDate.replace(/T.*/, '') })
+        .andWhere('DATE(edp.work_date) <= :endDate', { endDate: endDate.replace(/T.*/, '') });
+    }
+    const edpRows = await edpQb.getRawMany<{ id: number; employee_id: number; work_date: string; total_points: string; updated_at: Date }>();
+    for (const edp of edpRows) {
+      const edpId = edp.id;
+      const sumFromTaskPoints = list
+        .filter((x) => x.employee_daily_points_id === edpId)
+        .reduce((s, x) => s + x.points_awarded, 0);
+      const totalPts = parseFloat(edp.total_points || '0');
+      if (!Number.isFinite(totalPts)) continue;
+      const missing = totalPts - sumFromTaskPoints;
+      if (missing >= 0) continue;
+      list.push({
+        id: -edpId,
+        employee_id: edp.employee_id,
+        work_date: edp.work_date,
+        points_awarded: missing,
+        task_execution_id: null,
+        created_at: edp.updated_at,
+        employee_daily_points_id: edpId,
+      });
+    }
+    list.sort((a, b) => {
+      const d = (new Date(b.work_date).getTime()) - (new Date(a.work_date).getTime());
+      if (d !== 0) return d;
+      return (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime());
+    });
+    return list;
+  }
+
   async getEmployeePointsForDateRange(
     employeeId: number,
     startDate: string,
@@ -1327,7 +1480,7 @@ export class ExecutionService {
     const start = new Date(startDate + 'T00:00:00.000Z');
     const end = new Date(endDate + 'T23:59:59.999Z');
 
-    return await this.employeeDailyPointsRepository
+    const list = await this.employeeDailyPointsRepository
       .createQueryBuilder('dailyPoints')
       .leftJoinAndSelect('dailyPoints.task_points', 'taskPoints')
       .leftJoinAndSelect('taskPoints.task_execution', 'taskExecution')
@@ -1340,6 +1493,17 @@ export class ExecutionService {
       })
       .orderBy('dailyPoints.work_date', 'ASC')
       .getMany();
+
+    // Recalculăm total_points din suma task_points (inclusiv negative) pentru răspuns corect
+    for (const dp of list) {
+      const taskPoints = dp.task_points || [];
+      const sum = taskPoints.reduce(
+        (acc, tp) => acc + Number(tp.points_awarded ?? 0),
+        0,
+      );
+      (dp as any).total_points = sum;
+    }
+    return list;
   }
 
   async calculateTotalPointsForEmployee(
@@ -1347,19 +1511,21 @@ export class ExecutionService {
     startDate: string,
     endDate: string,
   ): Promise<number> {
-    const result = await this.employeeDailyPointsRepository
-      .createQueryBuilder('dailyPoints')
-      .select('SUM(dailyPoints.total_points)', 'total')
-      .where('dailyPoints.employee_id = :employeeId', { employeeId })
-      .andWhere('dailyPoints.work_date >= :startDate', {
-        startDate: new Date(startDate),
+    // Sumă din task_points (inclusiv negative), nu din total_points stocat
+    const result = await this.employeeDailyTaskPointsRepository
+      .createQueryBuilder('tp')
+      .innerJoin('tp.employee_daily_points', 'edp')
+      .select('COALESCE(SUM(tp.points_awarded), 0)', 'total')
+      .where('edp.employee_id = :employeeId', { employeeId })
+      .andWhere('DATE(edp.work_date) >= :startDate', {
+        startDate: startDate.replace(/T.*/, ''),
       })
-      .andWhere('dailyPoints.work_date <= :endDate', {
-        endDate: new Date(endDate),
+      .andWhere('DATE(edp.work_date) <= :endDate', {
+        endDate: endDate.replace(/T.*/, ''),
       })
-      .getRawOne();
+      .getRawOne<{ total: string }>();
 
-    return parseFloat(result.total) || 0;
+    return parseFloat(result?.total || '0') || 0;
   }
 
   // ===== METODĂ PENTRU GESTIONAREA FINALIZĂRII TASK-URILOR CU PUNCTE =====
@@ -1445,14 +1611,7 @@ export class ExecutionService {
 
         const action = isOverdue ? 'scăzut' : 'adăugat';
 
-        // ===== PUNCTAJ MANAGER =====
-        // După ce s-au acordat punctele angajatului, calculează și adaugă punctele pentru manager
-        await this.handleManagerPoints(
-          execution,
-          assignment,
-          totalPoints,
-          workDate,
-        );
+        // Puncte manager: sursă unică manager_daily_payout (la încasare/cron), nu la fiecare task
       } else {
       }
     } catch (error) {
@@ -1529,6 +1688,7 @@ export class ExecutionService {
 
     // Pentru fiecare element cu puncte, scade punctele posibile (nefinalizat = pierde punctele)
     for (const element of assignment.elements || []) {
+      if (!element?.task_element) continue;
       if (element.task_element.element_type === 'scoring_simple') {
         totalPointsDeducted += element.task_element.simple_score_points || 0;
       } else if (element.task_element.element_type === 'scoring_boolean') {
@@ -1544,25 +1704,60 @@ export class ExecutionService {
     }
 
     if (totalPointsDeducted > 0) {
-      // Creează sau actualizează punctajul zilnic
+      // Ziua de lucru: normalizare la începutul zilei pentru potrivire cu coloana date
+      const workDate = new Date(targetDate);
+      workDate.setHours(0, 0, 0, 0);
+
       let dailyPoints = await this.employeeDailyPointsRepository.findOne({
         where: {
           employee_id: assignment.assigned_to_id,
-          work_date: targetDate,
+          work_date: workDate,
         },
       });
 
+      const locationId =
+        (assignment as any).location_id != null
+          ? Number((assignment as any).location_id)
+          : null;
       if (!dailyPoints) {
         dailyPoints = this.employeeDailyPointsRepository.create({
           employee_id: assignment.assigned_to_id,
-          work_date: targetDate,
+          work_date: workDate,
           total_points: -totalPointsDeducted,
+          location_id: locationId,
         });
       } else {
-        dailyPoints.total_points -= totalPointsDeducted;
+        dailyPoints.total_points = Number(dailyPoints.total_points) - totalPointsDeducted;
+        if (locationId != null && (dailyPoints as any).location_id == null) {
+          (dailyPoints as any).location_id = locationId;
+        }
       }
 
-      await this.employeeDailyPointsRepository.save(dailyPoints);
+      dailyPoints = await this.employeeDailyPointsRepository.save(dailyPoints);
+
+      // Înregistrare în EmployeeDailyTaskPoints pentru audit și rapoarte (fără execuție – reatribuire)
+      // INSERT cu task_execution_id NULL – necesită coloana să fie INT NULL în DB (migrare run-on-server.sql)
+      try {
+        await this.employeeDailyTaskPointsRepository
+          .createQueryBuilder()
+          .insert()
+          .into(EmployeeDailyTaskPoints)
+          .values({
+            employee_daily_points_id: dailyPoints.id,
+            task_execution_id: null as any,
+            points_awarded: -totalPointsDeducted,
+          })
+          .execute();
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (msg.includes('task_execution_id') || msg.includes('Data truncated')) {
+          console.warn(
+            `⚠️ [deductPoints] Nu s-a putut insera Employee_Daily_Task_Points (task_execution_id=NULL). Rulează pe DB: ALTER TABLE Employee_Daily_Task_Points MODIFY COLUMN task_execution_id INT NULL;`,
+          );
+        } else {
+          throw err;
+        }
+      }
     }
 
     return totalPointsDeducted;
@@ -1605,8 +1800,10 @@ export class ExecutionService {
 
     // Verifică dacă task-ul a fost amânat
     const wasPostponed = assignment.was_postponed === true;
+    // Task realocat (a doua persoană): termen = până la introducerea încasării – nu se penalizează la finalizare
+    const isReallocated = (assignment as any).reallocation_trigger != null;
 
-    if ((deadlineElement || finalizedInElement) && execution.completed_at) {
+    if ((deadlineElement || finalizedInElement) && execution.completed_at && !isReallocated) {
       let deadline: Date | null = null;
 
       // Verifică dacă există finish_at (deadline fix)
@@ -1649,8 +1846,8 @@ export class ExecutionService {
       } else {
         isOverdue = false; // Nu este întârziat dacă nu există deadline
       }
-    } else if (wasPostponed) {
-      isOverdue = false; // Nu este întârziat dacă a fost amânat
+    } else if (wasPostponed || isReallocated) {
+      isOverdue = false; // Nu este întârziat dacă a fost amânat sau e task realocat (termen = la încasare)
     }
 
     // Găsește toate elementele cu puncte din assignment (scoring_boolean și scoring_simple)
@@ -1729,26 +1926,42 @@ export class ExecutionService {
   }
 
   // ===== AGREGAȚI PUNCTE PE LOCAȚIE/ANGAJAT ÎNTR-UN INTERVAL =====
+  // Folosește employee_daily_points (inclusiv puncte negative la reatribuire) unde location_id e setat.
+  // Fallback: dacă nu există niciun rând cu location_id, agregare din task_points + execution (comportament vechi).
   async calculateTotalPointsForLocation(
     locationId: number,
     startDate?: string,
     endDate?: string,
   ): Promise<number> {
-    const qb = this.employeeDailyTaskPointsRepository
-      .createQueryBuilder('taskPoints')
-      .innerJoin('taskPoints.task_execution', 'exec')
-      .select('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total')
-      .where('exec.location_id = :locId', { locId: locationId })
-      .andWhere('exec.completed_at IS NOT NULL');
+    const qb = this.employeeDailyPointsRepository
+      .createQueryBuilder('edp')
+      .select('COALESCE(SUM(edp.total_points), 0)', 'total')
+      .where('edp.location_id = :locId', { locId: locationId });
 
     if (startDate && endDate) {
-      const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
-      const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-      qb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+      const sd = startDate.replace(/T.*/, '');
+      const ed = endDate.replace(/T.*/, '');
+      qb.andWhere('DATE(edp.work_date) >= :sd', { sd }).andWhere('DATE(edp.work_date) <= :ed', { ed });
     }
 
     const res = await qb.getRawOne<{ total: string }>();
-    return parseFloat(res?.total || '0') || 0;
+    let total = parseFloat(res?.total || '0');
+    if (!Number.isFinite(total)) total = 0;
+    // Fallback: date vechi fără location_id pe edp – agregare din task_points + execution
+    if (total === 0 && startDate && endDate) {
+      const fallbackQb = this.employeeDailyTaskPointsRepository
+        .createQueryBuilder('taskPoints')
+        .innerJoin('taskPoints.task_execution', 'exec')
+        .select('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total')
+        .where('exec.location_id = :locId', { locId: locationId })
+        .andWhere('exec.completed_at IS NOT NULL');
+      const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
+      const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+      fallbackQb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+      const fallbackRes = await fallbackQb.getRawOne<{ total: string }>();
+      total = parseFloat(fallbackRes?.total || '0') || 0;
+    }
+    return total;
   }
 
   async calculatePointsByEmployeeForLocation(
@@ -1756,349 +1969,44 @@ export class ExecutionService {
     startDate?: string,
     endDate?: string,
   ): Promise<Array<{ employee_id: number; total_points: number }>> {
-    const qb = this.employeeDailyTaskPointsRepository
-      .createQueryBuilder('taskPoints')
-      .innerJoin('taskPoints.task_execution', 'exec')
-      .select('exec.employee_id', 'employee_id')
-      .addSelect('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total_points')
-      .where('exec.location_id = :locId', { locId: locationId })
-      .andWhere('exec.completed_at IS NOT NULL')
-      .groupBy('exec.employee_id');
+    const qb = this.employeeDailyPointsRepository
+      .createQueryBuilder('edp')
+      .select('edp.employee_id', 'employee_id')
+      .addSelect('COALESCE(SUM(edp.total_points), 0)', 'total_points')
+      .where('edp.location_id = :locId', { locId: locationId })
+      .groupBy('edp.employee_id');
 
     if (startDate && endDate) {
+      const sd = startDate.replace(/T.*/, '');
+      const ed = endDate.replace(/T.*/, '');
+      qb.andWhere('DATE(edp.work_date) >= :sd', { sd }).andWhere('DATE(edp.work_date) <= :ed', { ed });
+    }
+
+    let rows = await qb.getRawMany<{ employee_id: string; total_points: string }>();
+    // Fallback: dacă niciun rând cu location_id, folosim agregarea din task_points + execution
+    if (rows.length === 0 && startDate && endDate) {
+      const fallbackQb = this.employeeDailyTaskPointsRepository
+        .createQueryBuilder('taskPoints')
+        .innerJoin('taskPoints.task_execution', 'exec')
+        .select('exec.employee_id', 'employee_id')
+        .addSelect('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total_points')
+        .where('exec.location_id = :locId', { locId: locationId })
+        .andWhere('exec.completed_at IS NOT NULL')
+        .groupBy('exec.employee_id');
       const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
       const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-      qb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+      fallbackQb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
+      rows = await fallbackQb.getRawMany<{ employee_id: string; total_points: string }>();
     }
-
-    const rows = await qb.getRawMany<{
-      employee_id: string;
-      total_points: string;
-    }>();
-    return rows.map((r) => ({
-      employee_id: Number(r.employee_id),
-      total_points: parseFloat(r.total_points || '0') || 0,
-    }));
+    return rows.map((r) => {
+      const totalPoints = parseFloat(r.total_points || '0');
+      return {
+        employee_id: Number(r.employee_id),
+        total_points: Number.isFinite(totalPoints) ? totalPoints : 0,
+      };
+    });
   }
-  // ===== METODĂ PENTRU CALCULAREA PUNCTELOR MANAGERULUI =====
-  private async handleManagerPoints(
-    execution: TaskExecution,
-    assignment: TaskAssignment,
-    employeePoints: number,
-    workDate: Date,
-  ): Promise<void> {
-    try {
-      // 1. Obține ora finalizării task-ului
-      const taskCompletionTime = new Date(execution.completed_at);
-
-      // 2. Obține locația - mai întâi din elementele task-ului
-      const locationElement = assignment.elements?.find(
-        (el) => el.task_element?.element_type === 'work_location',
-      );
-
-      let locationId = locationElement?.value
-        ? parseInt(locationElement.value)
-        : null;
-
-      // Dacă nu găsim locația din elemente, încercăm să o obținem din angajat
-      if (!locationId && assignment.assigned_to_id) {
-        try {
-          const employeeResponse = await this.httpService.axiosRef.get(
-            `http://giurom.bitap.ro:3002/employees/${assignment.assigned_to_id}`,
-            {
-              headers: {
-                'x-internal-service': 'veziv-tasks',
-                'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
-                'Content-Type': 'application/json',
-              },
-            },
-          );
-          const employee = employeeResponse.data;
-          locationId =
-            employee?.work_location_default_id || employee?.work_location_id;
-        } catch (error) {
-          console.error(
-            `❌ Eroare la obținerea locației din angajat:`,
-            error.message,
-          );
-        }
-      }
-
-      if (!locationId) {
-        return;
-      }
-
-      // 3. Obține configurația managerului pentru această locație
-      const managerConfigResponse = await this.httpService.axiosRef.get(
-        `http://giurom.bitap.ro:3002/locations/${locationId}/manager-config`,
-        {
-          headers: {
-            'x-internal-service': 'veziv-tasks',
-            'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      const managerConfig = managerConfigResponse.data;
-
-      if (
-        !managerConfig ||
-        !managerConfig.manager_percent ||
-        managerConfig.manager_percent <= 0
-      ) {
-        return;
-      }
-
-      const managerPercentage =
-        parseFloat(String(managerConfig.manager_percent)) / 100;
-
-      // 4. Încercă să găsești managerul prin microserviciul employees (abordare simplificată)
-      let managerEmployeeId = null;
-
-      try {
-        // Obține toți angajații din locația respectivă
-        const employeesResponse = await this.httpService.axiosRef.get(
-          `http://giurom.bitap.ro:3002/employees?work_location_id=${locationId}&is_active=true`,
-          {
-            headers: {
-              'x-internal-service': 'veziv-tasks',
-              'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
-              'Content-Type': 'application/json',
-            },
-          },
-        );
-
-        const employees = employeesResponse.data?.employees || [];
-        console.log(
-          `👔 [MANAGER POINTS] Găsiți ${employees.length} angajați în locația ${locationId}`,
-        );
-
-        // Caută managerul din pontaj la momentul execuției task-ului
-        try {
-          // Obțin shift-urile din pontaj pentru data execuției
-          const workDate = new Date(taskCompletionTime)
-            .toISOString()
-            .split('T')[0]; // YYYY-MM-DD
-          console.log(
-            `👔 [MANAGER POINTS] Caut managerul din pontaj pentru data: ${workDate}`,
-          );
-
-          const shiftsResponse = await this.httpService.axiosRef.get(
-            `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
-            {
-              headers: {
-                'x-internal-service': 'veziv-tasks',
-                'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
-                'Content-Type': 'application/json',
-              },
-            },
-          );
-
-          // Extrage array-ul de shifts (format: { data: [...], total, page, limit })
-          let allShifts: any[] = [];
-          if (Array.isArray(shiftsResponse.data)) {
-            allShifts = shiftsResponse.data;
-          } else if (
-            shiftsResponse.data &&
-            Array.isArray(shiftsResponse.data.data)
-          ) {
-            allShifts = shiftsResponse.data.data;
-          }
-
-          if (allShifts.length > 0) {
-            console.log(
-              `👔 [MANAGER POINTS] Găsite ${allShifts.length} shift-uri în pontaj`,
-            );
-
-            // Filtrează shift-urile pentru data respectivă
-            const workDateObj = new Date(workDate);
-            workDateObj.setHours(0, 0, 0, 0);
-
-            const relevantShifts = allShifts.filter((shift: any) => {
-              const shiftStart = new Date(shift.start_datetime);
-              shiftStart.setHours(0, 0, 0, 0);
-              return shiftStart.getTime() === workDateObj.getTime();
-            });
-
-            console.log(
-              `👔 [MANAGER POINTS] Shift-uri relevante pentru ${workDate}: ${relevantShifts.length}`,
-            );
-
-            // Log toate shift-urile relevante pentru debugging
-            relevantShifts.forEach((shift: any, index: number) => {
-              console.log(
-                `👔 [MANAGER POINTS] Shift ${index + 1}: employee_id=${shift.employee_id}, department_id=${shift.department_id}`,
-              );
-            });
-
-            // Caută primul shift cu departamentul "Manager" prin department_id
-            let managerShift = null;
-
-            // Obțin toate departamentele pentru locația respectivă
-            try {
-              const departmentsResponse = await this.httpService.axiosRef.get(
-                `http://giurom.bitap.ro:3002/locations/${locationId}/departments`,
-                {
-                  headers: {
-                    'x-internal-service': 'veziv-tasks',
-                    'x-service-secret':
-                      process.env.SERVICE_SECRET || 'default-service-secret',
-                    'Content-Type': 'application/json',
-                  },
-                },
-              );
-
-              const departments = departmentsResponse.data || [];
-              console.log(
-                `👔 [MANAGER POINTS] Găsite ${departments.length} departamente pentru locația ${locationId}`,
-              );
-
-              // Log toate departamentele pentru debugging
-              departments.forEach((dept: any, index: number) => {
-                console.log(
-                  `👔 [MANAGER POINTS] Departament ${index + 1}: id=${dept.id}, name="${dept.name}", code="${dept.code}"`,
-                );
-              });
-
-              // Caută departamentul "Manager"
-              const managerDepartment = departments.find(
-                (dept: any) => dept.name === 'Manager',
-              );
-
-              if (managerDepartment) {
-                console.log(
-                  `👔 [MANAGER POINTS] Departamentul Manager găsit: id=${managerDepartment.id}, name="${managerDepartment.name}"`,
-                );
-
-                // Caută primul shift cu department_id-ul managerului
-                managerShift = relevantShifts.find(
-                  (shift: any) => shift.department_id === managerDepartment.id,
-                );
-
-                if (managerShift) {
-                  console.log(
-                    `👔 [MANAGER POINTS] Manager găsit în pontaj: employee_id ${(managerShift as any).employee_id} din departamentul "${managerDepartment.name}" pentru data ${workDate}`,
-                  );
-                } else {
-                  console.log(
-                    `👔 [MANAGER POINTS] Nu s-a găsit niciun shift pentru departamentul Manager (id=${managerDepartment.id}) în data ${workDate}`,
-                  );
-                }
-              } else {
-                console.log(
-                  `👔 [MANAGER POINTS] Nu s-a găsit departamentul "Manager" în locația ${locationId}`,
-                );
-              }
-            } catch (error) {
-              console.log(
-                `⚠️ [MANAGER POINTS] Nu s-au putut obține departamentele pentru locația ${locationId}:`,
-                error.message,
-              );
-            }
-
-            if (managerShift) {
-              managerEmployeeId = (managerShift as any).employee_id;
-              console.log(
-                `👔 [MANAGER POINTS] Manager găsit în pontaj: employee_id ${managerEmployeeId} pentru data ${workDate}`,
-              );
-            } else {
-              console.log(
-                `👔 [MANAGER POINTS] Nu s-a găsit niciun manager în pontaj pentru data ${workDate}`,
-              );
-            }
-          } else {
-            console.log(
-              `👔 [MANAGER POINTS] Nu s-au găsit shift-uri în pontaj pentru data ${workDate}`,
-            );
-          }
-        } catch (error) {
-          console.log(
-            `⚠️ [MANAGER POINTS] Eroare la căutarea managerului în pontaj:`,
-            error.message,
-          );
-        }
-
-        if (!managerEmployeeId) {
-          console.log(
-            `⚠️ [MANAGER POINTS] Nu s-a găsit niciun manager în locația ${locationId}`,
-          );
-          console.log(
-            `🔍 [MANAGER POINTS] DEBUG: managerEmployeeId = ${managerEmployeeId}`,
-          );
-          return;
-        }
-      } catch (error) {
-        console.error(
-          `❌ Eroare la căutarea managerului prin employees:`,
-          error.message,
-        );
-        return;
-      }
-
-      if (!managerEmployeeId) {
-        console.log(
-          `⚠️ [MANAGER POINTS] Nu s-a putut determina managerul pentru locația ${locationId}`,
-        );
-        console.log(
-          `🔍 [MANAGER POINTS] DEBUG: managerEmployeeId = ${managerEmployeeId}`,
-        );
-        return;
-      }
-
-      // 5. Calculează punctajul managerului
-      const managerPoints = employeePoints * managerPercentage;
-
-      // 6. Creează sau actualizează punctajul zilnic pentru manager
-      let managerDailyPoints = await this.employeeDailyPointsRepository.findOne(
-        {
-          where: {
-            employee_id: managerEmployeeId,
-            work_date: workDate,
-          },
-        },
-      );
-
-      if (!managerDailyPoints) {
-        managerDailyPoints = this.employeeDailyPointsRepository.create({
-          employee_id: managerEmployeeId,
-          work_date: workDate,
-          total_points: 0,
-        });
-        managerDailyPoints =
-          await this.employeeDailyPointsRepository.save(managerDailyPoints);
-      }
-
-      // 7. Adaugă punctele pentru acest task în punctajul zilnic al managerului
-      const managerTaskPoints = this.employeeDailyTaskPointsRepository.create({
-        employee_daily_points_id: managerDailyPoints.id,
-        task_execution_id: execution.id,
-        points_awarded: managerPoints,
-      });
-      await this.employeeDailyTaskPointsRepository.save(managerTaskPoints);
-
-      // 8. Actualizează punctajul total zilnic al managerului
-      const managerTotalDailyPoints =
-        await this.employeeDailyTaskPointsRepository
-          .createQueryBuilder('taskPoints')
-          .select('SUM(taskPoints.points_awarded)', 'total')
-          .where('taskPoints.employee_daily_points_id = :dailyPointsId', {
-            dailyPointsId: managerDailyPoints.id,
-          })
-          .getRawOne();
-
-      managerDailyPoints.total_points =
-        parseFloat(managerTotalDailyPoints.total) || 0;
-      await this.employeeDailyPointsRepository.save(managerDailyPoints);
-    } catch (error) {
-      console.error('❌ Eroare la calcularea punctelor pentru manager:', error);
-      // Nu aruncăm eroarea pentru a nu afecta procesarea angajatului
-    }
-  }
+  // Puncte manager: sursă unică manager_daily_payout (populat la încasare/cron), nu la fiecare task.
 
   // ===== METODĂ PENTRU GĂSIREA MANAGERULUI PREZENT LA UN MOMENT DAT =====
   private async findManagerAtTime(
@@ -2304,6 +2212,55 @@ export class ExecutionService {
       throw new BadRequestException(
         `Eroare la ștergerea imaginii: ${error?.message || 'Unknown error'}`,
       );
+    }
+  }
+
+  /**
+   * Listare înregistrări manager_daily_payout pentru rapoarte.
+   * Sursă unică: tabela manager_daily_payout (populată la introducerea/aprobarea încasării).
+   * Filtrare opțională: work_location_id, start_date, end_date. Fără N+1 – un singur query.
+   * Comparația de date folosește DATE() ca să evite probleme de timezone.
+   */
+  async findManagerDailyPayouts(
+    workLocationId?: number,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<ManagerDailyPayout[]> {
+    try {
+      const normStart = startDate ? startDate.split('T')[0].split(' ')[0] : undefined;
+      const normEnd = endDate ? endDate.split('T')[0].split(' ')[0] : undefined;
+
+      const qb = this.managerDailyPayoutRepository
+        .createQueryBuilder('p')
+        .orderBy('p.work_date', 'DESC')
+        .addOrderBy('p.work_location_id', 'ASC');
+
+      if (workLocationId != null) {
+        qb.andWhere('p.work_location_id = :workLocationId', { workLocationId });
+      }
+      if (normStart) {
+        qb.andWhere('p.work_date >= :normStart', { normStart });
+      }
+      if (normEnd) {
+        qb.andWhere('p.work_date <= :normEnd', { normEnd });
+      }
+
+      const list = await qb.getMany();
+      if (list.length === 0 && workLocationId != null && (normStart || normEnd)) {
+        const countWithoutDate = await this.managerDailyPayoutRepository
+          .createQueryBuilder('p')
+          .where('p.work_location_id = :workLocationId', { workLocationId })
+          .getCount();
+        if (countWithoutDate > 0) {
+          console.warn(
+            `[findManagerDailyPayouts] work_location_id=${workLocationId}, start=${normStart}, end=${normEnd}: 0 rânduri, dar locația are ${countWithoutDate} înregistrări (posibil filtru dată/timezone)`,
+          );
+        }
+      }
+      return list;
+    } catch (err) {
+      console.error('[findManagerDailyPayouts]', err);
+      return [];
     }
   }
 }

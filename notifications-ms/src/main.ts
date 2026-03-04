@@ -45,8 +45,10 @@ async function bootstrap() {
     
     await microservice.listen();
     console.log(`🐰 RabbitMQ microservice is running on queue: notifications`);
-  } catch (error) {
-    console.log(`⚠️  RabbitMQ not available, running HTTP-only mode`);
+  } catch (error: any) {
+    console.warn(
+      `⚠️  RabbitMQ not available, running HTTP-only mode. Notificările de task/creare nu vor ajunge. Eroare: ${error?.message ?? error}`,
+    );
   }
 }
 

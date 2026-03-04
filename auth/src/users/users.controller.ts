@@ -75,10 +75,11 @@ export class UsersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Returnează toți utilizatorii activi' })
+  @ApiOperation({ summary: 'Returnează utilizatorii (opțional inclusiv dezactivați)' })
+  @ApiQuery({ name: 'includeInactive', required: false, description: 'Dacă este "true", returnează toți utilizatorii, inclusiv cei dezactivați' })
   @ApiResponse({ status: 200, description: 'Lista utilizatorilor', type: [User] })
-  async findAll(): Promise<User[]> {
-    return this.usersService.findAll();
+  async findAll(@Query('includeInactive') includeInactive?: string): Promise<User[]> {
+    return this.usersService.findAll(includeInactive === 'true');
   }
 
   @Get('employee/:id_employee')
@@ -174,12 +175,22 @@ export class UsersController {
 
   @Delete('employee/:id_employee')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Șterge un utilizator' })
+  @ApiOperation({ summary: 'Șterge un utilizator după id_employee' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiResponse({ status: 204, description: 'Utilizatorul a fost șters cu succes' })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
   async remove(@Param('id_employee', ParseIntPipe) id_employee: number): Promise<void> {
     return this.usersService.remove(id_employee);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Șterge un utilizator după user id (users.id)' })
+  @ApiParam({ name: 'id', description: 'ID-ul utilizatorului (users.id)' })
+  @ApiResponse({ status: 204, description: 'Utilizatorul a fost șters cu succes' })
+  @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
+  async removeByUserId(@Param('id', ParseIntPipe) id: number): Promise<void> {
+    return this.usersService.removeByUserId(id);
   }
 
   // ===== PERMISSIONS ENDPOINTS =====

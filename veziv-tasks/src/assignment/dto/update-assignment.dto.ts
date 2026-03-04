@@ -180,6 +180,15 @@ export class UpdateAssignmentDto {
   is_visible_for_employee?: boolean;
 
   @ApiProperty({
+    description: 'Dacă realocarea este permisă pentru acest task (false = nu se realochează)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  permite_realocare?: boolean;
+
+  @ApiProperty({
     description: 'Dacă taskul a fost amânat de angajat',
     example: false,
     required: false

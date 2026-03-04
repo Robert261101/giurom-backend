@@ -53,4 +53,10 @@ export class FilterCalendarEventsDto {
   @IsOptional()
   @IsString({ message: 'Termenul de căutare trebuie să fie un string' })
   search?: string;
+
+  @ApiProperty({ description: 'Filtrare după ID locație – doar evenimente ale acestei locații', example: 1, required: false })
+  @IsOptional()
+  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
+  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  location_id?: number;
 }

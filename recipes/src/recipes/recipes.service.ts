@@ -147,10 +147,12 @@ export class RecipeService {
       .skip(offset)
       .getManyAndCount();
 
-    // Expune `is_consumable` per locație în payload (pentru compatibilitate cu frontend-ul)
+    // Expune `is_consumable` și `consumabil_pentru_angajat` per locație (pentru afișare în UI)
     for (const r of recipes) {
       const rl = Array.isArray((r as any).recipeLocations) ? (r as any).recipeLocations[0] : undefined;
-      (r as any).is_consumable = rl?.isConsumable ?? false;
+      const consumable = rl?.isConsumable ?? false;
+      (r as any).is_consumable = consumable;
+      (r as any).consumabil_pentru_angajat = consumable;
     }
     
     // Populate product data for each recipe
@@ -203,12 +205,14 @@ export class RecipeService {
       }
     }
 
-    // Expune `is_consumable` per locație în payload (pentru compatibilitate cu frontend-ul)
+    // Expune `is_consumable` și `consumabil_pentru_angajat` per locație (pentru afișare în UI)
     if (location_id !== undefined) {
       const rl = recipe.recipeLocations?.find((x: any) => x.idLocation === location_id);
-      (recipe as any).is_consumable = (rl as any)?.isConsumable ?? false;
+      const consumable = (rl as any)?.isConsumable ?? false;
+      (recipe as any).is_consumable = consumable;
+      (recipe as any).consumabil_pentru_angajat = consumable;
     }
-    
+
     // Populate product data
     if (recipe.recipe_products && recipe.recipe_products.length > 0) {
       for (const recipeProduct of recipe.recipe_products) {

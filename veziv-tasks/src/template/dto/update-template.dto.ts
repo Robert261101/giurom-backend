@@ -114,6 +114,15 @@ export class UpdateElementDto {
   @IsOptional()
   @IsBoolean()
   is_visible_for_employee?: boolean;
+
+  @ApiProperty({
+    description: 'Pentru elementul allow_reallocation: dacă task-ul permite realocare (opțional)',
+    example: true,
+    required: false
+  })
+  @IsOptional()
+  @IsBoolean()
+  permite_realocare?: boolean;
 }
 
 export class UpdateTemplateDto {

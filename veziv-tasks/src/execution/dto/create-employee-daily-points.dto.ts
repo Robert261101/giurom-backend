@@ -10,6 +10,11 @@ export class CreateEmployeeDailyPointsDto {
   @IsDateString()
   work_date: string;
 
+  @ApiProperty({ description: 'ID locație (pentru rapoarte pe locație)', required: false })
+  @IsInt()
+  @IsOptional()
+  location_id?: number;
+
   @ApiProperty({ description: 'Punctajul total pentru ziua respectivă', required: false })
   @IsNumber()
   @IsOptional()

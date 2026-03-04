@@ -14,12 +14,13 @@ export class EmployeeDailyTaskPoints {
   @JoinColumn({ name: 'employee_daily_points_id' })
   employee_daily_points: EmployeeDailyPoints;
 
-  @Column({ name: 'task_execution_id', type: 'int' })
-  task_execution_id: number;
+  /** Nullable pentru înregistrări agregate (ex: puncte manager la încasare – fără execuție task). */
+  @Column({ name: 'task_execution_id', type: 'int', nullable: true })
+  task_execution_id: number | null;
 
-  @ManyToOne(() => TaskExecution, { onDelete: 'CASCADE' })
+  @ManyToOne(() => TaskExecution, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'task_execution_id' })
-  task_execution: TaskExecution;
+  task_execution: TaskExecution | null;
 
   @Column({ name: 'points_awarded', type: 'decimal', precision: 10, scale: 2, default: 0 })
   points_awarded: number;

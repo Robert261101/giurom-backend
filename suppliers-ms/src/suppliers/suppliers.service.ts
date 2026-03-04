@@ -175,39 +175,7 @@ export class SuppliersService {
   }
 
   private async createSupplierFolders(supplier: Supplier): Promise<void> {
-    try {
-      const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
-      const repoRoot = this.getRepoRoot();
-      const filesDir = path.join(repoRoot, 'files');
-      const suppliersDir = path.join(filesDir, 'suppliers');
-      const supplierDir = path.join(suppliersDir, supplierNameSimplified);
-      
-      this.logger.log(`📁 Creating supplier folders for: ${supplier.supplier_name} (${supplierNameSimplified})`);
-      this.logger.log(`📁 Files directory: ${filesDir}`);
-      this.logger.log(`📁 Suppliers directory: ${suppliersDir}`);
-      this.logger.log(`📁 Supplier directory: ${supplierDir}`);
-      
-      // Create the main supplier directory
-      if (!fs.existsSync(filesDir)) {
-        this.logger.log(`📁 Creating files directory: ${filesDir}`);
-        fs.mkdirSync(filesDir, { recursive: true });
-      }
-      if (!fs.existsSync(suppliersDir)) {
-        this.logger.log(`📁 Creating suppliers directory: ${suppliersDir}`);
-        fs.mkdirSync(suppliersDir, { recursive: true });
-      }
-      if (!fs.existsSync(supplierDir)) {
-        this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
-        fs.mkdirSync(supplierDir, { recursive: true });
-      }
-      
-      // Only create the main supplier directory, subfolders will be created dynamically when needed
-      this.logger.log(`📁 Created main supplier directory: ${supplierDir}`);
-      
-      this.logger.log(`✅ Folder structure created successfully for supplier ${supplier.id}`);
-    } catch (error) {
-      this.logger.error(`❌ Error creating folder structure for supplier ${supplier.id}:`, error);
-    }
+    // Nu mai creăm directoare pe disk în files/suppliers; documentele nu se salvează fizic aici
   }
 
   private async createSupplierFoldersWithCustomName(supplier: Supplier, customFolderName?: string, documents?: any[], locationId?: number): Promise<void> {
@@ -270,83 +238,55 @@ export class SuppliersService {
           supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
         }
       } else {
-        // Default path for non-location-bound suppliers
-        const filesDir = path.join(repoRoot, 'files');
-        const suppliersDir = path.join(filesDir, 'suppliers');
+        // Default path for non-location-bound suppliers – nu mai creăm nimic pe disk în files/suppliers
         basePath = `/files/suppliers/${supplierNameSimplified}`;
-        supplierDir = path.join(suppliersDir, supplierNameSimplified);
+        supplierDir = path.join(repoRoot, 'files', 'suppliers', supplierNameSimplified);
       }
       
       this.logger.log(`📁 Creating supplier folders with custom name for: ${supplier.supplier_name} (${supplierNameSimplified})`);
       this.logger.log(`📁 Base path: ${basePath}`);
-      this.logger.log(`📁 Supplier directory: ${supplierDir}`);
       
-      // Create the main supplier directory
-      const dirToCreate = path.dirname(supplierDir);
-      if (!fs.existsSync(dirToCreate)) {
-        this.logger.log(`📁 Creating parent directory: ${dirToCreate}`);
-        fs.mkdirSync(dirToCreate, { recursive: true });
+      // Creăm directoare pe disk doar pentru calea locație (files/companies/.../Furnizori); nu pentru files/suppliers
+      const isUnderFilesSuppliers = basePath.startsWith('/files/suppliers/');
+      if (!isUnderFilesSuppliers) {
+        const dirToCreate = path.dirname(supplierDir);
+        if (!fs.existsSync(dirToCreate)) {
+          fs.mkdirSync(dirToCreate, { recursive: true });
+        }
+        if (!fs.existsSync(supplierDir)) {
+          fs.mkdirSync(supplierDir, { recursive: true });
+        }
       }
-      if (!fs.existsSync(supplierDir)) {
-        this.logger.log(`📁 Creating supplier directory: ${supplierDir}`);
-        fs.mkdirSync(supplierDir, { recursive: true });
-      }
-      
-      // Only create the main supplier directory, subfolders will be created dynamically when needed
-      this.logger.log(`📁 Created main supplier directory: ${supplierDir}`);
       
       this.logger.log(`✅ Folder structure created successfully for supplier ${supplier.id}`);
 
-      // Handle documents if provided
       const documentFolderName = customFolderName || 'Folder pentru documente și contracte';
-      
-      // Create folder records in database for backward compatibility
       const folders = [
         { supplier_id: supplier.id, description: documentFolderName, folder_path: `${basePath}/` },
       ];
-      
       const savedFolders: SupplierFolder[] = [];
       for (const folderData of folders) {
-        this.logger.log(`📁 Creating folder record: ${JSON.stringify(folderData)}`);
         const folder = this.folderRepo.create(folderData);
         const savedFolder = await this.folderRepo.save(folder);
         savedFolders.push(savedFolder);
       }
       
-      // Handle documents if provided
-      if (documents && documents.length > 0 && savedFolders[0]) {
+      // Scriem fișiere pe disk doar pentru calea locație (files/companies/...); nu pentru files/suppliers
+      if (documents && documents.length > 0 && savedFolders[0] && !isUnderFilesSuppliers) {
         const documentFolder = savedFolders[0];
-        
-        // Define supplier subfolders array
         const supplierSubfolders = [
-          'Certificat de Înregistrare furnizor',
-          'Certificat Fiscal furnizor',
-          'Act Constitutiv furnizor',
-          'Contract furnizare / prestări servicii',
-          'Acte adiționale',
-          'Acord GDPR',
-          'Comenzi (PO)',
-          'Confirmări de comandă',
-          'Recepții totale',
-          'Recepții parțiale',
-          'Facturi',
-          'Dovezi de plată',
-          'Procese verbale neconformitate',
-          'Oferte comerciale',
-          'Corespondență',
-          'Alte documente'
+          'Certificat de Înregistrare furnizor', 'Certificat Fiscal furnizor', 'Act Constitutiv furnizor',
+          'Contract furnizare / prestări servicii', 'Acte adiționale', 'Acord GDPR', 'Comenzi (PO)',
+          'Confirmări de comandă', 'Recepții totale', 'Recepții parțiale', 'Facturi', 'Dovezi de plată',
+          'Procese verbale neconformitate', 'Oferte comerciale', 'Corespondență', 'Alte documente'
         ];
-        
         for (const doc of documents) {
           try {
             const fileName = doc.fileName || doc.name;
             const timestamp = Date.now();
             const uniqueFileName = `${timestamp}_${fileName}`;
-            
-            // Save to the first subfolder (Certificat de Înregistrare furnizor) as default
             const firstSubfolder = supplierSubfolders[0];
             const filePath = path.join(supplierDir, firstSubfolder, uniqueFileName);
-            
             if (doc.content && doc.content.startsWith('data:')) {
               const base64Data = doc.content.split(',')[1];
               const buffer = Buffer.from(base64Data, 'base64');
@@ -355,7 +295,6 @@ export class SuppliersService {
               const fileContent = `Document: ${fileName}\nNote: ${doc.note || doc.notes || ''}\nUpload: ${new Date().toISOString()}\nFurnizor: ${supplier.supplier_name}`;
               fs.writeFileSync(filePath, fileContent, 'utf8');
             }
-            
             const documentData = {
               folder_id: documentFolder.id,
               document_type: DocumentType.OTHER,
@@ -367,6 +306,23 @@ export class SuppliersService {
             await this.supplierDocumentRepo.save(document);
           } catch (error) {
             this.logger.error(`❌ Error creating document: ${error}`);
+          }
+        }
+      } else if (documents && documents.length > 0 && savedFolders[0] && isUnderFilesSuppliers) {
+        const documentFolder = savedFolders[0];
+        for (const doc of documents) {
+          try {
+            const fileName = doc.fileName || doc.name;
+            const document = this.supplierDocumentRepo.create({
+              folder_id: documentFolder.id,
+              document_type: DocumentType.OTHER,
+              file_name: fileName,
+              file_path: `${basePath}/Alte documente/${fileName}`,
+              notes: doc.note || doc.notes || '',
+            });
+            await this.supplierDocumentRepo.save(document);
+          } catch (error) {
+            this.logger.error(`❌ Error creating document record: ${error}`);
           }
         }
       }
@@ -1813,8 +1769,8 @@ export class SuppliersService {
     })) as Array<SupplierOrderItemReception & { user_name?: string }>;
   }
 
-  async getReceptionReport(startDate: string, endDate: string): Promise<any[]> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}`);
+  async getReceptionReport(startDate: string, endDate: string, locationId?: number): Promise<any[]> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}${locationId != null ? `, location_id=${locationId}` : ''}`);
     
     const stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
     const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
@@ -1825,7 +1781,7 @@ export class SuppliersService {
 
     // Nou: dacă există evenimente în supplier_order_item_receptions pe interval, folosim direct acea sursă
     try {
-      const eventRows = await this.orderItemReceptionRepo
+      const qb = this.orderItemReceptionRepo
         .createQueryBuilder('ev')
         .select([
           'ev.supplier_order_id AS supplier_order_id',
@@ -1837,9 +1793,15 @@ export class SuppliersService {
           'ev.reason AS reason',
           'ev.occurred_at AS occurred_at',
         ])
-        .where('DATE(ev.occurred_at) BETWEEN :startDate AND :endDate', { startDate, endDate })
-        .getRawMany();
+        .where('DATE(ev.occurred_at) BETWEEN :startDate AND :endDate', { startDate, endDate });
+      if (locationId != null) {
+        qb.andWhere('ev.location_id = :locationId', { locationId });
+      }
+      const eventRows = await qb.getRawMany();
       
+      if (locationId != null && eventRows.length === 0) {
+        return [];
+      }
       if (eventRows.length > 0) {
         this.logger.log(`📦 [SUPPLIERS SERVICE] Using receptions events table with ${eventRows.length} rows`);
         const aggregated = new Map<string, {
@@ -2661,6 +2623,153 @@ export class SuppliersService {
     return qb.getMany();
   }
 
+  /**
+   * Comenzi anulate – paginare (10 per pagină).
+   * Aceeași logică de filtrare ca pe frontend: status cancelled sau toate item-urile acoperite de anulări.
+   */
+  async getCancelledOrdersPaginated(
+    supplierIds: number[],
+    locationId: number,
+    page: number,
+    limit: number,
+  ): Promise<{ data: SupplierOrder[]; total: number }> {
+    if (!supplierIds?.length) {
+      return { data: [], total: 0 };
+    }
+    const orders = await this.getSupplierOrdersBatch(supplierIds, { locationId });
+    const orderIds = orders.map((o) => o.id).filter((id) => Number.isFinite(id) && id > 0);
+    if (orderIds.length === 0) {
+      return { data: [], total: 0 };
+    }
+
+    const cancelledItemsRaw = await this.getOrderCancelledItemsBatch(orderIds);
+    const receptionsRaw = await this.getOrderReceptionsBatch(orderIds);
+
+    const cancelledItemsMap = new Map<number, typeof cancelledItemsRaw>();
+    for (const item of cancelledItemsRaw) {
+      const oid = Number((item as any).order_id ?? (item as any).supplier_order_id);
+      if (!Number.isFinite(oid)) continue;
+      const arr = cancelledItemsMap.get(oid) ?? [];
+      arr.push(item);
+      cancelledItemsMap.set(oid, arr);
+    }
+
+    const pendingReceptionsMap = new Map<number, (typeof receptionsRaw)[number][]>();
+    for (const r of receptionsRaw) {
+      if (r.status !== ReceptionStatus.PENDING) continue;
+      const oid = Number(r.supplier_order_id);
+      if (!Number.isFinite(oid)) continue;
+      const arr = pendingReceptionsMap.get(oid) ?? [];
+      arr.push(r);
+      pendingReceptionsMap.set(oid, arr);
+    }
+
+    const cancelledList = orders
+      .filter((order) => {
+        if (order.status === OrderStatus.CANCELLED) return true;
+        const cancelledItemsForOrder = cancelledItemsMap.get(order.id) ?? [];
+        const pendingReceptionsForOrder = pendingReceptionsMap.get(order.id) ?? [];
+        const cancelledByItemId = new Map<number, number>();
+        cancelledItemsForOrder.forEach((ci: any) => {
+          const itemId = ci.supplier_order_item_id;
+          const qty = Number(ci.returned_quantity ?? 0);
+          cancelledByItemId.set(itemId, (cancelledByItemId.get(itemId) ?? 0) + qty);
+        });
+        if (order.items?.length) {
+          const allProcessed = order.items.every((item: any) => {
+            const ordered = Number(item.quantity) || 0;
+            const receivedApproved = Number(item.received_quantity) || 0;
+            const pendingForItem = pendingReceptionsForOrder
+              .filter((r) => r.supplier_order_item_id === item.id)
+              .reduce((acc, r) => acc + (Number(r.received_delta) || 0), 0);
+            const totalReceived = receivedApproved + pendingForItem;
+            const cancelledQty = cancelledByItemId.get(item.id) ?? 0;
+            return totalReceived + cancelledQty >= ordered - 0.01;
+          });
+          return allProcessed && cancelledItemsForOrder.length > 0;
+        }
+        return false;
+      })
+      .map((order) => {
+        if (order.cancelled_at) return order;
+        const cancelledItemsForOrder = cancelledItemsMap.get(order.id) ?? [];
+        if (cancelledItemsForOrder.length === 0) return order;
+        const earliest = cancelledItemsForOrder.reduce((acc: any, cur: any) => {
+          if (!acc) return cur;
+          const accDate = new Date(acc.reception_date ?? acc.created_at).getTime();
+          const curDate = new Date(cur.reception_date ?? cur.created_at).getTime();
+          return curDate < accDate ? cur : acc;
+        }, null);
+        return {
+          ...order,
+          cancelled_at: earliest?.reception_date ?? earliest?.created_at ?? order.cancelled_at,
+        } as SupplierOrder;
+      });
+
+    cancelledList.sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+    const total = cancelledList.length;
+    const start = (page - 1) * limit;
+    const data = cancelledList.slice(start, start + limit);
+    return { data, total };
+  }
+
+  /**
+   * Comenzi receptionate – paginare (10 per pagină).
+   * Aceeași logică ca pe frontend: delivered, cu recepții PENDING sau cu received_quantity > 0.
+   */
+  async getReceivedOrdersPaginated(
+    supplierIds: number[],
+    locationId: number,
+    page: number,
+    limit: number,
+  ): Promise<{ data: SupplierOrder[]; total: number }> {
+    if (!supplierIds?.length) {
+      return { data: [], total: 0 };
+    }
+    const orders = await this.getSupplierOrdersBatch(supplierIds, { locationId });
+    const orderIds = orders.map((o) => o.id).filter((id) => Number.isFinite(id) && id > 0);
+    if (orderIds.length === 0) {
+      return { data: [], total: 0 };
+    }
+
+    const receptionsRaw = await this.getOrderReceptionsBatch(orderIds);
+    const pendingReceptionsMap = new Map<number, (typeof receptionsRaw)[number][]>();
+    for (const r of receptionsRaw) {
+      if (r.status !== ReceptionStatus.PENDING) continue;
+      const oid = Number(r.supplier_order_id);
+      if (!Number.isFinite(oid)) continue;
+      const arr = pendingReceptionsMap.get(oid) ?? [];
+      arr.push(r);
+      pendingReceptionsMap.set(oid, arr);
+    }
+
+    const receivedList = orders.filter((order) => {
+      if (order.status === OrderStatus.CANCELLED) {
+        const hasApproved = order.items?.some((item: any) => (Number(item.received_quantity) || 0) > 0);
+        const hasPending = pendingReceptionsMap.has(order.id);
+        return !!(hasApproved || hasPending);
+      }
+      if (order.status === OrderStatus.DELIVERED) return true;
+      if (pendingReceptionsMap.has(order.id)) return true;
+      if (order.items?.some((item: any) => (Number(item.quantity) || 0) > 0 && (Number(item.received_quantity) || 0) > 0)) {
+        return true;
+      }
+      return false;
+    });
+
+    // Mai întâi comenzi cu recepție neaprobată (PENDING), apoi restul după data comenzii (cele mai recente)
+    receivedList.sort((a, b) => {
+      const aPending = pendingReceptionsMap.has(a.id) ? 0 : 1;
+      const bPending = pendingReceptionsMap.has(b.id) ? 0 : 1;
+      if (aPending !== bPending) return aPending - bPending;
+      return new Date(b.order_date).getTime() - new Date(a.order_date).getTime();
+    });
+    const total = receivedList.length;
+    const start = (page - 1) * limit;
+    const data = receivedList.slice(start, start + limit);
+    return { data, total };
+  }
+
   async updateSupplierProduct(productId: number, updateData: Partial<SupplierProduct>): Promise<SupplierProduct> {
     const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
     if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');
@@ -2793,12 +2902,14 @@ export class SuppliersService {
           });
           folder = await this.folderRepo.save(newFolder);
           console.log(`✅ [addDocument] Created folder on server: ${folder.description} (ID: ${folder.id}), path: ${folderPath}`);
-          const repoRoot = this.getRepoRoot();
-          const basePathRel = basePath.startsWith('/') ? basePath.slice(1) : basePath;
-          const absoluteDir = path.join(repoRoot, basePathRel, folderName);
-          if (!fs.existsSync(absoluteDir)) {
-            fs.mkdirSync(absoluteDir, { recursive: true });
-            console.log(`📁 [addDocument] Created directory on disk: ${absoluteDir}`);
+          if (!basePath.startsWith('/files/suppliers/')) {
+            const repoRoot = this.getRepoRoot();
+            const basePathRel = basePath.startsWith('/') ? basePath.slice(1) : basePath;
+            const absoluteDir = path.join(repoRoot, basePathRel, folderName);
+            if (!fs.existsSync(absoluteDir)) {
+              fs.mkdirSync(absoluteDir, { recursive: true });
+              console.log(`📁 [addDocument] Created directory on disk: ${absoluteDir}`);
+            }
           }
         }
       }
@@ -2823,152 +2934,61 @@ export class SuppliersService {
         }
       }
 
-      // Save physical file if content provided
+      // Save physical file only under files/companies/... (locații); nu scriem nimic în files/suppliers
       const base64 = documentData.content || documentData.file_content;
-      if (base64) {
-        console.log(`💾 [addDocument] Processing file content for: ${documentData.fileName}`);
-        const repoRoot = this.getRepoRoot();
-        console.log(`📁 [addDocument] Repository root: ${repoRoot}`);
-
-        // Determine the correct file path: păstrăm ierarhia (folder în folder), nu doar baza
-        let folderPathToUse = folder.folder_path;
-
-        if (isBoundToLocation && locationPath) {
-          if (folder.folder_path.startsWith(locationPath)) {
-            folderPathToUse = folder.folder_path;
-          } else {
-            const supplierBase = `/files/suppliers/${supplierNameSimplified}`;
-            const rel = folder.folder_path.replace(supplierBase, '').replace(/^\/+/, '').replace(/\/+$/, '');
-            folderPathToUse = rel ? `${locationPath}/Furnizori/${supplierNameSimplified}/${rel}` : `${locationPath}/Furnizori/${supplierNameSimplified}`;
-          }
-        } else if (!isBoundToLocation) {
-          // Handle both old and new folder path structures
-          // Check if the folder path follows the old structure (with ID)
-          if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
-            // This is the old structure with ID, we need to convert it to the new structure
-            folderPathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
-            console.log(`🔄 [addDocument] Converted old path structure to new: ${folderPathToUse}`);
-          } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
-            // This is already the new structure, use it as is
-            folderPathToUse = folder.folder_path;
-            console.log(`✅ [addDocument] Using existing new folder path structure: ${folderPathToUse}`);
-          }
+      let folderPathToUse = folder.folder_path;
+      if (isBoundToLocation && locationPath) {
+        if (folder.folder_path.startsWith(locationPath)) {
+          folderPathToUse = folder.folder_path;
+        } else {
+          const supplierBase = `/files/suppliers/${supplierNameSimplified}`;
+          const rel = folder.folder_path.replace(supplierBase, '').replace(/^\/+/, '').replace(/\/+$/, '');
+          folderPathToUse = rel ? `${locationPath}/Furnizori/${supplierNameSimplified}/${rel}` : `${locationPath}/Furnizori/${supplierNameSimplified}`;
         }
+      } else if (!isBoundToLocation) {
+        if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
+          folderPathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
+        } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
+          folderPathToUse = folder.folder_path;
+        }
+      }
 
-        // Calea finală: folderPathToUse conține deja ierarhia (ex. .../Certificat de Înregistrare/Folder nou2/)
+      const saveToDisk = base64 && folderPathToUse.startsWith('/files/companies/');
+      if (saveToDisk) {
+        const repoRoot = this.getRepoRoot();
         const subfolderPath = folderPathToUse.replace(/\/+$/, '') + (folderPathToUse.endsWith('/') ? '' : '/');
-
         const subfolderPathRel = subfolderPath.startsWith('/') ? subfolderPath.slice(1) : subfolderPath;
         const absoluteDir = path.join(repoRoot, subfolderPathRel);
         const absolutePath = path.join(absoluteDir, documentData.fileName);
-        console.log(`📁 [addDocument] Absolute directory: ${absoluteDir}`);
-        console.log(`📄 [addDocument] Absolute file path: ${absolutePath}`);
-
-        // Ensure directory exists
         try {
-          console.log(`🔍 [addDocument] Checking if directory exists: ${absoluteDir}`);
           if (!fs.existsSync(absoluteDir)) {
-            console.log(`FontAwesomeIcon [addDocument] Directory does not exist, creating: ${absoluteDir}`);
             fs.mkdirSync(absoluteDir, { recursive: true });
-            console.log(`✅ [addDocument] Directory created successfully`);
-          } else {
-            console.log(`✅ [addDocument] Directory already exists`);
           }
-        } catch (dirError: any) {
-          console.error(`❌ [addDocument] Failed to create directory ${absoluteDir}:`, dirError);
-          throw new Error(`Failed to create directory: ${dirError.message || dirError}`);
-        }
-
-        // If using location-specific path, also ensure the supplier folder exists and create subfolders
-        if (isBoundToLocation && locationPath) {
-          const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
-          const supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
-          console.log(`📍 [addDocument] Checking location-specific supplier directory: ${supplierDir}`);
-
-          try {
+          if (isBoundToLocation && locationPath) {
+            const locationPathRel = locationPath.startsWith('/') ? locationPath.slice(1) : locationPath;
+            const supplierDir = path.join(repoRoot, locationPathRel, 'Furnizori', supplierNameSimplified);
             if (!fs.existsSync(supplierDir)) {
-              console.log(`📁 [addDocument] Creating location-specific supplier directory`);
               fs.mkdirSync(supplierDir, { recursive: true });
-              console.log(`✅ [addDocument] Created location-specific supplier directory: ${supplierDir}`);
-            } else {
-              console.log(`✅ [addDocument] Location-specific supplier directory already exists`);
             }
-
-            // Create all required subfolders for the supplier in location structure ONLY when needed
-            const supplierSubfolders = [
-              'Certificat de Înregistrare furnizor',
-              'Certificat Fiscal furnizor',
-              'Act Constitutiv furnizor',
-              'Contract furnizare / prestări servicii',
-              'Acte adiționale',
-              'Acord GDPR',
-              'Comenzi (PO)',
-              'Confirmări de comandă',
-              'Recepții totale',
-              'Recepții parțiale',
-              'Facturi',
-              'Dovezi de plată',
-              'Procese verbale neconformitate',
-              'Oferte comerciale',
-              'Corespondență',
-              'Alte documente'
-            ];
-
-            console.log(`📂 [addDocument] Ensuring supplier subfolders exist in location structure`);
-            // Only create the specific subfolder that's being used
             const designatedFolder = documentData.notes?.match(/\|folder:([^|]+)\|/)?.[1] || 'Alte documente';
-            const subfolderToCreate = supplierSubfolders.find(folder => folder === designatedFolder) || 'Alte documente';
-            const subfolderPath = path.join(supplierDir, subfolderToCreate);
-          
-            console.log(`🔍 [addDocument] Checking specific subfolder: ${subfolderPath}`);
-            if (!fs.existsSync(subfolderPath)) {
-              console.log(`📁 [addDocument] Creating subfolder: ${subfolderToCreate}`);
-              fs.mkdirSync(subfolderPath, { recursive: true });
-              console.log(`✅ [addDocument] Created subfolder: ${subfolderPath}`);
-            } else {
-              console.log(`✅ [addDocument] Subfolder already exists: ${subfolderToCreate}`);
+            const supplierSubfolders = ['Certificat de Înregistrare furnizor', 'Certificat Fiscal furnizor', 'Act Constitutiv furnizor', 'Contract furnizare / prestări servicii', 'Acte adiționale', 'Acord GDPR', 'Comenzi (PO)', 'Confirmări de comandă', 'Recepții totale', 'Recepții parțiale', 'Facturi', 'Dovezi de plată', 'Procese verbale neconformitate', 'Oferte comerciale', 'Corespondență', 'Alte documente'];
+            const subfolderToCreate = supplierSubfolders.find(f => f === designatedFolder) || 'Alte documente';
+            const subfolderPathAbs = path.join(supplierDir, subfolderToCreate);
+            if (!fs.existsSync(subfolderPathAbs)) {
+              fs.mkdirSync(subfolderPathAbs, { recursive: true });
             }
-          } catch (error: any) {
-            console.error(`❌ [addDocument] Error creating location-specific supplier folder structure:`, error?.message || error);
-            throw new Error(`Failed to create location-specific supplier folder structure: ${error?.message || error}`);
           }
-        }
-
-        try {
           const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
-          console.log(`💾 [addDocument] Writing file with ${base64Data.length} base64 characters`);
           const buffer = Buffer.from(base64Data, 'base64');
           fs.writeFileSync(absolutePath, buffer);
-          console.log(`✅ [addDocument] File written successfully to: ${absolutePath} (${buffer.length} bytes)`);
-        } catch (fileError: any) {
-          console.error(`❌ [addDocument] Failed to write file ${absolutePath}:`, fileError);
-          throw new Error(`Failed to write file: ${fileError.message || fileError}`);
-        }
-      } else {
-        console.log(`⚠️ [addDocument] No file content provided, skipping file save`);
-      }
-
-      // Determine the correct file path for the document record
-      let filePathToUse = folder.folder_path;
-      console.log(`📄 [addDocument] Determining file path for database record. Original: ${filePathToUse}`);
-
-      if (isBoundToLocation && locationPath) {
-        // Use location-specific path
-        filePathToUse = `${locationPath}/Furnizori/${supplierNameSimplified}`;
-        console.log(`📍 [addDocument] Using location-specific path for database: ${filePathToUse}`);
-      } else {
-        // Handle both old and new file path structures for the document record
-        // Check if the folder path follows the old structure (with ID)
-        if (folder.folder_path.includes(`/suppliers/${supplierId}/`)) {
-          // This is the old structure with ID, we need to convert it to the new structure
-          filePathToUse = `/files/suppliers/${supplierNameSimplified}/${folder.folder_path.split('/').slice(4).join('/')}`;
-          console.log(`🔄 [addDocument] Converted old path structure for database: ${filePathToUse}`);
-        } else if (folder.folder_path.startsWith(`/files/suppliers/`) && !folder.folder_path.includes(`/${supplierId}/`)) {
-          // This is already the new structure, use it as is
-          filePathToUse = folder.folder_path;
-          console.log(`✅ [addDocument] Using existing new path structure for database: ${filePathToUse}`);
+          console.log(`✅ [addDocument] File written to: ${absolutePath}`);
+        } catch (err: any) {
+          console.error(`❌ [addDocument] Failed to write file:`, err?.message || err);
+          throw new Error(`Failed to write file: ${err?.message || err}`);
         }
       }
+
+      const filePathToUse = folderPathToUse.replace(/\/+$/, '');
 
       // Create the document record
       // Determine the correct subfolder based on notes for database record
@@ -3214,11 +3234,13 @@ export class SuppliersService {
       parent_id: parentId,
     });
     const saved = await this.folderRepo.save(folder);
-    const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
-    const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), description);
-    if (!fs.existsSync(absoluteDir)) {
-      fs.mkdirSync(absoluteDir, { recursive: true });
-      this.logger.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+    if (folderPath.startsWith('/files/companies/')) {
+      const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
+      const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), description);
+      if (!fs.existsSync(absoluteDir)) {
+        fs.mkdirSync(absoluteDir, { recursive: true });
+        this.logger.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+      }
     }
     this.logger.log(`[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? 'null'})`);
     return saved;
@@ -3250,20 +3272,22 @@ export class SuppliersService {
     const oldDescription = folder.description;
     folder.description = newDescription;
     const saved = await this.folderRepo.save(folder);
-    const repoRoot = this.getRepoRoot();
-    const folderPathRel = (folder.folder_path || '').replace(/^\//, '').replace(/\/$/, '');
-    const oldDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), oldDescription);
-    const newDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), newDescription);
-    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
-      try {
-        fs.renameSync(oldDir, newDir);
-        this.logger.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
-      } catch (err: any) {
-        this.logger.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+    if ((folder.folder_path || '').startsWith('/files/companies/')) {
+      const repoRoot = this.getRepoRoot();
+      const folderPathRel = (folder.folder_path || '').replace(/^\//, '').replace(/\/$/, '');
+      const oldDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), oldDescription);
+      const newDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep), newDescription);
+      if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+        try {
+          fs.renameSync(oldDir, newDir);
+          this.logger.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
+        } catch (err: any) {
+          this.logger.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+        }
+      } else if (!fs.existsSync(newDir)) {
+        fs.mkdirSync(newDir, { recursive: true });
+        this.logger.log(`[updateFolder] Creat director pe disk: ${newDir}`);
       }
-    } else if (!fs.existsSync(newDir)) {
-      fs.mkdirSync(newDir, { recursive: true });
-      this.logger.log(`[updateFolder] Creat director pe disk: ${newDir}`);
     }
     this.logger.log(`[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`);
     return saved;
@@ -3290,18 +3314,18 @@ export class SuppliersService {
     if (folder) {
       const folderPathToDelete = folder.folder_path;
       await this.folderRepo.remove(folder);
-      try {
-        const repoRoot = this.getRepoRoot();
-        const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
-        const absolutePath = path.join(repoRoot, pathRel);
-        if (fs.existsSync(absolutePath)) {
-          fs.rmSync(absolutePath, { recursive: true, force: true });
-          this.logger.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
-        } else {
-          this.logger.warn(`[removeFolder] Directorul pe disk nu există: ${absolutePath}`);
+      if ((folderPathToDelete || '').startsWith('/files/companies/')) {
+        try {
+          const repoRoot = this.getRepoRoot();
+          const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
+          const absolutePath = path.join(repoRoot, pathRel);
+          if (fs.existsSync(absolutePath)) {
+            fs.rmSync(absolutePath, { recursive: true, force: true });
+            this.logger.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
+          }
+        } catch (e) {
+          this.logger.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
         }
-      } catch (e) {
-        this.logger.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
       }
     }
   }

@@ -47,8 +47,9 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
         TaskAssignment,
         TaskAssignmentElement
       ],
-      synchronize: false, // Temporar pentru a adăuga câmpurile noi
-      // dropSchema: true, 
+      synchronize: false,
+      // Activează temporar pentru a vedea în log query-ul care dă "Data truncated for task_execution_id":
+      logging: process.env.TYPEORM_LOGGING === 'true' ? true : false,
     }),
     TypeOrmModule.forFeature([
       TaskTemplate,

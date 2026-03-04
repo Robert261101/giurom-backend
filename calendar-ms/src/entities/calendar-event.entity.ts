@@ -104,4 +104,8 @@ export class CalendarEvent {
   })
   @Column()
   created_by: number;
+
+  @ApiProperty({ description: 'ID locație – evenimente per locație', example: 1, required: false })
+  @Column({ name: 'location_id', type: 'int', nullable: true })
+  location_id?: number | null;
 }

@@ -62,4 +62,10 @@ export class TaskGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Emite task completat: ${task.id}`);
     this.server.emit('taskCompleted', task);
   }
+
+  /** Emite ștergere task – toți clienții îl scot din listă / redirecționează dacă îl vizualizează */
+  notifyTaskDeleted(taskId: number) {
+    this.logger.log(`Emite task șters: ${taskId}`);
+    this.server.emit('taskDeleted', { id: taskId });
+  }
 }

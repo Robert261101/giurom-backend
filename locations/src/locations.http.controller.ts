@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, NotFoundException } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
@@ -137,6 +137,26 @@ export class LocationsHttpController {
 	findMyCompanies(@Request() req?: any) {
 		const user = req?.user;
 		return this.service.getEmployeeCompanies(user);
+	}
+
+	/** Listă departamente (limit, ids). Ruta fixă înainte de :id ca să nu fie prinsă ca id. */
+	@Get('work-location-departments')
+	@Permissions('locations.read')
+	findWorkLocationDepartmentsList(
+		@Query('limit') limit?: string,
+		@Query('ids') ids?: string,
+	) {
+		const limitNum = limit ? parseInt(limit, 10) : 1000;
+		const idList = ids ? ids.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n)) : undefined;
+		return this.service.findWorkLocationDepartmentsList(limitNum, idList);
+	}
+
+	@Get('work-location-departments/:id')
+	@Permissions('locations.read')
+	async findWorkLocationDepartmentById(@Param('id') id: string) {
+		const dept = await this.service.findWorkLocationDepartmentById(parseInt(id, 10));
+		if (!dept) throw new NotFoundException('Department not found');
+		return dept;
 	}
 
 	@Get(':id')

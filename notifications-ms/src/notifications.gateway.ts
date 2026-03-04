@@ -7,6 +7,7 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { Injectable, Logger } from "@nestjs/common";
+import { UserResolutionService } from "./user-resolution.service";
 
 @WebSocketGateway({
   namespace: "/notifications",
@@ -40,6 +41,8 @@ export class NotificationsGateway
 
   private readonly logger = new Logger(NotificationsGateway.name);
 
+  constructor(private readonly userResolution: UserResolutionService) {}
+
   handleConnection(client: Socket) {
     // Connection logging disabled to reduce noise
   }
@@ -49,12 +52,13 @@ export class NotificationsGateway
   }
 
   @SubscribeMessage("join")
-  handleJoin(client: Socket, payload: { userId: number | string }) {
-    const userId = Number(payload.userId);
-    const room = `user:${userId}`;
+  async handleJoin(client: Socket, payload: { userId: number | string }) {
+    const fromPayload = Number(payload.userId);
+    // JWT sub = id_employee; notificările sunt emise la room user:user_id
+    const resolvedUserId = await this.userResolution.resolveToUserId(fromPayload);
+    const room = `user:${resolvedUserId}`;
     client.join(room);
-    // Send confirmation back to client
-    client.emit("joined", { userId, room, socketId: client.id });
+    client.emit("joined", { userId: resolvedUserId, room, socketId: client.id });
   }
 
   emitUnreadCount(unread: number) {

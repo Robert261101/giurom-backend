@@ -42,26 +42,32 @@ export class EmployeeService {
     private httpService: HttpService,
   ) {}
 
+  private _filesRepoRootCache: string | null = null;
+
   /**
    * Rădăcina pentru toate fișierele – același arbore ca company/locations/furnizori.
-   * Prioritate: FILES_BASE_PATH (env) > rezolvare din __dirname > fallback (parent al cwd când rulăm în container employees).
+   * Prioritate: FILES_BASE_PATH (env) > rezolvare din __dirname > fallback (cwd).
+   * Rezultatul e cache-uit ca să nu se logheze la fiecare apel.
    */
   private getFilesRepoRoot(): string {
-    if (process.env.FILES_BASE_PATH) {
-      return path.resolve(process.env.FILES_BASE_PATH);
+    if (this._filesRepoRootCache != null) {
+      return this._filesRepoRootCache;
     }
-    // Aceeași logică ca company/furnizori: .../giurom-backend/employees/dist -> ../../.. = employees, ../../../.. = giurom-backend -> dirname = rădăcina proiectului
+    if (process.env.FILES_BASE_PATH) {
+      this._filesRepoRootCache = path.resolve(process.env.FILES_BASE_PATH);
+      return this._filesRepoRootCache;
+    }
     let repoRoot = path.resolve(__dirname, '../../../..');
     if (path.basename(repoRoot) === 'giurom-backend') {
       repoRoot = path.dirname(repoRoot);
     }
     const fsRoot = path.parse(repoRoot).root || path.sep;
     if (repoRoot === fsRoot || repoRoot === path.sep || repoRoot.length <= 1) {
-      // În Docker/runtime __dirname poate da / – folosim același truc ca la furnizori: rădăcina e parent față de directorul serviciului
       const cwd = process.cwd();
       repoRoot = (path.basename(cwd) === 'employees' ? path.join(cwd, '..') : cwd);
-      console.warn(`[getFilesRepoRoot] Repo root rezolvat la rădăcină, folosesc: ${repoRoot}`);
+      console.warn(`[getFilesRepoRoot] Repo root folosit (o dată per proces): ${repoRoot}`);
     }
+    this._filesRepoRootCache = repoRoot;
     return repoRoot;
   }
 
@@ -188,27 +194,7 @@ export class EmployeeService {
   }
 
   private async createEmployeeFolderStructure(employee: Employee): Promise<void> {
-    try {
-      const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
-      const baseDir = this.getEmployeesFilesRootDir();
-      const employeeDir = path.join(baseDir, employeeName);
-      
-      console.log(`📁 Creating employee directory: ${employeeDir}`);
-      
-      // Create the main employee directory
-      if (!fs.existsSync(employeeDir)) {
-        fs.mkdirSync(employeeDir, { recursive: true });
-        console.log(`📁 Created employee directory: ${employeeDir}`);
-      }
-      
-      // For the new structure, we only create the main employee directory
-      // Subfolders will be created on-demand when documents are uploaded
-      // This matches the requirement for suppliers as well
-      
-      console.log(`✅ Folder structure created successfully for employee ${employee.id}`);
-    } catch (error) {
-      console.error(`❌ Error creating folder structure for employee ${employee.id}:`, error);
-    }
+    // Nu mai creăm directoare pe disk în files/employees; doar imaginile de profil se salvează (on-demand în createFile)
   }
 
   // Listarea angajaților cu filtrare și paginare
@@ -858,177 +844,37 @@ export class EmployeeService {
       }
     }
     console.log('📁 Final subfolder:', subfolder);
-    
-    // Check if employee is bound to any locations
-    let locationPath = null;
-    let isBoundToLocation = false;
-    
-    try {
-      const employeeLocations = await this.employeeLocationRepository.find({
-        where: { employeeId: createFileDto.employee_id }
-      });
-      
-      console.log('🔍 Employee location check result:', employeeLocations);
-      
-      if (employeeLocations && employeeLocations.length > 0) {
-        console.log('📍 Employee is bound to locations:', employeeLocations);
-        // Get the first location (assuming employee is primarily bound to one location)
-        const locationId = employeeLocations[0].idLocation;
-        
-        // Get location details from locations service through API Gateway
-        try {
-          const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-          const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-          
-          const response = await axios.get(`${apiGatewayUrl}/locations/${locationId}`, {
-            headers: {
-              'x-internal-service': 'employees',
-              'x-service-secret': serviceSecret,
-              'Content-Type': 'application/json',
-            },
-            timeout: 3000,
-          });
-          
-          const location = response.data;
-          console.log('📍 Location details response:', location);
-          
-          if (location) {
-            // Get company name for the location
-            let companyName = 'UnknownCompany';
-            try {
-              const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-              
-              const companyResponse = await axios.get(`${apiGatewayUrl}/companies/${location.company_id}`, {
-                headers: {
-                  'x-internal-service': 'employees',
-                  'x-service-secret': serviceSecret,
-                  'Content-Type': 'application/json',
-                },
-                timeout: 3000,
-              });
-              
-              if (companyResponse.data && companyResponse.data.company_name) {
-                companyName = companyResponse.data.company_name;
-              }
-            } catch (error: any) {
-              console.warn(`Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
-            }
-            
-            // Create location-specific path
-            locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
-            isBoundToLocation = true;
-          } else {
-            console.warn(`Location details not found for location ID ${locationId}`);
-          }
-        } catch (error: any) {
-          console.warn(`Could not fetch location details for location ID ${locationId}:`, error?.message || error);
-          // Reset location binding if we can't fetch location details
-          isBoundToLocation = false;
-          locationPath = null;
-        }
-      }
-    } catch (error: any) {
-      console.warn(`Error checking employee location binding:`, error?.message || error);
-    }
-    
-    // Update the file_link to use the unique filename
+
+    // Salvare întotdeauna în files/employees/{nume_angajat}/profile_picture sau files/employees/{nume_angajat}/{subfolder}
     const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
-    let fileLinkPath;
-    
-    console.log('📍 Employee location binding:', { isBoundToLocation, locationPath, isProfilePicture, employeeName, subfolder });
-    
-    // Use location-specific path only if both conditions are met
-    if (isBoundToLocation && locationPath) {
-      // Use location-specific path
-      fileLinkPath = isProfilePicture 
-        ? `${locationPath}/Angajați/${employeeName}/profile_picture/${uniqueFileName}`
-        : `${locationPath}/Angajați/${employeeName}/${subfolder}/${uniqueFileName}`;
-      console.log(`🔗 Using location-specific file link path: ${fileLinkPath}`);
-    } else {
-      // Use default path
-      fileLinkPath = isProfilePicture 
-        ? `/files/employees/${employeeName}/profile_picture/${uniqueFileName}`
-        : `/files/employees/${employeeName}/${subfolder}/${uniqueFileName}`;
-      console.log(`🔗 Using default file link path: ${fileLinkPath}`);
-    }
-    
-    console.log('🔗 Final file link path:', fileLinkPath);
-    
+    const fileLinkPath = isProfilePicture
+      ? `/files/employees/${employeeName}/profile_picture/${uniqueFileName}`
+      : `/files/employees/${employeeName}/${subfolder}/${uniqueFileName}`;
+    console.log('🔗 File link path (files/employees + nume angajat):', fileLinkPath);
+
     const updatedFileLink = fileLinkPath;
 
-    // Create the directory if it doesn't exist
-    console.log(`📁 Creating directory for employee: ${employeeName}`);
+    // Pe disk salvăm doar imaginile de profil în files/employees; restul documentelor nu se mai scriu aici
     const baseDir = this.getEmployeesFilesRootDir();
-    
-    console.log('📁 Base directory:', baseDir);
-    
-    // Determine file directory based on location binding - must match file link path logic
-    let fileDir;
-    if (isBoundToLocation && locationPath) {
-      // Use location-specific directory
-      const locationBaseDir = path.join(baseDir, '..', 'companies');
-      fileDir = isProfilePicture 
-        ? path.join(locationBaseDir, locationPath.split('/').slice(3).join(path.sep), 'Angajați', employeeName, 'profile_picture')
-        : path.join(locationBaseDir, locationPath.split('/').slice(3).join(path.sep), 'Angajați', employeeName, subfolder);
-      
-      console.log('📁 Location-specific directory components:', {
-        locationBaseDir,
-        locationPathParts: locationPath.split('/').slice(3).join(path.sep),
-        employeeName,
-        subfolder,
-        finalPath: fileDir
-      });
-      
-      // Ensure the employee folder exists in location structure
-      const employeeDir = path.join(locationBaseDir, locationPath.split('/').slice(3).join(path.sep), 'Angajați', employeeName);
-      console.log(`🔍 Checking location-specific employee directory: ${employeeDir}`);
-      
-      try {
-        if (!fs.existsSync(employeeDir)) {
-          fs.mkdirSync(employeeDir, { recursive: true });
-          console.log(`📁 Created location-specific employee directory: ${employeeDir}`);
-        }
-        
-        // Only create the main employee directory, subfolders will be created dynamically when needed
-        console.log(`📁 Created main location-specific employee directory: ${employeeDir}`);
-      } catch (error: any) {
-        console.error(`❌ Error creating location-specific employee folder structure:`, error?.message || error);
-        // Don't throw error - continue with default path
+    if (isProfilePicture) {
+      const fileDir = path.join(baseDir, employeeName, 'profile_picture');
+      if (!fs.existsSync(fileDir)) {
+        fs.mkdirSync(fileDir, { recursive: true });
       }
-    } else {
-      // Use default directory
-      fileDir = isProfilePicture 
-        ? path.join(baseDir, employeeName, 'profile_picture')
-        : path.join(baseDir, employeeName, subfolder);
-      
-      console.log('📁 Default directory:', fileDir);
-    }
-      
-    if (!fs.existsSync(fileDir)) {
-      fs.mkdirSync(fileDir, { recursive: true });
-    }
-
-    // If file content is provided (base64), save it to disk
-    if (createFileDto.file_content) {
-      try {
-        const filePath = path.join(fileDir, uniqueFileName);
-        
-        // Extract base64 content from data URL (remove data:type;base64, prefix)
-        let base64Data = createFileDto.file_content;
-        if (base64Data.includes(',')) {
-          base64Data = base64Data.split(',')[1];
+      if (createFileDto.file_content) {
+        try {
+          const filePath = path.join(fileDir, uniqueFileName);
+          let base64Data = createFileDto.file_content;
+          if (base64Data.includes(',')) base64Data = base64Data.split(',')[1];
+          const buffer = Buffer.from(base64Data, 'base64');
+          fs.writeFileSync(filePath, buffer);
+          console.log(`✅ Poza de profil salvată pe disk: ${filePath}`);
+        } catch (error) {
+          console.error('❌ Eroare la salvarea pozei de profil pe disk:', error);
         }
-        
-        console.log(`💾 Saving file with ${base64Data.length} base64 characters`);
-        const buffer = Buffer.from(base64Data, 'base64');
-        fs.writeFileSync(filePath, buffer);
-        console.log(`✅ File saved to disk: ${filePath} (${buffer.length} bytes)`);
-      } catch (error) {
-        console.error('❌ Error saving file to disk:', error);
-        // Don't throw error - file is saved in DB even if disk save fails
       }
     }
+    // Pentru documente care nu sunt profile_picture: nu se scrie nimic pe disk în files/employees (doar înregistrare în DB)
 
     // Verifică dacă există deja un fișier cu același nume pentru același angajat
     const existingFile = await this.filesRepository.findOne({
@@ -1099,80 +945,8 @@ export class EmployeeService {
         if (employee) {
           const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
           const baseDir = this.getEmployeesFilesRootDir();
-          
-          // Check if employee is bound to any locations
-          let isBoundToLocation = false;
-          let locationPath = null;
-          
-          try {
-            const employeeLocations = await this.employeeLocationRepository.find({
-              where: { employeeId: employeeId }
-            });
-            
-            if (employeeLocations && employeeLocations.length > 0) {
-              // Get the first location (assuming employee is primarily bound to one location)
-              const locationId = employeeLocations[0].idLocation;
-              
-              // Get location details from locations service through API Gateway
-              try {
-                const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-                const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-                
-                const response = await axios.get(`${apiGatewayUrl}/locations/${locationId}`, {
-                  headers: {
-                    'x-internal-service': 'employees',
-                    'x-service-secret': serviceSecret,
-                    'Content-Type': 'application/json',
-                  },
-                  timeout: 3000,
-                });
-                
-                const location = response.data;
-                
-                if (location) {
-                  // Get company name for the location
-                  let companyName = 'UnknownCompany';
-                  try {
-                    const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-                    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-                    
-                    const companyResponse = await axios.get(`${apiGatewayUrl}/companies/${location.company_id}`, {
-                      headers: {
-                        'x-internal-service': 'employees',
-                        'x-service-secret': serviceSecret,
-                        'Content-Type': 'application/json',
-                      },
-                      timeout: 3000,
-                    });
-                    
-                    if (companyResponse.data && companyResponse.data.company_name) {
-                      companyName = companyResponse.data.company_name;
-                    }
-                  } catch (error: any) {
-                    console.warn(`Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
-                  }
-                  
-                  // Create location-specific path
-                  locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
-                  isBoundToLocation = true;
-                }
-              } catch (error: any) {
-                console.warn(`Could not fetch location details for location ID ${locationId}:`, error?.message || error);
-              }
-            }
-          } catch (error: any) {
-            console.warn(`Error checking employee location binding:`, error?.message || error);
-          }
-          
-          let filePath;
-          if (isBoundToLocation && locationPath) {
-            // Use location-specific path
-            const locationBaseDir = path.join(baseDir, '..', 'companies');
-            filePath = path.join(locationBaseDir, locationPath.split('/').slice(3).join(path.sep), 'Angajați', employeeName, 'profile_picture', existingProfilePicture.file_name);
-          } else {
-            // Use default path
-            filePath = path.join(baseDir, employeeName, 'profile_picture', existingProfilePicture.file_name);
-          }
+          // Întotdeauna în files/employees/{nume}/profile_picture
+          const filePath = path.join(baseDir, employeeName, 'profile_picture', existingProfilePicture.file_name);
           
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
@@ -1309,12 +1083,8 @@ export class EmployeeService {
     }
 
     if (!fs.existsSync(filePath)) {
-      
-      // Extract the directory part and filename
       const fileDir = path.dirname(filePath);
       const fileName = path.basename(filePath);
-      
-      // If the directory exists, check its subfolders
       if (fs.existsSync(fileDir)) {
         const items = fs.readdirSync(fileDir);
         for (const item of items) {
@@ -1328,143 +1098,48 @@ export class EmployeeService {
           }
         }
       }
-      
+    }
+
+    // Fallback: path relativ la baseDir (files/employees) – utile când rootDir diferă
+    if (!fs.existsSync(filePath) && file.file_link.startsWith('/files/employees/')) {
+      const relativePath = file.file_link.replace(/^\/files\/employees\//, '').split('/').join(path.sep);
+      const altPath = path.join(baseDir, relativePath);
+      if (fs.existsSync(altPath)) filePath = altPath;
+    }
+
+    // Fallback: files/employees/{nume_angajat}/profile_picture sau subfolder, plus format vechi by id
+    if (!fs.existsSync(filePath)) {
+      const employee = await this.employeeRepository.findOne({
+        where: { id: file.employee_id }
+      });
+      if (!employee) {
+        throw new NotFoundException(`Angajatul cu ID-ul ${file.employee_id} nu a fost găsit`);
+      }
+      const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
+      const isProfilePicture = file.file_type === 'profile_picture';
+      const employeeDir = path.join(baseDir, employeeName);
+
+      filePath = isProfilePicture
+        ? path.join(employeeDir, 'profile_picture', file.file_name)
+        : path.join(employeeDir, file.file_name);
+
+      if (!fs.existsSync(filePath) && fs.existsSync(employeeDir)) {
+        const subfolders = fs.readdirSync(employeeDir).filter(item =>
+          fs.statSync(path.join(employeeDir, item)).isDirectory() && item !== 'profile_picture'
+        );
+        for (const subfolder of subfolders) {
+          const possiblePath = path.join(employeeDir, subfolder, file.file_name);
+          if (fs.existsSync(possiblePath)) {
+            filePath = possiblePath;
+            break;
+          }
+        }
+      }
       if (!fs.existsSync(filePath)) {
-        const employee = await this.employeeRepository.findOne({
-          where: { id: file.employee_id }
-        });
-        
-        if (!employee) {
-          throw new NotFoundException(`Angajatul cu ID-ul ${file.employee_id} nu a fost găsit`);
-        }
-        
-        const employeeName = this.simplifyEmployeeName(employee.first_name, employee.last_name);
-        
-        // Check if employee is bound to any locations
-        let isBoundToLocation = false;
-        let locationPath = null;
-        
-        try {
-          const employeeLocations = await this.employeeLocationRepository.find({
-            where: { employeeId: file.employee_id }
-          });
-          
-          if (employeeLocations && employeeLocations.length > 0) {
-            // Get the first location (assuming employee is primarily bound to one location)
-            const locationId = employeeLocations[0].idLocation;
-            
-            // Get location details from locations service
-            try {
-              const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3005';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-              
-              const response = await axios.get(`${locationsUrl}/locations/${locationId}`, {
-                headers: {
-                  'x-internal-service': 'employees',
-                  'x-service-secret': serviceSecret,
-                  'Content-Type': 'application/json',
-                },
-                timeout: 3000,
-              });
-              
-              const location = response.data;
-              
-              if (location) {
-                // Get company name for the location
-                let companyName = 'UnknownCompany';
-                try {
-                  const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-                  const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
-                  
-                  const companyResponse = await axios.get(`${companiesUrl}/companies/${location.company_id}`, {
-                    headers: {
-                      'x-internal-service': 'employees',
-                      'x-service-secret': serviceSecret,
-                      'Content-Type': 'application/json',
-                    },
-                    timeout: 3000,
-                  });
-                  
-                  if (companyResponse.data && companyResponse.data.company_name) {
-                    companyName = companyResponse.data.company_name;
-                  }
-                } catch (error: any) {
-                  console.warn(`Could not fetch company name for company ID ${location.company_id}:`, error?.message || error);
-                }
-                
-                // Create location-specific path
-                locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
-                isBoundToLocation = true;
-              }
-            } catch (error: any) {
-              // Locația poate să nu existe sau URL-ul serviciului să fie greșit
-            }
-          }
-        } catch (error: any) {
-          console.warn(`Error checking employee location binding:`, error?.message || error);
-        }
-        
-        // Verifică dacă este o fotografie de profil
-        const isProfilePicture = file.file_type === 'profile_picture';
-        
-        if (isBoundToLocation && locationPath) {
-          // Use location-specific path
-          const locationBaseDir = path.join(baseDir, '..', 'companies');
-          const employeeDir = path.join(locationBaseDir, locationPath.split('/').slice(3).join(path.sep), 'Angajați', employeeName);
-          filePath = isProfilePicture
-            ? path.join(employeeDir, 'profile_picture', file.file_name)
-            : path.join(employeeDir, file.file_name);
-
-          if (!fs.existsSync(filePath)) {
-            
-            // Get all subfolders in the employee directory
-            if (fs.existsSync(employeeDir)) {
-              const subfolders = fs.readdirSync(employeeDir).filter(item => 
-                fs.statSync(path.join(employeeDir, item)).isDirectory() && item !== 'profile_picture'
-              );
-              
-              // Check each subfolder for the file
-              for (const subfolder of subfolders) {
-                const possiblePath = path.join(employeeDir, subfolder, file.file_name);
-                if (fs.existsSync(possiblePath)) {
-                  filePath = possiblePath;
-                  break;
-                }
-              }
-            }
-          }
-        } else {
-          const employeeDir = path.join(baseDir, employeeName);
-          filePath = isProfilePicture
-            ? path.join(employeeDir, 'profile_picture', file.file_name)
-            : path.join(employeeDir, file.file_name);
-
-          if (!fs.existsSync(filePath)) {
-            
-            // Get all subfolders in the employee directory
-            if (fs.existsSync(employeeDir)) {
-              const subfolders = fs.readdirSync(employeeDir).filter(item => 
-                fs.statSync(path.join(employeeDir, item)).isDirectory() && item !== 'profile_picture'
-              );
-              
-              // Check each subfolder for the file
-              for (const subfolder of subfolders) {
-                const possiblePath = path.join(employeeDir, subfolder, file.file_name);
-                if (fs.existsSync(possiblePath)) {
-                  filePath = possiblePath;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (!fs.existsSync(filePath)) {
-            filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
-          }
-          if (!fs.existsSync(filePath) && isProfilePicture) {
-            filePath = path.join(baseDir, file.employee_id.toString(), 'profile_picture', file.file_name);
-          }
-        }
+        filePath = path.join(baseDir, file.employee_id.toString(), file.file_name);
+      }
+      if (!fs.existsSync(filePath) && isProfilePicture) {
+        filePath = path.join(baseDir, file.employee_id.toString(), 'profile_picture', file.file_name);
       }
     }
 
@@ -1972,6 +1647,30 @@ export class EmployeeService {
     });
   }
 
+  /**
+   * Returnează ID-urile locațiilor la care angajatul are acces (pentru verificare read_own).
+   * Include work_location_default_id și toate idLocation din employees_locations.
+   */
+  async getLocationIdsForEmployee(employeeId: number): Promise<number[]> {
+    const employee = await this.employeeRepository.findOne({
+      where: { id: employeeId },
+      select: ['id', 'work_location_default_id'],
+    });
+    if (!employee) return [];
+    const ids: number[] = [];
+    if (employee.work_location_default_id != null) {
+      ids.push(employee.work_location_default_id);
+    }
+    const locs = await this.employeeLocationRepository.find({
+      where: { employeeId },
+      select: ['idLocation'],
+    });
+    locs.forEach((l) => {
+      if (l.idLocation != null && !ids.includes(l.idLocation)) ids.push(l.idLocation);
+    });
+    return ids;
+  }
+
   async findLocationEmployees(id_location: number): Promise<EmployeeLocation[]> {
     return await this.employeeLocationRepository.find({
       where: { idLocation: id_location },
@@ -2132,14 +1831,15 @@ export class EmployeeService {
     });
     const saved = await this.folderRepository.save(folder);
 
-    // Creare pe disk: același repo root ca company/locations (FILES_BASE_PATH sau parent of giurom-backend)
-    const repoRoot = this.getFilesRepoRoot();
-    const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
-    const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep));
-    if (!fs.existsSync(absoluteDir)) {
-      fs.mkdirSync(absoluteDir, { recursive: true });
-      console.log(`[createFolder] Repo root: ${repoRoot}`);
-      console.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+    // Creare pe disk doar pentru căi sub files/companies (locații); sub files/employees nu mai creăm nimic
+    if (folderPath.startsWith('/files/companies/')) {
+      const repoRoot = this.getFilesRepoRoot();
+      const folderPathRel = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
+      const absoluteDir = path.join(repoRoot, folderPathRel.split('/').join(path.sep));
+      if (!fs.existsSync(absoluteDir)) {
+        fs.mkdirSync(absoluteDir, { recursive: true });
+        console.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+      }
     }
     console.log(`[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? 'null'}, path: ${folderPath})`);
     return saved;
@@ -2178,21 +1878,23 @@ export class EmployeeService {
       folder.folder_path = folder.folder_path.replace(new RegExp(`/${ oldDescription.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }/?$`), `/${newDescription}/`);
     }
     const saved = await this.folderRepository.save(folder);
-    const repoRoot = this.getFilesRepoRoot();
-    const oldPathRel = oldFolderPath.replace(/^\//, '').replace(/\/+$/, '');
-    const newPathRel = (saved.folder_path || '').replace(/^\//, '').replace(/\/+$/, '');
-    const oldDir = path.join(repoRoot, oldPathRel.split('/').join(path.sep));
-    const newDir = path.join(repoRoot, newPathRel.split('/').join(path.sep));
-    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
-      try {
-        fs.renameSync(oldDir, newDir);
-        console.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
-      } catch (err: any) {
-        console.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+    if ((saved.folder_path || '').startsWith('/files/companies/')) {
+      const repoRoot = this.getFilesRepoRoot();
+      const oldPathRel = oldFolderPath.replace(/^\//, '').replace(/\/+$/, '');
+      const newPathRel = (saved.folder_path || '').replace(/^\//, '').replace(/\/+$/, '');
+      const oldDir = path.join(repoRoot, oldPathRel.split('/').join(path.sep));
+      const newDir = path.join(repoRoot, newPathRel.split('/').join(path.sep));
+      if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+        try {
+          fs.renameSync(oldDir, newDir);
+          console.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`);
+        } catch (err: any) {
+          console.warn(`[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`);
+        }
+      } else if (!fs.existsSync(newDir)) {
+        fs.mkdirSync(newDir, { recursive: true });
+        console.log(`[updateFolder] Creat director pe disk: ${newDir}`);
       }
-    } else if (!fs.existsSync(newDir)) {
-      fs.mkdirSync(newDir, { recursive: true });
-      console.log(`[updateFolder] Creat director pe disk: ${newDir}`);
     }
     console.log(`[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`);
     return saved;
@@ -2219,18 +1921,18 @@ export class EmployeeService {
     if (folder) {
       const folderPathToDelete = folder.folder_path;
       await this.folderRepository.remove(folder);
-      try {
-        const repoRoot = this.getFilesRepoRoot();
-        const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
-        const absolutePath = path.join(repoRoot, pathRel.split('/').join(path.sep));
-        if (fs.existsSync(absolutePath)) {
-          fs.rmSync(absolutePath, { recursive: true, force: true });
-          console.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
-        } else {
-          console.warn(`[removeFolder] Directorul pe disk nu există: ${absolutePath}`);
+      if ((folderPathToDelete || '').startsWith('/files/companies/')) {
+        try {
+          const repoRoot = this.getFilesRepoRoot();
+          const pathRel = (folderPathToDelete.startsWith('/files') ? folderPathToDelete : `/files${folderPathToDelete}`).replace(/^\//, '');
+          const absolutePath = path.join(repoRoot, pathRel.split('/').join(path.sep));
+          if (fs.existsSync(absolutePath)) {
+            fs.rmSync(absolutePath, { recursive: true, force: true });
+            console.log(`[removeFolder] Șters director pe disk: ${absolutePath}`);
+          }
+        } catch (e) {
+          console.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
         }
-      } catch (e) {
-        console.warn(`[removeFolder] Nu s-a putut șterge directorul pe disk: ${folderPathToDelete}`, e);
       }
     }
   }

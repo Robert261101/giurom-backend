@@ -145,11 +145,37 @@ export class ScheduledTasksService {
           },
         );
 
-        // Emit WebSocket pentru fiecare task activat (programat -> activ)
+        // Emit WebSocket + notificare "Task activ" pentru fiecare task activat (programat -> activ)
         for (const t of scheduledTasks) {
           try {
             const updated = await this.assignmentService.findOne(t.id);
-            if (updated) this.taskGateway.notifyTaskUpdate(updated);
+            if (updated) {
+              this.taskGateway.notifyTaskUpdate(updated);
+              if (updated.assigned_to_id) {
+                try {
+                  const taskNameEl = (updated.elements as any[])?.find(
+                    (el: any) => el.task_element?.element_type === 'task_name',
+                  );
+                  const displayName =
+                    taskNameEl?.value?.trim() || updated.template?.template_name || 'Sarcină';
+                  await this.assignmentService.sendTaskNotificationForEmployee(
+                    'assignment.became_visible',
+                    'Task activ',
+                    `Task-ul "${displayName}" a trecut în sarcini active.`,
+                    updated.id,
+                    updated.assigned_to_id,
+                  );
+                  console.log(
+                    `📤 [ScheduledTasksService] Notificare "Task activ" trimisă (programat→activ) task ${updated.id}, assigned_to_id=${updated.assigned_to_id}`,
+                  );
+                } catch (e: any) {
+                  console.warn(
+                    `[ScheduledTasksService] Eroare notificare became_visible task ${t.id}:`,
+                    e?.message || e,
+                  );
+                }
+              }
+            }
           } catch (e) {
             // ignoră erori la emit
           }
@@ -719,6 +745,7 @@ export class ScheduledTasksService {
       department_group_id: recurrenceId,
       assignment_mode: parentTask.assignment_mode,
       is_visible_for_employee: parentTask.is_visible_for_employee,
+      permite_realocare: parentTask.permite_realocare ?? true,
       elements: this.prepareRecurringElements(parentTask),
     };
 
@@ -855,6 +882,7 @@ export class ScheduledTasksService {
             department_group_id: recurrenceId,
             assignment_mode: AssignmentMode.INDIVIDUAL, // Schimbă în individual deoarece e atribuit direct
             is_visible_for_employee: parentTask.is_visible_for_employee,
+            permite_realocare: parentTask.permite_realocare ?? true,
             elements: this.prepareRecurringElements(parentTask),
           };
 
@@ -890,6 +918,7 @@ export class ScheduledTasksService {
             department_group_id: recurrenceId,
             assignment_mode: parentTask.assignment_mode,
             is_visible_for_employee: parentTask.is_visible_for_employee,
+            permite_realocare: parentTask.permite_realocare ?? true,
             elements: this.prepareRecurringElements(parentTask),
           };
 
@@ -927,6 +956,7 @@ export class ScheduledTasksService {
             department_group_id: recurrenceId,
             assignment_mode: parentTask.assignment_mode,
             is_visible_for_employee: parentTask.is_visible_for_employee,
+            permite_realocare: parentTask.permite_realocare ?? true,
             elements: this.prepareRecurringElements(parentTask),
           };
 
@@ -1414,7 +1444,7 @@ export class ScheduledTasksService {
           status: In([AssignmentStatus.ASSIGNED, AssignmentStatus.SCHEDULED]),
           is_visible_for_employee: false,
         },
-        relations: ['elements', 'elements.task_element'],
+        relations: ['elements', 'elements.task_element', 'template'],
       });
 
       console.log(
@@ -1471,12 +1501,40 @@ export class ScheduledTasksService {
                 { is_visible_for_employee: true },
               );
 
-              // Emit WebSocket (invizibil -> vizibil)
+              // Emit WebSocket (invizibil -> vizibil) – asigură is_visible_for_employee: true în payload
               try {
                 const updated = await this.assignmentService.findOne(assignment.id);
-                if (updated) this.taskGateway.notifyTaskUpdate(updated);
+                if (updated) {
+                  const payload = { ...updated, is_visible_for_employee: true };
+                  this.taskGateway.notifyTaskUpdate(payload);
+                }
               } catch (e) {
                 // ignoră erori la emit
+              }
+
+              if (assignment.assigned_to_id) {
+                try {
+                  const taskNameEl = (assignment.elements as any[])?.find(
+                    (el: any) => el.task_element?.element_type === 'task_name',
+                  );
+                  const displayName =
+                    taskNameEl?.value?.trim() || assignment.template?.template_name || 'Sarcină';
+                  await this.assignmentService.sendTaskNotificationForEmployee(
+                    'assignment.became_visible',
+                    'Task activ',
+                    `Task-ul "${displayName}" a trecut în sarcini active.`,
+                    assignment.id,
+                    assignment.assigned_to_id,
+                  );
+                  console.log(
+                    `📤 [ScheduledTasksService] Notificare "Task activ" trimisă pentru task ${assignment.id}, assigned_to_id=${assignment.assigned_to_id}`,
+                  );
+                } catch (e: any) {
+                  console.warn(
+                    `[ScheduledTasksService] Eroare la trimitere notificare became_visible task ${assignment.id}:`,
+                    e?.message || e,
+                  );
+                }
               }
 
               console.log(
@@ -1531,7 +1589,27 @@ export class ScheduledTasksService {
     assignment.status = AssignmentStatus.SCHEDULED;
     assignment.scheduled_datetime = scheduledDateTime;
 
-    return this.assignmentRepository.save(assignment);
+    const saved = await this.assignmentRepository.save(assignment);
+    if (saved.assigned_to_id) {
+      const taskNameEl = (saved.elements as any[])?.find(
+        (el: any) => el.task_element?.element_type === 'task_name',
+      );
+      const displayName =
+        taskNameEl?.value?.trim() || saved.template?.template_name || 'Sarcină';
+      const scheduledStr = new Date(saved.scheduled_datetime!).toLocaleString('ro-RO', {
+        timeZone: 'Europe/Bucharest',
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+      await this.assignmentService.sendTaskNotificationForEmployee(
+        'assignment.scheduled',
+        'Task programat',
+        `Task-ul "${displayName}" a fost programat la ${scheduledStr}.`,
+        saved.id,
+        saved.assigned_to_id,
+      );
+    }
+    return saved;
   }
 
   /**

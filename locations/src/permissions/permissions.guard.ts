@@ -138,7 +138,7 @@ export class PermissionsGuard implements CanActivate {
       
       // Verificare 2: Verifică în employees_locations prin employees microservice
       try {
-        const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://giurom.bitap.ro:3001';
+        const employeesUrl = process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3012';
         const response = await axios.get(`${employeesUrl}/employees/${employeeId}/locations`, {
           headers: {
             'x-internal-service': 'locations',

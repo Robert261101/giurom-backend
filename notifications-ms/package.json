@@ -8,6 +8,7 @@
     "start:dev": "ts-node -r tsconfig-paths/register src/main.ts"
   },
   "dependencies": {
+    "firebase-admin": "^13.0.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^10.3.0",
     "@nestjs/config": "^4.0.2",

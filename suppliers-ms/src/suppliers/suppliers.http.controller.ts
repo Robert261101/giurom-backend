@@ -31,7 +31,7 @@ import {
 import { CancelRemainingDto } from "./dto/cancel-remaining.dto";
 import { CancelOrderItemsDto } from "./dto/cancel-order-items.dto";
 import { Response } from "express";
-import { Permissions } from "../permissions/permissions.decorator";
+import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
 
 @ApiTags("suppliers")
@@ -263,6 +263,66 @@ export class SuppliersHttpController {
     });
   }
 
+  /**
+   * Comenzi anulate – paginate (10 per pagină).
+   * GET /suppliers/orders/cancelled/paginated?supplier_ids=1,2&location_id=1&page=1&limit=10
+   */
+  @Get("orders/cancelled/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Listează comenzi anulate cu paginare" })
+  @ApiQuery({ name: "supplier_ids", required: true, description: "ID-uri furnizori separate prin virgulă" })
+  @ApiQuery({ name: "location_id", required: true, description: "ID locație" })
+  @ApiQuery({ name: "page", required: false, description: "Pagina (implicit 1)" })
+  @ApiQuery({ name: "limit", required: false, description: "Elemente per pagină (implicit 10)" })
+  getCancelledOrdersPaginated(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("location_id") locationIdRaw: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    if (!supplierIdsRaw || !locationIdRaw) {
+      return { data: [], total: 0 };
+    }
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    const locationId = parseInt(locationIdRaw, 10);
+    const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
+    return this.service.getCancelledOrdersPaginated(supplierIds, locationId, page, limit);
+  }
+
+  /**
+   * Comenzi receptionate – paginate (10 per pagină).
+   * GET /suppliers/orders/received/paginated?supplier_ids=1,2&location_id=1&page=1&limit=10
+   */
+  @Get("orders/received/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Listează comenzi receptionate cu paginare" })
+  @ApiQuery({ name: "supplier_ids", required: true, description: "ID-uri furnizori separate prin virgulă" })
+  @ApiQuery({ name: "location_id", required: true, description: "ID locație" })
+  @ApiQuery({ name: "page", required: false, description: "Pagina (implicit 1)" })
+  @ApiQuery({ name: "limit", required: false, description: "Elemente per pagină (implicit 10)" })
+  getReceivedOrdersPaginated(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("location_id") locationIdRaw: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    if (!supplierIdsRaw || !locationIdRaw) {
+      return { data: [], total: 0 };
+    }
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    const locationId = parseInt(locationIdRaw, 10);
+    const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
+    return this.service.getReceivedOrdersPaginated(supplierIds, locationId, page, limit);
+  }
+
   @Post("orders")
   @Permissions("order.create")
   createOrder(@Body() dto: any) {
@@ -305,11 +365,13 @@ export class SuppliersHttpController {
   getReceptionReport(
     @Query("start_date") startDate: string,
     @Query("end_date") endDate: string,
+    @Query("location_id") locationId?: string,
   ) {
     if (!startDate || !endDate) {
       throw new Error("start_date și end_date sunt obligatorii");
     }
-    return this.service.getReceptionReport(startDate, endDate);
+    const locId = locationId ? parseInt(locationId, 10) : undefined;
+    return this.service.getReceptionReport(startDate, endDate, locId);
   }
 
   @Get("orders/reception-report/events")
@@ -462,9 +524,9 @@ export class SuppliersHttpController {
     };
   }
 
-  // Documents
+  // Documents – upload: fie suppliers.create fie suppliers.update (cine poate edita furnizorul poate adăuga documente)
   @Post(":supplierId/documents")
-  @Permissions("suppliers.create")
+  @PermissionsAny("suppliers.create", "suppliers.update")
   addDocument(@Param("supplierId") supplierId: string, @Body() body: any) {
     if (!body || typeof body !== 'object') {
       throw new BadRequestException('Body invalid sau lipsă (verifică că request-ul este JSON cu Content-Type: application/json).');
@@ -474,7 +536,7 @@ export class SuppliersHttpController {
 
   /** Creează un folder nou pentru furnizor (în DB și pe disk). Body: { description, parent_id? }. */
   @Post(":supplierId/folders")
-  @Permissions("suppliers.create")
+  @PermissionsAny("suppliers.create", "suppliers.update")
   createFolder(
     @Param("supplierId") supplierId: string,
     @Body() body: { description: string; parent_id?: number },

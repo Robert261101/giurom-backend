@@ -134,6 +134,10 @@ export class RecipePreparationsService implements OnModuleInit {
       .skip((page - 1) * limit)
       .take(limit)
       .getMany();
+    // Expune consumabil_pentru_angajat pentru afișare în UI (alias pentru is_consumable)
+    for (const row of rows) {
+      (row as any).consumabil_pentru_angajat = row.is_consumable ?? false;
+    }
     return rows;
   }
 
@@ -143,7 +147,50 @@ export class RecipePreparationsService implements OnModuleInit {
       relations: ["recipe", "recipe.category", "labels"],
     });
     if (!p) throw new NotFoundException("Preparation not found");
+    await this.enrichWithProducedByName(p);
     return p;
+  }
+
+  /**
+   * Încarcă numele angajatului (produced_by) din serviciul employees și îl expune ca produced_by_name.
+   * Expune și consumabil_pentru_angajat (alias pentru is_consumable) pentru frontend.
+   */
+  private async enrichWithProducedByName(prep: RecipePreparation): Promise<void> {
+    (prep as any).consumabil_pentru_angajat = prep.is_consumable ?? false;
+    const employeeId = prep.produced_by;
+    if (!employeeId) {
+      (prep as any).produced_by_name = null;
+      return;
+    }
+    try {
+      const employeesServiceUrl =
+        this.configService.get<string>("EMPLOYEES_HTTP_URL") || "http://localhost:3012";
+      const serviceSecret = process.env.SERVICE_SECRET || "default-service-secret";
+      const headers = {
+        "Content-Type": "application/json",
+        "x-internal-service": "recipes",
+        "x-service-secret": serviceSecret,
+      };
+      const response: any = await firstValueFrom(
+        this.httpService.get(`${employeesServiceUrl}/employees/${employeeId}`, { headers })
+      );
+      const data = response?.data?.data || response?.data || response;
+      if (data?.name) {
+        (prep as any).produced_by_name = data.name;
+      } else if (data?.first_name && data?.last_name) {
+        (prep as any).produced_by_name = `${data.first_name} ${data.last_name}`;
+      } else {
+        (prep as any).produced_by_name = `Angajat #${employeeId}`;
+      }
+    } catch (error: any) {
+      if (error?.response?.status !== 404) {
+        console.warn(
+          `⚠️ [RecipePreparationsService] Nu s-a putut încărca angajatul ${employeeId}:`,
+          error?.message
+        );
+      }
+      (prep as any).produced_by_name = `Angajat #${employeeId}`;
+    }
   }
 
   async findMany(ids: number[]) {
@@ -289,7 +336,8 @@ export class RecipePreparationsService implements OnModuleInit {
       throw e;
     }
 
-    return saved;
+    // Returnează preparatul complet (cu recipe, produced_by_name, consumabil_pentru_angajat) ca la GET :id
+    return this.findOne(saved.id);
   }
 
   /**

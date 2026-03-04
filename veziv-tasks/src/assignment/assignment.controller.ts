@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Request, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Request, UseGuards, Query, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { AssignmentService } from './assignment.service';
 import { ScheduledTasksService } from './scheduled-tasks.service';
@@ -128,7 +128,27 @@ export class AssignmentController {
       id,
       body?.new_assignee_id,
       body?.deduct_points !== false,
+      false,
+      'admin',
     );
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('assignment.read_own')
+  @Post(':id/trigger-reallocate')
+  @ApiOperation({ summary: 'Declanșează reatribuirea unei sarcini amânate (doar pentru asignatul curent)' })
+  @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
+  @ApiResponse({ status: 200, description: 'Reatribuire declanșată' })
+  @ApiResponse({ status: 400, description: 'Doar sarcinile amânate pot fi reatribuite de angajat' })
+  triggerReallocate(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ) {
+    const employeeId = Number(req.user?.sub ?? req.user?.userId ?? 0);
+    if (!employeeId) {
+      throw new BadRequestException('Utilizatorul curent nu este identificat ca angajat.');
+    }
+    return this.assignmentService.triggerReallocateByEmployee(id, employeeId);
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)

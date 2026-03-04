@@ -26,6 +26,7 @@ export enum ElementType {
   FINISH_AT = 'finish_at',
   SCHEDULED_DATETIME = 'scheduled_datetime',
   EMPLOYEE_VISIBILITY = 'employee_visibility',
+  ALLOW_REALLOCATION = 'allow_reallocation',
   REQUIRES_MANAGER_CHECK = 'requires_manager_check',
   SCHEDULED_BETWEEN = 'scheduled_between',  // Nou element: programat între start și end
   
@@ -97,6 +98,10 @@ export class TaskElement {
 
   @Column({ type: 'boolean', default: true })
   is_visible_for_employee: boolean;
+
+  /** Pentru elementul allow_reallocation: dacă task-ul permite realocare (opțional la șablon; la assignment default true). */
+  @Column({ type: 'boolean', nullable: true })
+  permite_realocare: boolean | null;
 
   @CreateDateColumn()
   created_at: Date;

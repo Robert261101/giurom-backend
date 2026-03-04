@@ -1,9 +1,15 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Raw, Not, IsNull } from 'typeorm';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Inject,
+  Logger,
+} from '@nestjs/common';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository, In, Raw, Not, IsNull } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, defaultIfEmpty } from 'rxjs';
 import {
   TaskAssignment,
   AssignmentStatus,
@@ -32,6 +38,8 @@ export class AssignmentService {
     private taskElementRepository: Repository<TaskElement>,
     @InjectRepository(TaskExecution)
     private executionRepository: Repository<TaskExecution>,
+    @InjectDataSource()
+    private dataSource: DataSource,
     private httpService: HttpService,
     private executionService: ExecutionService,
     private taskGateway: TaskGateway,
@@ -222,6 +230,39 @@ export class AssignmentService {
   }
 
   /**
+   * Flux rapid (1–2 s): un singur HTTP la employees pentru angajați la locație.
+   * Folosit doar la triggerReallocateByEmployee (realocare la amânare).
+   */
+  private async getCandidatesAtLocationFast(
+    workLocationId: number,
+    timeoutMs: number = 500,
+  ): Promise<number[]> {
+    const base =
+      process.env.EMPLOYEES_HTTP_URL ||
+      process.env.GATEWAY_HTTP_URL ||
+      'http://giurom.bitap.ro:3002';
+    const url = `${base.replace(/\/+$/, '')}/employees/locations/${workLocationId}/employees`;
+    const headers = {
+      'x-internal-service': 'veziv-tasks',
+      'x-service-secret':
+        process.env.SERVICE_SECRET || 'default-service-secret',
+      'Content-Type': 'application/json',
+    };
+    const resp = await firstValueFrom(
+      this.httpService.get(url, { headers, timeout: timeoutMs }),
+    );
+    const data = resp?.data;
+    let list: any[] = [];
+    if (Array.isArray(data)) list = data;
+    else if (data?.employees) list = data.employees;
+    else if (data?.data) list = Array.isArray(data.data) ? data.data : [];
+    const ids = list
+      .map((e: any) => Number(e?.id ?? e?.employeeId))
+      .filter((id: number) => !Number.isNaN(id) && id > 0);
+    return [...new Set(ids)];
+  }
+
+  /**
    * Returnează ID-urile angajaților pontați la o locație la un moment dat.
    * Folosit pentru realocare automată: alegem doar dintre cei care au shift la ora expirării.
    */
@@ -230,6 +271,7 @@ export class AssignmentService {
     dateTime: Date,
   ): Promise<number[]> {
     try {
+      const REALLOC_HTTP_TIMEOUT_MS = 1000;
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
           `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
@@ -240,6 +282,7 @@ export class AssignmentService {
                 process.env.SERVICE_SECRET || 'default-service-secret',
               'Content-Type': 'application/json',
             },
+            timeout: REALLOC_HTTP_TIMEOUT_MS,
           },
         ),
       );
@@ -273,126 +316,191 @@ export class AssignmentService {
   }
 
   /**
-   * Returnează ID-urile angajaților din grupul Manager (departamentul cu numele "Manager") la o locație la un moment dat.
+   * Fallback: angajați la locație din microserviciul employees (când attendance nu răspunde / pontați goale).
+   * Folosit la realocare ca să nu eșuăm doar pentru că pontajul a întârziat.
+   */
+  private async getEmployeeIdsAtLocationFallback(
+    workLocationId: number,
+  ): Promise<number[]> {
+    try {
+      const base =
+        process.env.EMPLOYEES_HTTP_URL ||
+        process.env.GATEWAY_HTTP_URL ||
+        'http://giurom.bitap.ro:3002';
+      const headers = {
+        'x-internal-service': 'veziv-tasks',
+        'x-service-secret':
+          process.env.SERVICE_SECRET || 'default-service-secret',
+        'Content-Type': 'application/json',
+      };
+      const resp = await firstValueFrom(
+        this.httpService.get(
+          `${base}/employees/locations/${workLocationId}/employees`,
+          { headers, timeout: 1000 },
+        ),
+      );
+      const data = resp?.data;
+      let list: any[] = [];
+      if (Array.isArray(data)) list = data;
+      else if (data?.employees) list = data.employees;
+      else if (data?.data) list = Array.isArray(data.data) ? data.data : [];
+      const ids = list
+        .map((e: any) => Number(e?.id ?? e?.employeeId))
+        .filter((id: number) => !Number.isNaN(id) && id > 0);
+      return [...new Set(ids)];
+    } catch (e) {
+      this.logger.warn(
+        `getEmployeeIdsAtLocationFallback failed: ${(e as Error)?.message || e}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Citește id-ul departamentului "Manager" pentru o locație din baza de date a microserviciului locations (worklocation_departments).
+   * Folosit când API-ul locations returnează 401. Presupune același server MySQL și user cu acces la DB locations.
+   */
+  private async getManagerDepartmentIdFromLocationsDb(
+    workLocationId: number,
+  ): Promise<number | null> {
+    try {
+      const dbName =
+        process.env.LOCATIONS_DB_NAME ||
+        (process.env.DB_DATABASE
+          ? process.env.DB_DATABASE.replace(/tasks$/i, 'locations')
+          : null) ||
+        'giurombitap_locations';
+      const safeDbName = /^[a-zA-Z0-9_]+$/.test(dbName)
+        ? dbName
+        : 'giurombitap_locations';
+      const rows = await this.dataSource.query(
+        `SELECT id FROM \`${safeDbName}\`.worklocation_departments WHERE work_location_id = ? AND LOWER(TRIM(name)) = 'manager' LIMIT 1`,
+        [workLocationId],
+      );
+      if (rows && rows.length > 0 && rows[0].id != null) {
+        const id = Number(rows[0].id);
+        return !Number.isNaN(id) && id > 0 ? id : null;
+      }
+      return null;
+    } catch (e) {
+      this.logger.warn(
+        `getManagerDepartmentIdFromLocationsDb failed: ${(e as Error)?.message || e}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Returnează ID-urile angajaților din grupul Manager (departamentul cu numele "Manager") care au tura activă la dateTime.
    * Folosit pentru a exclude managerii din lista de candidați la realocare.
+   * Flux: obține id departament Manager de la API locations; la 401/eroare citește direct din DB locations (worklocation_departments).
    */
   async getManagerEmployeeIdsForLocationAtDateTime(
     workLocationId: number,
     dateTime: Date,
   ): Promise<number[]> {
     try {
-      const shiftsResponse = await firstValueFrom(
-        this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
-          {
-            headers: {
-              'x-internal-service': 'veziv-tasks',
-              'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
-      );
-      let allShifts: any[] = [];
-      if (Array.isArray(shiftsResponse.data)) allShifts = shiftsResponse.data;
-      else if (shiftsResponse.data?.data) allShifts = shiftsResponse.data.data;
-      else if (shiftsResponse.data?.shifts) allShifts = shiftsResponse.data.shifts;
+      const locationsBase =
+        process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
+      const serviceSecret =
+        process.env.SERVICE_SECRET || 'default-service-secret';
+      const authHeaders = {
+        'x-internal-service': 'veziv-tasks',
+        'x-service-secret': serviceSecret,
+        'Content-Type': 'application/json',
+      };
 
-      const t = dateTime.getTime();
-      const relevantShifts = allShifts.filter((shift: any) => {
-        if (!shift.start_datetime || !shift.end_datetime) return false;
-        const start = new Date(shift.start_datetime).getTime();
-        const end = new Date(shift.end_datetime).getTime();
-        return t >= start && t <= end;
-      });
+      let managerDeptId: number | null = null;
 
-      let departments: any[] = [];
+      const REALLOC_HTTP_TIMEOUT_MS = 1000;
       try {
         const deptResponse = await firstValueFrom(
           this.httpService.get(
-            `http://giurom.bitap.ro:3002/locations/${workLocationId}/departments`,
-            {
-              headers: {
-                'x-internal-service': 'veziv-tasks',
-                'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
-                'Content-Type': 'application/json',
-              },
-            },
+            `${locationsBase}/locations/${workLocationId}/departments`,
+            { headers: authHeaders, timeout: REALLOC_HTTP_TIMEOUT_MS },
           ),
         );
-        departments = deptResponse?.data || [];
-      } catch {
+        const departments: any[] = deptResponse?.data || [];
+        const managerDept = departments.find(
+          (d: any) =>
+            (d.name && String(d.name).trim().toLowerCase() === 'manager') ||
+            (d.department_name &&
+              String(d.department_name).trim().toLowerCase() === 'manager'),
+        );
+        if (managerDept) {
+          const id = Number(managerDept.id);
+          if (!Number.isNaN(id) && id > 0) managerDeptId = id;
+        }
+      } catch (e1: any) {
+        const status = e1?.response?.status;
+        this.logger.warn(
+          `getManagerEmployeeIds: locations API failed (status=${status}), încerc citire din DB locations.`,
+        );
+        managerDeptId =
+          await this.getManagerDepartmentIdFromLocationsDb(workLocationId);
+        if (managerDeptId != null) {
+          this.logger.log(
+            `[REALLOC] Id departament Manager (locația ${workLocationId}) luat din DB locations: ${managerDeptId}`,
+          );
+        }
+      }
+
+      if (managerDeptId == null || managerDeptId <= 0) {
         return [];
       }
-      const managerDept = departments.find(
-        (d: any) =>
-          (d.name && String(d.name).trim().toLowerCase() === 'manager') ||
-          (d.department_name && String(d.department_name).trim().toLowerCase() === 'manager'),
+
+      const managerShiftsResp = await firstValueFrom(
+        this.httpService.get(
+          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&department_id=${managerDeptId}&limit=1000`,
+          { headers: authHeaders, timeout: REALLOC_HTTP_TIMEOUT_MS },
+        ),
       );
-      if (!managerDept) return [];
 
-      const managerDeptId = Number(managerDept.id);
-      if (Number.isNaN(managerDeptId) || managerDeptId <= 0) return [];
+      let managerShifts: any[] = [];
+      const body = managerShiftsResp.data;
+      if (Array.isArray(body)) managerShifts = body;
+      else if (body?.data && Array.isArray(body.data))
+        managerShifts = body.data;
+      else if (body?.shifts && Array.isArray(body.shifts))
+        managerShifts = body.shifts;
+      else if (body && typeof body === 'object' && !Array.isArray(body)) {
+        const arr = (body as any).data ?? (body as any).shifts;
+        if (Array.isArray(arr)) managerShifts = arr;
+      }
 
-      let managerIds = [
+      // Intervalul zilei în timezone local (ex. Europe/Bucharest): 00:00 - 23:59:59.999
+      // Un shift e considerat activ pentru data dateTime dacă se suprapune cu această zi (nu doar cu un moment).
+      const y = dateTime.getFullYear();
+      const m = dateTime.getMonth();
+      const d = dateTime.getDate();
+      const dayStart = new Date(y, m, d, 0, 0, 0, 0).getTime();
+      const dayEnd = new Date(y, m, d, 23, 59, 59, 999).getTime();
+
+      const activeManagerShifts = managerShifts.filter((s: any) => {
+        if (!s.start_datetime || !s.end_datetime) return false;
+        const start = new Date(s.start_datetime).getTime();
+        const end = new Date(s.end_datetime).getTime();
+        return start <= dayEnd && end >= dayStart;
+      });
+
+      const managerIds = [
         ...new Set(
-          relevantShifts
-            .filter(
-              (s: any) =>
-                Number(s.department_id) === managerDeptId ||
-                s.department_id === managerDeptId,
-            )
+          activeManagerShifts
             .map((s: any) => Number(s.employee_id))
             .filter((id: number) => !Number.isNaN(id) && id > 0),
         ),
       ];
 
-      // Fallback: dacă nu avem manageri din shift-uri (ex. API nu returnează department_id), cerem doar shift-urile din departamentul Manager
-      if (managerIds.length === 0) {
-        try {
-          const managerShiftsResp = await firstValueFrom(
-            this.httpService.get(
-              `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&department_id=${managerDeptId}&limit=1000`,
-              {
-                headers: {
-                  'x-internal-service': 'veziv-tasks',
-                  'x-service-secret':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
-                  'Content-Type': 'application/json',
-                },
-              },
-            ),
-          );
-          let managerShifts: any[] = [];
-          if (Array.isArray(managerShiftsResp.data)) managerShifts = managerShiftsResp.data;
-          else if (managerShiftsResp.data?.data) managerShifts = managerShiftsResp.data.data;
-          else if (managerShiftsResp.data?.shifts) managerShifts = managerShiftsResp.data.shifts;
-          managerIds = [
-            ...new Set(
-              managerShifts
-                .filter((s: any) => {
-                  if (!s.start_datetime || !s.end_datetime) return false;
-                  const start = new Date(s.start_datetime).getTime();
-                  const end = new Date(s.end_datetime).getTime();
-                  return t >= start && t <= end;
-                })
-                .map((s: any) => Number(s.employee_id))
-                .filter((id: number) => !Number.isNaN(id) && id > 0),
-            ),
-          ];
-        } catch (e2) {
-          this.logger.warn(
-            `getManagerEmployeeIds fallback (department_id) failed: ${(e2 as Error)?.message || e2}`,
-          );
-        }
+      if (managerShifts.length > 0 && managerIds.length === 0) {
+        this.logger.warn(
+          `[REALLOC] Manager shifts exist (${managerShifts.length}) but none overlap day ${dateTime.toISOString().split('T')[0]}. Sample: start=${managerShifts[0]?.start_datetime}, end=${managerShifts[0]?.end_datetime}`,
+        );
       }
 
       return managerIds;
     } catch (e) {
       this.logger.warn(
-        `getManagerEmployeeIdsForLocationAtDateTime failed: ${e?.message || e}`,
+        `getManagerEmployeeIdsForLocationAtDateTime failed: ${(e as Error)?.message || e}`,
       );
       return [];
     }
@@ -406,23 +514,84 @@ export class AssignmentService {
     metadata?: any,
   ): Promise<void> {
     try {
+      const payload = {
+        type,
+        title,
+        description,
+        entity_id: assignmentId,
+        entity_type: 'task_assignment',
+        metadata: metadata ?? {},
+        priority: 'medium' as const,
+        target_url: `/sarcini/${assignmentId}`,
+      };
       await firstValueFrom(
-        this.notificationsClient.emit(
-          { cmd: 'tasks.notification' },
-          {
-            type,
-            title,
-            description,
-            entity_id: assignmentId,
-            entity_type: 'task_assignment',
-            metadata,
-            priority: 'medium',
-          },
-        ),
+        this.notificationsClient
+          .emit({ cmd: 'tasks.notification' }, payload)
+          .pipe(defaultIfEmpty(undefined)),
       );
     } catch (error) {
-      console.error('Failed to send assignment notification:', error);
+      this.logger.warn('Failed to send assignment notification', error);
     }
+  }
+
+  /**
+   * Trimite notificare pentru angajat (folosit din cron pentru puncte câștigate/pierdute etc.)
+   */
+  async sendTaskNotificationForEmployee(
+    type: string,
+    title: string,
+    description: string,
+    assignmentId: number,
+    assignedToId: number,
+  ): Promise<void> {
+    await this.sendAssignmentNotification(
+      type,
+      title,
+      description,
+      assignmentId,
+      {
+        assignedToId,
+      },
+    );
+  }
+
+  /**
+   * Notificare pentru manageri/admini: sarcina a fost reatribuită de la X la Y.
+   * Folosește assignment.reassigned_manager_info (notifications-ms trimite la toți managerii/adminii).
+   */
+  private async notifyManagersReallocated(
+    assignmentId: number,
+    taskDisplayName: string,
+    previousAssigneeId: number,
+    newAssigneeId: number,
+  ): Promise<void> {
+    const oldInfo =
+      previousAssigneeId != null
+        ? await this.getEmployeeInfo(previousAssigneeId)
+        : null;
+    const newInfo =
+      newAssigneeId != null ? await this.getEmployeeInfo(newAssigneeId) : null;
+    const oldName =
+      oldInfo != null
+        ? `${oldInfo.first_name} ${oldInfo.last_name}`.trim() ||
+          `ID ${previousAssigneeId}`
+        : previousAssigneeId != null
+          ? `angajatul anterior (ID ${previousAssigneeId})`
+          : '–';
+    const newName =
+      newInfo != null
+        ? `${newInfo.first_name} ${newInfo.last_name}`.trim() ||
+          `ID ${newAssigneeId}`
+        : newAssigneeId != null
+          ? `noul angajat (ID ${newAssigneeId})`
+          : '–';
+    await this.sendAssignmentNotification(
+      'assignment.reassigned_manager_info',
+      'Sarcină reatribuită',
+      `Sarcina "${taskDisplayName}" a fost reatribuită de la ${oldName} la ${newName}.`,
+      assignmentId,
+      { previousAssigneeId, newAssigneeId },
+    );
   }
 
   /**
@@ -889,6 +1058,10 @@ export class AssignmentService {
         : true;
     let requiresManagerCheck =
       createAssignmentDto.requires_manager_check || false;
+    let permiteRealocare =
+      createAssignmentDto.permite_realocare !== undefined
+        ? createAssignmentDto.permite_realocare
+        : true;
 
     if (createAssignmentDto.elements) {
       // Găsește template-ul pentru a verifica tipurile elementelor
@@ -907,6 +1080,9 @@ export class AssignmentService {
         );
         const requiresManagerCheckTemplateElement = template.elements.find(
           (te) => te.element_type === 'requires_manager_check',
+        );
+        const allowReallocationTemplateElement = template.elements.find(
+          (te) => te.element_type === 'allow_reallocation',
         );
 
         // Verifică dacă există elementul requires_manager_check și setează valoarea
@@ -987,6 +1163,27 @@ export class AssignmentService {
             }
           }
         }
+        // Permite realocare din elementul allow_reallocation (când DTO nu override-uiește)
+        if (
+          allowReallocationTemplateElement &&
+          createAssignmentDto.permite_realocare === undefined
+        ) {
+          const dtoEl = createAssignmentDto.elements.find(
+            (el) => el.task_element_id === allowReallocationTemplateElement.id,
+          );
+          if (dtoEl?.value !== undefined && dtoEl?.value !== null) {
+            permiteRealocare =
+              dtoEl.value === 'true' ||
+              dtoEl.value === 'True' ||
+              dtoEl.value === '1';
+          } else if (
+            allowReallocationTemplateElement.permite_realocare !== undefined &&
+            allowReallocationTemplateElement.permite_realocare !== null
+          ) {
+            permiteRealocare =
+              allowReallocationTemplateElement.permite_realocare;
+          }
+        }
       }
     }
 
@@ -1036,6 +1233,7 @@ export class AssignmentService {
           ? 1
           : null),
       is_visible_for_employee: shouldBeVisible,
+      permite_realocare: permiteRealocare,
       recurrence_settings: createAssignmentDto.recurrence_settings,
     });
 
@@ -1184,17 +1382,48 @@ export class AssignmentService {
     // Emite notificare WebSocket pentru task nou
     this.taskGateway.notifyNewTask(finalAssignment);
 
-    // Trimite notificare RabbitMQ pentru creare assignment
-    await this.sendAssignmentNotification(
-      'assignment.created',
-      'Task creat',
-      `Task-ul "${finalAssignment.template?.template_name || 'Nou'}" a fost creat`,
-      finalAssignment.id,
-      {
-        templateId: finalAssignment.template_id,
-        assignedToId: finalAssignment.assigned_to_id,
-      },
+    // Nume afișat: din elementul task_name (dacă există) sau template_name
+    const taskNameEl = (finalAssignment.elements as any[])?.find(
+      (el: any) => el.task_element?.element_type === 'task_name',
     );
+    const displayName =
+      taskNameEl?.value?.trim() ||
+      finalAssignment.template?.template_name ||
+      'Nou';
+
+    const assignedToId = finalAssignment.assigned_to_id;
+    const isScheduled = finalAssignment.status === AssignmentStatus.SCHEDULED && finalAssignment.scheduled_datetime != null && assignedToId;
+    if (isScheduled && finalAssignment.scheduled_datetime) {
+      const scheduledStr = new Date(finalAssignment.scheduled_datetime).toLocaleString('ro-RO', {
+        timeZone: 'Europe/Bucharest',
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+      this.logger.log(
+        `📤 [NOTIFICATION] Trimit notificare "assignment.scheduled" pentru assignment ${finalAssignment.id}, assignedToId=${assignedToId}`,
+      );
+      await this.sendAssignmentNotification(
+        'assignment.scheduled',
+        'Task programat',
+        `Task-ul "${displayName}" a fost creat și este programat la ${scheduledStr}.`,
+        finalAssignment.id,
+        { templateId: finalAssignment.template_id, assignedToId },
+      );
+    } else {
+      this.logger.log(
+        `📤 [NOTIFICATION] Trimit notificare "assignment.created" pentru assignment ${finalAssignment.id}, assignedToId=${assignedToId ?? 'null'}`,
+      );
+      await this.sendAssignmentNotification(
+        'assignment.created',
+        'Task creat',
+        `Task-ul "${displayName}" a fost creat`,
+        finalAssignment.id,
+        {
+          templateId: finalAssignment.template_id,
+          assignedToId,
+        },
+      );
+    }
 
     return finalAssignment;
   }
@@ -1274,6 +1503,7 @@ export class AssignmentService {
         'department_group_id',
         'assignment_mode',
         'is_visible_for_employee',
+        'permite_realocare',
         'was_postponed',
         'created_at',
         'updated_at',
@@ -1355,6 +1585,14 @@ export class AssignmentService {
     if (updateAssignmentDto.requires_manager_check !== undefined)
       updateData.requires_manager_check =
         updateAssignmentDto.requires_manager_check;
+    if (
+      Object.prototype.hasOwnProperty.call(
+        updateAssignmentDto,
+        'permite_realocare',
+      )
+    )
+      updateData.permite_realocare =
+        updateAssignmentDto.permite_realocare === true;
     if (updateAssignmentDto.recurrence_settings !== undefined)
       updateData.recurrence_settings = updateAssignmentDto.recurrence_settings;
 
@@ -1386,17 +1624,96 @@ export class AssignmentService {
     // Emite notificare WebSocket pentru actualizare task
     this.taskGateway.notifyTaskUpdate(updatedAssignment);
 
-    // Trimite notificare RabbitMQ pentru actualizare assignment
-    await this.sendAssignmentNotification(
-      'assignment.updated',
-      'Task actualizat',
-      `Task-ul "${updatedAssignment.template?.template_name || 'Nou'}" a fost actualizat`,
-      updatedAssignment.id,
-      {
-        status: updatedAssignment.status,
-        templateId: updatedAssignment.template_id,
-      },
-    );
+    const templateName = updatedAssignment.template?.template_name || 'Nou';
+    const isReassignment =
+      updateAssignmentDto.assigned_to_id !== undefined &&
+      assignment.assigned_to_id !== updatedAssignment.assigned_to_id;
+
+    if (isReassignment) {
+      // Nume task (task_name element sau template)
+      const taskNameEl = (updatedAssignment.elements as any[])?.find(
+        (el: any) => el.task_element?.element_type === 'task_name',
+      );
+      const displayName =
+        taskNameEl?.value?.trim() ||
+        updatedAssignment.template?.template_name ||
+        'Nou';
+
+      const previousAssignedToId = assignment.assigned_to_id;
+      const newAssignedToId = updatedAssignment.assigned_to_id;
+
+      // 1) Notificare la vechiul asignat (de la care a plecat)
+      if (previousAssignedToId != null) {
+        await this.sendAssignmentNotification(
+          'assignment.reassigned_from',
+          'Task reatribuit',
+          `Task-ul "${displayName}" ți-a fost reatribuit altui angajat`,
+          updatedAssignment.id,
+          {
+            assignedToId: previousAssignedToId,
+            templateId: updatedAssignment.template_id,
+          },
+        );
+      }
+      // 2) Notificare la noul asignat
+      if (newAssignedToId != null) {
+        await this.sendAssignmentNotification(
+          'assignment.reassigned_to',
+          'Task atribuit',
+          `Ți s-a atribuit task-ul "${displayName}"`,
+          updatedAssignment.id,
+          {
+            assignedToId: newAssignedToId,
+            templateId: updatedAssignment.template_id,
+          },
+        );
+      }
+      // 3) Notificare la fiecare manager/admin (fără assignedToId – notifications-ms trimite la toți)
+      const oldInfo =
+        previousAssignedToId != null
+          ? await this.getEmployeeInfo(previousAssignedToId)
+          : null;
+      const newInfo =
+        newAssignedToId != null
+          ? await this.getEmployeeInfo(newAssignedToId)
+          : null;
+      const oldName =
+        oldInfo != null
+          ? `${oldInfo.first_name} ${oldInfo.last_name}`.trim() ||
+            `ID ${previousAssignedToId}`
+          : previousAssignedToId != null
+            ? `angajatul anterior (ID ${previousAssignedToId})`
+            : '–';
+      const newName =
+        newInfo != null
+          ? `${newInfo.first_name} ${newInfo.last_name}`.trim() ||
+            `ID ${newAssignedToId}`
+          : newAssignedToId != null
+            ? `noul angajat (ID ${newAssignedToId})`
+            : '–';
+      await this.sendAssignmentNotification(
+        'assignment.reassigned_manager_info',
+        'Task reatribuit',
+        `Task-ul "${displayName}" a fost reatribuit de la ${oldName} la ${newName}.`,
+        updatedAssignment.id,
+        { templateId: updatedAssignment.template_id },
+      );
+    } else {
+      // Actualizare fără schimbare de asignat: notificare doar pentru asignatul curent
+      if (updatedAssignment.assigned_to_id != null) {
+        await this.sendAssignmentNotification(
+          'assignment.updated',
+          'Task actualizat',
+          `Task-ul "${templateName}" a fost actualizat`,
+          updatedAssignment.id,
+          {
+            status: updatedAssignment.status,
+            templateId: updatedAssignment.template_id,
+            assignedToId: updatedAssignment.assigned_to_id,
+          },
+        );
+      }
+    }
 
     return updatedAssignment;
   }
@@ -1414,23 +1731,31 @@ export class AssignmentService {
 
       // Șterge task-urile copil (elementele lor vor fi șterse în cascada DB / TypeORM)
       for (const childTask of childTasks) {
+        this.taskGateway.notifyTaskDeleted(childTask.id);
         await this.assignmentRepository.remove(childTask);
       }
     }
 
     // Șterge task-ul părinte (elementele asociate vor fi șterse în cascada DB / TypeORM)
     const assignmentId = assignment.id;
-    const templateName = assignment.template?.template_name || 'Necunoscut';
+    const taskNameEl = (assignment.elements as any[])?.find(
+      (el: any) => el.task_element?.element_type === 'task_name',
+    );
+    const displayName =
+      taskNameEl?.value?.trim() || assignment.template?.template_name || 'Necunoscut';
+
+    // Emite WebSocket înainte de ștergere ca toți clienții să actualizeze lista / să redirecționeze
+    this.taskGateway.notifyTaskDeleted(assignmentId);
 
     await this.assignmentRepository.remove(assignment);
 
-    // Trimite notificare RabbitMQ pentru ștergere assignment
+    // Trimite notificare RabbitMQ pentru angajat (ștergere assignment)
     await this.sendAssignmentNotification(
       'assignment.deleted',
       'Task șters',
-      `Task-ul "${templateName}" a fost șters`,
+      `Task-ul "${displayName}" a fost șters`,
       assignmentId,
-      { templateName },
+      { templateName: displayName, assignedToId: assignment.assigned_to_id },
     );
   }
 
@@ -2800,6 +3125,7 @@ export class AssignmentService {
           'department_group_id',
           'assignment_mode',
           'is_visible_for_employee',
+          'permite_realocare',
           'created_at',
           'updated_at',
         ],
@@ -2840,6 +3166,7 @@ export class AssignmentService {
         'department_group_id',
         'assignment_mode',
         'is_visible_for_employee',
+        'permite_realocare',
         'created_at',
         'updated_at',
       ],
@@ -3010,6 +3337,18 @@ export class AssignmentService {
       `✅ [APPROVE] Task ${id} aprobat de manager ${managerId} și finalizat`,
     );
 
+    // Notificare pentru angajat: task aprobat de manager
+    await this.sendAssignmentNotification(
+      'assignment.approved',
+      'Task aprobat',
+      `Task-ul "${assignment.template?.template_name || 'Nou'}" a fost aprobat de manager`,
+      id,
+      {
+        templateId: assignment.template_id,
+        assignedToId: assignment.assigned_to_id,
+      },
+    );
+
     // Returnează task-ul actualizat
     return this.findOne(id);
   }
@@ -3081,6 +3420,18 @@ export class AssignmentService {
 
     console.log(
       `✅ [REJECT] Task ${id} respins de manager ${managerId} (respingere #${newRejectingTimes}) și returnat la assigned`,
+    );
+
+    // Notificare pentru angajat: task respins de manager
+    await this.sendAssignmentNotification(
+      'assignment.rejected',
+      'Task respins',
+      `Task-ul "${assignment.template?.template_name || 'Nou'}" a fost respins de manager. Poți să-l completezi din nou.`,
+      id,
+      {
+        templateId: assignment.template_id,
+        assignedToId: assignment.assigned_to_id,
+      },
     );
 
     // Returnează task-ul actualizat
@@ -3253,13 +3604,7 @@ export class AssignmentService {
     const assignment = await this.assignmentRepository.findOne({
       where: { id },
       relations: ['elements', 'elements.task_element'],
-      select: [
-        'id',
-        'assigned_to_id',
-        'status',
-        'due_date',
-        'was_postponed',
-      ],
+      select: ['id', 'assigned_to_id', 'status', 'due_date', 'was_postponed'],
     });
 
     if (!assignment) {
@@ -3306,15 +3651,23 @@ export class AssignmentService {
 
     // Obține minutele de amânare din element (JSON: { enabled, minutes } sau default 30)
     let postponeMinutes = 30;
-    if (allowPostponeElement?.value && allowPostponeElement.value.startsWith('{')) {
+    if (
+      allowPostponeElement?.value &&
+      allowPostponeElement.value.startsWith('{')
+    ) {
       try {
         const cfg = JSON.parse(allowPostponeElement.value);
-        if (typeof cfg.minutes === 'number' && cfg.minutes > 0) postponeMinutes = cfg.minutes;
+        if (typeof cfg.minutes === 'number' && cfg.minutes > 0)
+          postponeMinutes = cfg.minutes;
       } catch (e) {}
     }
 
-    const currentDue = assignment.due_date ? new Date(assignment.due_date) : new Date();
-    const newDueDate = new Date(currentDue.getTime() + postponeMinutes * 60 * 1000);
+    const currentDue = assignment.due_date
+      ? new Date(assignment.due_date)
+      : new Date();
+    const newDueDate = new Date(
+      currentDue.getTime() + postponeMinutes * 60 * 1000,
+    );
 
     // Actualizează assignment-ul: due_date += minute amânare, was_postponed = true, allow_postpone = false
     try {
@@ -3323,7 +3676,9 @@ export class AssignmentService {
       );
       if (el) {
         await this.elementRepository.update({ id: el.id }, { value: 'false' });
-        console.log(`✅ [POSTPONE] Updated allow_postpone to false for task ${id}`);
+        console.log(
+          `✅ [POSTPONE] Updated allow_postpone to false for task ${id}`,
+        );
       }
 
       await this.assignmentRepository.update(id, {
@@ -3382,11 +3737,14 @@ export class AssignmentService {
     if (allowEl.value.startsWith('{')) {
       try {
         const cfg = JSON.parse(allowEl.value);
-        if (typeof cfg.minutes === 'number' && cfg.minutes > 0) minutes = cfg.minutes;
+        if (typeof cfg.minutes === 'number' && cfg.minutes > 0)
+          minutes = cfg.minutes;
       } catch (e) {}
     }
 
-    const currentDue = assignment.due_date ? new Date(assignment.due_date) : new Date();
+    const currentDue = assignment.due_date
+      ? new Date(assignment.due_date)
+      : new Date();
     const newDueDate = new Date(currentDue.getTime() + minutes * 60 * 1000);
 
     await this.elementRepository.update({ id: allowEl.id }, { value: 'false' });
@@ -3397,6 +3755,23 @@ export class AssignmentService {
     this.logger.log(
       `⏸️ [AUTO-POSTPONE] Task ${assignment.id}: due_date += ${minutes} min, was_postponed = true`,
     );
+    // Notificare pentru angajat: amânare automată (cu numele task-ului)
+    const taskNameEl = (assignment.elements as any[])?.find(
+      (el: any) => el.task_element?.element_type === 'task_name',
+    );
+    const displayName =
+      taskNameEl?.value?.trim() ||
+      (assignment as any).template?.template_name ||
+      'Task';
+    if (assignment.assigned_to_id) {
+      await this.sendAssignmentNotification(
+        'assignment.auto_postponed',
+        'Task amânat automat',
+        `Task-ul "${displayName}" a fost amânat automat cu ${minutes} minute. Noul termen limită a fost actualizat.`,
+        assignment.id,
+        { assignedToId: assignment.assigned_to_id, minutes },
+      );
+    }
     return true;
   }
 
@@ -3427,8 +3802,10 @@ export class AssignmentService {
         .getRawMany<{ id: number; previous_assignee_ids: string }>();
       const countAsPrevious = (withPrevious || []).filter((row) => {
         try {
-          const arr = typeof row.previous_assignee_ids === 'string'
-            ? JSON.parse(row.previous_assignee_ids) : row.previous_assignee_ids;
+          const arr =
+            typeof row.previous_assignee_ids === 'string'
+              ? JSON.parse(row.previous_assignee_ids)
+              : row.previous_assignee_ids;
           return Array.isArray(arr) && arr.includes(employeeId);
         } catch {
           return false;
@@ -3449,22 +3826,32 @@ export class AssignmentService {
           auto2: '%puncte deduse pentru nefinalizare%',
         });
       const completedRaw = await completedQb.getRawOne<{ completed: string }>();
-      const completed = Math.max(0, parseInt(completedRaw?.completed ?? '0', 10));
-      const percentage = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+      const completed = Math.max(
+        0,
+        parseInt(completedRaw?.completed ?? '0', 10),
+      );
+      const percentage =
+        total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
 
       return { total_count: total, completed_count: completed, percentage };
     } catch (err) {
-      this.logger.warn(`getEfficiencyForEmployee(${employeeId}) failed, using fallback: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.warn(
+        `getEfficiencyForEmployee(${employeeId}) failed, using fallback: ${err instanceof Error ? err.message : String(err)}`,
+      );
       // Fallback: logica veche (doar assigned_to_id, completed = status completed)
       const raw = await this.assignmentRepository
         .createQueryBuilder('a')
         .select('COUNT(a.id)', 'total')
-        .addSelect("SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END)", 'completed')
+        .addSelect(
+          "SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END)",
+          'completed',
+        )
         .where('a.assigned_to_id = :employeeId', { employeeId })
         .getRawOne<{ total: string; completed: string }>();
       const total = Math.max(0, parseInt(raw?.total ?? '0', 10));
       const completed = Math.max(0, parseInt(raw?.completed ?? '0', 10));
-      const percentage = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+      const percentage =
+        total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
       return { total_count: total, completed_count: completed, percentage };
     }
   }
@@ -3506,7 +3893,12 @@ export class AssignmentService {
         const hours = durationData.hours || 0;
         const minutes = durationData.minutes || 0;
         const deadline = new Date(assignment.assigned_at);
-        deadline.setHours(deadline.getHours() + hours, deadline.getMinutes() + minutes, 0, 0);
+        deadline.setHours(
+          deadline.getHours() + hours,
+          deadline.getMinutes() + minutes,
+          0,
+          0,
+        );
         return deadline;
       } catch (e) {
         return null;
@@ -3525,9 +3917,10 @@ export class AssignmentService {
     dueDate: Date,
     assignedAtForCopy?: Date,
   ): Promise<TaskAssignment> {
-    const previousIds = [...(original.previous_assignee_ids || []), original.assigned_to_id].filter(
-      (id): id is number => id != null && !Number.isNaN(id),
-    );
+    const previousIds = [
+      ...(original.previous_assignee_ids || []),
+      original.assigned_to_id,
+    ].filter((id): id is number => id != null && !Number.isNaN(id));
     const assignedAt = assignedAtForCopy ?? new Date();
     const copyData = {
       template_id: original.template_id,
@@ -3549,12 +3942,17 @@ export class AssignmentService {
       assignment_mode: original.assignment_mode,
       max_acceptances: original.max_acceptances,
       is_visible_for_employee: original.is_visible_for_employee,
+      permite_realocare: original.permite_realocare ?? true,
       was_postponed: false,
       reallocated_from_id: original.id,
       previous_assignee_ids: previousIds,
     };
-    const copy = this.assignmentRepository.create(copyData as unknown as Partial<TaskAssignment>);
-    const saved = await this.assignmentRepository.save(copy) as TaskAssignment;
+    const copy = this.assignmentRepository.create(
+      copyData as unknown as Partial<TaskAssignment>,
+    );
+    const saved = (await this.assignmentRepository.save(
+      copy,
+    )) as TaskAssignment;
 
     if (original.elements?.length) {
       for (const el of original.elements) {
@@ -3628,14 +4026,12 @@ export class AssignmentService {
   }
 
   /**
-   * Realocare: opțional scade puncte la assignee-ul curent, apoi reatribuie același task la noul angajat (fără copie).
-   * Condiții: nu se realochează sarcinile recurente; doar după depășirea termenului; nu către angajați din grupul Manager.
-   * @param deductPoints dacă true (implicit), se scad puncte la assignee-ul curent; dacă false, nu se scad (reatribuire fără penalizare).
+   * Reatribuire la amânare: preia ora, ia din pontaj cine e la locație la ora respectivă, aplică random, atât.
+   * Un singur HTTP la attendance (shifts la locație), timeout scurt.
    */
-  async reallocateAssignment(
+  async triggerReallocateByEmployee(
     assignmentId: number,
-    newAssigneeId?: number,
-    deductPoints: boolean = true,
+    employeeId: number,
   ): Promise<{ original: TaskAssignment; copy: TaskAssignment | null }> {
     const assignment = await this.assignmentRepository.findOne({
       where: { id: assignmentId },
@@ -3644,7 +4040,159 @@ export class AssignmentService {
     if (!assignment) {
       throw new NotFoundException(`Assignment ${assignmentId} nu există.`);
     }
-    if (assignment.status !== AssignmentStatus.ASSIGNED && assignment.status !== AssignmentStatus.IN_PROGRESS) {
+    if (assignment.assigned_to_id !== employeeId) {
+      throw new BadRequestException(
+        'Poți declanșa reatribuirea doar pentru sarcinile tale.',
+      );
+    }
+    if (assignment.was_postponed !== true) {
+      throw new BadRequestException(
+        'Reatribuirea e doar pentru sarcinile amânate.',
+      );
+    }
+    if (
+      assignment.status !== AssignmentStatus.ASSIGNED &&
+      assignment.status !== AssignmentStatus.IN_PROGRESS
+    ) {
+      throw new BadRequestException(
+        `Doar sarcinile active. Status: ${assignment.status}`,
+      );
+    }
+    if (assignment.permite_realocare === false) {
+      throw new BadRequestException(
+        'Realocarea nu e permisă pentru acest task.',
+      );
+    }
+    // Realocarea se face o singură dată: fie automat (cron), fie manual (angajat). Nu se poate realoca din nou.
+    if (assignment.reallocation_trigger != null) {
+      throw new BadRequestException(
+        'Realocarea s-a făcut deja o dată. Nu se poate realoca din nou.',
+      );
+    }
+    const workLocationId = this.getWorkLocationIdForPontati(assignment);
+    if (workLocationId == null) {
+      throw new BadRequestException(
+        'Locația task-ului nu e setată (locație sau department_group_id loc_X_).',
+      );
+    }
+
+    const now = new Date();
+    const pontati = await this.getEmployeeIdsPontatiAtLocationAtDateTime(
+      workLocationId,
+      now,
+    );
+    const excludeIds = new Set<number>([
+      assignment.assigned_to_id,
+      ...(assignment.previous_assignee_ids || []),
+    ]);
+    const candidates = pontati.filter((id) => !excludeIds.has(id));
+    if (candidates.length === 0) {
+      throw new BadRequestException(
+        'Nimeni pontat la această oră la locație (sau toți au avut deja sarcina). Încearcă mai târziu.',
+      );
+    }
+    const targetAssigneeId =
+      candidates[Math.floor(Math.random() * candidates.length)];
+    this.logger.log(
+      `🔄 [REALLOC] Ora ${now.toISOString()}, locație ${workLocationId}, pontați ${pontati.length}, ales ${targetAssigneeId}`,
+    );
+
+    const workDate = assignment.assigned_at
+      ? new Date(assignment.assigned_at)
+      : new Date();
+    workDate.setHours(0, 0, 0, 0);
+    await this.executionService.deductPointsForUncompletedAssignment(
+      assignment,
+      workDate,
+    );
+
+    const startTime = assignment.scheduled_datetime
+      ? new Date(assignment.scheduled_datetime)
+      : new Date(assignment.assigned_at);
+    const previousAssignees = [
+      ...(assignment.previous_assignee_ids || []),
+      assignment.assigned_to_id,
+    ].filter((id): id is number => id != null && !Number.isNaN(id));
+    // Task realocat: termen = până la introducerea încasării (sfârșitul zilei)
+    const newDueDate = new Date();
+    newDueDate.setHours(23, 59, 59, 999);
+
+    await this.assignmentRepository.update(assignmentId, {
+      assigned_to_id: targetAssigneeId,
+      previous_assignee_ids: previousAssignees,
+      status: AssignmentStatus.ASSIGNED,
+      assigned_at: startTime,
+      due_date: newDueDate,
+      was_postponed: false,
+      reallocation_trigger: 'employee',
+      reallocation_attempted_at: now,
+    });
+
+    this.logger.log(
+      `✅ [REALLOC] Trigger angajat: task ${assignmentId} reatribuit de la ${assignment.assigned_to_id} la ${targetAssigneeId}`,
+    );
+
+    const taskNameEl = (assignment.elements as any[])?.find(
+      (el: any) => el.task_element?.element_type === 'task_name',
+    );
+    const displayName =
+      taskNameEl?.value?.trim() ||
+      (assignment as any).template?.template_name ||
+      'Sarcină';
+    this.sendAssignmentNotification(
+      'assignment.reallocated',
+      'Sarcină reatribuită',
+      `Sarcina "${displayName}" ți-a fost reatribuită.`,
+      assignmentId,
+      {
+        assignedToId: targetAssigneeId,
+        previousAssigneeId: assignment.assigned_to_id,
+      },
+    ).catch((err) => this.logger.warn('Notificare reatribuire nereușită', err));
+    this.notifyManagersReallocated(
+      assignmentId,
+      displayName,
+      assignment.assigned_to_id,
+      targetAssigneeId,
+    ).catch((err) =>
+      this.logger.warn('Notificare reatribuire admini nereușită', err),
+    );
+
+    const original = {
+      ...assignment,
+      id: assignmentId,
+      assigned_to_id: targetAssigneeId,
+      previous_assignee_ids: previousAssignees,
+      status: AssignmentStatus.ASSIGNED,
+      assigned_at: startTime,
+      due_date: newDueDate,
+      was_postponed: false,
+    } as TaskAssignment;
+    return { original, copy: null };
+  }
+
+  /**
+   * Realocare: opțional scade puncte la assignee-ul curent, apoi reatribuie același task la noul angajat (fără copie).
+   * @param reallocationTrigger 'cron' = automată, 'admin' = manuală de admin (pentru rapoarte).
+   */
+  async reallocateAssignment(
+    assignmentId: number,
+    newAssigneeId?: number,
+    deductPoints: boolean = true,
+    skipExpirationCheck: boolean = false,
+    reallocationTrigger?: 'cron' | 'admin',
+  ): Promise<{ original: TaskAssignment; copy: TaskAssignment | null }> {
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id: assignmentId },
+      relations: ['elements', 'elements.task_element', 'template'],
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment ${assignmentId} nu există.`);
+    }
+    if (
+      assignment.status !== AssignmentStatus.ASSIGNED &&
+      assignment.status !== AssignmentStatus.IN_PROGRESS
+    ) {
       throw new BadRequestException(
         `Doar sarcinile active (assigned/in_progress) pot fi realocate. Status actual: ${assignment.status}`,
       );
@@ -3652,11 +4200,23 @@ export class AssignmentService {
     if (!assignment.assigned_to_id) {
       throw new BadRequestException('Assignment-ul nu are assignee.');
     }
+    if (assignment.permite_realocare === false) {
+      throw new BadRequestException(
+        'Realocarea nu este permisă pentru acest task.',
+      );
+    }
+    // Realocarea se face o singură dată: fie automat (cron), fie manual (angajat/admin). Nu se poate realoca din nou.
+    if (assignment.reallocation_trigger != null) {
+      throw new BadRequestException(
+        'Realocarea s-a făcut deja o dată. Nu se poate realoca din nou.',
+      );
+    }
 
     // Doar șabloanele recurente (părinte) nu se realochează; copiii recurenți (parent_recurrence_id setat) pot fi realocați
     const isRecurringParent =
       assignment.recurrence_settings?.enabled === true &&
-      (assignment.parent_recurrence_id == null || assignment.parent_recurrence_id === '');
+      (assignment.parent_recurrence_id == null ||
+        assignment.parent_recurrence_id === '');
     if (isRecurringParent) {
       throw new BadRequestException(
         'Sarcinile recurente (șabloane) nu pot fi realocate.',
@@ -3677,7 +4237,7 @@ export class AssignmentService {
         'Sarcina nu are termen limită setat; realocarea nu este permisă.',
       );
     }
-    if (!this.isAssignmentExpired(assignment, now)) {
+    if (!skipExpirationCheck && !this.isAssignmentExpired(assignment, now)) {
       throw new BadRequestException(
         'Sarcina poate fi realocată doar după ce s-a depășit termenul limită.',
       );
@@ -3688,17 +4248,13 @@ export class AssignmentService {
       ...(assignment.previous_assignee_ids || []),
     ]);
 
-    // Exclude angajații din grupul Manager (departamentul cu numele "Manager")
     const workLocationId = this.getWorkLocationIdForPontati(assignment);
-    if (workLocationId != null) {
-      const managerIds = await this.getManagerEmployeeIdsForLocationAtDateTime(
-        workLocationId,
-        now,
-      );
-      managerIds.forEach((id) => excludeIds.add(id));
-    }
 
+    // Flux rapid (1–2 s) pentru trigger de angajat: un singur HTTP la employees, fără pontaj/manager
+    const useFastPath =
+      skipExpirationCheck && newAssigneeId == null && workLocationId != null;
     let targetAssigneeId: number;
+
     if (newAssigneeId != null) {
       if (excludeIds.has(newAssigneeId)) {
         const hadTask =
@@ -3711,36 +4267,75 @@ export class AssignmentService {
         );
       }
       targetAssigneeId = newAssigneeId;
-    } else {
-      if (workLocationId == null) {
+    } else if (workLocationId == null) {
+      throw new BadRequestException(
+        'Nu se poate determina locația pentru realocare automată.',
+      );
+    } else if (useFastPath) {
+      let candidates: number[];
+      try {
+        candidates = await this.getCandidatesAtLocationFast(
+          workLocationId,
+          500,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `[REALLOC] getCandidatesAtLocationFast failed: ${(e as Error)?.message ?? e}`,
+        );
         throw new BadRequestException(
-          'Nu se poate determina locația pentru realocare automată.',
+          'Serviciul angajați nu răspunde la timp. Încearcă din nou.',
         );
       }
-      const pontati = await this.getEmployeeIdsPontatiAtLocationAtDateTime(
-        workLocationId,
-        now,
+      const filtered = candidates.filter((id) => !excludeIds.has(id));
+      if (filtered.length === 0) {
+        throw new BadRequestException(
+          'Nu există alți angajați la această locație. Încearcă din nou sau contactează un administrator.',
+        );
+      }
+      targetAssigneeId = filtered[Math.floor(Math.random() * filtered.length)];
+      this.logger.log(
+        `🔄 [REALLOC] Realocare rapidă (angajat): ales ${targetAssigneeId} din ${filtered.length} la locația ${workLocationId}`,
       );
-      const candidates = pontati.filter((id) => !excludeIds.has(id));
+    } else {
+      // Flux complet: exclude manageri, folosește pontați (+ fallback)
+      let managerIds: number[] = [];
+      let pontati: number[] = [];
+      [managerIds, pontati] = await Promise.all([
+        this.getManagerEmployeeIdsForLocationAtDateTime(workLocationId, now),
+        this.getEmployeeIdsPontatiAtLocationAtDateTime(workLocationId, now),
+      ]);
+      managerIds.forEach((id) => excludeIds.add(id));
+      let candidates = pontati.filter((id) => !excludeIds.has(id));
+      if (candidates.length === 0 && pontati.length === 0) {
+        const fallbackIds =
+          await this.getEmployeeIdsAtLocationFallback(workLocationId);
+        candidates = fallbackIds.filter((id) => !excludeIds.has(id));
+      }
       if (candidates.length === 0) {
         throw new BadRequestException(
-          'Nu există angajați pontați la această locație (sau toți au avut deja sarcina / sunt în grupul Manager).',
+          'Nu există angajați pontați la această locație (sau toți au avut deja sarcina / sunt manageri).',
         );
       }
-      targetAssigneeId = candidates[Math.floor(Math.random() * candidates.length)];
+      targetAssigneeId =
+        candidates[Math.floor(Math.random() * candidates.length)];
       this.logger.log(
-        `🔄 [REALLOC] Realocare automată: ales angajat ${targetAssigneeId} din ${candidates.length} pontați (excluzând ${[...excludeIds].join(', ')})`,
+        `🔄 [REALLOC] Realocare automată: ales angajat ${targetAssigneeId} din ${candidates.length} pontați`,
       );
     }
 
     if (deductPoints) {
+      // Ziua de lucru pentru scăderea punctelor: ziua atribuirii (nu „acum”), ca punctele să intre în ziua corectă
+      const workDate = assignment.assigned_at
+        ? new Date(assignment.assigned_at)
+        : new Date();
+      workDate.setHours(0, 0, 0, 0);
       await this.executionService.deductPointsForUncompletedAssignment(
         assignment,
-        new Date(),
+        workDate,
       );
     }
 
-    // Reatribuie același assignment (fără copie): schimbă assignee, păstrează programarea și deadline-ul original (până la X)
+    // Reatribuie același assignment: noul assignee – termen limită = până la introducerea încasării (sfârșitul zilei)
     const startTime = assignment.scheduled_datetime
       ? new Date(assignment.scheduled_datetime)
       : new Date(assignment.assigned_at);
@@ -3748,21 +4343,66 @@ export class AssignmentService {
       ...(assignment.previous_assignee_ids || []),
       assignment.assigned_to_id,
     ].filter((id): id is number => id != null && !Number.isNaN(id));
-    // Păstrăm due_date-ul original (ex. 01:59), nu recalculat de la atribuire
-    const dueDate = new Date(assignment.due_date);
+
+    const newDueDate = new Date();
+    newDueDate.setHours(23, 59, 59, 999);
 
     await this.assignmentRepository.update(assignmentId, {
       assigned_to_id: targetAssigneeId,
       previous_assignee_ids: previousAssignees,
       status: AssignmentStatus.ASSIGNED,
       assigned_at: startTime,
-      due_date: dueDate,
+      due_date: newDueDate,
+      was_postponed: false,
+      ...(reallocationTrigger && { reallocation_trigger: reallocationTrigger }),
     });
 
     this.logger.log(
       `✅ [REALLOC] Același task ${assignmentId} reatribuit de la ${assignment.assigned_to_id} la ${targetAssigneeId}`,
     );
-    const updated = await this.findOne(assignmentId);
-    return { original: updated, copy: null };
+
+    const taskNameEl = (assignment.elements as any[])?.find(
+      (el: any) => el.task_element?.element_type === 'task_name',
+    );
+    const displayName =
+      taskNameEl?.value?.trim() ||
+      (assignment as any).template?.template_name ||
+      'Sarcină';
+    this.sendAssignmentNotification(
+      'assignment.reallocated',
+      'Sarcină reatribuită',
+      `Sarcina "${displayName}" ți-a fost reatribuită.`,
+      assignmentId,
+      {
+        assignedToId: targetAssigneeId,
+        previousAssigneeId: assignment.assigned_to_id,
+      },
+    ).catch((err) =>
+      this.logger.warn(
+        'Notificare reatribuire nereușită (nu blochează răspunsul)',
+        err,
+      ),
+    );
+    this.notifyManagersReallocated(
+      assignmentId,
+      displayName,
+      assignment.assigned_to_id,
+      targetAssigneeId,
+    ).catch((err) =>
+      this.logger.warn('Notificare reatribuire pentru admini nereușită', err),
+    );
+
+    // Returnează imediat după update, fără findOne – răspuns mai rapid pentru UI
+    const original = {
+      ...assignment,
+      id: assignmentId,
+      assigned_to_id: targetAssigneeId,
+      previous_assignee_ids: previousAssignees,
+      status: AssignmentStatus.ASSIGNED,
+      assigned_at: startTime,
+      due_date: newDueDate,
+      was_postponed: false,
+    } as TaskAssignment;
+    return { original, copy: null };
   }
 }

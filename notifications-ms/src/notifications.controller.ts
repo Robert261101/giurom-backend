@@ -1,13 +1,21 @@
-import { Controller, Get, Post, Patch, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query, Body, UseGuards, Request, Logger } from '@nestjs/common';
 import { Ctx, MessagePattern, Payload, RmqContext } from '@nestjs/microservices';
 import { NotificationsService } from './notifications.service';
+import { PushService } from './push/push.service';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
+import { UserResolutionService } from './user-resolution.service';
 
 @Controller('notifications')
 @UseGuards(PermissionsGuard)
 export class NotificationsController {
-  constructor(private readonly service: NotificationsService) {}
+  private readonly logger = new Logger(NotificationsController.name);
+
+  constructor(
+    private readonly service: NotificationsService,
+    private readonly pushService: PushService,
+    private readonly userResolution: UserResolutionService,
+  ) {}
 
   // HTTP endpoints for frontend
   @Get('unread-count')
@@ -28,20 +36,21 @@ export class NotificationsController {
   }
 
 
+  // Mark all as read – trebuie înainte de :id/read ca „mark-all-read” să nu fie interpretat ca id
+  @Patch('mark-all-read')
+  @Permissions('notifications.update')
+  markAllAsRead(@Request() req, @Query('userId') userId?: string) {
+    const raw = userId ? parseInt(userId, 10) : (req.user?.userId ?? req.user?.sub);
+    const targetUserId = Number.isNaN(raw) ? undefined : raw;
+    this.logger.log(`mark-all-read apelat, targetUserId=${targetUserId}, query userId=${userId ?? 'nu'}`);
+    return this.service.markAllAsRead(targetUserId);
+  }
+
   // Mark one as read
   @Patch(':id/read')
   @Permissions('notifications.update')
   markAsRead(@Param('id') id: string) {
     return this.service.markAsRead(Number(id));
-  }
-
-  // Mark all as read
-  @Patch('mark-all-read')
-  @Permissions('notifications.update')
-  markAllAsRead(@Request() req, @Query('userId') userId?: string) {
-    // Use the userId from query params if provided, otherwise use the authenticated user's ID
-    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
-    return this.service.markAllAsRead(targetUserId);
   }
 
   // Trigger expiring labels check (demo/seed)
@@ -57,6 +66,59 @@ export class NotificationsController {
   async triggerFileExpirationCheck() {
     await this.service.checkExpiringFiles();
     return { message: 'File expiration check triggered successfully' };
+  }
+
+  /** Înregistrează token FCM pentru Web Push (notificări când app-ul e închis). */
+  @Post('push-subscribe')
+  @Permissions('notifications.read')
+  async pushSubscribe(@Request() req, @Body() body: { token: string; deviceLabel?: string }) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId || !body?.token) {
+        return { success: false, message: 'Missing userId or token' };
+      }
+      const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+      await this.pushService.subscribe(resolvedUserId, body.token.trim(), body.deviceLabel);
+      return { success: true };
+    } catch (err: any) {
+      this.logger.error(`push-subscribe: ${err?.message || err}`, err?.stack);
+      // Return 200 cu success: false ca frontend-ul să nu afișeze eroare; cauza se vede în logs
+      return { success: false, message: 'Nu s-a putut înregistra notificările push. Încearcă din nou mai târziu.' };
+    }
+  }
+
+  /** Trimite o notificare de test către user-ul curent (DB + WebSocket + Web Push). Pentru testare. */
+  @Post('test-push')
+  @Permissions('notifications.read')
+  async sendTestPush(@Request() req) {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return { success: false, message: 'Nu ești autentificat.' };
+    }
+    const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+    await this.service.create({
+      type: 'test_push',
+      title: 'Test notificare push',
+      description: 'Dacă vezi asta, Web Push funcționează.',
+      user_id: resolvedUserId,
+      status: 'unread',
+      priority: 'medium',
+      target_url: '/notificari',
+    } as any);
+    return { success: true, message: 'Notificare de test trimisă. Verifică notificările în app și push-ul pe dispozitiv.' };
+  }
+
+  /** Elimină token FCM (dezabonare Web Push). */
+  @Post('push-unsubscribe')
+  @Permissions('notifications.read')
+  async pushUnsubscribe(@Request() req, @Body() body: { token: string }) {
+    const userId = req.user?.userId;
+    if (!userId || !body?.token) {
+      return { success: false, message: 'Missing userId or token' };
+    }
+    const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+    await this.pushService.unsubscribe(resolvedUserId, body.token.trim());
+    return { success: true };
   }
 
   @Get('health')
@@ -145,6 +207,12 @@ export class NotificationsController {
   @MessagePattern({ cmd: 'company.notification' })
   async handleCompanyNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
     await this.service.onCompanyNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: 'tasks.notification' })
+  async handleTaskNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onTaskNotification(data);
     return true;
   }
 

@@ -64,7 +64,7 @@ export class LocationsService {
     // 1) Încearcă employees microservice (preferred)
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://giurom.bitap.ro:3001";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -414,7 +414,7 @@ export class LocationsService {
     let employeeLocationIds: number[] = [];
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://giurom.bitap.ro:3001";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -579,7 +579,7 @@ export class LocationsService {
     let employeeLocationIds: number[] = [];
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://giurom.bitap.ro:3001";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -762,7 +762,7 @@ export class LocationsService {
       if (employeeId) {
         try {
           const employeesUrl =
-            process.env.EMPLOYEES_HTTP_URL || "http://giurom.bitap.ro:3001";
+            process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
           const response = await axios.get(
             `${employeesUrl}/employees/${employeeId}/locations`,
             {
@@ -1025,6 +1025,24 @@ export class LocationsService {
   }
 
   // --- Departments ---
+  /** Listă departamente: optional limit și ids (comma-separated). Folosit de frontend pentru rapoarte Sarcini. */
+  async findWorkLocationDepartmentsList(
+    limit = 1000,
+    ids?: number[],
+  ): Promise<WorkLocationDepartments[]> {
+    const opts: any = { order: { name: 'ASC' } as any };
+    if (ids?.length) {
+      opts.where = { id: In(ids) };
+    }
+    opts.take = Math.min(limit, 5000);
+    return this.departmentsRepository.find(opts);
+  }
+
+  /** Un singur departament după id. Folosit de veziv-tasks. */
+  async findWorkLocationDepartmentById(id: number): Promise<WorkLocationDepartments | null> {
+    return this.departmentsRepository.findOne({ where: { id } as any });
+  }
+
   async findDepartmentsByLocation(
     locationId: number,
   ): Promise<WorkLocationDepartments[]> {
@@ -1258,7 +1276,85 @@ export class LocationsService {
       "✅ [recordRevenue Service] Revenue saved successfully with employee_id:",
       saved.employee_id,
     );
+
+    // La introducerea încasării cu status approved: declanșăm bonusuri și manager_daily_payout (ca la updateRevenue)
+    if (status === RevenueStatus.Approved && normalizedDate) {
+      this.triggerBonusAndManagerPayoutOnApprovedRevenue(
+        saved.id,
+        workLocationId,
+        normalizedDate,
+      );
+    }
+
     return saved;
+  }
+
+  /**
+   * Declanșează calculul bonusurilor angajaților și manager_daily_payout când o încasare este aprobată.
+   * Folosit atât la recordRevenue (introducere cu status approved) cât și la updateRevenue (trecere la approved).
+   */
+  private triggerBonusAndManagerPayoutOnApprovedRevenue(
+    revenueId: number,
+    workLocationId: number,
+    revenueDate: string,
+  ): void {
+    console.log(
+      `🔔 [BONUS TRIGGER] Încasare ${revenueId} aprobată. Calcul bonusuri și manager_daily_payout pentru data: ${revenueDate}`,
+    );
+    this.calculateEmployeeBonusesForDate(workLocationId, revenueDate).catch(
+      (err) => {
+        console.error(
+          `❌ [BONUS TRIGGER] Eroare calcul bonusuri pentru încasare ${revenueId}:`,
+          err,
+        );
+      },
+    );
+    // TASKS_API_BASE = gateway (ex. 3002) sau URL direct tasks (ex. 3008). Path: /tasks/cron/manager-daily-payout
+    const tasksApiBase =
+      process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3002";
+    const tasksCronPath =
+      tasksApiBase.replace(/\/$/, "") + "/tasks/cron/manager-daily-payout";
+    // SERVICE_SECRET trebuie să fie identic în locations ȘI în tasks (veziv-tasks), altfel tasks răspunde 401
+    const serviceSecret =
+      process.env.SERVICE_SECRET || "default-service-secret";
+    const hasCustomSecret = !!process.env.SERVICE_SECRET;
+    console.log(
+      `📤 [MANAGER PAYOUT TRIGGER] Apel tasks: ${tasksCronPath} (work_location_id=${workLocationId}, work_date=${revenueDate}), x-service-secret: ${hasCustomSecret ? "din env" : "implicit"}`,
+    );
+    axios
+      .post(
+        tasksCronPath,
+        {
+          work_location_id: workLocationId,
+          work_date: revenueDate,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-service": "locations",
+            "x-service-secret": serviceSecret,
+          },
+        },
+      )
+      .then((res) => {
+        const data = res.data ?? {};
+        if (data.ok && data.created) {
+          console.log(
+            `✅ [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} → manager_daily_payout creat locație ${workLocationId}, data ${revenueDate}: puncte=${data.total_points}, puncte_manager=${data.amount}`,
+          );
+        } else {
+          console.log(
+            `📋 [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} – răspuns tasks: ok=${data.ok}, created=${data.created}, message=${data.message ?? "—"}`,
+          );
+        }
+      })
+      .catch((err) => {
+        const status = err?.response?.status;
+        const body = err?.response?.data;
+        console.error(
+          `❌ [MANAGER PAYOUT TRIGGER] Eroare apel tasks manager-daily-payout pentru încasare ${revenueId}: status=${status ?? "N/A"}, body=${JSON.stringify(body ?? {})}, message=${err?.message ?? err}`,
+        );
+      });
   }
 
   async listRevenue(
@@ -1431,23 +1527,13 @@ export class LocationsService {
       revenue as WorkLocationRevenue,
     );
 
-    // Trigger bonus calculation when revenue becomes approved
-    // IMPORTANT: Calculate bonuses based on revenue_date (date when revenue was created),
-    // NOT the approval date. If revenue is approved tomorrow, bonuses are still calculated for revenue_date.
+    // Trigger bonus calculation and manager_daily_payout when revenue becomes approved
     if (shouldCalculateBonuses && revenueDate) {
-      console.log(
-        `🔔 [BONUS TRIGGER] Revenue ${revenueId} approved. Calculating bonuses for revenue_date: ${revenueDate} (date of revenue, not approval date)`,
-      );
-      // Calculate bonuses asynchronously (don't block the response)
-      this.calculateEmployeeBonusesForDate(
+      this.triggerBonusAndManagerPayoutOnApprovedRevenue(
+        revenueId,
         revenue.work_location_id,
         revenueDate,
-      ).catch((err) => {
-        console.error(
-          `❌ [BONUS TRIGGER] Error calculating bonuses for revenue ${revenueId}:`,
-          err,
-        );
-      });
+      );
     }
 
     return savedRevenue;
@@ -1499,17 +1585,24 @@ export class LocationsService {
       // fallback_revenue_per_point is no longer in the entity, use 0 as default fallback
       const fallback = 0;
 
-      // Get all employees from this location
+      // Get all employees from this location (folosește EMPLOYEES_HTTP_URL – în Docker setați ex. http://employees:3001)
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://giurom.bitap.ro:3001";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+      const employeesEndpoint = `${employeesUrl}/employees/locations/${locationId}/employees`;
       let employees: any[] = [];
+      const serviceSecret =
+        process.env.SERVICE_SECRET || "default-service-secret";
       try {
-        const response = await axios.get(
-          `${employeesUrl}/locations/${locationId}/employees`,
-          {
-            headers: { "Content-Type": "application/json" },
-          },
+        console.log(
+          `🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`,
         );
+        const response = await axios.get(employeesEndpoint, {
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-service": "locations",
+            "x-service-secret": serviceSecret,
+          },
+        });
         employees = Array.isArray(response.data)
           ? response.data
           : Array.isArray(response.data?.data)
@@ -1520,8 +1613,8 @@ export class LocationsService {
         );
       } catch (error) {
         console.error(
-          `❌ [BONUS CALC] Failed to fetch employees for location ${locationId}:`,
-          error,
+          `❌ [BONUS CALC] Failed to fetch employees for location ${locationId} (URL: ${employeesEndpoint}). Set EMPLOYEES_HTTP_URL dacă locations și employees sunt în rețele diferite (ex. Docker: http://nume-serviciu-employees:3001):`,
+          error?.message ?? error,
         );
         return;
       }

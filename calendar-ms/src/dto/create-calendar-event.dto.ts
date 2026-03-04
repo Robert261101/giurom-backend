@@ -80,4 +80,10 @@ export class CreateCalendarEventDto {
   @IsNumber({}, { message: 'ID-ul creatorului trebuie să fie un număr' })
   @IsPositive({ message: 'ID-ul creatorului trebuie să fie pozitiv' })
   created_by: number;
+
+  @ApiProperty({ description: 'ID locație – evenimentul este vizibil doar pentru această locație', example: 1, required: false })
+  @IsOptional()
+  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
+  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  location_id?: number;
 }

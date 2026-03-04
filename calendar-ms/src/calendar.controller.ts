@@ -127,6 +127,7 @@ export class CalendarController {
   @ApiQuery({ name: 'category', required: false, description: 'Categoria evenimentelor' })
   @ApiQuery({ name: 'created_by', required: false, description: 'ID-ul creatorului evenimentelor' })
   @ApiQuery({ name: 'search', required: false, description: 'Căutare în titlu sau descriere' })
+  @ApiQuery({ name: 'location_id', required: false, description: 'Filtrare după locație – doar evenimente ale acestei locații' })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista evenimentelor filtrate',

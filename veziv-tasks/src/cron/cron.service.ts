@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull, Raw } from 'typeorm';
+import { ClientProxy } from '@nestjs/microservices';
 import {
   TaskAssignment,
   AssignmentStatus,
@@ -14,7 +15,7 @@ import { ManagerDailyPayout } from '../execution/entity/manager-daily-payout.ent
 import { ExecutionService } from '../execution/execution.service';
 import { AssignmentService } from '../assignment/assignment.service';
 import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, defaultIfEmpty } from 'rxjs';
 
 @Injectable()
 export class CronService {
@@ -36,6 +37,8 @@ export class CronService {
     private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private executionService: ExecutionService,
     private httpService: HttpService,
+    @Inject('NOTIFICATIONS_RMQ')
+    private readonly notificationsClient: ClientProxy,
   ) {}
 
   /**
@@ -114,7 +117,10 @@ export class CronService {
    * @param forDate ziua pentru care se rulează (ex. 18.02.2026); dacă lipsește, se folosește startul zilei curente
    * @param locationId dacă e setat, se finalizează doar sarcinile din această locație (la încasare pe locație)
    */
-  async processActiveTasksForDate(forDate?: Date, locationId?: number): Promise<{
+  async processActiveTasksForDate(
+    forDate?: Date,
+    locationId?: number,
+  ): Promise<{
     completedCount: number;
     totalPointsDeducted: number;
   }> {
@@ -145,7 +151,9 @@ export class CronService {
       { status: AssignmentStatus.SCHEDULED },
     ];
     if (locationId != null) {
-      whereConditions.forEach((c) => { c.location_id = locationId; });
+      whereConditions.forEach((c) => {
+        c.location_id = locationId;
+      });
       this.logger.log(`📍 [complete-day] Filtrare doar locația ${locationId}`);
     }
 
@@ -251,6 +259,13 @@ export class CronService {
             this.logger.log(
               `✅ Awarded ${maxPoints} points to employee ${assignment.assigned_to_id} for postponed task ${assignment.id}`,
             );
+            await this.assignmentService.sendTaskNotificationForEmployee(
+              'assignment.points_awarded',
+              'Puncte câștigate',
+              `Ai primit ${maxPoints} puncte pentru task-ul amânat.`,
+              assignment.id,
+              assignment.assigned_to_id,
+            );
           } else {
             this.logger.log(
               `📋 Task ${assignment.id} has no points - created execution without point award`,
@@ -276,6 +291,13 @@ export class CronService {
             totalPointsDeducted += maxPoints;
             this.logger.log(
               `⚠️ Deducted ${maxPoints} points from employee ${assignment.assigned_to_id} for incomplete task ${assignment.id}`,
+            );
+            await this.assignmentService.sendTaskNotificationForEmployee(
+              'assignment.points_deducted',
+              'Puncte pierdute',
+              `S-au dedus ${maxPoints} puncte pentru task-ul nefinalizat la timp.`,
+              assignment.id,
+              assignment.assigned_to_id,
             );
           } else {
             this.logger.log(
@@ -634,12 +656,14 @@ export class CronService {
     }
 
     if (options?.executionId != null) {
-      const existingLink = await this.employeeDailyTaskPointsRepository.findOne({
-        where: {
-          employee_daily_points_id: dailyPoints.id,
-          task_execution_id: options.executionId,
+      const existingLink = await this.employeeDailyTaskPointsRepository.findOne(
+        {
+          where: {
+            employee_daily_points_id: dailyPoints.id,
+            task_execution_id: options.executionId,
+          },
         },
-      });
+      );
       if (!existingLink) {
         await this.employeeDailyTaskPointsRepository.save(
           this.employeeDailyTaskPointsRepository.create({
@@ -1248,9 +1272,7 @@ export class CronService {
   /**
    * Obține informațiile despre angajați după ID-uri
    */
-  private async getEmployeesByIds(
-    employeeIds: number[],
-  ): Promise<Array<{
+  private async getEmployeesByIds(employeeIds: number[]): Promise<Array<{
     id: number;
     first_name: string;
     last_name: string;
@@ -1284,7 +1306,10 @@ export class CronService {
     try {
       await this.processExpiredTasks();
     } catch (error) {
-      this.logger.error('❌ Error in expired task reassignment cron job:', error);
+      this.logger.error(
+        '❌ Error in expired task reassignment cron job:',
+        error,
+      );
     }
   }
 
@@ -1360,6 +1385,8 @@ export class CronService {
         if (!assignment.assigned_to_id) continue;
         // Nu mai sărim task-urile de grup FCFS la expirare: se realochează la un angajat random din pontaj (fără manager)
         if ((assignment as any).reallocation_attempted_at != null) continue;
+        // Dacă angajatul a făcut deja realocarea manuală, nu se mai face și automat (o singură realocare: fie automată, fie manuală)
+        if ((assignment as any).reallocation_trigger === 'employee') continue;
 
         // Doar șabloanele recurente (părinte) nu se realochează; copiii recurenți (parent_recurrence_id setat) pot fi amânați și realocați
         const isRecurringParent =
@@ -1372,7 +1399,8 @@ export class CronService {
 
         // Dacă task-ul permite amânare și nu a fost amânat încă, amânare automată (due_date += minute); realocarea după noul termen
         try {
-          const postponed = await this.assignmentService.autoPostponeExpiredTask(assignment);
+          const postponed =
+            await this.assignmentService.autoPostponeExpiredTask(assignment);
           if (postponed) {
             this.logger.log(
               `⏸️ Task ${assignment.id} amânat automat – realocarea va fi după noul termen`,
@@ -1385,6 +1413,14 @@ export class CronService {
           );
         }
 
+        // Realocarea este permisă doar dacă task-ul are permite_realocare !== false
+        if ((assignment as any).permite_realocare === false) {
+          this.logger.log(
+            `⏭️ Task ${assignment.id} expirat dar permite_realocare=false – nu se realochează`,
+          );
+          continue;
+        }
+
         this.logger.log(
           `⏰ Task ${assignment.id} has expired - attempting reallocation (o singură încercare)`,
         );
@@ -1394,7 +1430,13 @@ export class CronService {
         } as any);
 
         try {
-          await this.assignmentService.reallocateAssignment(assignment.id);
+          await this.assignmentService.reallocateAssignment(
+            assignment.id,
+            undefined,
+            true,
+            false,
+            'cron',
+          );
           reassignedCount++;
           this.logger.log(
             `✅ Successfully reallocated expired task ${assignment.id}`,
@@ -1748,6 +1790,179 @@ export class CronService {
   }
 
   /**
+   * Calculează și înregistrează plata managerului pentru o locație și o dată.
+   * Apelat la aprobarea încasării (trigger) sau din cron zilnic.
+   * Sumă punctele angajaților din ziua respectivă, găsește managerul pontat în departamentul "Manager",
+   * aplică manager_percent din WorkLocation_ManagerConfig: amount = total_points * manager_percent / 100.
+   */
+  async processManagerDailyPayoutForLocationAndDate(
+    workLocationId: number,
+    dateStr: string,
+  ): Promise<{
+    ok: boolean;
+    created?: boolean;
+    total_points?: number;
+    amount?: number;
+    manager_employee_id?: number;
+    message?: string;
+  }> {
+    const normalizedDate = dateStr
+      .toString()
+      .trim()
+      .split(' ')[0]
+      .split('T')[0];
+    const workDate = new Date(normalizedDate + 'T12:00:00');
+
+    const locationsUrl =
+      process.env.LOCATIONS_HTTP_URL || 'http://localhost:3002';
+    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const headers = {
+      'x-internal-service': 'veziv-tasks',
+      'x-service-secret': secret,
+      'x-api-key': secret,
+      'Content-Type': 'application/json',
+    } as Record<string, string>;
+
+    try {
+      const existing = await this.managerDailyPayoutRepository.findOne({
+        where: {
+          work_location_id: workLocationId,
+          work_date: workDate,
+        } as any,
+      });
+      if (existing) {
+        this.logger.log(
+          `⏭️ [Manager Payout] Locația ${workLocationId} – deja procesat pentru ${normalizedDate}`,
+        );
+        return { ok: true, created: false };
+      }
+
+      const totalPointsResult = await this.employeeDailyTaskPointsRepository
+        .createQueryBuilder('edtp')
+        .innerJoin(
+          EmployeeDailyPoints,
+          'edp',
+          'edtp.employee_daily_points_id = edp.id',
+        )
+        .innerJoin(TaskExecution, 'te', 'edtp.task_execution_id = te.id')
+        .where('edp.work_date = :date', { date: normalizedDate })
+        .andWhere('te.location_id = :locId', { locId: workLocationId })
+        .select('COALESCE(SUM(edtp.points_awarded), 0)', 'total')
+        .getRawOne();
+      const totalPoints = Number(totalPointsResult?.total ?? 0);
+
+      // Puncte scăzute (sarcinile anulate / nefinalizate) – angajați care au avut execuții la această locație în ziua respectivă
+      const employeeIdsAtLocation = await this.employeeDailyTaskPointsRepository
+        .createQueryBuilder('edtp')
+        .innerJoin(
+          EmployeeDailyPoints,
+          'edp',
+          'edtp.employee_daily_points_id = edp.id',
+        )
+        .innerJoin(TaskExecution, 'te', 'edtp.task_execution_id = te.id')
+        .where('edp.work_date = :date', { date: normalizedDate })
+        .andWhere('te.location_id = :locId', { locId: workLocationId })
+        .select('edp.employee_id', 'employee_id')
+        .distinct(true)
+        .getRawMany();
+      const ids = (employeeIdsAtLocation || [])
+        .map((r) => (r as any).employee_id)
+        .filter(Boolean);
+      let pointsDeducted = 0;
+      if (ids.length > 0) {
+        const deductedResult = await this.employeeDailyTaskPointsRepository
+          .createQueryBuilder('edtp')
+          .innerJoin(
+            EmployeeDailyPoints,
+            'edp',
+            'edtp.employee_daily_points_id = edp.id',
+          )
+          .where('edp.work_date = :date', { date: normalizedDate })
+          .andWhere('edp.employee_id IN (:...ids)', { ids })
+          .andWhere('edtp.points_awarded < 0')
+          .select('COALESCE(SUM(edtp.points_awarded), 0)', 'deducted')
+          .getRawOne();
+        pointsDeducted = Number(deductedResult?.deducted ?? 0);
+      }
+
+      if (totalPoints <= 0) {
+        this.logger.log(
+          `⏭️ [Manager Payout] Locația ${workLocationId} – ${normalizedDate}: puncte_sarcini_finalizate=0, puncte_sarcinile_anulate=${pointsDeducted}, zero puncte pentru calcul manager`,
+        );
+        return { ok: true, created: false, message: 'no_points' };
+      }
+
+      let managerConfig: { manager_percent?: number } | null = null;
+      try {
+        const res = await firstValueFrom(
+          this.httpService.get(
+            `${locationsUrl}/locations/${workLocationId}/manager-config`,
+            { headers },
+          ),
+        );
+        managerConfig = res?.data ?? null;
+      } catch (e) {
+        this.logger.warn(
+          `⚠️ [Manager Payout] Locația ${workLocationId} – manager-config: ${e?.message || e}`,
+        );
+        return { ok: false, message: 'manager_config_failed' };
+      }
+      const managerPercent = Number(managerConfig?.manager_percent ?? 0);
+      if (managerPercent <= 0) {
+        this.logger.log(
+          `⏭️ [Manager Payout] Locația ${workLocationId} – manager_percent 0 sau lipsă`,
+        );
+        return { ok: true, created: false, message: 'no_manager_percent' };
+      }
+
+      // Folosim aceeași logică ca în assignment (getManagerEmployeeIdsForLocationAtDateTime):
+      // API locations + fallback la DB locations pentru departament Manager, apoi shifts din attendance cu department_id.
+      const workDateAtNoon = new Date(normalizedDate + 'T12:00:00');
+      const managerIds =
+        await this.assignmentService.getManagerEmployeeIdsForLocationAtDateTime(
+          workLocationId,
+          workDateAtNoon,
+        );
+      const managerEmployeeId = managerIds.length > 0 ? managerIds[0] : null;
+      if (!managerEmployeeId) {
+        this.logger.log(
+          `⏭️ [Manager Payout] Locația ${workLocationId} – niciun manager pontat pe ${normalizedDate}`,
+        );
+        return { ok: true, created: false, message: 'no_manager_shift' };
+      }
+
+      const amount = totalPoints * (managerPercent / 100);
+      const managerPoints = totalPoints * (managerPercent / 100);
+
+      await this.managerDailyPayoutRepository.save({
+        work_location_id: workLocationId,
+        work_date: workDate,
+        manager_employee_id: managerEmployeeId,
+        total_points: totalPoints,
+        manager_points: managerPoints,
+        amount,
+      } as any);
+
+      // Puncte manager doar în manager_daily_payout (nu și în Employee_Daily_Task_Points) – sursă unică pentru rapoarte
+      this.logger.log(
+        `✅ [Manager Payout / Încasare] Locația ${workLocationId} – ${normalizedDate}: puncte_sarcini_finalizate=${totalPoints}, puncte_sarcinile_anulate=${pointsDeducted}, puncte_manager=${managerPoints.toFixed(2)} (${managerPercent}% din ${totalPoints}) → angajat ${managerEmployeeId}`,
+      );
+      return {
+        ok: true,
+        created: true,
+        total_points: totalPoints,
+        amount,
+        manager_employee_id: managerEmployeeId,
+      };
+    } catch (err) {
+      this.logger.error(
+        `❌ [Manager Payout] Locația ${workLocationId} – ${normalizedDate}: ${err?.message || err}`,
+      );
+      return { ok: false, message: String(err?.message || err) };
+    }
+  }
+
+  /**
    * Cron zilnic: calculează și înregistrează plățile managerilor pe baza punctelor angajaților.
    * Rulează la 01:00 pentru ziua anterioară.
    * Pentru fiecare locație cu puncte: sumă puncte din employee_daily_task_points, găsește managerul
@@ -1759,18 +1974,6 @@ export class CronService {
     workDate.setDate(workDate.getDate() - 1);
     const dateStr = workDate.toISOString().split('T')[0];
     this.logger.log(`📋 [Manager Payout] Start pentru data ${dateStr}`);
-
-    const locationsUrl =
-      process.env.LOCATIONS_HTTP_URL || 'http://localhost:3002';
-    const attendanceBase =
-      process.env.ATTENDANCE_HTTP_URL || 'http://giurom.bitap.ro:3016';
-    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
-    const headers = {
-      'x-internal-service': 'veziv-tasks',
-      'x-service-secret': secret,
-      'x-api-key': secret,
-      'Content-Type': 'application/json',
-    } as Record<string, string>;
 
     const locationIds = await this.executionRepository
       .createQueryBuilder('te')
@@ -1796,136 +1999,145 @@ export class CronService {
       );
 
     for (const workLocationId of locationIds) {
-      try {
-        const existing = await this.managerDailyPayoutRepository.findOne({
-          where: {
-            work_location_id: workLocationId,
-            work_date: workDate,
-          } as any,
-        });
-        if (existing) {
-          this.logger.log(
-            `⏭️ [Manager Payout] Locația ${workLocationId} – deja procesat pentru ${dateStr}`,
-          );
-          continue;
-        }
-
-        const totalPointsResult = await this.employeeDailyTaskPointsRepository
-          .createQueryBuilder('edtp')
-          .innerJoin(
-            EmployeeDailyPoints,
-            'edp',
-            'edtp.employee_daily_points_id = edp.id',
-          )
-          .innerJoin(TaskExecution, 'te', 'edtp.task_execution_id = te.id')
-          .where('edp.work_date = :date', { date: dateStr })
-          .andWhere('te.location_id = :locId', { locId: workLocationId })
-          .select('COALESCE(SUM(edtp.points_awarded), 0)', 'total')
-          .getRawOne();
-        const totalPoints = Number(totalPointsResult?.total ?? 0);
-        if (totalPoints <= 0) continue;
-
-        let managerConfig: { manager_percent?: number } | null = null;
-        try {
-          const res = await firstValueFrom(
-            this.httpService.get(
-              `${locationsUrl}/locations/${workLocationId}/manager-config`,
-              { headers },
-            ),
-          );
-          managerConfig = res?.data ?? null;
-        } catch (e) {
-          this.logger.warn(
-            `⚠️ [Manager Payout] Locația ${workLocationId} – manager-config: ${e?.message || e}`,
-          );
-          continue;
-        }
-        const managerPercent = Number(managerConfig?.manager_percent ?? 0);
-        if (managerPercent <= 0) continue;
-
-        let departments: Array<{ id: number; name: string }> = [];
-        try {
-          const res = await firstValueFrom(
-            this.httpService.get(
-              `${locationsUrl}/locations/${workLocationId}/departments`,
-              { headers },
-            ),
-          );
-          departments = Array.isArray(res?.data) ? res.data : [];
-        } catch (e) {
-          this.logger.warn(
-            `⚠️ [Manager Payout] Locația ${workLocationId} – departments: ${e?.message || e}`,
-          );
-          continue;
-        }
-        const managerDept = departments.find(
-          (d) =>
-            String(d?.name ?? '')
-              .toLowerCase()
-              .trim() === 'manager',
-        );
-        if (!managerDept) {
-          this.logger.log(
-            `⏭️ [Manager Payout] Locația ${workLocationId} – nu există departament Manager`,
-          );
-          continue;
-        }
-
-        let managerEmployeeId: number | null = null;
-        try {
-          const shiftsRes = await firstValueFrom(
-            this.httpService.get(
-              `${attendanceBase}/attendance/shifts?work_location_id=${workLocationId}&limit=1000`,
-              {
-                headers,
-              },
-            ),
-          );
-          let allShifts: any[] = [];
-          if (Array.isArray(shiftsRes.data)) allShifts = shiftsRes.data;
-          else if (shiftsRes.data?.data && Array.isArray(shiftsRes.data.data))
-            allShifts = shiftsRes.data.data;
-          const dayShifts = allShifts.filter((s: any) => {
-            const d = s.start_datetime
-              ? new Date(s.start_datetime).toISOString().split('T')[0]
-              : '';
-            return (
-              d === dateStr &&
-              Number(s.department_id) === Number(managerDept.id)
-            );
-          });
-          if (dayShifts.length > 0) {
-            managerEmployeeId = Number(dayShifts[0].employee_id) || null;
-          }
-        } catch (e) {
-          this.logger.warn(
-            `⚠️ [Manager Payout] Locația ${workLocationId} – shifts: ${e?.message || e}`,
-          );
-        }
-        if (!managerEmployeeId) {
-          this.logger.log(
-            `⏭️ [Manager Payout] Locația ${workLocationId} – niciun manager pontat pe ${dateStr}`,
-          );
-          continue;
-        }
-
-        const amount = totalPoints * (managerPercent / 100);
-        await this.managerDailyPayoutRepository.save({
-          work_location_id: workLocationId,
-          work_date: workDate,
-          manager_employee_id: managerEmployeeId,
-          total_points: totalPoints,
-          amount,
-        } as any);
-        this.logger.log(
-          `✅ [Manager Payout] Locația ${workLocationId} – ${dateStr}: puncte=${totalPoints}, ${managerPercent}% → ${amount.toFixed(2)} → angajat ${managerEmployeeId}`,
-        );
-      } catch (err) {
-        this.logger.error(
-          `❌ [Manager Payout] Locația ${workLocationId}: ${err?.message || err}`,
-        );
-      }
+      await this.processManagerDailyPayoutForLocationAndDate(
+        workLocationId,
+        dateStr,
+      );
     }
     this.logger.log(`📋 [Manager Payout] Finalizat pentru ${dateStr}`);
+  }
+
+  /**
+   * Cron: la fiecare 5 ore verifică documentele expirate din Angajați, Furnizori, Locații, Firme
+   * și trimite notificare.
+   */
+  @Cron('0 */5 * * *') // La minute 0, la fiecare 5 ore (00:00, 05:00, 10:00, 15:00, 20:00)
+  async handleExpiredDocumentsNotification() {
+    this.logger.log(
+      '📄 [Documente expirate] Start verificare documente expirate...',
+    );
+    const baseUrl =
+      process.env.API_GATEWAY_URL ||
+      process.env.LOCATIONS_HTTP_URL ||
+      'http://localhost:3002';
+    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const headers = {
+      'x-internal-service': 'veziv-tasks',
+      'x-service-secret': secret,
+      'x-api-key': secret,
+      'Content-Type': 'application/json',
+    } as Record<string, string>;
+
+    const employeesUrl = process.env.EMPLOYEES_HTTP_URL || baseUrl;
+    const locationsUrl = process.env.LOCATIONS_HTTP_URL || baseUrl;
+    const companiesUrl = process.env.COMPANY_HTTP_URL || baseUrl;
+    const suppliersUrl = process.env.SUPPLIERS_HTTP_URL || baseUrl;
+
+    const results: {
+      source: string;
+      count: number;
+      items: Array<{
+        id: number;
+        name?: string;
+        expire_date?: string;
+        [k: string]: any;
+      }>;
+    }[] = [];
+
+    try {
+      const toList = (v: any): any[] =>
+        Array.isArray(v) ? v : Array.isArray(v?.data) ? v.data : [];
+      const [empRes, locRes, compRes, suppRes] = await Promise.allSettled([
+        firstValueFrom(
+          this.httpService.get(`${employeesUrl}/employees/files/expired`, {
+            headers,
+          }),
+        ).then((r) => r.data),
+        firstValueFrom(
+          this.httpService.get(`${locationsUrl}/locations/files/expired`, {
+            headers,
+          }),
+        ).then((r) => r.data),
+        firstValueFrom(
+          this.httpService.get(`${companiesUrl}/companies/documents/expired`, {
+            headers,
+          }),
+        ).then((r) => r.data),
+        firstValueFrom(
+          this.httpService.get(`${suppliersUrl}/suppliers/documents/expired`, {
+            headers,
+          }),
+        ).then((r) => r.data),
+      ]);
+
+      const empList = empRes.status === 'fulfilled' ? toList(empRes.value) : [];
+      const locList = locRes.status === 'fulfilled' ? toList(locRes.value) : [];
+      const compList =
+        compRes.status === 'fulfilled' ? toList(compRes.value) : [];
+      const suppList =
+        suppRes.status === 'fulfilled' ? toList(suppRes.value) : [];
+
+      if (empList.length)
+        results.push({
+          source: 'Angajați',
+          count: empList.length,
+          items: empList,
+        });
+      if (locList.length)
+        results.push({
+          source: 'Locații',
+          count: locList.length,
+          items: locList,
+        });
+      if (compList.length)
+        results.push({
+          source: 'Firme',
+          count: compList.length,
+          items: compList,
+        });
+      if (suppList.length)
+        results.push({
+          source: 'Furnizori',
+          count: suppList.length,
+          items: suppList,
+        });
+
+      const total = results.reduce((s, r) => s + r.count, 0);
+      if (total === 0) {
+        this.logger.log('📄 [Documente expirate] Niciun document expirat.');
+        return;
+      }
+
+      this.logger.log(
+        `📄 [Documente expirate] Total: ${total} (Angajați: ${empList.length}, Locații: ${locList.length}, Firme: ${compList.length}, Furnizori: ${suppList.length})`,
+      );
+
+      const title = 'Documente expirate';
+      const description = results
+        .map((r) => `${r.source}: ${r.count} document(e)`)
+        .join('; ');
+      const payload = {
+        type: 'document_expired',
+        title,
+        description,
+        entity_type: 'document',
+        entity_id: null,
+        metadata: { sources: results, total },
+        priority: 'high' as const,
+        target_url: '/rapoarte',
+      };
+      await firstValueFrom(
+        this.notificationsClient
+          .emit({ cmd: 'tasks.notification' }, payload)
+          .pipe(defaultIfEmpty(undefined)),
+      );
+      this.logger.log(
+        `📄 [Documente expirate] Notificare trimisă: ${title} – ${description}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `❌ [Documente expirate] Eroare: ${err?.message || err}`,
+      );
+    }
   }
 }

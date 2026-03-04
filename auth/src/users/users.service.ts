@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -34,16 +38,21 @@ export class UsersService {
   async create(createUserDto: CreateUserDto): Promise<User> {
     // Verifică dacă există deja un utilizator cu acest id_employee
     const existingUser = await this.userRepository.findOne({
-      where: { id_employee: createUserDto.id_employee }
+      where: { id_employee: createUserDto.id_employee },
     });
 
     if (existingUser) {
-      throw new ConflictException(`Utilizatorul cu id_employee ${createUserDto.id_employee} există deja`);
+      throw new ConflictException(
+        `Utilizatorul cu id_employee ${createUserDto.id_employee} există deja`,
+      );
     }
 
     // Hash-uiește parola
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(createUserDto.password, saltRounds);
+    const hashedPassword = await bcrypt.hash(
+      createUserDto.password,
+      saltRounds,
+    );
 
     // Creează utilizatorul
     const user = this.userRepository.create({
@@ -62,14 +71,16 @@ export class UsersService {
    */
   async findByEmployeeId(id_employee: number): Promise<User | null> {
     return await this.userRepository.findOne({
-      where: { id_employee }
+      where: { id_employee },
     });
   }
 
   /**
    * Găsește un utilizator după id_employee cu parola inclusă
    */
-  async findByEmployeeIdWithPassword(id_employee: number): Promise<User | null> {
+  async findByEmployeeIdWithPassword(
+    id_employee: number,
+  ): Promise<User | null> {
     return await this.userRepository
       .createQueryBuilder('user')
       .addSelect('user.password')
@@ -78,32 +89,37 @@ export class UsersService {
       .getOne();
   }
 
-
   /**
    * Găsește un utilizator după ID
    */
   async findOne(id: number): Promise<User | null> {
     return await this.userRepository.findOne({
-      where: { id }
+      where: { id },
     });
   }
 
   /**
-   * Găsește toți utilizatorii activi
+   * Găsește utilizatorii. Dacă includeInactive este true, returnează toți (inclusiv dezactivați).
    */
-  async findAll(): Promise<User[]> {
+  async findAll(includeInactive = false): Promise<User[]> {
     return await this.userRepository.find({
-      where: { is_active: true }
+      where: includeInactive ? {} : { is_active: true },
+      order: { id: 'ASC' },
     });
   }
 
   /**
    * Actualizează parola unui utilizator
    */
-  async updatePassword(id_employee: number, newPassword: string): Promise<User> {
+  async updatePassword(
+    id_employee: number,
+    newPassword: string,
+  ): Promise<User> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
 
     const saltRounds = 10;
@@ -111,12 +127,14 @@ export class UsersService {
 
     await this.userRepository.update(
       { id_employee },
-      { password: hashedPassword }
+      { password: hashedPassword },
     );
 
     const updatedUser = await this.findByEmployeeId(id_employee);
     if (!updatedUser) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
     return updatedUser;
   }
@@ -124,10 +142,15 @@ export class UsersService {
   /**
    * Actualizează imaginea de profil a unui utilizator
    */
-  async updateProfileImage(id_employee: number, profileImageUrl: string): Promise<User> {
+  async updateProfileImage(
+    id_employee: number,
+    profileImageUrl: string,
+  ): Promise<User> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
 
     // Handle profile image URL properly
@@ -145,12 +168,14 @@ export class UsersService {
 
     await this.userRepository.update(
       { id_employee },
-      { profile_image: processedProfileImageUrl }
+      { profile_image: processedProfileImageUrl },
     );
 
     const updatedUser = await this.findByEmployeeId(id_employee);
     if (!updatedUser) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
     return updatedUser;
   }
@@ -158,20 +183,24 @@ export class UsersService {
   /**
    * Actualizează statusul activ al unui utilizator
    */
-  async updateActiveStatus(id_employee: number, is_active: boolean): Promise<User> {
+  async updateActiveStatus(
+    id_employee: number,
+    is_active: boolean,
+  ): Promise<User> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
 
-    await this.userRepository.update(
-      { id_employee },
-      { is_active }
-    );
+    await this.userRepository.update({ id_employee }, { is_active });
 
     const updatedUser = await this.findByEmployeeId(id_employee);
     if (!updatedUser) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
     return updatedUser;
   }
@@ -182,17 +211,18 @@ export class UsersService {
   async update2FAStatus(id_employee: number, is_2fa: boolean): Promise<User> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
 
-    await this.userRepository.update(
-      { id_employee },
-      { is_2fa }
-    );
+    await this.userRepository.update({ id_employee }, { is_2fa });
 
     const updatedUser = await this.findByEmployeeId(id_employee);
     if (!updatedUser) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
     return updatedUser;
   }
@@ -200,7 +230,10 @@ export class UsersService {
   /**
    * Verifică parola unui utilizator
    */
-  async validatePassword(id_employee: number, password: string): Promise<boolean> {
+  async validatePassword(
+    id_employee: number,
+    password: string,
+  ): Promise<boolean> {
     const user = await this.findByEmployeeIdWithPassword(id_employee);
     if (!user) {
       return false;
@@ -212,20 +245,28 @@ export class UsersService {
   /**
    * Actualizează profilul complet al unui utilizator
    */
-  async updateProfile(id_employee: number, updateData: UpdateUserDto): Promise<User> {
+  async updateProfile(
+    id_employee: number,
+    updateData: UpdateUserDto,
+  ): Promise<User> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
 
     // Pregătește datele pentru actualizare
     const updateFields: any = {};
-    
+
     if (updateData.password) {
       const saltRounds = 10;
-      updateFields.password = await bcrypt.hash(updateData.password, saltRounds);
+      updateFields.password = await bcrypt.hash(
+        updateData.password,
+        saltRounds,
+      );
     }
-    
+
     // Handle profile image URL properly
     if (updateData.profile_image !== undefined) {
       let profileImageUrl = updateData.profile_image;
@@ -242,15 +283,19 @@ export class UsersService {
       // For any other URL (including empty/null), keep as is
       updateFields.profile_image = profileImageUrl;
     }
-    
-    if (updateData.is_active !== undefined) updateFields.is_active = updateData.is_active;
-    if (updateData.is_2fa !== undefined) updateFields.is_2fa = updateData.is_2fa;
+
+    if (updateData.is_active !== undefined)
+      updateFields.is_active = updateData.is_active;
+    if (updateData.is_2fa !== undefined)
+      updateFields.is_2fa = updateData.is_2fa;
 
     await this.userRepository.update({ id_employee }, updateFields);
 
     const updatedUser = await this.findByEmployeeId(id_employee);
     if (!updatedUser) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
     return updatedUser;
   }
@@ -261,10 +306,10 @@ export class UsersService {
   async getUserRoles(userId: number): Promise<Role[]> {
     const userRoles = await this.userRoleRepository.find({
       where: { userId },
-      relations: ['role']
+      relations: ['role'],
     });
 
-    return userRoles.map(userRole => userRole.role);
+    return userRoles.map((userRole) => userRole.role);
   }
 
   /**
@@ -274,24 +319,25 @@ export class UsersService {
     // First get user roles
     const userRoles = await this.userRoleRepository.find({
       where: { userId },
-      relations: ['role']
+      relations: ['role'],
     });
 
     // Then get role permissions
-    const roleIds = userRoles.map(userRole => userRole.roleId);
+    const roleIds = userRoles.map((userRole) => userRole.roleId);
     if (roleIds.length === 0) {
       return [];
     }
 
     const rolePermissions = await this.rolePermissionRepository.find({
       where: { roleId: In(roleIds) },
-      relations: ['permission']
+      relations: ['permission'],
     });
 
     // Extract unique permissions
-    const permissions = rolePermissions.map(rp => rp.permission);
-    const uniquePermissions = permissions.filter((permission, index, self) => 
-      index === self.findIndex(p => p.id === permission.id)
+    const permissions = rolePermissions.map((rp) => rp.permission);
+    const uniquePermissions = permissions.filter(
+      (permission, index, self) =>
+        index === self.findIndex((p) => p.id === permission.id),
     );
 
     return uniquePermissions;
@@ -311,7 +357,9 @@ export class UsersService {
   /**
    * Get user permissions by employee id
    */
-  async getUserPermissionsByEmployeeId(employeeId: number): Promise<Permission[]> {
+  async getUserPermissionsByEmployeeId(
+    employeeId: number,
+  ): Promise<Permission[]> {
     const user = await this.findByEmployeeId(employeeId);
     if (!user) {
       return [];
@@ -322,7 +370,9 @@ export class UsersService {
   /**
    * Obține roles și permissions pentru un utilizator
    */
-  async getUserRolesAndPermissions(userId: number): Promise<{ roles: string[]; permissions: string[] }> {
+  async getUserRolesAndPermissions(
+    userId: number,
+  ): Promise<{ roles: string[]; permissions: string[] }> {
     try {
       // Obține toate role-urile utilizatorului
       const userRoles = await this.userRoleRepository
@@ -331,11 +381,11 @@ export class UsersService {
         .where('ur.userId = :userId', { userId })
         .getMany();
 
-      const roles = userRoles.map(ur => ur.role.name);
+      const roles = userRoles.map((ur) => ur.role.name);
 
       // Obține toate permisiunile pentru role-urile utilizatorului
-      const roleIds = userRoles.map(ur => ur.roleId);
-      
+      const roleIds = userRoles.map((ur) => ur.roleId);
+
       let permissions: string[] = [];
       if (roleIds.length > 0) {
         const rolePermissions = await this.rolePermissionRepository
@@ -344,7 +394,7 @@ export class UsersService {
           .where('rp.roleId IN (:...roleIds)', { roleIds })
           .getMany();
 
-        permissions = rolePermissions.map(rp => rp.permission.name);
+        permissions = rolePermissions.map((rp) => rp.permission.name);
       }
 
       return { roles, permissions };
@@ -355,30 +405,75 @@ export class UsersService {
   }
 
   /**
-   * Șterge un utilizator
+   * Șterge un utilizator după id_employee. Șterge mai întâi rolurile din user_roles (FK către users), apoi userul.
    */
   async remove(id_employee: number): Promise<void> {
     const user = await this.findByEmployeeId(id_employee);
     if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${id_employee} nu a fost găsit`,
+      );
     }
+    await this.removeUserAndRoles(user.id, id_employee);
+  }
 
-    await this.userRepository.delete({ id_employee });
+  /**
+   * Șterge un utilizator după user id (users.id). Folosit și intern, după ce user_roles sunt șterse.
+   */
+  async removeByUserId(userId: number): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(
+        `Utilizatorul cu id ${userId} nu a fost găsit`,
+      );
+    }
+    await this.removeUserAndRoles(user.id, undefined);
+  }
+
+  private async removeUserAndRoles(
+    userId: number,
+    id_employee?: number,
+  ): Promise<void> {
+    const userRoles = await this.userRoleRepository.find({
+      where: { userId },
+    });
+    if (userRoles.length > 0) {
+      await this.userRoleRepository.remove(userRoles);
+    }
+    if (id_employee != null) {
+      await this.userRepository.delete({ id_employee });
+    } else {
+      await this.userRepository.delete({ id: userId });
+    }
   }
 
   /**
    * Găsește un angajat după email din microserviciul employees
    */
-  async findEmployeeByEmail(email: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
+  async findEmployeeByEmail(email: string): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    phone: string;
+    profile_image: string | null;
+    birth_date: string | null;
+    department_default_id: number | null;
+    work_location_default_id: number | null;
+  } | null> {
     try {
       // Add internal service authentication header
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3012/employees/email/${encodeURIComponent(email)}`, {
-          headers: {
-            'X-Internal-Service': 'auth-service',
-            'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
-          }
-        })
+        this.httpService.get(
+          `http://localhost:3012/employees/email/${encodeURIComponent(email)}`,
+          {
+            headers: {
+              'X-Internal-Service': 'auth-service',
+              'X-Service-Secret':
+                process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          },
+        ),
       );
       const data = response.data;
       // Ensure the response includes the required fields, defaulting to null if missing
@@ -399,15 +494,26 @@ export class UsersService {
   /**
    * Găsește un employee după ID
    */
-  async findEmployeeById(employeeId: number): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
+  async findEmployeeById(employeeId: number): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    phone: string;
+    profile_image: string | null;
+    birth_date: string | null;
+    department_default_id: number | null;
+    work_location_default_id: number | null;
+  } | null> {
     try {
       const response = await firstValueFrom(
         this.httpService.get(`http://localhost:3012/employees/${employeeId}`, {
           headers: {
             'X-Internal-Service': 'auth-service',
-            'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
-          }
-        })
+            'X-Service-Secret':
+              process.env.SERVICE_SECRET || 'default-service-secret',
+          },
+        }),
       );
       const employee = response.data?.data || response.data;
       if (!employee) {
@@ -421,25 +527,48 @@ export class UsersService {
         phone: employee.phone || '',
         profile_image: employee.profile_image || employee.profileImage || null,
         birth_date: employee.birth_date || employee.birthDate || null,
-        department_default_id: employee.department_default_id || employee.departmentDefaultId || null,
-        work_location_default_id: employee.work_location_default_id || employee.workLocationDefaultId || null
+        department_default_id:
+          employee.department_default_id ||
+          employee.departmentDefaultId ||
+          null,
+        work_location_default_id:
+          employee.work_location_default_id ||
+          employee.workLocationDefaultId ||
+          null,
       };
     } catch (error) {
-      console.error(`Eroare la găsirea employee-ului cu ID ${employeeId}:`, error);
+      console.error(
+        `Eroare la găsirea employee-ului cu ID ${employeeId}:`,
+        error,
+      );
       return null;
     }
   }
 
-  async findEmployeeByPhone(phone: string): Promise<{ id: number; email: string; first_name: string; last_name: string; phone: string; profile_image: string | null; birth_date: string | null; department_default_id: number | null; work_location_default_id: number | null } | null> {
+  async findEmployeeByPhone(phone: string): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    phone: string;
+    profile_image: string | null;
+    birth_date: string | null;
+    department_default_id: number | null;
+    work_location_default_id: number | null;
+  } | null> {
     try {
       // Add internal service authentication header
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3012/employees/phone/${encodeURIComponent(phone)}`, {
-          headers: {
-            'X-Internal-Service': 'auth-service',
-            'X-Service-Secret': process.env.SERVICE_SECRET || 'default-service-secret'
-          }
-        })
+        this.httpService.get(
+          `http://localhost:3012/employees/phone/${encodeURIComponent(phone)}`,
+          {
+            headers: {
+              'X-Internal-Service': 'auth-service',
+              'X-Service-Secret':
+                process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          },
+        ),
       );
       const data = response.data;
       // Ensure the response includes the required fields, defaulting to null if missing
@@ -475,7 +604,11 @@ export class UsersService {
   }
 
   // ===== PERMISSIONS METHODS =====
-  async createPermission(createPermissionDto: { name: string; group?: string; description?: string }): Promise<Permission> {
+  async createPermission(createPermissionDto: {
+    name: string;
+    group?: string;
+    description?: string;
+  }): Promise<Permission> {
     const permission = this.permissionRepository.create(createPermissionDto);
     return await this.permissionRepository.save(permission);
   }
@@ -485,7 +618,10 @@ export class UsersService {
   }
 
   // ===== ROLES CRUD METHODS =====
-  async createRole(createRoleDto: { name: string; description?: string }): Promise<Role> {
+  async createRole(createRoleDto: {
+    name: string;
+    description?: string;
+  }): Promise<Role> {
     const role = this.roleRepository.create(createRoleDto);
     return await this.roleRepository.save(role);
   }
@@ -502,7 +638,10 @@ export class UsersService {
     return role;
   }
 
-  async updateRole(id: number, updateRoleDto: { name?: string; description?: string }): Promise<Role> {
+  async updateRole(
+    id: number,
+    updateRoleDto: { name?: string; description?: string },
+  ): Promise<Role> {
     const role = await this.getRoleById(id);
     Object.assign(role, updateRoleDto);
     return await this.roleRepository.save(role);
@@ -514,8 +653,13 @@ export class UsersService {
   }
 
   // ===== ROLE_PERMISSIONS CRUD METHODS =====
-  async createRolePermission(createRolePermissionDto: { roleId: number; permissionId: number }): Promise<RolePermission> {
-    const rolePermission = this.rolePermissionRepository.create(createRolePermissionDto);
+  async createRolePermission(createRolePermissionDto: {
+    roleId: number;
+    permissionId: number;
+  }): Promise<RolePermission> {
+    const rolePermission = this.rolePermissionRepository.create(
+      createRolePermissionDto,
+    );
     return await this.rolePermissionRepository.save(rolePermission);
   }
 
@@ -524,20 +668,27 @@ export class UsersService {
   }
 
   async getRolePermissionsByRoleId(roleId: number): Promise<RolePermission[]> {
-    return await this.rolePermissionRepository.find({ 
-      where: { roleId } 
+    return await this.rolePermissionRepository.find({
+      where: { roleId },
     });
   }
 
   async getRolePermissionById(id: number): Promise<RolePermission> {
-    const rolePermission = await this.rolePermissionRepository.findOne({ where: { id } });
+    const rolePermission = await this.rolePermissionRepository.findOne({
+      where: { id },
+    });
     if (!rolePermission) {
-      throw new NotFoundException(`Asocierea rol-permisiune cu ID ${id} nu a fost găsită`);
+      throw new NotFoundException(
+        `Asocierea rol-permisiune cu ID ${id} nu a fost găsită`,
+      );
     }
     return rolePermission;
   }
 
-  async updateRolePermission(id: number, updateRolePermissionDto: { roleId?: number; permissionId?: number }): Promise<RolePermission> {
+  async updateRolePermission(
+    id: number,
+    updateRolePermissionDto: { roleId?: number; permissionId?: number },
+  ): Promise<RolePermission> {
     const rolePermission = await this.getRolePermissionById(id);
     Object.assign(rolePermission, updateRolePermissionDto);
     return await this.rolePermissionRepository.save(rolePermission);
@@ -552,7 +703,9 @@ export class UsersService {
    * Șterge toate permisiunile pentru un rol într-un singur query (bulk delete)
    * Optimizare pentru a evita N+1 queries
    */
-  async deleteRolePermissionsBulk(roleId: number): Promise<{ deleted: number }> {
+  async deleteRolePermissionsBulk(
+    roleId: number,
+  ): Promise<{ deleted: number }> {
     const result = await this.rolePermissionRepository.delete({ roleId });
     return { deleted: result.affected || 0 };
   }
@@ -561,43 +714,55 @@ export class UsersService {
    * Creează multiple asocieri rol-permisiune într-un singur request (bulk insert)
    * Optimizare pentru a evita N+1 queries
    */
-  async createRolePermissionsBulk(roleId: number, permissionIds: number[]): Promise<{ created: number; rolePermissions: RolePermission[] }> {
+  async createRolePermissionsBulk(
+    roleId: number,
+    permissionIds: number[],
+  ): Promise<{ created: number; rolePermissions: RolePermission[] }> {
     if (!permissionIds || permissionIds.length === 0) {
       return { created: 0, rolePermissions: [] };
     }
 
     // Verifică dacă permisiunile există deja pentru acest rol
     const existingRolePermissions = await this.rolePermissionRepository.find({
-      where: { 
+      where: {
         roleId,
-        permissionId: In(permissionIds)
-      }
+        permissionId: In(permissionIds),
+      },
     });
 
-    const existingPermissionIds = new Set(existingRolePermissions.map(rp => rp.permissionId));
-    
+    const existingPermissionIds = new Set(
+      existingRolePermissions.map((rp) => rp.permissionId),
+    );
+
     // Filtrează doar permisiunile care nu există deja
-    const newPermissionIds = permissionIds.filter(permissionId => !existingPermissionIds.has(permissionId));
+    const newPermissionIds = permissionIds.filter(
+      (permissionId) => !existingPermissionIds.has(permissionId),
+    );
 
     if (newPermissionIds.length === 0) {
       return { created: 0, rolePermissions: existingRolePermissions };
     }
 
     // Creează toate asocierile într-un singur bulk insert
-    const rolePermissionsToCreate = newPermissionIds.map(permissionId => 
-      this.rolePermissionRepository.create({ roleId, permissionId })
+    const rolePermissionsToCreate = newPermissionIds.map((permissionId) =>
+      this.rolePermissionRepository.create({ roleId, permissionId }),
     );
 
-    const savedRolePermissions = await this.rolePermissionRepository.save(rolePermissionsToCreate);
+    const savedRolePermissions = await this.rolePermissionRepository.save(
+      rolePermissionsToCreate,
+    );
 
-    return { 
-      created: savedRolePermissions.length, 
-      rolePermissions: [...existingRolePermissions, ...savedRolePermissions]
+    return {
+      created: savedRolePermissions.length,
+      rolePermissions: [...existingRolePermissions, ...savedRolePermissions],
     };
   }
 
   // ===== USER_ROLES CRUD METHODS =====
-  async createUserRole(createUserRoleDto: { userId: number; roleId: number }): Promise<UserRole> {
+  async createUserRole(createUserRoleDto: {
+    userId: number;
+    roleId: number;
+  }): Promise<UserRole> {
     const userRole = this.userRoleRepository.create(createUserRoleDto);
     return await this.userRoleRepository.save(userRole);
   }
@@ -609,12 +774,17 @@ export class UsersService {
   async getUserRoleById(id: number): Promise<UserRole> {
     const userRole = await this.userRoleRepository.findOne({ where: { id } });
     if (!userRole) {
-      throw new NotFoundException(`Asocierea utilizator-rol cu ID ${id} nu a fost găsită`);
+      throw new NotFoundException(
+        `Asocierea utilizator-rol cu ID ${id} nu a fost găsită`,
+      );
     }
     return userRole;
   }
 
-  async updateUserRole(id: number, updateUserRoleDto: { userId?: number; roleId?: number }): Promise<UserRole> {
+  async updateUserRole(
+    id: number,
+    updateUserRoleDto: { userId?: number; roleId?: number },
+  ): Promise<UserRole> {
     const userRole = await this.getUserRoleById(id);
     Object.assign(userRole, updateUserRoleDto);
     return await this.userRoleRepository.save(userRole);
@@ -627,13 +797,15 @@ export class UsersService {
 
   async deleteUserRolesByUserId(userId: number): Promise<void> {
     const userRoles = await this.userRoleRepository.find({
-      where: { userId }
+      where: { userId },
     });
-    
+
     if (userRoles.length === 0) {
-      throw new NotFoundException(`Nu s-au găsit roluri pentru utilizatorul cu ID-ul ${userId}`);
+      throw new NotFoundException(
+        `Nu s-au găsit roluri pentru utilizatorul cu ID-ul ${userId}`,
+      );
     }
-    
+
     await this.userRoleRepository.remove(userRoles);
   }
-} 
+}

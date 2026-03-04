@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, defaultIfEmpty } from 'rxjs';
 import { TaskTemplate } from './entity/task-template.entity';
 import { TaskElement } from './entity/task-element.entity';
 import { TemplateLocation } from './entity/template-location.entity';
@@ -30,15 +30,18 @@ export class TemplateService {
   ): Promise<void> {
     try {
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'tasks.notification' }, {
-          type,
-          title,
-          description,
-          entity_id: templateId,
-          entity_type: 'task_template',
-          metadata,
-          priority: 'medium',
-        })
+        this.notificationsClient
+          .emit({ cmd: 'tasks.notification' }, {
+            type,
+            title,
+            description,
+            entity_id: templateId,
+            entity_type: 'task_template',
+            metadata,
+            priority: 'medium',
+            target_url: '/sarcini/new',
+          })
+          .pipe(defaultIfEmpty(undefined)),
       );
     } catch (error) {
       console.error('Failed to send template notification:', error);

@@ -26,21 +26,19 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Fără permisiuni');
     }
 
-    // Verifică dacă utilizatorul are permisiunea necesară
-    const hasAll = requiredPermissions.every((perm) => (user.permissions as string[]).includes(perm));
-    
-    // Dacă nu are permisiunea, verifică dacă încearcă să vadă propriile date
-    if (!hasAll) {
-      // Verifică dacă este un request pentru propriile date
-      // Poate fi /employees/:id sau /employees/:employeeId/... (pentru locații, etc.)
-      const requestId = request.params?.id || request.params?.employeeId;
-      const userEmployeeId = user.id || user.userId; // id_employee din JWT
-      
-      if (requestId && userEmployeeId && String(requestId) === String(userEmployeeId)) return true;
-      
-      this.logger.warn(`User missing required permissions: ${requiredPermissions.join(', ')}`);
-      throw new ForbiddenException('Permisiuni insuficiente');
-    }
-    return true;
+    // Cel puțin una dintre permisiunile listate (OR), ca în veziv-tasks
+    const hasAny = requiredPermissions.some((perm) => (user.permissions as string[]).includes(perm));
+
+    if (hasAny) return true;
+
+    // Dacă nu are niciuna, verifică dacă încearcă să vadă propriile date
+    // Poate fi /employees/:id sau /employees/:employeeId/... (pentru locații, etc.)
+    const requestId = request.params?.id || request.params?.employeeId;
+    const userEmployeeId = user.id || user.userId; // id_employee din JWT
+
+    if (requestId && userEmployeeId && String(requestId) === String(userEmployeeId)) return true;
+
+    this.logger.warn(`User missing required permissions (need one of): ${requiredPermissions.join(', ')}`);
+    throw new ForbiddenException('Permisiuni insuficiente');
   }
 }

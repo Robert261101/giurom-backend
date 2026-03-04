@@ -102,6 +102,7 @@ export class CalendarService {
       ...dto,
       start_datetime: startDate,
       end_datetime: endDate,
+      location_id: dto.location_id ?? undefined,
     });
 
     const savedEvent = await this.eventRepo.save(event);
@@ -160,6 +161,13 @@ export class CalendarService {
         '(event.title LIKE :search OR event.description LIKE :search)',
         { search: `%${filters.search}%` }
       );
+    }
+
+    // Filtrare după locație – evenimente independente per locație
+    if (filters.location_id != null) {
+      queryBuilder.andWhere('event.location_id = :locationId', {
+        locationId: filters.location_id,
+      });
     }
 
     // Autorizare: utilizatorii pot vedea doar propriile evenimente

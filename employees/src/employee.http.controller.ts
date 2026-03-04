@@ -61,11 +61,11 @@ export class EmployeeHttpController {
 
   @Get()
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions("employees.read")
+  @Permissions("employees.read", "employees.read_own")
   @ApiOperation({
     summary: "Listează toți angajații",
     description:
-      "Returnează o listă paginată cu toți angajații din sistem cu opțiuni de filtrare.",
+      "Returnează o listă paginată cu toți angajații. Cu employees.read_own se returnează doar angajații din locația utilizatorului (location_id obligatoriu sau work_location din user).",
   })
   @ApiQuery({
     name: "page",
@@ -112,6 +112,7 @@ export class EmployeeHttpController {
     description: "Lista angajații a fost returnată cu succes",
   })
   async findAll(
+    @Request() req: any,
     @Query("page") page: string = "1",
     @Query("limit") limit: string = "10",
     @Query("is_active") is_active?: string,
@@ -121,6 +122,25 @@ export class EmployeeHttpController {
     @Query("location_id") location_id?: string,
     @Query("department_name") department_name?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
+    const user = req?.user;
+    const perms = (user?.permissions as string[]) || [];
+    const hasReadOwn = perms.includes("employees.read_own");
+    const hasRead = perms.includes("employees.read");
+    if (user && hasReadOwn && !hasRead) {
+      const locationId =
+        location_id ? parseInt(location_id, 10)
+        : work_location_id ? parseInt(work_location_id, 10)
+        : user.work_location_id ?? user.work_location_default_id;
+      if (locationId == null || Number.isNaN(locationId)) {
+        throw new ForbiddenException(
+          "Pentru permisiunea employees.read_own este necesar location_id sau work_location_id în query sau locația utilizatorului.",
+        );
+      }
+      const list = await this.employeeService.findForOwn(locationId);
+      const total = list.length;
+      return { employees: list as Employee[], total, totalPages: 1 };
+    }
+
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
     const isActiveFilter =
@@ -692,10 +712,11 @@ export class EmployeeHttpController {
   }
 
   @Get("locations/:locationId/employees")
-  @Permissions("employees.read")
+  @UseGuards(InternalServiceGuard, JwtAuthGuard)
+  @Permissions("employees.read", "employees.read_own")
   @ApiOperation({
     summary: "Obține angajații unei locații",
-    description: "Returnează toți angajații asignați la o locație de lucru.",
+    description: "Returnează toți angajații asignați la o locație. Cu read_own doar pentru propria locație (ex.: realocare task).",
   })
   @ApiParam({ name: "locationId", description: "ID-ul locației" })
   @ApiResponse({
@@ -705,7 +726,26 @@ export class EmployeeHttpController {
   })
   async getLocationEmployees(
     @Param("locationId", ParseIntPipe) locationId: number,
-  ): Promise<EmployeeLocation[]> {
+    @Request() req: any,
+  ): Promise<EmployeeLocation[] | { employee: { id: number; first_name: string; last_name: string } }[]> {
+    const user = req?.user;
+    const perms = (user?.permissions as string[]) || [];
+    const hasReadOwn = perms.includes("employees.read_own");
+    const hasRead = perms.includes("employees.read");
+
+    if (user && hasReadOwn && !hasRead) {
+      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
+      if (employeeId == null) {
+        throw new ForbiddenException("Lipsă id angajat în token.");
+      }
+      const allowedIds = await this.employeeService.getLocationIdsForEmployee(Number(employeeId));
+      if (!allowedIds.includes(locationId)) {
+        throw new ForbiddenException("Nu ai acces la angajații acestei locații.");
+      }
+      const list = await this.employeeService.findForOwn(locationId);
+      return list.map((e) => ({ employee: e })) as any;
+    }
+
     console.log(
       "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
       locationId,
@@ -716,13 +756,35 @@ export class EmployeeHttpController {
   }
 
   @Get("location/:locationId")
-  @Permissions("employees.read")
-  @ApiOperation({ summary: "Obține toți angajații din locația specificată" })
+  @Permissions("employees.read", "employees.read_own")
+  @ApiOperation({
+    summary: "Obține toți angajații din locația specificată",
+    description: "Cu read_own doar pentru propria locație (ex.: realocare task).",
+  })
   @ApiParam({ name: "locationId", description: "ID-ul locației" })
   @ApiResponse({ status: 200, description: "Lista angajaților din locație" })
   async getEmployeesByLocation(
     @Param("locationId", ParseIntPipe) locationId: number,
+    @Request() req: any,
   ) {
+    const user = req?.user;
+    const perms = (user?.permissions as string[]) || [];
+    const hasReadOwn = perms.includes("employees.read_own");
+    const hasRead = perms.includes("employees.read");
+
+    if (user && hasReadOwn && !hasRead) {
+      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
+      if (employeeId == null) {
+        throw new ForbiddenException("Lipsă id angajat în token.");
+      }
+      const allowedIds = await this.employeeService.getLocationIdsForEmployee(Number(employeeId));
+      if (!allowedIds.includes(locationId)) {
+        throw new ForbiddenException("Nu ai acces la angajații acestei locații.");
+      }
+      const employees = await this.employeeService.findForOwn(locationId);
+      return { employees };
+    }
+
     console.log(
       "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
       locationId,

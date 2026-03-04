@@ -6,6 +6,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { CronService } from './cron.service';
 import { CronController } from './cron.controller';
+import { InternalServiceGuard } from '../guards/internal-service.guard';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { TaskAssignment } from '../assignment/entity/task-assignment.entity';
 import { TaskExecution } from '../execution/entity/task-execution.entity';
 import { TaskExecutionAnswer } from '../execution/entity/task-execution-answer.entity';
@@ -19,6 +21,7 @@ import { AssignmentModule } from '../assignment/assignment.module';
   imports: [
     ScheduleModule.forRoot(),
     HttpModule,
+    NotificationsModule,
     AssignmentModule,
     TypeOrmModule.forFeature([
       TaskAssignment,
@@ -48,7 +51,7 @@ import { AssignmentModule } from '../assignment/assignment.module';
     ExecutionModule,
   ],
   controllers: [CronController],
-  providers: [CronService],
+  providers: [CronService, InternalServiceGuard],
   exports: [CronService],
 })
 export class CronModule {}

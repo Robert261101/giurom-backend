@@ -127,6 +127,10 @@ export class TaskAssignment {
   @Column({ type: 'boolean', default: true })
   is_visible_for_employee: boolean;
 
+  /** Dacă realocarea este permisă pentru acest task (false = nu se realochează manual sau automat). */
+  @Column({ type: 'boolean', default: true })
+  permite_realocare: boolean;
+
   @Column({ type: 'boolean', default: false })
   was_postponed: boolean;
 
@@ -160,4 +164,8 @@ export class TaskAssignment {
   /** La ce dată/ora s-a încercat realocarea (cron). După prima încercare (reușită sau eșuată) nu se mai încearcă. */
   @Column({ name: 'reallocation_attempted_at', type: 'datetime', nullable: true })
   reallocation_attempted_at: Date | null;
+
+  /** Tip reatribuire: cron = automată (task expirat), employee = manuală de angajat (la amânare), admin = manuală de admin. */
+  @Column({ name: 'reallocation_trigger', type: 'varchar', length: 20, nullable: true })
+  reallocation_trigger: 'cron' | 'employee' | 'admin' | null;
 }

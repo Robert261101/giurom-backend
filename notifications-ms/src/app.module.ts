@@ -8,7 +8,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { UserResolutionService } from './user-resolution.service';
 import { NotificationEntity } from './notification.entity';
+import { PushSubscriptionEntity } from './push-subscription.entity';
+import { PushModule } from './push/push.module';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -29,11 +32,12 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [NotificationEntity],
+      entities: [NotificationEntity, PushSubscriptionEntity],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
     }),
     TypeOrmModule.forFeature([NotificationEntity]),
+    PushModule,
     ClientsModule.register([
       {
         name: 'NOTIFICATIONS_RMQ',
@@ -48,7 +52,8 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   ],
   controllers: [NotificationsController],
   providers: [
-    NotificationsService, 
+    UserResolutionService,
+    NotificationsService,
     NotificationsGateway,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
