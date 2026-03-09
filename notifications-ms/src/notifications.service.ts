@@ -950,37 +950,9 @@ export class NotificationsService {
     const userIdsForQuery = [resolvedUserId, rawUserId].filter((id): id is number => id != null && id !== undefined);
     const uniqueUserIds = [...new Set(userIdsForQuery)];
 
-    let isAdminOrManager = false;
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
-    if (resolvedUserId) {
-      const userRoles = await this.getUserRoles(resolvedUserId);
-      isAdminOrManager = userRoles.some((role: string) => 
-        role.toLowerCase() === 'admin' || role.toLowerCase() === 'manager'
-      );
-    }
-
-    if (isAdminOrManager) {
-      const adminManagerUsers = await this.getUsersWithRoles(['admin', 'manager']);
-      const adminManagerUserIds = adminManagerUsers.map(u => u.id);
-      
-      if (adminManagerUserIds.length > 0) {
-        return this.repo
-          .createQueryBuilder('notification')
-          .where('notification.user_id IN (:...userIds)', { userIds: adminManagerUserIds })
-          .andWhere(
-            '(notification.status = :unreadStatus OR (notification.status = :readStatus AND notification.created_at >= :fortyEightHoursAgo))',
-            {
-              unreadStatus: 'unread',
-              readStatus: 'read',
-              fortyEightHoursAgo: fortyEightHoursAgo
-            }
-          )
-          .orderBy('notification.created_at', 'DESC')
-          .getMany();
-      }
-    }
-
+    // Fiecare user (inclusiv admin/manager) vede doar notificările proprii (user_id = utilizatorul curent)
     // Notificările pot fi stocate cu user_id = users.id (rezolvat) sau = employee_id (raw) – căutăm pe ambele
     if (uniqueUserIds.length > 0) {
       return this.repo

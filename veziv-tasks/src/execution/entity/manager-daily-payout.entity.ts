@@ -23,12 +23,9 @@ export class ManagerDailyPayout {
   @Column({ name: 'total_points', type: 'decimal', precision: 12, scale: 2, default: 0 })
   total_points: number;
 
-  /** Puncte alocate managerului (total_points * manager_percent / 100) – sursă unică pentru rapoarte. */
+  /** Puncte alocate managerului (total_points * manager_percent / 100) – sursă unică pentru rapoarte. Banii se calculează în timp real. */
   @Column({ name: 'manager_points', type: 'decimal', precision: 12, scale: 2, default: 0 })
   manager_points: number;
-
-  @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
-  amount: number;
 
   @CreateDateColumn()
   created_at: Date;

@@ -1931,7 +1931,6 @@ export class CronService {
         return { ok: true, created: false, message: 'no_manager_shift' };
       }
 
-      const amount = totalPoints * (managerPercent / 100);
       const managerPoints = totalPoints * (managerPercent / 100);
 
       await this.managerDailyPayoutRepository.save({
@@ -1940,10 +1939,9 @@ export class CronService {
         manager_employee_id: managerEmployeeId,
         total_points: totalPoints,
         manager_points: managerPoints,
-        amount,
-      } as any);
+      });
 
-      // Puncte manager doar în manager_daily_payout (nu și în Employee_Daily_Task_Points) – sursă unică pentru rapoarte
+      // Puncte manager doar în manager_daily_payout (nu și în Employee_Daily_Task_Points) – sursă unică pentru rapoarte. Banii se calculează în timp real.
       this.logger.log(
         `✅ [Manager Payout / Încasare] Locația ${workLocationId} – ${normalizedDate}: puncte_sarcini_finalizate=${totalPoints}, puncte_sarcinile_anulate=${pointsDeducted}, puncte_manager=${managerPoints.toFixed(2)} (${managerPercent}% din ${totalPoints}) → angajat ${managerEmployeeId}`,
       );
@@ -1951,7 +1949,7 @@ export class CronService {
         ok: true,
         created: true,
         total_points: totalPoints,
-        amount,
+        amount: managerPoints,
         manager_employee_id: managerEmployeeId,
       };
     } catch (err) {

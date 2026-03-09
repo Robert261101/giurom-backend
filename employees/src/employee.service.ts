@@ -435,6 +435,25 @@ export class EmployeeService {
     (employee as any).generatedDocuments = generatedDocuments;
     (employee as any).employeeLocations = employeeLocations;
 
+    // Dacă angajatul are locație, completează company_id și company_name din locație (o locație = o firmă)
+    if (employee.work_location_default_id) {
+      try {
+        const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+        const locRes = await axios.get(`${locationsUrl}/locations/${employee.work_location_default_id}`);
+        const loc = locRes.data;
+        const companyId = (loc as any)?.company_id ?? (loc as any)?.companyId;
+        if (companyId != null) {
+          (employee as any).company_id = companyId;
+        }
+        const companyName = (loc as any)?.company_name ?? (loc as any)?.companyName;
+        if (companyName != null) {
+          (employee as any).company_name = companyName;
+        }
+      } catch {
+        // Ignoră dacă locations nu răspunde
+      }
+    }
+
     return employee;
   }
 

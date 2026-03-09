@@ -83,16 +83,19 @@ export class AssignmentController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Obține un assignment specific cu elementele sale' })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @ApiOperation({ summary: 'Obține un assignment specific (doar dacă utilizatorul are dreptul să-l vadă)' })
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
   @ApiResponse({ 
     status: 200, 
     description: 'Assignment găsit',
     type: TaskAssignment 
   })
+  @ApiResponse({ status: 403, description: 'Nu ai dreptul să accesezi această sarcină' })
   @ApiResponse({ status: 404, description: 'Assignment nu a fost găsit' })
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<TaskAssignment> {
-    return this.assignmentService.findOne(id);
+  findOne(@Request() req, @Param('id', ParseIntPipe) id: number): Promise<TaskAssignment> {
+    return this.assignmentService.findOne(id, req.user);
   }
   
   @UseGuards(JwtAuthGuard, PermissionsGuard)

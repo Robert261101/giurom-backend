@@ -152,7 +152,6 @@ export class ExecutionController {
           manager_employee_id: { type: 'number' },
           total_points: { type: 'number' },
           manager_points: { type: 'number' },
-          amount: { type: 'number' },
           created_at: { type: 'string', format: 'date-time' },
         },
       },

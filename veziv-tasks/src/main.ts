@@ -20,24 +20,39 @@ if (typeof (global as any).crypto === 'undefined') {
   console.log('✅ Crypto polyfill aplicat pentru @nestjs/schedule');
 }
 
+function getAllowedOrigins(): string[] {
+  const isProd = process.env.NODE_ENV === 'production';
+  const fromEnv = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  if (isProd) {
+    if (fromEnv.length === 0) {
+      throw new Error('ALLOWED_ORIGINS must be set in production (e.g. https://giurom.bitap.ro)');
+    }
+    return fromEnv;
+  }
+  return fromEnv.length > 0 ? fromEnv : [
+    'http://localhost:3000', 'http://localhost:3001', 'http://localhost:4200',
+    'https://giurom-frontend.vercel.app', 'https://giurom.bitap.ro',
+  ];
+}
+
 async function bootstrap() {
+  if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
+    throw new Error('SERVICE_SECRET must be set in production. Do not use default fallback.');
+  }
+
   const app = await NestFactory.create(AppModule);
 
   // Configurare container pentru validatori
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
 
-  // Configurare CORS - comentat pentru dezvoltare
-  // app.enableCors({
-  //   origin: ['http://localhost:3000', 'http://localhost:4200', 'https://frontend.tau.com'],
-  //   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  //   credentials: true,
-  // });
-
-  // CORS permis pentru orice origin în dezvoltare
   app.enableCors({
-    origin: true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    origin: getAllowedOrigins(),
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   // Configurare validare

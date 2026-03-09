@@ -7,6 +7,7 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Unique,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Shift } from './shift.entity';
@@ -19,6 +20,7 @@ export enum PresenceStatus {
 }
 
 @Entity('presence')
+@Unique('UQ_presence_shift_date', ['shift_id', 'date'])
 export class Presence {
   @ApiProperty({
     description: 'ID-ul unic al prezenței',

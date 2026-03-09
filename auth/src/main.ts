@@ -7,7 +7,29 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ResponseInterceptor } from './common/response.interceptor';
 
+function getAllowedOrigins(): string[] {
+  const isProd = process.env.NODE_ENV === 'production';
+  const fromEnv = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  if (isProd) {
+    if (fromEnv.length === 0) {
+      throw new Error('ALLOWED_ORIGINS must be set in production (e.g. https://giurom.bitap.ro)');
+    }
+    return fromEnv;
+  }
+  return fromEnv.length > 0 ? fromEnv : [
+    'http://localhost:4200', 'http://localhost:3001', 'http://localhost:3000',
+    'https://frontend.tau.com', 'https://giurom-frontend.vercel.app', 'https://giurom.bitap.ro',
+  ];
+}
+
 async function bootstrap() {
+  if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
+    throw new Error('SERVICE_SECRET must be set in production. Do not use default fallback.');
+  }
+
   const app = await NestFactory.create(AppModule);
   
   // Configurare Swagger
@@ -23,16 +45,11 @@ async function bootstrap() {
 
   // Protecție HTTP Headers
   app.use(helmet());
-  // CORS
   app.enableCors({
-    origin: [
-      'http://localhost:4200',
-      'https://frontend.tau.com',
-      'http://localhost:3001',  // Frontend BNK
-      'http://localhost:3000'   // Frontend BNK (alternativ)
-    ],
+    origin: getAllowedOrigins(),
     methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
   // Rate limiting dezactivat
   // const publicAuthPaths = ['/auth/validate-identifier', '/auth/login', '/auth/verify', '/auth/send-verification-code', '/2fa'];

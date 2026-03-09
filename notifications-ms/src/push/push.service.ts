@@ -1,8 +1,8 @@
-import * as pathModule from 'path';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { PushSubscriptionEntity } from '../push-subscription.entity';
+import * as pathModule from "path";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { PushSubscriptionEntity } from "../push-subscription.entity";
 
 // Firebase Admin este importat dinamic; tipul e any ca să nu ceară @types/firebase-admin
 export interface WebPushPayload {
@@ -14,7 +14,9 @@ export interface WebPushPayload {
 @Injectable()
 export class PushService implements OnModuleInit {
   private readonly logger = new Logger(PushService.name);
-  private messaging: { sendEachForMulticast: (msg: any) => Promise<any> } | null = null;
+  private messaging: {
+    sendEachForMulticast: (msg: any) => Promise<any>;
+  } | null = null;
 
   constructor(
     @InjectRepository(PushSubscriptionEntity)
@@ -31,7 +33,7 @@ export class PushService implements OnModuleInit {
 
     if (!path && !json) {
       this.logger.warn(
-        'FCM dezactivat: lipsește FIREBASE_SERVICE_ACCOUNT_PATH sau FIREBASE_SERVICE_ACCOUNT_JSON',
+        "FCM dezactivat: lipsește FIREBASE_SERVICE_ACCOUNT_PATH sau FIREBASE_SERVICE_ACCOUNT_JSON",
       );
       return;
     }
@@ -40,22 +42,28 @@ export class PushService implements OnModuleInit {
       let admin: any;
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        admin = require('firebase-admin');
+        admin = require("firebase-admin");
       } catch {
         // Pe server Node poate căuta module doar din anumite căi; încercăm din cwd (root-ul proiectului)
-        const cwdModule = pathModule.join(process.cwd(), 'node_modules', 'firebase-admin');
+        const cwdModule = pathModule.join(
+          process.cwd(),
+          "node_modules",
+          "firebase-admin",
+        );
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         admin = require(cwdModule);
       }
       if (admin.apps?.length) {
         this.messaging = admin.messaging();
-        this.logger.log('FCM folosește aplicația Firebase existentă');
+        this.logger.log("FCM folosește aplicația Firebase existentă");
         return;
       }
       let credentials: object;
       if (path) {
-        const fs = require('fs');
-        const resolvedPath = pathModule.isAbsolute(path) ? path : pathModule.join(process.cwd(), path);
+        const fs = require("fs");
+        const resolvedPath = pathModule.isAbsolute(path)
+          ? path
+          : pathModule.join(process.cwd(), path);
         if (!fs.existsSync(resolvedPath)) {
           this.logger.error(
             `FCM: fișierul Service Account nu există la ${resolvedPath} (cwd=${process.cwd()}). Copiază fișierul JSON pe server în acest folder.`,
@@ -63,16 +71,17 @@ export class PushService implements OnModuleInit {
           this.messaging = null;
           return;
         }
-        const content = fs.readFileSync(resolvedPath, 'utf8');
+        const content = fs.readFileSync(resolvedPath, "utf8");
         credentials = JSON.parse(content);
       } else {
-        const raw =
-          json!.startsWith('{') ? json! : Buffer.from(json!, 'base64').toString('utf8');
+        const raw = json!.startsWith("{")
+          ? json!
+          : Buffer.from(json!, "base64").toString("utf8");
         credentials = JSON.parse(raw);
       }
       admin.initializeApp({ credential: admin.credential.cert(credentials) });
       this.messaging = admin.messaging();
-      this.logger.log('FCM inițializat cu succes');
+      this.logger.log("FCM inițializat cu succes");
     } catch (err: any) {
       const msg = err?.message || String(err);
       this.logger.error(`Eroare inițializare FCM: ${msg}`);
@@ -85,7 +94,10 @@ export class PushService implements OnModuleInit {
     }
   }
 
-  /** Înregistrează un token FCM pentru user. Dacă tokenul există deja, actualizează updated_at. */
+  /**
+   * Înregistrează un token FCM pentru user.
+   * Un singur device per user: orice abonament existent este înlocuit cu acest token.
+   */
   async subscribe(
     userId: number,
     fcmToken: string,
@@ -96,9 +108,12 @@ export class PushService implements OnModuleInit {
     });
     if (existing) {
       existing.device_label = deviceLabel ?? existing.device_label;
+      existing.updated_at = new Date(); // reîmprospătare explicită ca updated_at să se actualizeze în DB
       await this.repo.save(existing);
       return existing;
     }
+    // Un singur device: șterge toate abonamentele existente pentru acest user
+    await this.repo.delete({ user_id: userId } as any);
     const entity = this.repo.create({
       user_id: userId,
       fcm_token: fcmToken,
@@ -106,6 +121,21 @@ export class PushService implements OnModuleInit {
     } as any);
     const saved = await this.repo.save(entity);
     return Array.isArray(saved) ? saved[0] : saved;
+  }
+
+  /** Verifică dacă utilizatorul are un abonament push; opțional doar pentru tokenul dat. */
+  async hasSubscription(
+    userId: number,
+    fcmToken?: string,
+  ): Promise<boolean> {
+    if (fcmToken) {
+      const one = await this.repo.findOne({
+        where: { user_id: userId, fcm_token: fcmToken } as any,
+      });
+      return !!one;
+    }
+    const count = await this.repo.count({ where: { user_id: userId } as any });
+    return count > 0;
   }
 
   /** Elimină un token FCM pentru user. */
@@ -125,7 +155,9 @@ export class PushService implements OnModuleInit {
     payload: WebPushPayload,
   ): Promise<{ sent: number; failed: number }> {
     if (!this.messaging) {
-      this.logger.warn(`FCM sendToUser(${userId}): FCM neinițializat (lipsește/eroare Service Account), push omis`);
+      this.logger.warn(
+        `FCM sendToUser(${userId}): FCM neinițializat (lipsește/eroare Service Account), push omis`,
+      );
       return { sent: 0, failed: 0 };
     }
 
@@ -133,7 +165,9 @@ export class PushService implements OnModuleInit {
       where: { user_id: userId } as any,
     });
     if (subscriptions.length === 0) {
-      this.logger.log(`FCM sendToUser(${userId}): niciun token înregistrat, push omis`);
+      this.logger.log(
+        `FCM sendToUser(${userId}): niciun token înregistrat, push omis`,
+      );
       return { sent: 0, failed: 0 };
     }
 
@@ -141,7 +175,7 @@ export class PushService implements OnModuleInit {
     const data: Record<string, string> = {};
     if (payload.data) {
       for (const [k, v] of Object.entries(payload.data)) {
-        data[k] = typeof v === 'string' ? v : String(v);
+        data[k] = typeof v === "string" ? v : String(v);
       }
     }
     const link = payload.data?.url ?? payload.data?.target_url;
@@ -151,16 +185,14 @@ export class PushService implements OnModuleInit {
 
     // Trimitem doar `data`, fără `notification`, ca doar service worker-ul să afișeze notificarea (o singură dată).
     // Dacă trimitem și notification, FCM afișează automat + SW afișează din onBackgroundMessage = dublu.
-    if (!data.title) data.title = payload.title ?? 'Notificare';
-    if (!data.body && payload.body) data.body = payload.body ?? '';
+    if (!data.title) data.title = payload.title ?? "Notificare";
+    if (!data.body && payload.body) data.body = payload.body ?? "";
 
     try {
       const response = await this.messaging.sendEachForMulticast({
         tokens,
         data,
-        webpush: link
-          ? { fcmOptions: { link } }
-          : undefined,
+        webpush: link ? { fcmOptions: { link } } : undefined,
       });
 
       for (let i = 0; i < response.responses.length; i++) {
@@ -171,8 +203,8 @@ export class PushService implements OnModuleInit {
           failed++;
           const token = tokens[i];
           if (
-            r.error?.code === 'messaging/invalid-registration-token' ||
-            r.error?.code === 'messaging/registration-token-not-registered'
+            r.error?.code === "messaging/invalid-registration-token" ||
+            r.error?.code === "messaging/registration-token-not-registered"
           ) {
             await this.repo.delete({ fcm_token: token } as any).catch(() => {});
           }
@@ -184,7 +216,9 @@ export class PushService implements OnModuleInit {
     }
 
     if (sent > 0 || failed > 0) {
-      this.logger.log(`FCM sendToUser(${userId}): trimise=${sent}, eșecuri=${failed}`);
+      this.logger.log(
+        `FCM sendToUser(${userId}): trimise=${sent}, eșecuri=${failed}`,
+      );
     }
     return { sent, failed };
   }

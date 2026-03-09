@@ -117,8 +117,8 @@ export class ExecutionService {
       ).template.template_name;
     }
 
-    // Setează location_id din assignment pentru filtrări după locație
-    if (assignment.location_id) {
+    // Setează location_id din assignment (obligatoriu pentru Employee_Daily_Points; inclusiv la sarcinile reatribuite)
+    if (assignment.location_id != null && assignment.location_id !== undefined) {
       (executionData as any).location_id = assignment.location_id;
     }
 
@@ -1259,7 +1259,7 @@ export class ExecutionService {
       employee_id: createDto.employee_id,
       work_date: new Date(createDto.work_date),
       total_points: createDto.total_points || 0,
-      location_id: createDto.location_id ?? null,
+      location_id: createDto.location_id,
     });
 
     return await this.employeeDailyPointsRepository.save(dailyPoints);
@@ -1336,7 +1336,7 @@ export class ExecutionService {
     const savedTaskPoints =
       await this.employeeDailyTaskPointsRepository.save(taskPoints);
 
-    // Setează location_id pe daily_points din execuție dacă lipsește (pentru rapoarte pe locație)
+    // Setează location_id pe daily_points din execuție dacă lipsește (nu ar trebui cu coloana NOT NULL)
     const execLocId = (taskExecution as any).location_id;
     if (execLocId != null && (dailyPoints as any).location_id == null) {
       (dailyPoints as any).location_id = execLocId;
@@ -1568,15 +1568,34 @@ export class ExecutionService {
         },
       });
 
-      // Dacă nu există, creează unul nou
+      const locationId = (execution as any).location_id ?? (assignment as any)?.location_id;
+      if (locationId == null) {
+        console.error(
+          `❌ [handleTaskCompletion] Execuția ${execution.id} / assignment ${execution.task_assignment_id} fără location_id – nu se creează puncte zilnice`,
+        );
+        return;
+      }
+
+      // Actualizează execuția cu location_id dacă lipsește (ex.: sarcină reatribuită, execuție creată înainte de setare)
+      if ((execution as any).location_id == null) {
+        await this.executionRepository.update(execution.id, {
+          location_id: locationId,
+        } as any);
+      }
+
+      // Dacă nu există, creează unul nou (cu location_id obligatoriu)
       if (!dailyPoints) {
         dailyPoints = this.employeeDailyPointsRepository.create({
           employee_id: execution.employee_id,
           work_date: workDate,
           total_points: 0,
+          location_id: locationId,
         });
         dailyPoints =
           await this.employeeDailyPointsRepository.save(dailyPoints);
+      } else if ((dailyPoints as any).location_id == null) {
+        (dailyPoints as any).location_id = locationId;
+        await this.employeeDailyPointsRepository.save(dailyPoints);
       }
 
       // Verifică dacă există deja punctaj pentru această execuție
@@ -1704,6 +1723,17 @@ export class ExecutionService {
     }
 
     if (totalPointsDeducted > 0) {
+      const locationId =
+        (assignment as any).location_id != null
+          ? Number((assignment as any).location_id)
+          : null;
+      if (locationId == null) {
+        console.warn(
+          `⚠️ [deductPoints] Assignment ${assignment.id} nu are location_id – deducerea de puncte nu este înregistrată (Employee_Daily_Points necesită location_id).`,
+        );
+        return totalPointsDeducted;
+      }
+
       // Ziua de lucru: normalizare la începutul zilei pentru potrivire cu coloana date
       const workDate = new Date(targetDate);
       workDate.setHours(0, 0, 0, 0);
@@ -1715,10 +1745,6 @@ export class ExecutionService {
         },
       });
 
-      const locationId =
-        (assignment as any).location_id != null
-          ? Number((assignment as any).location_id)
-          : null;
       if (!dailyPoints) {
         dailyPoints = this.employeeDailyPointsRepository.create({
           employee_id: assignment.assigned_to_id,
@@ -1728,7 +1754,7 @@ export class ExecutionService {
         });
       } else {
         dailyPoints.total_points = Number(dailyPoints.total_points) - totalPointsDeducted;
-        if (locationId != null && (dailyPoints as any).location_id == null) {
+        if ((dailyPoints as any).location_id == null) {
           (dailyPoints as any).location_id = locationId;
         }
       }

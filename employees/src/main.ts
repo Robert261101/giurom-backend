@@ -4,15 +4,30 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 // import rateLimit from 'express-rate-limit'; // Rate limiting dezactivat
 
+function getAllowedOrigins(): string[] {
+  const isProd = process.env.NODE_ENV === 'production';
+  const fromEnv = (process.env.ALLOWED_ORIGINS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+  if (isProd) {
+    if (fromEnv.length === 0) throw new Error('ALLOWED_ORIGINS must be set in production (e.g. https://giurom.bitap.ro)');
+    return fromEnv;
+  }
+  return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
+}
+
 async function bootstrap() {
+  if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
+    throw new Error('SERVICE_SECRET must be set in production. Do not use default fallback.');
+  }
+
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   app.enableCors({
-    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+    origin: getAllowedOrigins(),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   // Rate limiting dezactivat

@@ -750,7 +750,19 @@ export class LocationsService {
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
     if (!hasLocationReadPermission && user) {
-      const employeeId = user.id || user.employee_id || user.userId;
+      const perms = (user.permissions as string[]) || [];
+      const hasAnyReadOwn = perms.some(
+        (p) =>
+          p === "read_own_locations" ||
+          p === "assignment.read_own" ||
+          p === "execution.read_own",
+      );
+      if (hasAnyReadOwn) {
+        return locationWithCompany;
+      }
+
+      const employeeId =
+        user.id || user.employee_id || user.userId || user.sub;
       const userWorkLocationId = user.work_location_id;
 
       // Verificare 1: Dacă work_location_id se potrivește
@@ -762,7 +774,7 @@ export class LocationsService {
       if (employeeId) {
         try {
           const employeesUrl =
-            process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+            process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
           const response = await axios.get(
             `${employeesUrl}/employees/${employeeId}/locations`,
             {

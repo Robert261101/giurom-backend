@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not } from 'typeorm';
+import { Repository, Between, MoreThanOrEqual, LessThanOrEqual, Not, QueryFailedError } from 'typeorm';
 import { format } from 'date-fns';
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
@@ -272,6 +272,14 @@ export class AttendanceService implements OnModuleInit {
   }
 
   // PRESENCE METHODS
+  /**
+   * Normalizează o dată la începutul zilei (fără oră) pentru comparație consistentă shift_id + date.
+   */
+  private normalizeDateOnly(date: string | Date): Date {
+    const d = new Date(date);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
   async createPresence(createPresenceDto: CreatePresenceDto): Promise<Presence> {
     const { shift_id, date, check_in, check_out, ...rest } = createPresenceDto;
 
@@ -281,14 +289,7 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Schimbul cu ID-ul ${shift_id} nu a fost găsit`);
     }
 
-    // Verifică dacă nu există deja o prezență pentru această dată și schimb
-    const existingPresence = await this.presenceRepository.findOne({
-      where: { shift_id, date: new Date(date) },
-    });
-
-    if (existingPresence) {
-      throw new ConflictException('Există deja o prezență înregistrată pentru această dată și schimb');
-    }
+    const dateNorm = this.normalizeDateOnly(date);
 
     // Validare check-in și check-out
     if (check_in && check_out) {
@@ -331,16 +332,35 @@ export class AttendanceService implements OnModuleInit {
       console.log(`🕐 Auto-checkout calculat: ${autoCheckout.toISOString()} (din shift.end_datetime: ${shift.end_datetime} + ${timeForCheckout} minute, check_in: ${check_in})`);
     }
 
-    const presence = this.presenceRepository.create({
-      ...rest,
-      shift_id,
-      date: new Date(date),
-      check_in: check_in ? toZonedTime(new Date(check_in), 'Europe/Bucharest') : null,
-      check_out: check_out ? toZonedTime(new Date(check_out), 'Europe/Bucharest') : null,
-      auto_checkout: autoCheckout,
-    });
-
-    const savedPresence = await this.presenceRepository.save(presence);
+    let savedPresence: Presence;
+    try {
+      savedPresence = await this.presenceRepository.manager.transaction(async (em) => {
+        const presenceRepo = em.getRepository(Presence);
+        const existingPresence = await presenceRepo.findOne({
+          where: { shift_id, date: dateNorm },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (existingPresence) {
+          throw new ConflictException('Există deja o prezență înregistrată pentru această dată și schimb');
+        }
+        const presence = presenceRepo.create({
+          ...rest,
+          shift_id,
+          date: dateNorm,
+          check_in: check_in ? toZonedTime(new Date(check_in), 'Europe/Bucharest') : null,
+          check_out: check_out ? toZonedTime(new Date(check_out), 'Europe/Bucharest') : null,
+          auto_checkout: autoCheckout,
+        });
+        return await presenceRepo.save(presence);
+      });
+    } catch (err: any) {
+      if (err instanceof ConflictException) throw err;
+      const isDuplicate = err instanceof QueryFailedError && (err as any).driverError?.code === 'ER_DUP_ENTRY';
+      if (isDuplicate) {
+        throw new ConflictException('Există deja o prezență înregistrată pentru această dată și schimb');
+      }
+      throw err;
+    }
     
     // Logica pentru puncte - doar dacă există check_in
     if (check_in) {

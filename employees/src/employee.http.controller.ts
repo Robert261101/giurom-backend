@@ -519,12 +519,24 @@ export class EmployeeHttpController {
 
   // Serve employee file (download or inline based on query)
   @Get("file/:fileId")
-  @Permissions("employees.read")
+  @Permissions("employees.read", "employees.read_own")
   async getEmployeeFile(
     @Param("fileId", ParseIntPipe) fileId: number,
     @Query("download") download: string,
     @Res() res: Response,
+    @Request() req: any,
   ) {
+    const file = await this.employeeService.findOneFile(fileId);
+    const user = req?.user;
+    const perms = (user?.permissions as string[]) || [];
+    const hasReadOwn = perms.includes("employees.read_own");
+    const hasRead = perms.includes("employees.read");
+    if (user && hasReadOwn && !hasRead) {
+      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
+      if (file.employee_id !== employeeId) {
+        throw new ForbiddenException("Nu ai acces la acest fișier.");
+      }
+    }
     const forceDownload = download === "true";
     const served = await this.employeeService.serveFile(fileId, forceDownload);
     const buffer = Buffer.from(served.data, "base64");
@@ -563,13 +575,25 @@ export class EmployeeHttpController {
     return this.employeeService.removeFile(fileId);
   }
 
-  // Force inline view
+  // Force inline view (inclusiv imagine profil – utilizatorul cu read_own vede doar fișierele proprii)
   @Get("file/:fileId/view")
-  @Permissions("employees.read")
+  @Permissions("employees.read", "employees.read_own")
   async viewEmployeeFile(
     @Param("fileId", ParseIntPipe) fileId: number,
     @Res() res: Response,
+    @Request() req: any,
   ) {
+    const file = await this.employeeService.findOneFile(fileId);
+    const user = req?.user;
+    const perms = (user?.permissions as string[]) || [];
+    const hasReadOwn = perms.includes("employees.read_own");
+    const hasRead = perms.includes("employees.read");
+    if (user && hasReadOwn && !hasRead) {
+      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
+      if (file.employee_id !== employeeId) {
+        throw new ForbiddenException("Nu ai acces la acest fișier.");
+      }
+    }
     const served = await this.employeeService.serveFile(fileId, false);
     const buffer = Buffer.from(served.data, "base64");
     res.setHeader(

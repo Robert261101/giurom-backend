@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   Logger,
 } from '@nestjs/common';
@@ -1477,7 +1478,7 @@ export class AssignmentService {
     });
   }
 
-  async findOne(id: number): Promise<TaskAssignment> {
+  async findOne(id: number, user?: any): Promise<TaskAssignment> {
     const assignment = await this.assignmentRepository.findOne({
       where: { id },
       relations: [
@@ -1491,6 +1492,7 @@ export class AssignmentService {
         'template_id',
         'assigned_to_id',
         'created_by_employee_id',
+        'location_id',
         'status',
         'priority',
         'assigned_at',
@@ -1509,6 +1511,7 @@ export class AssignmentService {
         'updated_at',
         'reallocated_from_id',
         'previous_assignee_ids',
+        'reallocation_trigger',
       ],
       order: {
         template: {
@@ -1523,8 +1526,27 @@ export class AssignmentService {
       throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
     }
 
+    // Verificare permisiuni: dacă request-ul vine cu user (GET de la client), doar dacă are dreptul să vadă sarcina
+    if (user) {
+      const perms = user.permissions || [];
+      const userId = user.sub ?? user.employee_id ?? user.employeeId;
+      if (perms.includes('assignment.read_all') || perms.includes('assignment.read_company')) {
+        // Manager / admin – poate vedea orice sarcină
+      } else if (perms.includes('assignment.read_location')) {
+        // Manager locație – poate vedea orice (ca în findAll)
+      } else if (perms.includes('assignment.read_own')) {
+        // Angajat – doar sarcinile atribuite lui și vizibile
+        const assignedToMe = Number(assignment.assigned_to_id) === Number(userId);
+        const visible = assignment.is_visible_for_employee !== false;
+        if (!assignedToMe || !visible) {
+          throw new ForbiddenException('Nu ai dreptul să accesezi această sarcină');
+        }
+      } else {
+        throw new ForbiddenException('Nu ai dreptul să accesezi această sarcină');
+      }
+    }
+
     // Adaugă informații despre persoana responsabilă și departamentul din grup
-    // Pentru un singur assignment, folosim metoda batch (mai eficientă decât metoda veche)
     const enrichedAssignments = await this.enrichAssignmentsWithDetailsBatch([
       assignment,
     ]);
@@ -3036,37 +3058,40 @@ export class AssignmentService {
    * Preluare task: fie UPDATE rapid (1 proprietar), fie clone + eventual dezactivare original (primii 2/3 proprietari).
    */
   async acceptTask(id: number, userId: number): Promise<TaskAssignment> {
-    const row = await this.assignmentRepository.findOne({
+    const full = await this.assignmentRepository.findOne({
       where: { id },
+      relations: ['template', 'elements', 'elements.task_element'],
       select: [
         'id',
+        'template_id',
+        'location_id',
         'assigned_to_id',
+        'created_by_employee_id',
         'status',
         'assignment_mode',
         'max_acceptances',
         'department_group_id',
+        'assigned_at',
+        'due_date',
+        'scheduled_datetime',
+        'notes',
+        'requires_manager_check',
+        'priority',
       ],
     });
-    if (!row) {
+    if (!full) {
       throw new NotFoundException(`Task assignment ${id} not found`);
     }
-    if (row.assigned_to_id != null && row.assigned_to_id !== userId) {
+    if (full.assigned_to_id != null && full.assigned_to_id !== userId) {
       throw new NotFoundException('Task is already assigned to another person');
     }
 
-    const maxAcc = row.max_acceptances ?? 1;
+    const maxAcc = full.max_acceptances ?? 1;
     const isFCFS =
-      row.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED;
-    const isUnassigned = row.assigned_to_id == null;
+      full.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED;
+    const isUnassigned = full.assigned_to_id == null;
 
-    if (isFCFS && isUnassigned && maxAcc > 1 && row.department_group_id) {
-      const full = await this.assignmentRepository.findOne({
-        where: { id },
-        relations: ['template', 'elements', 'elements.task_element'],
-      });
-      if (!full) {
-        throw new NotFoundException(`Task assignment ${id} not found`);
-      }
+    if (isFCFS && isUnassigned && maxAcc > 1 && full.department_group_id) {
       const createDto: CreateAssignmentDto = {
         template_id: full.template_id,
         location_id: full.location_id,
@@ -3144,7 +3169,7 @@ export class AssignmentService {
       assigned_to_id: userId,
       updated_at: new Date(),
     };
-    if (row.status === AssignmentStatus.SCHEDULED) {
+    if (full.status === AssignmentStatus.SCHEDULED) {
       updateData.status = AssignmentStatus.ASSIGNED;
     }
     await this.assignmentRepository.update(id, updateData);
