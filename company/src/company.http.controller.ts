@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, ParseIntPipe, UseGuards, Headers } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService } from './company/company.service';
@@ -16,7 +16,10 @@ export class CompanyHttpController {
 
 	@Post()
 	@Permissions('companies.create')
-	create(@Body() dto: CreateCompanyDto) { return this.service.createCompany(dto); }
+	create(@Body() dto: CreateCompanyDto, @Headers('x-work-location-id') xWorkLocationId?: string) {
+		const work_location_id = xWorkLocationId != null ? parseInt(xWorkLocationId, 10) : undefined;
+		return this.service.createCompany(dto, Number.isFinite(work_location_id) ? work_location_id : undefined);
+	}
 
 	@Post('with-documents')
 	@Permissions('companies.create')
@@ -76,11 +79,17 @@ export class CompanyHttpController {
 
 	@Patch(':id')
 	@Permissions('companies.update')
-	update(@Param('id') id: string, @Body() dto: UpdateCompanyDto) { return this.service.updateCompany(parseInt(id, 10), dto); }
+	update(@Param('id') id: string, @Body() dto: UpdateCompanyDto, @Headers('x-work-location-id') xWorkLocationId?: string) {
+		const work_location_id = xWorkLocationId != null ? parseInt(xWorkLocationId, 10) : undefined;
+		return this.service.updateCompany(parseInt(id, 10), dto, Number.isFinite(work_location_id) ? work_location_id : undefined);
+	}
 
 	@Delete(':id')
 	@Permissions('companies.delete')
-	remove(@Param('id') id: string) { return this.service.removeCompany(parseInt(id, 10)); }
+	remove(@Param('id') id: string, @Headers('x-work-location-id') xWorkLocationId?: string) {
+		const work_location_id = xWorkLocationId != null ? parseInt(xWorkLocationId, 10) : undefined;
+		return this.service.removeCompany(parseInt(id, 10), Number.isFinite(work_location_id) ? work_location_id : undefined);
+	}
 
 	// Documents
 	@Get(':companyId/documents')

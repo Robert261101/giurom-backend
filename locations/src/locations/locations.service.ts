@@ -177,11 +177,15 @@ export class LocationsService {
     return path.join(this.getRepoRoot(), "files", "companies");
   }
 
-  private async getCompanyNameForLocation(location: WorkLocation): Promise<string> {
+  private async getCompanyNameForLocation(
+    location: WorkLocation,
+  ): Promise<string> {
     let companyName = "Unknown";
     try {
-      const companiesUrl = process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
-      const serviceSecret = process.env.SERVICE_SECRET || "default-service-secret";
+      const companiesUrl =
+        process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
+      const serviceSecret =
+        process.env.SERVICE_SECRET || "default-service-secret";
       const response = await axios.get(
         `${companiesUrl}/companies/${location.company_id}`,
         {
@@ -206,7 +210,10 @@ export class LocationsService {
   }
 
   /** Calea absolută pe disc: files/companies/[companyName]/Locații/[locationName]. */
-  private getLocationBasePath(companyName: string, locationName: string): string {
+  private getLocationBasePath(
+    companyName: string,
+    locationName: string,
+  ): string {
     return path.join(
       this.getFilesCompaniesRoot(),
       companyName,
@@ -287,7 +294,9 @@ export class LocationsService {
         const subfolderPath = path.join(locationDir, subfolder);
         if (!fs.existsSync(subfolderPath)) {
           fs.mkdirSync(subfolderPath, { recursive: true });
-          console.log(`📁 Created mandatory location subfolder: ${subfolderPath}`);
+          console.log(
+            `📁 Created mandatory location subfolder: ${subfolderPath}`,
+          );
         }
       }
 
@@ -337,6 +346,36 @@ export class LocationsService {
     }
   }
 
+  /** Notificări încasări pentru admin: trimisă, aprobată, respinsă (entity_type: revenue). */
+  private async sendRevenueNotification(
+    type: string,
+    title: string,
+    description: string,
+    revenueId: number,
+    workLocationId: number,
+    metadata?: any,
+    target_url?: string,
+  ): Promise<void> {
+    try {
+      const url = target_url ?? `/locatii/${workLocationId}/incasari`;
+      this.notificationsClient.emit(
+        { cmd: "locations.notification" },
+        {
+          type,
+          title,
+          description,
+          entity_id: revenueId,
+          entity_type: "revenue",
+          metadata: { work_location_id: workLocationId, ...metadata },
+          priority: "medium",
+          target_url: url,
+        },
+      );
+    } catch (error) {
+      console.error("Failed to send revenue notification:", error);
+    }
+  }
+
   async createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation> {
     const entity: WorkLocation = this.workLocationRepository.create(
       dto as unknown as Partial<WorkLocation>,
@@ -347,6 +386,18 @@ export class LocationsService {
 
     // Create the required folder structure for the new location
     await this.createLocationFolderStructure(saved);
+
+    // Creează automat departamentul "Manager" pentru locația nouă
+    try {
+      await this.createDepartment({
+        work_location_id: saved.id,
+        name: "Manager",
+        code: "MGR",
+        description: "Departament manager – creat automat la crearea locației",
+      });
+    } catch (err: any) {
+      console.warn(`[createWorkLocation] Nu s-a putut crea departamentul Manager pentru locația ${saved.id}:`, err?.message || err);
+    }
 
     // Send notification for new location
     await this.sendLocationNotification(
@@ -761,8 +812,7 @@ export class LocationsService {
         return locationWithCompany;
       }
 
-      const employeeId =
-        user.id || user.employee_id || user.userId || user.sub;
+      const employeeId = user.id || user.employee_id || user.userId || user.sub;
       const userWorkLocationId = user.work_location_id;
 
       // Verificare 1: Dacă work_location_id se potrivește
@@ -863,9 +913,7 @@ export class LocationsService {
   }
 
   /** Un singur request: locații + foldere + fișiere pentru o firmă (optimizare pentru tab Documente). */
-  async findWorkLocationsByCompanyWithDocuments(
-    companyId: number,
-  ): Promise<{
+  async findWorkLocationsByCompanyWithDocuments(companyId: number): Promise<{
     locations: WorkLocation[];
     foldersByLocationId: Record<number, WorkLocationFolder[]>;
     filesByLocationId: Record<number, WorkLocationFiles[]>;
@@ -1042,7 +1090,7 @@ export class LocationsService {
     limit = 1000,
     ids?: number[],
   ): Promise<WorkLocationDepartments[]> {
-    const opts: any = { order: { name: 'ASC' } as any };
+    const opts: any = { order: { name: "ASC" } as any };
     if (ids?.length) {
       opts.where = { id: In(ids) };
     }
@@ -1051,7 +1099,9 @@ export class LocationsService {
   }
 
   /** Un singur departament după id. Folosit de veziv-tasks. */
-  async findWorkLocationDepartmentById(id: number): Promise<WorkLocationDepartments | null> {
+  async findWorkLocationDepartmentById(
+    id: number,
+  ): Promise<WorkLocationDepartments | null> {
     return this.departmentsRepository.findOne({ where: { id } as any });
   }
 
@@ -1252,7 +1302,9 @@ export class LocationsService {
       ? revenueDate.toString().trim().split(" ")[0].split("T")[0]
       : null;
     if (!normalizedDate || !/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-      throw new Error("revenue_date trebuie să fie în format YYYY-MM-DD sau YYYY-MM-DD HH:mm:ss");
+      throw new Error(
+        "revenue_date trebuie să fie în format YYYY-MM-DD sau YYYY-MM-DD HH:mm:ss",
+      );
     }
     const revenueDateToStore = `${normalizedDate} 12:00:00`;
 
@@ -1289,12 +1341,43 @@ export class LocationsService {
       saved.employee_id,
     );
 
+    await this.sendRevenueNotification(
+      "revenue_sent",
+      "Încasare trimisă",
+      `A fost trimisă o încasare pentru data ${normalizedDate}, total: ${Number(saved.total_amount ?? 0).toFixed(2)} RON.`,
+      saved.id,
+      workLocationId,
+      {
+        revenue_date: normalizedDate,
+        total_amount: Number(saved.total_amount ?? 0),
+      },
+    );
+
+    if (status === RevenueStatus.Approved && normalizedDate) {
+      await this.sendRevenueNotification(
+        "revenue_approved",
+        "Încasare aprobată",
+        `Încasarea pentru data ${normalizedDate} a fost aprobată, total: ${Number(saved.total_amount ?? 0).toFixed(2)} RON.`,
+        saved.id,
+        workLocationId,
+        {
+          revenue_date: normalizedDate,
+          total_amount: Number(saved.total_amount ?? 0),
+        },
+      );
+    }
+
     // La introducerea încasării cu status approved: declanșăm bonusuri și manager_daily_payout (ca la updateRevenue)
     if (status === RevenueStatus.Approved && normalizedDate) {
       this.triggerBonusAndManagerPayoutOnApprovedRevenue(
         saved.id,
         workLocationId,
         normalizedDate,
+      ).catch((err) =>
+        console.error(
+          `❌ [recordRevenue] triggerBonusAndManagerPayoutOnApprovedRevenue:`,
+          err,
+        ),
       );
     }
 
@@ -1303,24 +1386,47 @@ export class LocationsService {
 
   /**
    * Declanșează calculul bonusurilor angajaților și manager_daily_payout când o încasare este aprobată.
+   * Trimite notificări către fiecare angajat pontat în ziua încasării cu suma câștigată.
    * Folosit atât la recordRevenue (introducere cu status approved) cât și la updateRevenue (trecere la approved).
    */
-  private triggerBonusAndManagerPayoutOnApprovedRevenue(
+  private async triggerBonusAndManagerPayoutOnApprovedRevenue(
     revenueId: number,
     workLocationId: number,
     revenueDate: string,
-  ): void {
+  ): Promise<void> {
     console.log(
       `🔔 [BONUS TRIGGER] Încasare ${revenueId} aprobată. Calcul bonusuri și manager_daily_payout pentru data: ${revenueDate}`,
     );
-    this.calculateEmployeeBonusesForDate(workLocationId, revenueDate).catch(
-      (err) => {
-        console.error(
-          `❌ [BONUS TRIGGER] Eroare calcul bonusuri pentru încasare ${revenueId}:`,
-          err,
+    let earnings: Array<{ employeeId: number; amount: number }> = [];
+    try {
+      earnings = await this.calculateEmployeeBonusesForDate(
+        workLocationId,
+        revenueDate,
+      );
+    } catch (err) {
+      console.error(
+        `❌ [BONUS TRIGGER] Eroare calcul bonusuri pentru încasare ${revenueId}:`,
+        err,
+      );
+    }
+    if (earnings.length > 0) {
+      try {
+        this.notificationsClient.emit(
+          { cmd: "locations.revenue_approved" },
+          {
+            revenueId,
+            workLocationId,
+            revenueDate,
+            employees: earnings,
+          },
         );
-      },
-    );
+      } catch (notifErr) {
+        console.error(
+          `❌ [BONUS TRIGGER] Eroare trimitere notificări revenue_approved:`,
+          notifErr,
+        );
+      }
+    }
     // TASKS_API_BASE = gateway (ex. 3002) sau URL direct tasks (ex. 3008). Path: /tasks/cron/manager-daily-payout
     const tasksApiBase =
       process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3002";
@@ -1539,24 +1645,51 @@ export class LocationsService {
       revenue as WorkLocationRevenue,
     );
 
-    // Trigger bonus calculation and manager_daily_payout when revenue becomes approved
+    const becomingCanceled = data.status === RevenueStatus.Canceled;
+
     if (shouldCalculateBonuses && revenueDate) {
+      await this.sendRevenueNotification(
+        "revenue_approved",
+        "Încasare aprobată",
+        `Încasarea pentru data ${revenueDate} a fost aprobată, total: ${Number(savedRevenue.total_amount ?? 0).toFixed(2)} RON.`,
+        revenueId,
+        revenue.work_location_id,
+        {
+          revenue_date: revenueDate,
+          total_amount: Number(savedRevenue.total_amount ?? 0),
+        },
+      );
       this.triggerBonusAndManagerPayoutOnApprovedRevenue(
         revenueId,
         revenue.work_location_id,
         revenueDate,
+      ).catch((err) =>
+        console.error(
+          `❌ [updateRevenue] triggerBonusAndManagerPayoutOnApprovedRevenue:`,
+          err,
+        ),
+      );
+    } else if (becomingCanceled) {
+      await this.sendRevenueNotification(
+        "revenue_rejected",
+        "Încasare respinsă",
+        `Încasarea pentru data ${revenueDate ?? "N/A"} a fost respinsă.`,
+        revenueId,
+        revenue.work_location_id,
+        { revenue_date: revenueDate },
       );
     }
 
     return savedRevenue;
   }
 
-  // Calculate bonuses for all employees in a location for a specific date based on approved revenues
+  // Calculate bonuses for all employees in a location for a specific date based on approved revenues.
+  // Returns list of { employeeId, amount } for employees who had points that day (pentru notificări).
   // IMPORTANT: revenueDate is the date when revenue was created (revenue_date), not the approval date
   private async calculateEmployeeBonusesForDate(
     locationId: number,
     revenueDate: string,
-  ): Promise<void> {
+  ): Promise<Array<{ employeeId: number; amount: number }>> {
     try {
       // Normalize date to YYYY-MM-DD format for consistent querying
       const normalizedDate = revenueDate.toString().split(" ")[0].split("T")[0];
@@ -1581,7 +1714,7 @@ export class LocationsService {
         console.log(
           `⚠️ [BONUS CALC] No approved revenues found for location ${locationId}, date ${revenueDate}`,
         );
-        return;
+        return [];
       }
 
       // Get revenue intervals for this location
@@ -1605,9 +1738,7 @@ export class LocationsService {
       const serviceSecret =
         process.env.SERVICE_SECRET || "default-service-secret";
       try {
-        console.log(
-          `🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`,
-        );
+        console.log(`🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`);
         const response = await axios.get(employeesEndpoint, {
           headers: {
             "Content-Type": "application/json",
@@ -1628,7 +1759,7 @@ export class LocationsService {
           `❌ [BONUS CALC] Failed to fetch employees for location ${locationId} (URL: ${employeesEndpoint}). Set EMPLOYEES_HTTP_URL dacă locations și employees sunt în rețele diferite (ex. Docker: http://nume-serviciu-employees:3001):`,
           error?.message ?? error,
         );
-        return;
+        return [];
       }
 
       // Helper function to find multiplier for a revenue amount
@@ -1652,6 +1783,8 @@ export class LocationsService {
         process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3008";
       const workDate = new Date(revenueDate);
       workDate.setHours(0, 0, 0, 0);
+
+      const earnings: Array<{ employeeId: number; amount: number }> = [];
 
       for (const employee of employees) {
         try {
@@ -1720,8 +1853,7 @@ export class LocationsService {
             `✅ [BONUS CALC] Employee ${employeeId} total bonus for revenue_date ${normalizedDate}: ${totalBonus.toFixed(2)} RON`,
           );
 
-          // Note: The bonus is calculated but not stored in a separate table
-          // It will be calculated on-the-fly when requested via the /api/employees/[id]/money endpoint
+          earnings.push({ employeeId, amount: totalBonus });
         } catch (employeeError) {
           console.error(
             `❌ [BONUS CALC] Error processing employee ${employee.id}:`,
@@ -1733,11 +1865,13 @@ export class LocationsService {
       console.log(
         `✅ [BONUS CALC] Finished bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`,
       );
+      return earnings;
     } catch (error) {
       console.error(
         `❌ [BONUS CALC] Error in calculateEmployeeBonusesForDate:`,
         error,
       );
+      return [];
     }
   }
 
@@ -1900,10 +2034,17 @@ export class LocationsService {
           `Folderul cu ID-ul ${createFileDto.folder_id} nu a fost găsit pentru această locație`,
         );
       }
-      const basePath = this.getLocationBasePath(companyName, location.location_name);
+      const basePath = this.getLocationBasePath(
+        companyName,
+        location.location_name,
+      );
       fileDir = path.join(basePath, folder.folder_path);
       const relativePath = folder.folder_path.replace(/\\/g, "/");
-      updatedFileLink = `/files/companies/${companyName}/Locații/${location.location_name}/${relativePath}/${uniqueFileName}`.replace(/\/+/g, "/");
+      updatedFileLink =
+        `/files/companies/${companyName}/Locații/${location.location_name}/${relativePath}/${uniqueFileName}`.replace(
+          /\/+/g,
+          "/",
+        );
     } else {
       let folderName: string | null = null;
       if (createFileDto.notes) {
@@ -1919,7 +2060,11 @@ export class LocationsService {
       } else {
         fileDir = locationDir;
       }
-      updatedFileLink = `/files/companies/${companyName}/Locații/${location.location_name}${folderName ? `/${folderName}` : ""}/${uniqueFileName}`.replace(/\/+/g, "/");
+      updatedFileLink =
+        `/files/companies/${companyName}/Locații/${location.location_name}${folderName ? `/${folderName}` : ""}/${uniqueFileName}`.replace(
+          /\/+/g,
+          "/",
+        );
     }
 
     if (!fs.existsSync(fileDir)) {
@@ -2015,7 +2160,9 @@ export class LocationsService {
     });
   }
 
-  async findFoldersByLocation(work_location_id: number): Promise<WorkLocationFolder[]> {
+  async findFoldersByLocation(
+    work_location_id: number,
+  ): Promise<WorkLocationFolder[]> {
     const location = await this.workLocationRepository.findOne({
       where: { id: work_location_id },
     });
@@ -2038,10 +2185,15 @@ export class LocationsService {
       where: { id: locationId },
     });
     if (!location) {
-      throw new NotFoundException(`Locația cu ID-ul ${locationId} nu a fost găsită`);
+      throw new NotFoundException(
+        `Locația cu ID-ul ${locationId} nu a fost găsită`,
+      );
     }
     const companyName = await this.getCompanyNameForLocation(location);
-    const basePath = this.getLocationBasePath(companyName, location.location_name);
+    const basePath = this.getLocationBasePath(
+      companyName,
+      location.location_name,
+    );
 
     const parentId = body.parent_id ?? null;
     let folderPath: string;
@@ -2050,7 +2202,9 @@ export class LocationsService {
         where: { id: parentId, work_location_id: locationId },
       });
       if (!parent) {
-        throw new NotFoundException(`Folderul părinte cu ID-ul ${parentId} nu a fost găsit`);
+        throw new NotFoundException(
+          `Folderul părinte cu ID-ul ${parentId} nu a fost găsit`,
+        );
       }
       folderPath = path.join(parent.folder_path, body.description);
     } else {
@@ -2095,13 +2249,17 @@ export class LocationsService {
       where: { id: folderId, work_location_id: locationId },
     });
     if (!folder) {
-      throw new NotFoundException(`Folderul cu ID-ul ${folderId} nu a fost găsit`);
+      throw new NotFoundException(
+        `Folderul cu ID-ul ${folderId} nu a fost găsit`,
+      );
     }
     const location = await this.workLocationRepository.findOne({
       where: { id: locationId },
     });
     if (!location) {
-      throw new NotFoundException(`Locația cu ID-ul ${locationId} nu a fost găsită`);
+      throw new NotFoundException(
+        `Locația cu ID-ul ${locationId} nu a fost găsită`,
+      );
     }
 
     const existingSibling = await this.folderRepository.findOne({
@@ -2118,7 +2276,10 @@ export class LocationsService {
     }
 
     const companyName = await this.getCompanyNameForLocation(location);
-    const basePath = this.getLocationBasePath(companyName, location.location_name);
+    const basePath = this.getLocationBasePath(
+      companyName,
+      location.location_name,
+    );
     const oldAbsolute = path.join(basePath, folder.folder_path);
     const parent = folder.parent_id
       ? await this.folderRepository.findOne({ where: { id: folder.parent_id } })
@@ -2141,11 +2302,14 @@ export class LocationsService {
     });
     for (const c of children) {
       if (c.folder_path.startsWith(prefix) && c.id !== folder.id) {
-        c.folder_path = newFolderPath + c.folder_path.slice(oldFolderPath.length);
+        c.folder_path =
+          newFolderPath + c.folder_path.slice(oldFolderPath.length);
         await this.folderRepository.save(c);
       }
     }
-    return this.folderRepository.findOne({ where: { id: folderId } }) as Promise<WorkLocationFolder>;
+    return this.folderRepository.findOne({
+      where: { id: folderId },
+    }) as Promise<WorkLocationFolder>;
   }
 
   async removeFolder(locationId: number, folderId: number): Promise<void> {
@@ -2153,23 +2317,32 @@ export class LocationsService {
       where: { id: folderId, work_location_id: locationId },
     });
     if (!folder) {
-      throw new NotFoundException(`Folderul cu ID-ul ${folderId} nu a fost găsit`);
+      throw new NotFoundException(
+        `Folderul cu ID-ul ${folderId} nu a fost găsit`,
+      );
     }
     const location = await this.workLocationRepository.findOne({
       where: { id: locationId },
     });
     if (!location) {
-      throw new NotFoundException(`Locația cu ID-ul ${locationId} nu a fost găsită`);
+      throw new NotFoundException(
+        `Locația cu ID-ul ${locationId} nu a fost găsită`,
+      );
     }
     const companyName = await this.getCompanyNameForLocation(location);
-    const basePath = this.getLocationBasePath(companyName, location.location_name);
+    const basePath = this.getLocationBasePath(
+      companyName,
+      location.location_name,
+    );
     const absoluteDir = path.join(basePath, folder.folder_path);
 
     const allFolders = await this.folderRepository.find({
       where: { work_location_id: locationId },
     });
     const toDelete = allFolders.filter(
-      (f) => f.folder_path === folder.folder_path || f.folder_path.startsWith(folder.folder_path + "/"),
+      (f) =>
+        f.folder_path === folder.folder_path ||
+        f.folder_path.startsWith(folder.folder_path + "/"),
     );
     const idsToDelete = toDelete.map((f) => f.id);
     await this.filesRepository.update(
@@ -2231,13 +2404,17 @@ export class LocationsService {
 
       let filePath: string;
       if (file.file_link.startsWith("/files/companies/")) {
-        const relative = file.file_link.replace(/^\/files\/companies\//, "").replace(/\//g, path.sep);
+        const relative = file.file_link
+          .replace(/^\/files\/companies\//, "")
+          .replace(/\//g, path.sep);
         filePath = path.join(this.getFilesCompaniesRoot(), relative);
       } else {
         let companyName = "Unknown";
         try {
-          const companiesUrl = process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
-          const serviceSecret = process.env.SERVICE_SECRET || "default-service-secret";
+          const companiesUrl =
+            process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
+          const serviceSecret =
+            process.env.SERVICE_SECRET || "default-service-secret";
           const response = await axios.get(
             `${companiesUrl}/companies/${location.company_id}`,
             {
@@ -2249,7 +2426,8 @@ export class LocationsService {
               timeout: 3000,
             },
           );
-          if (response.data?.company_name) companyName = response.data.company_name;
+          if (response.data?.company_name)
+            companyName = response.data.company_name;
         } catch (err: any) {
           console.warn(`⚠️ Could not fetch company name:`, err?.message);
         }

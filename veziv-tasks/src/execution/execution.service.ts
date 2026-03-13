@@ -54,23 +54,22 @@ export class ExecutionService {
     description: string,
     executionId: number,
     metadata?: any,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload = {
+        type,
+        title,
+        description,
+        entity_id: executionId,
+        entity_type: 'task_execution',
+        metadata: { ...(metadata ?? {}), ...(work_location_id != null ? { work_location_id } : {}) },
+        priority: 'medium',
+        target_url: `/sarcini/${metadata?.task_assignment_id ?? ''}`,
+      };
       await firstValueFrom(
         this.notificationsClient
-          .emit(
-            { cmd: 'tasks.notification' },
-            {
-              type,
-              title,
-              description,
-              entity_id: executionId,
-              entity_type: 'task_execution',
-              metadata,
-              priority: 'medium',
-              target_url: `/sarcini/${metadata?.task_assignment_id ?? ''}`,
-            },
-          )
+          .emit({ cmd: 'tasks.notification' }, payload)
           .pipe(defaultIfEmpty(undefined)),
       );
     } catch (error) {
@@ -274,7 +273,7 @@ export class ExecutionService {
       await this.handleTaskCompletion(executionWithRelations);
     }
 
-    // Trimite notificare RabbitMQ pentru creare execution (angajatul care a completat)
+    const locId = (assignment as any).location_id ?? undefined;
     await this.sendExecutionNotification(
       'execution.created',
       'Execuție creată',
@@ -286,6 +285,7 @@ export class ExecutionService {
         points,
         isOverdue,
       },
+      locId,
     );
 
     return {
@@ -983,7 +983,10 @@ export class ExecutionService {
       await this.handleTaskCompletion(updatedExecution);
     }
 
-    // Trimite notificare RabbitMQ pentru actualizare execution (angajatul asignat)
+    const assignmentForLoc = await this.taskAssignmentRepository.findOne({
+      where: { id: updatedExecution.task_assignment_id },
+    });
+    const locIdUpdate = (assignmentForLoc as any)?.location_id ?? undefined;
     await this.sendExecutionNotification(
       'execution.updated',
       'Execuție actualizată',
@@ -994,6 +997,7 @@ export class ExecutionService {
         assignedToId: updatedExecution.employee_id,
         completedAt: updatedExecution.completed_at,
       },
+      locIdUpdate,
     );
 
     return updatedExecution;
@@ -1038,13 +1042,14 @@ export class ExecutionService {
     await this.handleTaskRemoval(execution);
     await this.executionRepository.remove(execution);
 
-    // Trimite notificare RabbitMQ pentru ștergere execution (angajatul asignat)
+    const locIdDel = (assignment as any).location_id ?? undefined;
     await this.sendExecutionNotification(
       'execution.deleted',
       'Execuție ștearsă',
       `Execuția task-ului a fost ștearsă`,
       executionId,
       { assignmentId, assignedToId: assignment.assigned_to_id },
+      locIdDel,
     );
 
     // Reactivează assignment-ul (schimbă status-ul în 'assigned')
@@ -1281,6 +1286,19 @@ export class ExecutionService {
       throw new NotFoundException(
         `Nu există punctaj pentru angajatul ${employeeId} în data ${workDate}`,
       );
+    }
+
+    // Sursă de adevăr: SUM(employee_daily_task_points.points_awarded). Resincronizează total_points.
+    const sumResult = await this.employeeDailyTaskPointsRepository
+      .createQueryBuilder('tp')
+      .select('COALESCE(SUM(tp.points_awarded), 0)', 'total')
+      .where('tp.employee_daily_points_id = :id', { id: dailyPoints.id })
+      .getRawOne<{ total: string }>();
+    const sum = parseFloat(sumResult?.total ?? '0') || 0;
+    const currentStored = Number(dailyPoints.total_points);
+    if (currentStored !== sum) {
+      dailyPoints.total_points = sum;
+      await this.employeeDailyPointsRepository.save(dailyPoints);
     }
 
     return dailyPoints;

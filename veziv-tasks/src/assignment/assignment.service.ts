@@ -513,6 +513,7 @@ export class AssignmentService {
     description: string,
     assignmentId: number,
     metadata?: any,
+    work_location_id?: number,
   ): Promise<void> {
     try {
       const payload = {
@@ -521,7 +522,7 @@ export class AssignmentService {
         description,
         entity_id: assignmentId,
         entity_type: 'task_assignment',
-        metadata: metadata ?? {},
+        metadata: { ...(metadata ?? {}), ...(work_location_id != null ? { work_location_id } : {}) },
         priority: 'medium' as const,
         target_url: `/sarcini/${assignmentId}`,
       };
@@ -565,6 +566,7 @@ export class AssignmentService {
     taskDisplayName: string,
     previousAssigneeId: number,
     newAssigneeId: number,
+    work_location_id?: number,
   ): Promise<void> {
     const oldInfo =
       previousAssigneeId != null
@@ -592,6 +594,7 @@ export class AssignmentService {
       `Sarcina "${taskDisplayName}" a fost reatribuită de la ${oldName} la ${newName}.`,
       assignmentId,
       { previousAssigneeId, newAssigneeId },
+      work_location_id,
     );
   }
 
@@ -1713,12 +1716,14 @@ export class AssignmentService {
           : newAssignedToId != null
             ? `noul angajat (ID ${newAssignedToId})`
             : '–';
+      const locId = (updatedAssignment as any).location_id ?? undefined;
       await this.sendAssignmentNotification(
         'assignment.reassigned_manager_info',
         'Task reatribuit',
         `Task-ul "${displayName}" a fost reatribuit de la ${oldName} la ${newName}.`,
         updatedAssignment.id,
         { templateId: updatedAssignment.template_id },
+        locId,
       );
     } else {
       // Actualizare fără schimbare de asignat: notificare doar pentru asignatul curent
@@ -3789,12 +3794,14 @@ export class AssignmentService {
       (assignment as any).template?.template_name ||
       'Task';
     if (assignment.assigned_to_id) {
+      const locId = (assignment as any).location_id ?? undefined;
       await this.sendAssignmentNotification(
         'assignment.auto_postponed',
         'Task amânat automat',
         `Task-ul "${displayName}" a fost amânat automat cu ${minutes} minute. Noul termen limită a fost actualizat.`,
         assignment.id,
         { assignedToId: assignment.assigned_to_id, minutes },
+        locId,
       );
     }
     return true;
@@ -4179,6 +4186,7 @@ export class AssignmentService {
       displayName,
       assignment.assigned_to_id,
       targetAssigneeId,
+      (assignment as any).location_id,
     ).catch((err) =>
       this.logger.warn('Notificare reatribuire admini nereușită', err),
     );
@@ -4413,6 +4421,7 @@ export class AssignmentService {
       displayName,
       assignment.assigned_to_id,
       targetAssigneeId,
+      (assignment as any).location_id,
     ).catch((err) =>
       this.logger.warn('Notificare reatribuire pentru admini nereușită', err),
     );

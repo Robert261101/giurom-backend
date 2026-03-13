@@ -45,32 +45,45 @@ export class StockHttpService {
    * Creates a stock item entry in the stock microservice
    */
   async createStockItem(dto: CreateStockItemDto): Promise<StockResponse | null> {
+    const url = `${this.stockServiceUrl}/stock/items`;
     try {
-      this.logger.log(`Creating stock item for product ${dto.product_id} with quantity ${dto.quantity}`);
-      
+      this.logger.log(`📦 [StockHttpService] POST ${url} - product_id=${dto.product_id}, quantity=${dto.quantity}, location_id=${dto.location_id ?? 'null'}`);
       const response = await firstValueFrom(
         this.httpService.post<StockResponse>(
-          `${this.stockServiceUrl}/stock/items`, 
-          dto,
+          url,
+          {
+            product_id: dto.product_id,
+            supplier_order_item_id: dto.supplier_order_item_id,
+            quantity: dto.quantity,
+            price: dto.price,
+            entry_date: dto.entry_date,
+            status: dto.status ?? 'valid',
+            location_id: dto.location_id,
+          },
           {
             headers: {
               'x-internal-service': 'suppliers-ms',
               'x-service-secret': this.serviceSecret,
+              'Content-Type': 'application/json',
             },
           }
         )
       );
-
-      this.logger.log(`Successfully created stock item with ID: ${response.data.id}`);
-      return response.data;
+      const data = response.data;
+      this.logger.log(`✅ [StockHttpService] Created stock item ID ${data?.id} for product ${dto.product_id}`);
+      return data;
     } catch (error: any) {
-      this.logger.error(`Failed to create stock item for product ${dto.product_id}:`, error?.message || error);
-      
-      // Log more details for debugging
-      if (error?.response) {
-        this.logger.error(`Stock service responded with status ${error.response.status}:`, error.response.data);
+      const status = error?.response?.status;
+      const body = error?.response?.data;
+      this.logger.error(
+        `❌ [StockHttpService] Failed to create stock item (product_id=${dto.product_id}, quantity=${dto.quantity}): status=${status ?? 'N/A'}, message=${error?.message ?? error}`
+      );
+      if (body != null) {
+        this.logger.error(`❌ [StockHttpService] Response body: ${JSON.stringify(body)}`);
       }
-      
+      if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND') {
+        this.logger.error(`❌ [StockHttpService] Verifică STOCK_HTTP_URL (current: ${this.stockServiceUrl}) și că serviciul stock rulează.`);
+      }
       return null;
     }
   }

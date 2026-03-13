@@ -17,6 +17,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.id || payload.sub, // ID-ul angajatului (id_employee din JWT)
       username: payload.username,
       permissions: payload.permissions || [],
+      work_location_id: payload.work_location_id ?? undefined,
+      work_location_default_id: payload.work_location_default_id ?? undefined,
     };
   }
 }

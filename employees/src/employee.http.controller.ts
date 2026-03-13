@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  Headers,
   HttpStatus,
   UseGuards,
   Res,
@@ -20,6 +21,7 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiHeader,
   ApiBearerAuth,
 } from "@nestjs/swagger";
 import { EmployeeService } from "./employee.service";
@@ -53,10 +55,17 @@ export class EmployeeHttpController {
     description: "Angajatul a fost creat cu succes",
     type: Employee,
   })
+  @ApiHeader({ name: "x-work-location-id", required: false, description: "Locația selectată în UI (colț dreapta sus)" })
+  @ApiQuery({ name: "location_id", required: false, description: "Alternativ: locația selectată (dacă nu e în header)" })
   async create(
     @Body() createEmployeeDto: CreateEmployeeDto,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ): Promise<Employee> {
-    return this.employeeService.create(createEmployeeDto);
+    const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    return this.employeeService.create(createEmployeeDto, selectedWorkLocationId);
   }
 
   @Get()
@@ -478,11 +487,18 @@ export class EmployeeHttpController {
     description: "Angajatul a fost actualizat cu succes",
     type: Employee,
   })
+  @ApiHeader({ name: "x-work-location-id", required: false })
+  @ApiQuery({ name: "location_id", required: false })
   async update(
     @Param("id") id: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ): Promise<Employee> {
-    return this.employeeService.update(+id, updateEmployeeDto);
+    const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    return this.employeeService.update(+id, updateEmployeeDto, selectedWorkLocationId);
   }
 
   @Patch(":id/toggle-active")
@@ -513,8 +529,17 @@ export class EmployeeHttpController {
     status: HttpStatus.OK,
     description: "Angajatul a fost șters cu succes",
   })
-  async remove(@Param("id") id: string): Promise<{ message: string }> {
-    return this.employeeService.remove(+id);
+  @ApiHeader({ name: "x-work-location-id", required: false })
+  @ApiQuery({ name: "location_id", required: false })
+  async remove(
+    @Param("id") id: string,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ): Promise<{ message: string }> {
+    const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    return this.employeeService.remove(+id, selectedWorkLocationId);
   }
 
   // Serve employee file (download or inline based on query)
@@ -901,4 +926,11 @@ export class EmployeeHttpController {
     console.log(`[EMPLOYEES CONTROLLER] Getting expired files`);
     return this.employeeService.findExpiredFiles();
   }
+}
+
+/** Locația selectată în UI (colț dreapta sus): header x-work-location-id sau query location_id. */
+function parseSelectedWorkLocationId(value: string | undefined): number | undefined {
+  if (value == null || value === "") return undefined;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : undefined;
 }

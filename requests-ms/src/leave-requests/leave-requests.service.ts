@@ -37,20 +37,22 @@ export class LeaveRequestsService implements OnModuleInit {
     description: string,
     userId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload: any = {
+        type,
+        title,
+        description,
+        user_id: userId,
+        entity_type: 'leave_request',
+        metadata: { ...metadata, ...(work_location_id != null ? { work_location_id: work_location_id } : {}) },
+        priority: 'medium',
+        target_url,
+      };
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'leave.notification' }, {
-          type,
-          title,
-          description,
-          user_id: userId,
-          entity_type: 'leave_request',
-          metadata,
-          priority: 'medium',
-          target_url,  // Add target_url to notification data
-        })
+        this.notificationsClient.emit({ cmd: 'leave.notification' }, payload)
       );
     } catch (error) {
       this.logger.error(`Failed to send leave notification: ${error?.message || error}`);
@@ -140,7 +142,7 @@ export class LeaveRequestsService implements OnModuleInit {
     const durationMs = endDate.getTime() - startDate.getTime();
     const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
 
-    // Send notification to admins/managers about new leave request
+    // Send notification to admins/managers about new leave request (work_location_id pentru filtrare pe locație)
     await this.sendLeaveNotification(
       'leave_request_created',
       'Cerere de concediu noua',
@@ -154,7 +156,8 @@ export class LeaveRequestsService implements OnModuleInit {
         endDate: endDate.toISOString(),
         duration: durationDays,
       },
-      `/pontaj/${dto.employee_id}`  // Add target_url
+      `/pontaj/${dto.employee_id}`,
+      locationId,
     );
 
     return this.findOne(savedRequest.id);
@@ -313,7 +316,8 @@ export class LeaveRequestsService implements OnModuleInit {
             endDate: leaveRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
           },
-          `/pontaj/${leaveRequest.employee_id}`  // Add target_url
+          `/pontaj/${leaveRequest.employee_id}`,
+          leaveRequest.location_id ?? undefined,
         );
       } else if (dto.status === LeaveStatus.REJECTED) {
         await this.sendLeaveNotification(
@@ -329,7 +333,8 @@ export class LeaveRequestsService implements OnModuleInit {
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           },
-          `/pontaj/${leaveRequest.employee_id}`  // Add target_url
+          `/pontaj/${leaveRequest.employee_id}`,
+          leaveRequest.location_id ?? undefined,
         );
       }
     } catch (error) {

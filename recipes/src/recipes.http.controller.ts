@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Request, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Permissions } from './permissions/permissions.decorator';
 import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
@@ -250,7 +250,14 @@ export class RecipesHttpController {
   }
   @Delete('recipes/:id')
   @Permissions('recipes.delete')
-  remove(@Param('id') id: string) { return this.recipes.remove(Number(id)); }
+  remove(
+    @Param('id') id: string,
+    @Headers('x-work-location-id') xWorkLocationId?: string,
+    @Query('location_id') location_id?: string,
+  ) {
+    const selectedWorkLocationId = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    return this.recipes.remove(Number(id), selectedWorkLocationId);
+  }
 
   // Preparations
   @Get('recipe-preparations')
@@ -469,4 +476,10 @@ export class RecipesHttpController {
     await this.recipes.removeRecipeFromLocation(Number(recipeId), Number(locationId));
     return { message: 'Rețeta a fost eliminată de la locație cu succes' };
   }
+}
+
+function parseSelectedWorkLocationId(value: string | undefined): number | undefined {
+  if (value == null || value === '') return undefined;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : undefined;
 }

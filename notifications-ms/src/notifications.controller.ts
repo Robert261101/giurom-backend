@@ -195,12 +195,24 @@ export class NotificationsController {
     return true;
   }
 
+  @MessagePattern({ cmd: "labels.expired" })
+  async handleLabelExpired(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onLabelExpired(data);
+    return true;
+  }
+
   @MessagePattern({ cmd: "suppliers.notification" })
   async handleSupplierNotification(
     @Payload() data: any,
     @Ctx() _ctx: RmqContext,
   ) {
     await this.service.onSupplierNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: "orders.notification" })
+  async handleOrderNotification(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onOrderNotification(data);
     return true;
   }
 
@@ -225,6 +237,12 @@ export class NotificationsController {
     @Ctx() _ctx: RmqContext,
   ) {
     await this.service.onLocationNotification(data);
+    return true;
+  }
+
+  @MessagePattern({ cmd: "locations.revenue_approved" })
+  async handleRevenueApproved(@Payload() data: any, @Ctx() _ctx: RmqContext) {
+    await this.service.onRevenueApproved(data);
     return true;
   }
 

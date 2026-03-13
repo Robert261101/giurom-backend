@@ -103,35 +103,66 @@ export class NotificationsService {
   }
 
   async onExpiringLabel(event: { labelId: number; labelCode: string; preparationId: number; expiresAt: string }) {
-    // For expiring labels, apply time-based deduplication (5 minutes)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.labelId, 
-        entity_type: 'recipe_label', 
+    const targetUsers = await this.getUsersWithRoles(['admin', 'manager']);
+    const created = [];
+    for (const user of targetUsers) {
+      const existing = await this.repo.findOne({
+        where: {
+          entity_id: event.labelId,
+          entity_type: 'recipe_label',
+          type: 'label_expiring',
+          user_id: user.id,
+          created_at: MoreThanOrEqual(fiveMinutesAgo) as any,
+        } as any,
+      });
+      if (existing) continue;
+      const saved = await this.create({
         type: 'label_expiring',
-        created_at: MoreThanOrEqual(fiveMinutesAgo) as any
-      } as any 
-    });
-    
-    if (existing) {
-      return existing;
+        title: 'Eticheta aproape de expirare',
+        description: `Eticheta ${event.labelCode} va expira la ${new Date(event.expiresAt).toLocaleString('ro-RO')}`,
+        user_id: user.id,
+        entity_id: event.labelId,
+        entity_type: 'recipe_label',
+        target_url: '/retetar/istoric-etichete',
+        metadata: { preparationId: event.preparationId, labelCode: event.labelCode, expiresAt: event.expiresAt },
+        priority: 'high',
+        status: 'unread',
+        expires_at: event.expiresAt as any,
+      } as any);
+      created.push(saved);
     }
-    
-    // Create a persistent notification for expiring label
-    const saved = await this.create({
-      type: 'label_expiring',
-      title: 'Eticheta aproape de expirare',
-      description: `Eticheta ${event.labelCode} va expira la ${new Date(event.expiresAt).toLocaleString('ro-RO')}`,
-      entity_id: event.labelId,
-      entity_type: 'recipe_label',
-      target_url: '/retetar/istoric-etichete',
-      metadata: { preparationId: event.preparationId, labelCode: event.labelCode, expiresAt: event.expiresAt },
-      priority: 'high',
-      status: 'unread',
-      expires_at: event.expiresAt as any,
-    } as any);
-    return saved;
+    return created;
+  }
+
+  async onLabelExpired(event: { labelId: number; labelCode: string; preparationId: number; expiresAt: string }) {
+    const targetUsers = await this.getUsersWithRoles(['admin', 'manager']);
+    const created = [];
+    for (const user of targetUsers) {
+      const existing = await this.repo.findOne({
+        where: {
+          entity_id: event.labelId,
+          entity_type: 'recipe_label',
+          type: 'label_expired',
+          user_id: user.id,
+        } as any,
+      });
+      if (existing) continue;
+      const saved = await this.create({
+        type: 'label_expired',
+        title: 'Eticheta a expirat',
+        description: `Eticheta ${event.labelCode} a expirat la ${new Date(event.expiresAt).toLocaleString('ro-RO')}`,
+        user_id: user.id,
+        entity_id: event.labelId,
+        entity_type: 'recipe_label',
+        target_url: '/retetar/istoric-etichete',
+        metadata: { preparationId: event.preparationId, labelCode: event.labelCode, expiresAt: event.expiresAt },
+        priority: 'high',
+        status: 'unread',
+      } as any);
+      created.push(saved);
+    }
+    return created;
   }
 
   async onRecipeNotification(event: { 
@@ -143,62 +174,66 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // For update-type notifications, apply time-based deduplication (5 minutes)
-    let existing: NotificationEntity | null = null;
-    if (event.type.includes('updated') || event.type.includes('modified')) {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type,
-          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
-        } as any 
-      });
-    } else {
-      // For non-update notifications, check for any existing duplicate
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type 
-        } as any 
-      });
-    }
-    
-    if (existing) {
-      return existing;
-    }
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Combine manager/admin users with the specific user (if provided)
-    const targetUsers: Array<{id: number, email?: string, roles?: string[]}> = [...managerAndAdminUsers];
-    if (event.user_id && !managerAndAdminUsers.some(u => u.id === event.user_id)) {
-      targetUsers.push({ id: event.user_id, email: '', roles: [] });
-    }
-    
-    // Create notifications for each target user
+    const adminOnly = event.metadata?.audience === 'admin_only' ||
+      (event.entity_type === 'recipe' && ['recipe_created', 'recipe_updated', 'recipe_deleted'].includes(event.type));
+    const roleNames = adminOnly ? ['admin'] : ['admin', 'manager'];
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    let targetUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(roleNames, workLocationId)
+        : await this.getUsersWithRoles(roleNames);
+    if (targetUsers.length === 0 && workLocationId != null)
+      targetUsers = await this.getUsersWithRoles(roleNames);
+
+    // Deduplicare per user (5 min pentru update, altfel orice duplicate)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const isUpdateType = event.type.includes('updated') || event.type.includes('modified');
     const notifications = [];
     for (const user of targetUsers) {
+      let existing: NotificationEntity | null = null;
+      if (isUpdateType) {
+        existing = await this.repo.findOne({
+          where: {
+            entity_id: event.entity_id,
+            entity_type: event.entity_type,
+            type: event.type,
+            user_id: user.id,
+            created_at: MoreThanOrEqual(fiveMinutesAgo) as any,
+          } as any,
+        });
+      } else {
+        existing = await this.repo.findOne({
+          where: {
+            entity_id: event.entity_id,
+            entity_type: event.entity_type,
+            type: event.type,
+            user_id: user.id,
+          } as any,
+        });
+      }
+      if (existing) continue;
+      const { title, description } = await this.prefixWithLocation(
+        event.title,
+        event.description,
+        workLocationId,
+        event.metadata,
+      );
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
     return notifications;
   }
 
@@ -210,60 +245,71 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // For update-type notifications, apply time-based deduplication (5 minutes)
-    let existing: NotificationEntity | null = null;
-    if (event.type.includes('updated') || event.type.includes('modified')) {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type,
-          created_at: MoreThanOrEqual(fiveMinutesAgo) as any
-        } as any 
-      });
-    } else {
-      // For non-update notifications, check for any existing duplicate
-      existing = await this.repo.findOne({ 
-        where: { 
-          entity_id: event.entity_id, 
-          entity_type: event.entity_type, 
-          type: event.type 
-        } as any 
-      });
+    const isMovement = event.type.startsWith('stock_in_') || event.type.startsWith('stock_out_');
+    if (!isMovement) {
+      let existing: NotificationEntity | null = null;
+      if (event.type.includes('updated') || event.type.includes('modified')) {
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        existing = await this.repo.findOne({ 
+          where: { 
+            entity_id: event.entity_id, 
+            entity_type: event.entity_type, 
+            type: event.type,
+            created_at: MoreThanOrEqual(fiveMinutesAgo) as any
+          } as any 
+        });
+      } else {
+        existing = await this.repo.findOne({ 
+          where: { 
+            entity_id: event.entity_id, 
+            entity_type: event.entity_type, 
+            type: event.type 
+          } as any 
+        });
+      }
+      if (existing) return existing;
     }
-    
-    if (existing) {
-      return existing;
-    }
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
+
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    let targetUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
+    if (targetUsers.length === 0 && workLocationId != null)
+      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
-    for (const user of managerAndAdminUsers) {
+    for (const user of targetUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url ?? '/stoc',
       } as any);
       notifications.push(saved);
     }
-    
     return notifications;
   }
 
-  async onLocationNotification(event: { 
+  /**
+   * Notificări locații și încasări: doar adminul de la firma care are locația (sau admini cu acea locație).
+   * Locații: creare, modificare, ștergere. Încasări: trimisă, aprobată, respinsă.
+   * Folosește work_location_id pentru a trimite doar la adminii care au acea locație.
+   */
+  async onLocationNotification(event: {
     type: string;
     title: string;
     description: string;
@@ -271,15 +317,24 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
-    // IMPORTANT: We create notifications for ALL admins/managers, filtering happens on frontend
+    const workLocationId =
+      event.entity_type === 'location'
+        ? event.entity_id
+        : event.metadata?.work_location_id ?? null;
+    let targetUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['admin'], workLocationId)
+        : [];
+    if (targetUsers.length === 0) {
+      this.logger.log(
+        `[locations.notification] Niciun admin pe locația ${workLocationId ?? 'N/A'}, fallback la toți adminii`,
+      );
+      targetUsers = await this.getUsersWithRoles(['admin']);
+    }
     const notifications = [];
-    for (const user of managerAndAdminUsers) {
+    for (const user of targetUsers) {
       
       // Check for duplicate per user, but with a very short window (30 seconds) for updates
       // This allows multiple updates to be notified, but prevents spam from rapid-fire updates
@@ -314,12 +369,18 @@ export class NotificationsService {
         notifications.push(existing);
         continue;
       }
-      
+
+      const { title, description } = await this.prefixWithLocation(
+        event.title,
+        event.description,
+        workLocationId,
+        event.metadata,
+      );
       try {
         const saved = await this.create({
           type: event.type,
-          title: event.title,
-          description: event.description,
+          title,
+          description,
           user_id: user.id,
           entity_id: event.entity_id,
           entity_type: event.entity_type,
@@ -333,11 +394,15 @@ export class NotificationsService {
         // Continue processing other users even if one fails
       }
     }
-    
+
     return notifications;
   }
 
-  async onSupplierNotification(event: { 
+  /**
+   * Notificări furnizor: doar admin – la creare, modificare, ștergere furnizor și la comanda furnizor.
+   * Dacă metadata.work_location_id este prezent, notifică doar adminii de la acea locație.
+   */
+  async onSupplierNotification(event: {
     type: string;
     title: string;
     description: string;
@@ -345,30 +410,91 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    let targetUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['admin'], workLocationId)
+        : await this.getUsersWithRoles(['admin']);
+    if (targetUsers.length === 0 && workLocationId != null)
+      targetUsers = await this.getUsersWithRoles(['admin']);
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
-    for (const user of managerAndAdminUsers) {
+    for (const user of targetUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
     return notifications;
+  }
+
+  /**
+   * Notificări comenzi: admini/manageri din locație; dacă niciunul nu e găsit pe locație, fallback la toți adminii/managerii.
+   * - order_received_total, order_received_partial, order_cancelled -> admin + manager
+   * - order_reception_approved, order_reception_rejected -> doar admin
+   */
+  async onOrderNotification(event: {
+    type: string;
+    title: string;
+    description: string;
+    work_location_id: number;
+    entity_id: number;
+    entity_type: string;
+    metadata?: any;
+    priority?: 'low' | 'medium' | 'high';
+    target_url?: string;
+  }) {
+    const workLocationId = event.work_location_id;
+    const adminOnly = event.type === 'order_reception_approved' || event.type === 'order_reception_rejected';
+    const roleNames = adminOnly ? ['admin'] : ['admin', 'manager'];
+
+    let targetUsers = workLocationId != null
+      ? await this.getUsersWithAccessToLocation(roleNames, workLocationId)
+      : [];
+    if (targetUsers.length === 0) {
+      this.logger.log(`[orders.notification] Niciun admin/manager pe locația ${workLocationId ?? 'N/A'}, fallback la toți rolurile: ${roleNames.join(', ')}`);
+      targetUsers = await this.getUsersWithRoles(roleNames);
+    }
+    if (targetUsers.length === 0) {
+      this.logger.warn('[orders.notification] Niciun utilizator găsit pentru rolurile cerute, notificare omisă');
+      return;
+    }
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
+    for (const user of targetUsers) {
+      await this.create({
+        type: event.type,
+        title,
+        description,
+        user_id: user.id,
+        entity_id: event.entity_id,
+        entity_type: event.entity_type ?? 'supplier_order',
+        metadata: event.metadata,
+        priority: event.priority ?? 'medium',
+        status: 'unread',
+        target_url: event.target_url ?? '/comenzi',
+      } as any);
+    }
   }
 
   async onLeaveNotification(event: { 
@@ -379,61 +505,66 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    // Use the requestId from metadata if available, otherwise fall back to user_id
     const entityId = event.metadata?.requestId || event.user_id;
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: entityId, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
-    
-    if (existing) {
-      return existing;
-    }
-    
-    // Get users with manager and admin roles for admin/manager notifications
-    // For employee notifications, send directly to the employee
-    let targetUsers = [];
-    
+    const employeeId = event.metadata?.employeeId ?? event.user_id;
+
+    let targetUsers: Array<{ id: number; email?: string; roles?: string[] }>;
+    const workLocationId = event.metadata?.work_location_id ?? null;
+
     if (event.type === 'leave_request_created') {
-      // Send to managers/admins AND to the employee who created the request
-      // event.user_id is the employee_id who created the leave request
-      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-      const employeeUser = [{ id: event.user_id }];
-      
-      // Combine both groups (avoiding duplicates)
-      const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
-      targetUsers = allTargetUsers.filter((user, index, self) => 
-        index === self.findIndex(u => u.id === user.id)
-      );
+      targetUsers =
+        workLocationId != null
+          ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+          : await this.getUsersWithRoles(['manager', 'admin']);
     } else {
-      // Send to the specific employee
-      targetUsers = [{ id: event.user_id }];
+      // Aprobare/respingere: doar angajatul (rezolvăm employee_id -> user_id)
+      let userId: number | null = null;
+      try {
+        const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+        const res = await firstValueFrom(
+          this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          })
+        );
+        const user = res.data?.data ?? res.data;
+        if (user?.id) userId = user.id;
+      } catch (e: any) {
+        this.logger.warn(`[leave.notification] Nu s-a putut rezolva user_id pentru employee ${employeeId}: ${e?.message || e}`);
+      }
+      targetUsers = userId != null ? [{ id: userId, email: '', roles: [] }] : [];
     }
-    
-    // Create notifications for target users
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of targetUsers) {
+      const existing = await this.repo.findOne({
+        where: { entity_id: entityId, entity_type: event.entity_type, type: event.type, user_id: user.id } as any,
+      });
+      if (existing) continue;
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: entityId,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url ?? '/cereri-concedii',
       } as any);
       notifications.push(saved);
     }
-    
     return notifications;
   }
 
@@ -445,53 +576,66 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    // Use the requestId from metadata if available, otherwise fall back to user_id
     const entityId = event.metadata?.requestId || event.user_id;
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: entityId, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
-    
-    if (existing) {
-      return existing;
-    }
-    
-    // Get users with manager and admin roles for admin/manager notifications
-    // For employee notifications, send directly to the employee
-    let targetUsers = [];
-    
+    const employeeId = event.metadata?.employeeId ?? event.user_id;
+
+    let targetUsers: Array<{ id: number; email?: string; roles?: string[] }>;
+    const workLocationId = event.metadata?.work_location_id ?? null;
+
     if (event.type === 'shift_change_request_created') {
-      // Send to managers and admins
-      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      targetUsers =
+        workLocationId != null
+          ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+          : await this.getUsersWithRoles(['manager', 'admin']);
     } else {
-      // Send to the specific employee
-      targetUsers = [{ id: event.user_id }];
+      // Aprobare/respingere: doar angajatul (rezolvăm employee_id -> user_id)
+      let userId: number | null = null;
+      try {
+        const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+        const res = await firstValueFrom(
+          this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          })
+        );
+        const user = res.data?.data ?? res.data;
+        if (user?.id) userId = user.id;
+      } catch (e: any) {
+        this.logger.warn(`[shift-change.notification] Nu s-a putut rezolva user_id pentru employee ${employeeId}: ${e?.message || e}`);
+      }
+      targetUsers = userId != null ? [{ id: userId, email: '', roles: [] }] : [];
     }
-    
-    // Create notifications for target users
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of targetUsers) {
+      const existing = await this.repo.findOne({
+        where: { entity_id: entityId, entity_type: event.entity_type, type: event.type, user_id: user.id } as any,
+      });
+      if (existing) continue;
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: entityId,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url ?? '/cereri-schimb-tura',
       } as any);
       notifications.push(saved);
     }
-    
     return notifications;
   }
 
@@ -518,10 +662,12 @@ export class NotificationsService {
     if (existing) {
       return existing;
     }
-    
-    // Get users with manager and admin roles for admin notifications
-    // Also include the employee for whom the attendance was created
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    const managerAndAdminUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
     const employeeUser = [{ id: event.user_id }];
     
     // Combine both groups (avoiding duplicates)
@@ -530,13 +676,18 @@ export class NotificationsService {
       index === self.findIndex(u => u.id === user.id)
     );
     
-    // Create notifications for target users
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of uniqueTargetUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: entityId,
         entity_type: event.entity_type,
@@ -546,7 +697,7 @@ export class NotificationsService {
       } as any);
       notifications.push(saved);
     }
-    
+
     return notifications;
   }
 
@@ -561,48 +712,78 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
-    const existing = await this.repo.findOne({ 
-      where: { 
-        entity_id: event.entity_id, 
-        entity_type: event.entity_type, 
-        type: event.type 
-      } as any 
-    });
-    
-    if (existing) {
-      return existing;
+    // Rezolvă employee_id -> user_id (attendance-ms trimite employee_id ca user_id)
+    const employeeId = event.metadata?.employeeId ?? event.user_id;
+    let userId: number | null = event.user_id;
+    if (employeeId != null) {
+      try {
+        const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+        const url = `${apiGatewayUrl}/users/employee/${employeeId}`;
+        this.logger.log(`[shift.notification] Rezolv user_id pentru employee ${employeeId}: GET ${url}`);
+        const res = await firstValueFrom(
+          this.httpService.get(url, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          })
+        );
+        const user = res.data?.data ?? res.data;
+        if (user?.id) {
+          userId = user.id;
+          this.logger.log(`[shift.notification] Rezolvat: employee ${employeeId} -> user_id=${userId}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`[shift.notification] Nu s-a putut rezolva user_id pentru employee ${employeeId}: ${e?.message || e}`);
+      }
     }
-    
-    // Get users with manager and admin roles for admin notifications
-    // Also include the employee for whom the shift was created
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    const employeeUser = [{ id: event.user_id }];
-    
-    // Combine both groups (avoiding duplicates)
+
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    const managerAndAdminUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
+    const employeeUser = userId != null ? [{ id: userId, email: '', roles: [] }] : [];
+
     const allTargetUsers = [...managerAndAdminUsers, ...employeeUser];
     const uniqueTargetUsers = allTargetUsers.filter((user, index, self) => 
       index === self.findIndex(u => u.id === user.id)
     );
     
-    // Create notifications for target users
     const notifications = [];
     for (const user of uniqueTargetUsers) {
+      // Evită duplicat per user: doar dacă acest user nu are deja notificare pentru acest (entity, type)
+      const existingForUser = await this.repo.findOne({
+        where: {
+          entity_id: event.entity_id,
+          entity_type: event.entity_type,
+          type: event.type,
+          user_id: user.id,
+        } as any,
+      });
+      if (existingForUser) continue;
+
+      const { title, description } = await this.prefixWithLocation(
+        event.title,
+        event.description,
+        workLocationId,
+        event.metadata,
+      );
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
+
     return notifications;
   }
 
@@ -716,6 +897,161 @@ export class NotificationsService {
   }
 
   /**
+   * Elimină un prefix existent "[...]: " de la începutul textului, ca să nu dublăm locația.
+   */
+  private stripLocationPrefix(text: string | null | undefined): string {
+    if (text == null || typeof text !== 'string') return '';
+    const trimmed = text.trim();
+    const match = trimmed.match(/^\[[^\]]+\]:\s*/);
+    return match ? trimmed.slice(match[0].length).trim() : trimmed;
+  }
+
+  /**
+   * Returnează numele locației: din metadata.location_name sau GET /locations/:id.
+   */
+  private async getLocationName(
+    workLocationId: number,
+    metadata?: { location_name?: string; [k: string]: any },
+  ): Promise<string> {
+    if (metadata?.location_name && String(metadata.location_name).trim()) {
+      return String(metadata.location_name).trim();
+    }
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      const loc = await this.httpRequestWithRetry<any>(
+        `${apiGatewayUrl}/locations/${workLocationId}`,
+      );
+      const data = loc?.data ?? loc;
+      const name = data?.location_name ?? data?.locationName ?? data?.name;
+      return name != null ? String(name).trim() : `Locație ${workLocationId}`;
+    } catch (e: any) {
+      this.logger.warn(`[notifications] getLocationName(${workLocationId}): ${e?.message || e}`);
+      return `Locație ${workLocationId}`;
+    }
+  }
+
+  /**
+   * Prefixează doar title-ul cu "[Nume Locație]: " când există work_location_id.
+   * Description rămâne fără prefix ca în UI să nu apară locația de două ori (title + description).
+   */
+  private async prefixWithLocation(
+    title: string,
+    description: string | null | undefined,
+    workLocationId: number | null,
+    metadata?: { location_name?: string; [k: string]: any },
+  ): Promise<{ title: string; description: string }> {
+    if (workLocationId == null) {
+      return { title: title || 'Notificare', description: description ?? '' };
+    }
+    const locationName = await this.getLocationName(workLocationId, metadata);
+    const prefix = `[${locationName}]: `;
+    const titleClean = this.stripLocationPrefix(title || 'Notificare');
+    const descClean = this.stripLocationPrefix(description ?? '');
+    return {
+      title: prefix + titleClean,
+      description: descClean,
+    };
+  }
+
+  /**
+   * Returnează userii cu rolurile date care au acces la locația work_location_id:
+   * - au acea locație în setul de locații (work_location_default_id sau employees_locations),
+   * - sau au acces la cel puțin o locație din aceeași companie (acces la nivel de companie).
+   */
+  private async getUsersWithAccessToLocation(
+    roleNames: string[],
+    workLocationId: number,
+  ): Promise<Array<{ id: number; email: string; roles: string[] }>> {
+    try {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      const wlId = Number(workLocationId);
+      const usersWithRoles = await this.getUsersWithRoles(roleNames);
+      if (usersWithRoles.length === 0) return [];
+
+      // Locațiile companiei (pentru acces la nivel companie)
+      let companyLocationIds: number[] = [];
+      try {
+        const locResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/locations/${wlId}`);
+        const locData = locResponse?.data ?? locResponse;
+        const companyId = locData?.company_id ?? locData?.companyId;
+        if (companyId != null) {
+          const listResponse = await this.httpRequestWithRetry<any>(
+            `${apiGatewayUrl}/locations?companyId=${companyId}&limit=500`,
+          );
+          const list = listResponse?.data ?? listResponse?.locations ?? listResponse ?? [];
+          const arr = Array.isArray(list) ? list : (list?.data ?? []);
+          companyLocationIds = arr.map((l: any) => l?.id ?? l?.location_id).filter((id: any) => id != null);
+          if (!companyLocationIds.includes(wlId)) companyLocationIds.push(wlId);
+        } else {
+          companyLocationIds = [wlId];
+        }
+      } catch {
+        companyLocationIds = [wlId];
+      }
+
+      const result: Array<{ id: number; email: string; roles: string[] }> = [];
+      const headers = {
+        'x-internal-service': 'notifications',
+        'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+      };
+
+      for (let i = 0; i < usersWithRoles.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, 30));
+        const user = usersWithRoles[i];
+        try {
+          const userResponse = await firstValueFrom(
+            this.httpService.get(`${apiGatewayUrl}/users/${user.id}`, { headers }),
+          );
+          const userData = userResponse?.data ?? userResponse;
+          const idEmployee = userData?.id_employee ?? userData?.idEmployee;
+          if (idEmployee == null) continue;
+
+          const locationIds: number[] = [];
+          try {
+            const empResponse = await firstValueFrom(
+              this.httpService.get(`${apiGatewayUrl}/employees/${idEmployee}`, { headers }),
+            );
+            const emp = empResponse?.data ?? empResponse;
+            const defaultLoc = emp?.work_location_default_id ?? emp?.workLocationDefaultId;
+            if (defaultLoc != null) locationIds.push(Number(defaultLoc));
+          } catch {
+            // skip
+          }
+          try {
+            const locsResponse = await firstValueFrom(
+              this.httpService.get(`${apiGatewayUrl}/employees/${idEmployee}/locations`, { headers }),
+            );
+            const locs = locsResponse?.data ?? locsResponse;
+            const arr = Array.isArray(locs) ? locs : (locs?.data ?? []);
+            arr.forEach((item: any) => {
+              const idLoc = item?.idLocation ?? item?.id_location ?? item?.work_location_id;
+              if (idLoc != null && !locationIds.includes(Number(idLoc))) locationIds.push(Number(idLoc));
+            });
+          } catch {
+            // skip
+          }
+
+          const hasDirectAccess = locationIds.includes(wlId);
+          const hasCompanyAccess = companyLocationIds.some((id) => locationIds.includes(id));
+          if (hasDirectAccess || hasCompanyAccess) {
+            result.push(user);
+          }
+        } catch {
+          // skip user
+        }
+      }
+
+      this.logger.log(
+        `[notifications] getUsersWithAccessToLocation locație ${workLocationId}, roluri [${roleNames.join(',')}]: ${result.length} utilizatori`,
+      );
+      return result;
+    } catch (e) {
+      this.logger.warn(`[notifications] getUsersWithAccessToLocation: ${(e as Error)?.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Notificări pentru sarcini (tasks): trimise către angajatul asignat (assigned_to_id -> user_id).
    * Payload: type, title, description, entity_id, entity_type, metadata (assignedToId = employee_id), priority, target_url.
    * Opțional: user_id (dacă e deja rezolvat în veziv-tasks).
@@ -735,16 +1071,25 @@ export class NotificationsService {
       `📥 [tasks.notification] Primit: type=${event.type}, entity_id=${event.entity_id}, assignedToId=${event.metadata?.assignedToId ?? 'null'}, user_id=${event.user_id ?? 'null'}`,
     );
 
-    // Notificare doar pentru manageri/admins (fără assignedToId): reatribuire – fiecare manager/admin primește
     if (event.type === 'assignment.reassigned_manager_info') {
       const entityType = event.entity_type ?? 'task_assignment';
       const targetUrl = event.target_url ?? (event.entity_id ? `/sarcini/${event.entity_id}` : '/sarcini');
-      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+      const taskWorkLocationId = event.metadata?.work_location_id ?? null;
+      const managerAndAdminUsers =
+        taskWorkLocationId != null
+          ? await this.getUsersWithAccessToLocation(['manager', 'admin'], taskWorkLocationId)
+          : await this.getUsersWithRoles(['manager', 'admin']);
+      const { title, description } = await this.prefixWithLocation(
+        event.title,
+        event.description,
+        taskWorkLocationId,
+        event.metadata,
+      );
       for (const user of managerAndAdminUsers) {
         await this.create({
           type: event.type,
-          title: event.title,
-          description: event.description,
+          title,
+          description,
           user_id: user.id,
           entity_id: event.entity_id ?? null,
           entity_type: entityType,
@@ -788,11 +1133,18 @@ export class NotificationsService {
     const targetUrl = event.target_url ?? (entityType === 'task_template' ? '/sarcini/new' : (event.entity_id ? `/sarcini/${event.entity_id}` : '/sarcini'));
 
     if (userId != null) {
-      this.logger.log(`📝 [tasks.notification] Creez notificare pentru user_id=${userId}, title="${event.title}"`);
+      const taskWorkLocationId = event.metadata?.work_location_id ?? null;
+      const { title, description } = await this.prefixWithLocation(
+        event.title,
+        event.description,
+        taskWorkLocationId,
+        event.metadata,
+      );
+      this.logger.log(`📝 [tasks.notification] Creez notificare pentru user_id=${userId}, title="${title}"`);
       await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: userId,
         entity_id: event.entity_id ?? null,
         entity_type: entityType,
@@ -801,15 +1153,23 @@ export class NotificationsService {
         status: 'unread',
         target_url: targetUrl,
       } as any);
-      // La finalizare task (execution.created): notificare și pentru admin/manager
       if (event.type === 'execution.created') {
-        const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+        const managerAndAdminUsers =
+          taskWorkLocationId != null
+            ? await this.getUsersWithAccessToLocation(['manager', 'admin'], taskWorkLocationId)
+            : await this.getUsersWithRoles(['manager', 'admin']);
+        const { title: execTitle, description: execDesc } = await this.prefixWithLocation(
+          'Task finalizat',
+          event.description,
+          taskWorkLocationId,
+          event.metadata,
+        );
         for (const user of managerAndAdminUsers) {
           if (user.id === userId) continue;
           await this.create({
             type: event.type,
-            title: 'Task finalizat',
-            description: event.description,
+            title: execTitle,
+            description: execDesc,
             user_id: user.id,
             entity_id: event.entity_id ?? null,
             entity_type: entityType,
@@ -820,15 +1180,17 @@ export class NotificationsService {
           } as any);
         }
       }
-      // La amânare automată (assignment.auto_postponed): notificare și pentru fiecare manager/admin
       if (event.type === 'assignment.auto_postponed') {
-        const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
+        const managerAndAdminUsers =
+          taskWorkLocationId != null
+            ? await this.getUsersWithAccessToLocation(['manager', 'admin'], taskWorkLocationId)
+            : await this.getUsersWithRoles(['manager', 'admin']);
         for (const user of managerAndAdminUsers) {
           if (user.id === userId) continue;
           await this.create({
             type: event.type,
-            title: event.title,
-            description: event.description,
+            title,
+            description,
             user_id: user.id,
             entity_id: event.entity_id ?? null,
             entity_type: entityType,
@@ -842,21 +1204,22 @@ export class NotificationsService {
       return;
     }
 
-    // Fără angajat asignat: pentru task_template trimitem către manageri/admins
-    if (entityType === 'task_template') {
-      const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-      for (const user of managerAndAdminUsers) {
+    // Șabloane (template): doar admin la creare, modificare, ștergere
+    if (entityType === 'task_template' || ['template.created', 'template.updated', 'template.deleted'].includes(event.type)) {
+      const targetUsers = await this.getUsersWithRoles(['admin']);
+      const targetUrl = event.target_url ?? '/sarcini/new';
+      for (const user of targetUsers) {
         await this.create({
           type: event.type,
           title: event.title,
           description: event.description,
           user_id: user.id,
           entity_id: event.entity_id ?? null,
-          entity_type: entityType,
+          entity_type: entityType === 'task_template' ? entityType : 'task_template',
           metadata: event.metadata ?? null,
           priority: (event.priority as any) ?? 'medium',
           status: 'unread',
-          target_url: '/sarcini/new',
+          target_url: targetUrl,
         } as any);
       }
       return;
@@ -875,9 +1238,8 @@ export class NotificationsService {
     entity_type: string;
     metadata?: any;
     priority: 'low' | 'medium' | 'high';
-    target_url?: string; // Add target_url parameter
+    target_url?: string;
   }) {
-    // Avoid duplicate notifications for the same entity if one already exists
     if (event.entity_id) {
       const existing = await this.repo.findOne({ 
         where: { 
@@ -886,33 +1248,110 @@ export class NotificationsService {
           type: event.type 
         } as any 
       });
-      
-      if (existing) {
-        return existing;
-      }
+      if (existing) return existing;
     }
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
+
+    const isEmployeeCrud = ['employee_created', 'employee_updated', 'employee_deleted'].includes(event.type);
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    let targetUsers: Array<{ id: number; email: string; roles: string[] }>;
+    if (isEmployeeCrud) {
+      targetUsers =
+        workLocationId != null
+          ? await this.getUsersWithAccessToLocation(['admin'], workLocationId)
+          : await this.getUsersWithRoles(['admin']);
+      if (targetUsers.length === 0 && workLocationId != null)
+        targetUsers = await this.getUsersWithRoles(['admin']);
+    } else {
+      targetUsers = await this.getUsersWithRoles(['manager', 'admin']);
+    }
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
-    for (const user of managerAndAdminUsers) {
+    for (const user of targetUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url ?? (event.entity_id ? `/angajati/${event.entity_id}` : undefined),
       } as any);
       notifications.push(saved);
     }
-    
+    return notifications;
+  }
+
+  /**
+   * La aprobarea unei încasări de către manager: notificare pentru fiecare angajat pontat în ziua încasării,
+   * cu suma câștigată de fiecare.
+   */
+  async onRevenueApproved(event: {
+    revenueId: number;
+    workLocationId: number;
+    revenueDate: string;
+    employees: Array<{ employeeId: number; amount: number }>;
+  }) {
+    const datePart = event.revenueDate?.toString().split('T')[0]?.split(' ')[0] || event.revenueDate || '—';
+    const dateDisplay = datePart; // ex. 2025-03-06
+    const notifications = [];
+    const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+
+    for (const { employeeId, amount } of event.employees) {
+      let userId: number | null = null;
+      try {
+        const res = await firstValueFrom(
+          this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
+            headers: {
+              'x-internal-service': 'notifications',
+              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            },
+          })
+        );
+        const user = res.data?.data ?? res.data;
+        if (user?.id) userId = user.id;
+      } catch (e: any) {
+        this.logger.warn(`[revenue_approved] Nu s-a putut rezolva user_id pentru employee ${employeeId}: ${e?.message || e}`);
+        continue;
+      }
+      if (userId == null) continue;
+
+      const amountFormatted = typeof amount === 'number' ? amount.toFixed(2) : String(amount);
+      const title = 'Încasare acceptată';
+      const description = `Încasarea pentru data ${dateDisplay} a fost acceptată. Suma ta pentru această zi: ${amountFormatted} RON.`;
+
+      const existing = await this.repo.findOne({
+        where: {
+          entity_id: event.revenueId,
+          entity_type: 'revenue',
+          type: 'revenue_approved',
+          user_id: userId,
+        } as any,
+      });
+      if (existing) continue;
+
+      const saved = await this.create({
+        type: 'revenue_approved',
+        title,
+        description,
+        user_id: userId,
+        entity_id: event.revenueId,
+        entity_type: 'revenue',
+        metadata: { workLocationId: event.workLocationId, revenueDate: datePart, amount, employeeId },
+        priority: 'medium',
+        status: 'unread',
+        target_url: `/locatii/${event.workLocationId}/incasari`,
+      } as any);
+      notifications.push(saved);
+    }
     return notifications;
   }
 
@@ -1212,7 +1651,7 @@ export class NotificationsService {
     }
   }
 
-  // Check location files expiring
+  // Check location files expiring – notifică doar admin/manager de la acea locație
   private async checkLocationFilesExpiring(targetDate: string, days: number, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
       const response = await firstValueFrom(
@@ -1224,21 +1663,31 @@ export class NotificationsService {
         })
       );
       const files = Array.isArray(response.data) ? response.data : [];
-      
-      // Create notifications for each expiring file
       for (const file of files) {
         const locationName = file.workLocation?.location_name || 'N/A';
-        
-        // Create notification for each manager/admin user
-        for (const user of users) {
+        const workLocationId = file.work_location_id;
+        let targetUsers =
+          workLocationId != null
+            ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+            : [];
+        if (targetUsers.length === 0) targetUsers = users;
+        const rawTitle = `Document locatie expira in ${days} zile`;
+        const rawDesc = `Documentul "${file.file_name}" al locatiei "${locationName}" va expira in ${days} zile`;
+        const { title, description } = await this.prefixWithLocation(
+          rawTitle,
+          rawDesc,
+          workLocationId,
+          { location_name: locationName },
+        );
+        for (const user of targetUsers) {
           await this.create({
             type: 'location_file_expiring',
-            title: `Document locatie expira in ${days} zile`,
-            description: `Documentul "${file.file_name}" al locatiei "${locationName}" va expira in ${days} zile`,
+            title,
+            description,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'location_file',
-            metadata: { 
+            metadata: {
               locationId: file.work_location_id,
               locationName,
               fileName: file.file_name,
@@ -1382,7 +1831,7 @@ export class NotificationsService {
     }
   }
   
-  // Check location files expired
+  // Check location files expired – notifică doar admin/manager de la acea locație
   private async checkLocationFilesExpired(today: string, users: Array<{id: number, email: string, roles: string[]}>, apiGatewayUrl: string) {
     try {
       const response = await firstValueFrom(
@@ -1400,11 +1849,23 @@ export class NotificationsService {
         const alreadyNotified = await this.hasRecentExpiredNotification(file.id, 'location_file', 'location_file_expired');
         if (alreadyNotified) continue;
         const locationName = file.workLocation?.location_name || 'N/A';
-        for (const user of users) {
+        const workLocationId = file.work_location_id;
+        let targetUsers =
+          workLocationId != null
+            ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+            : [];
+        if (targetUsers.length === 0) targetUsers = users;
+        const { title, description } = await this.prefixWithLocation(
+          'Document locație expirat',
+          `Documentul "${file.file_name}" al locației "${locationName}" a expirat`,
+          workLocationId,
+          { location_name: locationName },
+        );
+        for (const user of targetUsers) {
           await this.create({
             type: 'location_file_expired',
-            title: 'Document locație expirat',
-            description: `Documentul "${file.file_name}" al locației "${locationName}" a expirat`,
+            title,
+            description,
             user_id: user.id,
             entity_id: file.id,
             entity_type: 'location_file',
@@ -1520,28 +1981,36 @@ export class NotificationsService {
         return existing;
       }
     }
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
+
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    const managerAndAdminUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of managerAndAdminUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
+
     return notifications;
   }
 
@@ -1569,28 +2038,36 @@ export class NotificationsService {
         return existing;
       }
     }
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    
-    // Create notifications for each manager and admin user
+
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    const managerAndAdminUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of managerAndAdminUsers) {
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
+
     return notifications;
   }
 
@@ -1606,34 +2083,35 @@ export class NotificationsService {
   }) {
     // console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
     
-    // Always create notifications for company events - remove duplicate detection for now
-    // This ensures that all company operations generate notifications
-    
-    // Get users with manager and admin roles
-    const managerAndAdminUsers = await this.getUsersWithRoles(['manager', 'admin']);
-    // console.log(`👥 [NOTIFICATIONS SERVICE] Found ${managerAndAdminUsers.length} users with manager/admin roles for company notification`);
-    
-    // Create notifications for each manager and admin user
+    const workLocationId = event.metadata?.work_location_id ?? null;
+    const managerAndAdminUsers =
+      workLocationId != null
+        ? await this.getUsersWithAccessToLocation(['manager', 'admin'], workLocationId)
+        : await this.getUsersWithRoles(['manager', 'admin']);
+
+    const { title, description } = await this.prefixWithLocation(
+      event.title,
+      event.description,
+      workLocationId,
+      event.metadata,
+    );
     const notifications = [];
     for (const user of managerAndAdminUsers) {
-      // console.log(`📝 [NOTIFICATIONS SERVICE] Creating notification for user ID: ${user.id}`);
-      
       const saved = await this.create({
         type: event.type,
-        title: event.title,
-        description: event.description,
+        title,
+        description,
         user_id: user.id,
         entity_id: event.entity_id,
         entity_type: event.entity_type,
         metadata: event.metadata,
         priority: event.priority,
         status: 'unread',
-        target_url: event.target_url, // Pass through target_url
+        target_url: event.target_url,
       } as any);
       notifications.push(saved);
     }
-    
-    // console.log(`✅ [NOTIFICATIONS SERVICE] Created ${notifications.length} notifications for company event`);
+
     return notifications;
   }
 }

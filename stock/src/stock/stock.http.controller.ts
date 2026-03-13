@@ -9,6 +9,7 @@ import {
   Query,
   Res,
   Request,
+  BadRequestException,
 } from "@nestjs/common";
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
@@ -23,6 +24,8 @@ import { UpdateWasteRecordDto } from "./dto/update-waste-record.dto";
 import { CreateConsumptionRecordDto } from "./dto/create-consumption-record.dto";
 import { UpdateConsumptionRecordDto } from "./dto/update-consumption-record.dto";
 import { AssignCategoryDto } from "./dto/assign-category.dto";
+import { CreateOrderListDto } from "./dto/create-order-list.dto";
+import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 
 @Controller("stock")
 export class StockHttpController {
@@ -175,11 +178,13 @@ export class StockHttpController {
   // Waste record for employees (with separate permission)
   @Post("employee/waste")
   @Permissions("stock.waste_own")
-  async employeeWaste(@Body() dto: CreateWasteRecordDto) {
+  async employeeWaste(@Body() dto: CreateWasteRecordDto, @Request() req?: any) {
+    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
     console.log(
-      `📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}`
+      `📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`
     );
-    const result = await this.service.createWasteRecord(dto);
+    const result = await this.service.createWasteRecord(dtoWithLocation);
 
     // Also consume the stock when creating waste record (only if product_id is provided)
     // Use 'waste' as target to skip consumption_records creation (only waste_records will be created)
@@ -191,7 +196,7 @@ export class StockHttpController {
           dto.quantity,
           "waste",
           undefined,
-          dto.location_id
+          locationId ?? undefined
         );
       } catch (error) {
         // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat
@@ -204,12 +209,14 @@ export class StockHttpController {
   // === WASTE RECORDS ===
   @Post("waste-records")
   @Permissions("stock.create")
-  async createWasteRecord(@Body() dto: CreateWasteRecordDto) {
+  async createWasteRecord(@Body() dto: CreateWasteRecordDto, @Request() req?: any) {
+    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
     console.log(
-      `📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}`
+      `📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`
     );
     try {
-      const result = await this.service.createWasteRecord(dto);
+      const result = await this.service.createWasteRecord(dtoWithLocation);
       return result;
     } catch (error: any) {
       console.error(`❌ [WasteRecord] Error:`, error?.message || error);
@@ -500,5 +507,43 @@ export class StockHttpController {
   async deleteConsumeImage(@Body() payload: { imageUrl: string }) {
     await this.service.deleteConsumeImage(payload.imageUrl);
     return { success: true, message: "Imaginea a fost ștearsă cu succes" };
+  }
+
+  // === ORDER LISTS (lista tampon) - CRUD fără permisiuni, doar JWT ===
+  @Get("order-lists")
+  async getOrderLists(
+    @Query("work_location_id") workLocationId?: string,
+    @Request() req?: any
+  ) {
+    const locId = workLocationId ? Number(workLocationId) : (req?.user?.work_location_id ?? req?.user?.work_location_default_id);
+    return this.service.findAllOrderLists(locId ?? undefined);
+  }
+
+  @Get("order-lists/:id")
+  async getOrderList(@Param("id") id: string) {
+    return this.service.findOneOrderList(Number(id));
+  }
+
+  @Post("order-lists")
+  async createOrderList(@Body() dto: CreateOrderListDto, @Request() req?: any) {
+    const workLocationId = dto.work_location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    if (workLocationId == null) {
+      throw new BadRequestException("work_location_id este obligatoriu");
+    }
+    return this.service.createOrderList({ ...dto, work_location_id: workLocationId });
+  }
+
+  @Patch("order-lists/:id")
+  async updateOrderList(
+    @Param("id") id: string,
+    @Body() dto: UpdateOrderListDto
+  ) {
+    return this.service.updateOrderList(Number(id), dto);
+  }
+
+  @Delete("order-lists/:id")
+  async deleteOrderList(@Param("id") id: string) {
+    await this.service.deleteOrderList(Number(id));
+    return { success: true };
   }
 }

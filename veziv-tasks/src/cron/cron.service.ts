@@ -204,6 +204,26 @@ export class CronService {
           continue;
         }
 
+        // Dacă angajatul a finalizat deja sarcina (ex.: sarcina realocată finalizată înainte de introducere încasare), nu scădem puncte – doar o marcăm închisă
+        const alreadyCompletedByEmployee =
+          await this.executionRepository.findOne({
+            where: {
+              task_assignment_id: assignment.id,
+              completed_at: Not(IsNull()),
+            },
+          });
+        if (alreadyCompletedByEmployee) {
+          this.logger.log(
+            `✅ Task ${assignment.id} already completed by employee ${assignment.assigned_to_id} (e.g. reallocated task finished before end of day) – marking as completed, no deduction`,
+          );
+          await this.assignmentRepository.update(assignment.id, {
+            status: 'completed' as any,
+            completed_at: alreadyCompletedByEmployee.completed_at,
+          });
+          completedCount++;
+          continue;
+        }
+
         // Verifică dacă task-ul permite amânarea și dacă a fost amânat
         const allowPostponeElement = assignment.elements?.find(
           (el) => el.task_element.element_type === 'allow_postpone',
@@ -1770,6 +1790,29 @@ export class CronService {
       this.logger.log(
         `🎲 Randomly selected employee ${selectedEmployee.id} (${selectedEmployee.first_name} ${selectedEmployee.last_name}) for task ${assignment.id}`,
       );
+
+      // Scade punctele de la angajatul de la care se ia sarcina (nefinalizată la realocare)
+      const workDate = assignment.assigned_at
+        ? new Date(assignment.assigned_at)
+        : new Date(now);
+      workDate.setHours(0, 0, 0, 0);
+      (assignment as any).location_id = locationId;
+      try {
+        const deducted =
+          await this.executionService.deductPointsForUncompletedAssignment(
+            assignment,
+            workDate,
+          );
+        if (deducted > 0) {
+          this.logger.log(
+            `📉 [REALLOC] Scăzut ${deducted} puncte de la angajatul ${currentEmployeeId} (task ${assignment.id} realocat)`,
+          );
+        }
+      } catch (deductErr: any) {
+        this.logger.warn(
+          `⚠️ [REALLOC] Deducere puncte la realocare eșuată (continuăm): ${deductErr?.message || deductErr}`,
+        );
+      }
 
       // Reatribuie task-ul la noul angajat
       await this.assignmentRepository.update(assignment.id, {

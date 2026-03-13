@@ -44,9 +44,13 @@ export class WasteRecordsService {
         description: `S-a inregistrat un deseu: ${dto.quantity} ${dto.unit}${dto.reason ? ` - ${dto.reason}` : ''}`,
         entity_id: savedEntity.id,
         entity_type: 'waste_record',
-        metadata: { wasteRecordId: savedEntity.id, ...dto },
+        metadata: {
+          wasteRecordId: savedEntity.id,
+          ...dto,
+          ...(dto.location_id != null ? { work_location_id: dto.location_id } : {}),
+        },
         priority: 'medium',
-        target_url: `/stoc`, // Add target_url
+        target_url: '/stoc',
       });
     } catch (error) {
       console.error('Failed to send waste record notification:', error);

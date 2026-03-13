@@ -92,7 +92,7 @@ export class CompanyService {
     }
   }
 
-  async createCompany(dto: CreateCompanyDto): Promise<Company> {
+  async createCompany(dto: CreateCompanyDto, work_location_id?: number): Promise<Company> {
     const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
     if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     const company = this.companyRepository.create(dto);
@@ -113,8 +113,8 @@ export class CompanyService {
         entity_id: saved.id,
         entity_type: 'company',
         priority: 'medium',
-        target_url: `/firme/${saved.id}`, // Add target_url
-        metadata: { companyId: saved.id, ...dto }
+        target_url: `/firme/${saved.id}`,
+        metadata: { companyId: saved.id, ...dto, ...(work_location_id != null ? { work_location_id } : {}) },
       };
       
       console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
@@ -253,7 +253,7 @@ export class CompanyService {
     return company;
   }
 
-  async updateCompany(id: number, dto: UpdateCompanyDto): Promise<Company> {
+  async updateCompany(id: number, dto: UpdateCompanyDto, work_location_id?: number): Promise<Company> {
     console.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
     
     const company = await this.findCompanyById(id);
@@ -275,13 +275,14 @@ export class CompanyService {
         entity_id: updatedCompany.id,
         entity_type: 'company',
         priority: 'medium',
-        target_url: `/firme/${updatedCompany.id}`, // Add target_url
-        metadata: { 
+        target_url: `/firme/${updatedCompany.id}`,
+        metadata: {
           companyId: updatedCompany.id,
           oldName: company.company_name,
           newName: updatedCompany.company_name,
-          updatedFields: Object.keys(dto)
-        }
+          updatedFields: Object.keys(dto),
+          ...(work_location_id != null ? { work_location_id } : {}),
+        },
       };
       
       console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
@@ -296,7 +297,7 @@ export class CompanyService {
     return updatedCompany;
   }
 
-  async removeCompany(id: number): Promise<void> {
+  async removeCompany(id: number, work_location_id?: number): Promise<void> {
     console.log(`🔍 [COMPANY SERVICE] Removing company ${id}`);
     
     const company = await this.findCompanyById(id);
@@ -314,8 +315,8 @@ export class CompanyService {
         entity_id: id,
         entity_type: 'company',
         priority: 'medium',
-        target_url: `/firme/${id}`, // Add target_url
-        metadata: { companyId: id, companyName }
+        target_url: `/firme/${id}`,
+        metadata: { companyId: id, companyName, ...(work_location_id != null ? { work_location_id } : {}) },
       };
       
       console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);

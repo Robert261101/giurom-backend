@@ -164,11 +164,33 @@ export class RecipesLabelsService {
       generated_by_employee_id: employeeId
     });
     const savedLabel = await this.labelRepo.save(label);
-    
+
     // Update the preparation's is_labeled flag
     prep.is_labeled = true;
     await this.prepRepo.save(prep);
-    
+
+    // Notificare la admin și manager: s-a generat etichetă
+    try {
+      await firstValueFrom(
+        this.rmq.emit({ cmd: 'recipes.notification' }, {
+          type: 'label_generated',
+          title: 'S-a generat etichetă',
+          description: `S-a generat eticheta ${savedLabel.label_code} pentru preparatul ${prep.id}`,
+          entity_id: savedLabel.id,
+          entity_type: 'recipe_label',
+          metadata: {
+            preparationId: prep.id,
+            labelCode: savedLabel.label_code,
+            ...((prep as any).location_id != null ? { work_location_id: (prep as any).location_id } : {}),
+          },
+          priority: 'medium',
+          target_url: '/retetar/istoric-etichete',
+        })
+      );
+    } catch (e) {
+      console.warn('Failed to send label_generated notification:', e);
+    }
+
     return savedLabel;
   }
 
@@ -201,6 +223,18 @@ export class RecipesLabelsService {
       if (expirationAt > now && expirationAt <= inTwoHours) {
         try {
           await firstValueFrom(this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
+            labelId: label.id,
+            labelCode: label.label_code,
+            preparationId: label.recipe_preparation_id,
+            expiresAt: expirationAt.toISOString(),
+          }));
+        } catch {
+          // Ignore transient RMQ errors
+        }
+      }
+      if (expirationAt <= now) {
+        try {
+          await firstValueFrom(this.rmq.emit({ cmd: 'labels.expired' }, {
             labelId: label.id,
             labelCode: label.label_code,
             preparationId: label.recipe_preparation_id,

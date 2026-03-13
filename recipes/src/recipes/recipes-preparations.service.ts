@@ -74,7 +74,8 @@ export class RecipePreparationsService implements OnModuleInit {
     recipeId: number,
     user_id?: number,
     metadata?: any,
-    target_url?: string // Add target_url parameter
+    target_url?: string,
+    workLocationId?: number,
   ): Promise<void> {
     try {
       await firstValueFrom(
@@ -90,9 +91,10 @@ export class RecipePreparationsService implements OnModuleInit {
             metadata: {
               ...metadata,
               recipeId,
+              ...(workLocationId != null ? { work_location_id: workLocationId } : {}),
             },
             priority: "medium",
-            target_url, // Add target_url to notification data
+            target_url,
           }
         )
       );
@@ -296,7 +298,7 @@ export class RecipePreparationsService implements OnModuleInit {
       p as any
     )) as RecipePreparation;
 
-    // Send notification for new preparation
+    // Send notification for new preparation (work_location_id pentru [Locație] în notificare)
     const user_id = dto.employee_id || undefined;
     await this.sendPreparationNotification(
       "recipe_preparation_created",
@@ -310,7 +312,8 @@ export class RecipePreparationsService implements OnModuleInit {
         quantity: dto.quantity,
         producedBy: dto.employee_id,
       },
-      `/retetar/preparate/${saved.id}`
+      `/retetar/preparate/${saved.id}`,
+      saved.location_id ?? dto.location_id,
     );
 
     // STEP 4: Consumă stocul (acum suntem siguri că e disponibil)

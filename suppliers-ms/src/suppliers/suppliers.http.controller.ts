@@ -7,6 +7,7 @@ import {
   Param,
   Body,
   Query,
+  Headers,
   Res,
   ParseIntPipe,
   UseGuards,
@@ -82,25 +83,32 @@ export class SuppliersHttpController {
 
   @Post()
   @Permissions("suppliers.create")
-  create(@Body() dto: CreateSupplierDto, @Request() req?: any) {
-    // Obține location_id din user context
+  @ApiQuery({ name: "location_id", required: false, description: "Locația selectată în UI (colț dreapta sus)" })
+  create(
+    @Body() dto: CreateSupplierDto,
+    @Request() req?: any,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+  ) {
+    const selectedId = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const user = req?.user;
-    const location_id =
-      user?.work_location_id || user?.work_location_default_id;
+    const location_id_resolved =
+      selectedId ?? user?.work_location_id ?? user?.work_location_default_id;
 
-    if (!location_id) {
+    if (!location_id_resolved) {
       throw new BadRequestException(
         "Nu se poate crea un furnizor fără o locație asignată. Vă rugăm să selectați o locație.",
       );
     }
 
-    return this.service.create(dto, location_id);
+    return this.service.create(dto, location_id_resolved);
   }
 
   @Post("with-documents")
   @Permissions("suppliers.create")
   createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) {
-    return this.service.createWithDocuments(dto);
+    const location_id = (dto as any).location_id != null ? Number((dto as any).location_id) : undefined;
+    return this.service.createWithDocuments(dto, location_id);
   }
 
   // === SUPPLIER LOCATIONS ENDPOINTS (trebuie să fie înainte de :id pentru a evita conflictele de rute) ===
@@ -183,14 +191,31 @@ export class SuppliersHttpController {
 
   @Patch(":id")
   @Permissions("suppliers.update")
-  update(@Param("id") id: string, @Body() dto: any) {
-    return this.service.update(Number(id), dto);
+  @ApiQuery({ name: "location_id", required: false })
+  update(
+    @Param("id") id: string,
+    @Body() dto: any,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ) {
+    const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    return this.service.update(Number(id), dto, selectedWorkLocationId);
   }
 
   @Delete(":id")
   @Permissions("suppliers.delete")
-  remove(@Param("id") id: string) {
-    return this.service.remove(Number(id));
+  @ApiQuery({ name: "location_id", required: false })
+  remove(
+    @Param("id") id: string,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ) {
+    const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
+    const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    return this.service.remove(Number(id), selectedWorkLocationId);
   }
 
   // Products
@@ -640,4 +665,10 @@ export class SuppliersHttpController {
   getExpiredDocuments() {
     return this.service.findExpiredDocuments();
   }
+}
+
+function parseSelectedWorkLocationId(value: string | undefined): number | undefined {
+  if (value == null || value === "") return undefined;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : undefined;
 }

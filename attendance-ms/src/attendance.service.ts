@@ -43,19 +43,21 @@ export class AttendanceService implements OnModuleInit {
     title: string,
     description: string,
     userId: number,
-    metadata?: any
+    metadata?: any,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload: any = {
+        type,
+        title,
+        description,
+        user_id: userId,
+        entity_type: 'attendance',
+        metadata: { ...metadata, ...(work_location_id != null ? { work_location_id } : {}) },
+        priority: 'medium',
+      };
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'attendance.notification' }, {
-          type,
-          title,
-          description,
-          user_id: userId,
-          entity_type: 'attendance',
-          metadata,
-          priority: 'medium',
-        })
+        this.notificationsClient.emit({ cmd: 'attendance.notification' }, payload)
       );
     } catch (error) {
       console.error('Failed to send attendance notification:', error);
@@ -84,21 +86,23 @@ export class AttendanceService implements OnModuleInit {
     userId: number,
     shiftId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload: any = {
+        type,
+        title,
+        description,
+        user_id: userId,
+        entity_id: shiftId,
+        entity_type: 'shift',
+        metadata: { ...metadata, ...(work_location_id != null ? { work_location_id } : {}) },
+        priority: 'medium',
+        target_url,
+      };
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'shift.notification' }, {
-          type,
-          title,
-          description,
-          user_id: userId,
-          entity_id: shiftId,
-          entity_type: 'shift',
-          metadata,
-          priority: 'medium',
-          target_url,  // Add target_url to notification data
-        })
+        this.notificationsClient.emit({ cmd: 'shift.notification' }, payload)
       );
     } catch (error) {
       console.error('Failed to send shift notification:', error);
@@ -142,11 +146,12 @@ export class AttendanceService implements OnModuleInit {
 
     const savedShift = await this.shiftRepository.save(shift);
     
-    // Send notification to admin and the employee for whom the shift was created
+    const timeOpt = { hour: '2-digit' as const, minute: '2-digit' as const };
+    const locId = (savedShift as any).work_location_id ?? (createShiftDto as any).work_location_id;
     await this.sendShiftNotification(
       'shift_created',
-      'Schimb programat',
-      `A fost creat un nou schimb programat pentru data de ${startDate.toLocaleDateString('ro-RO')} - ${endDate.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' })}`,
+      'Pontaj creat',
+      `S-a creat pontaj pentru data de ${startDate.toLocaleDateString('ro-RO')}, început ${startDate.toLocaleTimeString('ro-RO', timeOpt)} și sfârșit ${endDate.toLocaleTimeString('ro-RO', timeOpt)}`,
       employee_id,
       savedShift.id,
       {
@@ -155,7 +160,8 @@ export class AttendanceService implements OnModuleInit {
         startDate: startDate,
         endDate: endDate,
       },
-      `/pontaj`  // Add target_url
+      '/pontaj',
+      locId,
     );
 
     return savedShift;
@@ -230,7 +236,29 @@ export class AttendanceService implements OnModuleInit {
     }
 
     Object.assign(shift, updateShiftDto);
-    return await this.shiftRepository.save(shift);
+    const savedShift = await this.shiftRepository.save(shift);
+
+    const startDt = savedShift.start_datetime instanceof Date ? savedShift.start_datetime : new Date(savedShift.start_datetime);
+    const endDt = savedShift.end_datetime instanceof Date ? savedShift.end_datetime : new Date(savedShift.end_datetime);
+    const timeOpt = { hour: '2-digit' as const, minute: '2-digit' as const };
+    const locId = (savedShift as any).work_location_id;
+    await this.sendShiftNotification(
+      'shift_updated',
+      'Pontaj modificat',
+      `Pentru data de ${startDt.toLocaleDateString('ro-RO')} s-a modificat pontajul în început ${startDt.toLocaleTimeString('ro-RO', timeOpt)} și sfârșit ${endDt.toLocaleTimeString('ro-RO', timeOpt)}`,
+      savedShift.employee_id,
+      savedShift.id,
+      {
+        shiftId: savedShift.id,
+        employeeId: savedShift.employee_id,
+        startDate: savedShift.start_datetime,
+        endDate: savedShift.end_datetime,
+      },
+      '/pontaj',
+      locId,
+    );
+
+    return savedShift;
   }
 
   async deleteShift(id: number): Promise<void> {
@@ -243,22 +271,12 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Schimbul cu ID-ul ${id} nu a fost găsit`);
     }
 
-    // Delete all associated presences and their inflexions
-    for (const presence of shift.presences) {
-      // Delete all inflexions for this presence
-      await this.presenceInflexionRepository.delete({ presence_id: presence.id } as any);
-      // Delete the presence
-      await this.presenceRepository.remove(presence);
-    }
-
-    // Delete the shift
-    await this.shiftRepository.remove(shift);
-
-    // Send notification that shift was deleted
+    const startDtDel = shift.start_datetime instanceof Date ? shift.start_datetime : new Date(shift.start_datetime);
+    const locId = (shift as any).work_location_id;
     await this.sendShiftNotification(
       'shift_deleted',
-      'Schimb sters',
-      `Schimbul pentru data de ${shift.start_datetime.toLocaleDateString('ro-RO')} a fost sters`,
+      'Pontaj șters',
+      `Ți s-a șters pontajul din data de ${startDtDel.toLocaleDateString('ro-RO')}`,
       shift.employee_id,
       shift.id,
       {
@@ -267,8 +285,17 @@ export class AttendanceService implements OnModuleInit {
         startDate: shift.start_datetime,
         endDate: shift.end_datetime,
       },
-      `/pontaj`  // Add target_url
+      '/pontaj',
+      locId,
     );
+
+    // Delete all associated presences and their inflexions
+    for (const presence of shift.presences) {
+      await this.presenceInflexionRepository.delete({ presence_id: presence.id } as any);
+      await this.presenceRepository.remove(presence);
+    }
+
+    await this.shiftRepository.remove(shift);
   }
 
   // PRESENCE METHODS
@@ -398,7 +425,7 @@ export class AttendanceService implements OnModuleInit {
       }
     }
     
-    // Send notification to admin and the employee for whom the attendance was created
+    const locId = (shift as any).work_location_id;
     await this.sendAttendanceNotification(
       'attendance_created',
       'Pontaj creat',
@@ -409,7 +436,8 @@ export class AttendanceService implements OnModuleInit {
         shiftId: shift_id,
         date: date,
         employeeId: shift.employee_id,
-      }
+      },
+      locId,
     );
 
     return savedPresence;
@@ -653,6 +681,7 @@ export class AttendanceService implements OnModuleInit {
               ? `${hoursWorked.toFixed(2)} ore` 
               : 'programul';
             
+            const locId = (shift as any).work_location_id;
             await this.sendAttendanceNotification(
               'program_finalizat',
               'Program finalizat',
@@ -664,7 +693,8 @@ export class AttendanceService implements OnModuleInit {
                 check_in: savedPresence.check_in,
                 check_out: savedPresence.check_out,
                 total_hours: savedPresence.total_hours
-              }
+              },
+              locId,
             );
             
             console.log(`[AttendanceService] Notificare trimisă angajatului ${employeeUserId} (employee_id: ${shift.employee_id}) pentru finalizarea programului`);
@@ -697,7 +727,7 @@ export class AttendanceService implements OnModuleInit {
     // Delete the presence
     await this.presenceRepository.remove(presence);
 
-    // Send notification that presence was deleted
+    const locId = (presence.shift as any)?.work_location_id;
     await this.sendAttendanceNotification(
       'presence_deleted',
       'Prezenta stearsa',
@@ -707,7 +737,8 @@ export class AttendanceService implements OnModuleInit {
         presenceId: presence.id,
         employeeId: presence.shift.employee_id,
         date: presence.date,
-      }
+      },
+      locId,
     );
   }
 

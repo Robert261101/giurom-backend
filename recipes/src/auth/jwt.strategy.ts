@@ -20,6 +20,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       first_name: payload.first_name || '',
       last_name: payload.last_name || '',
       permissions: payload.permissions || [],
+      work_location_id: payload.work_location_id ?? undefined,
+      work_location_default_id: payload.work_location_default_id ?? undefined,
     };
   }
 }

@@ -14,7 +14,8 @@ export class RecipeProduct {
   @Column()
   product_id: number;
 
-  @Column({ type: 'decimal', precision: 6, scale: 2 })
+  /** Cantitate ingredient; precision 10, scale 4 pentru valori mici (ex: 0.003 kg) */
+  @Column({ type: 'decimal', precision: 10, scale: 4 })
   quantity: number;
 
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })

@@ -12,7 +12,8 @@ export class RecipeRecipe {
   @Column()
   ingredient_recipe_id: number; // Rețeta folosită ca ingredient
 
-  @Column({ type: 'decimal', precision: 6, scale: 2 })
+  /** Cantitate rețetă-ingredient; precision 10, scale 4 pentru valori mici */
+  @Column({ type: 'decimal', precision: 10, scale: 4 })
   quantity: number; // Cantitatea de rețetă necesară (în unități de rețetă)
 
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })

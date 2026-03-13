@@ -29,20 +29,22 @@ export class CalendarService {
     description: string,
     entity_id?: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload: any = {
+        type,
+        title,
+        description,
+        entity_id,
+        entity_type: 'calendar_event',
+        metadata: { ...metadata, ...(work_location_id != null ? { work_location_id } : {}) },
+        priority: 'medium',
+        target_url,
+      };
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'calendar.notification' }, {
-          type,
-          title,
-          description,
-          entity_id,
-          entity_type: 'calendar_event',
-          metadata,
-          priority: 'medium',
-          target_url,  // Add target_url to notification data
-        })
+        this.notificationsClient.emit({ cmd: 'calendar.notification' }, payload)
       );
     } catch (error) {
       console.error('Failed to send calendar notification:', error);
@@ -107,7 +109,7 @@ export class CalendarService {
 
     const savedEvent = await this.eventRepo.save(event);
     
-    // Send notification to admin and manager that a new event was created
+    const locId = savedEvent.location_id ?? undefined;
     await this.sendCalendarNotification(
       'calendar_event_created',
       'Eveniment nou creat',
@@ -119,7 +121,8 @@ export class CalendarService {
         startDatetime: savedEvent.start_datetime,
         createdBy: savedEvent.created_by,
       },
-      `/calendar`  // Add target_url
+      '/calendar',
+      locId,
     );
 
     return savedEvent;

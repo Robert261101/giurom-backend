@@ -44,15 +44,21 @@ export class RecipeService {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
   }
 
+  /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus). */
   private async sendRecipeNotification(
     type: string,
     title: string,
     description: string,
     recipeId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    selectedWorkLocationId?: number,
   ): Promise<void> {
     try {
+      const payloadMetadata = {
+        ...metadata,
+        ...(selectedWorkLocationId != null && { work_location_id: selectedWorkLocationId }),
+      };
       await firstValueFrom(
         this.notificationsClient.emit({ cmd: 'recipes.notification' }, {
           type,
@@ -60,9 +66,9 @@ export class RecipeService {
           description,
           entity_id: recipeId,
           entity_type: 'recipe',
-          metadata,
+          metadata: payloadMetadata,
           priority: 'medium',
-          target_url,  // Add target_url to notification data
+          target_url,
         })
       );
     } catch (error) {
@@ -94,14 +100,14 @@ export class RecipeService {
       }
     }
     
-    // Send notification for new recipe
     await this.sendRecipeNotification(
       'recipe_created',
-      'Reteta noua creata',
-      `A fost creata o noua reteta: ${savedRecipe.name}`,
+      'S-a adăugat rețeta',
+      `S-a adăugat rețeta ${savedRecipe.name}`,
       savedRecipe.id,
-      { recipeName: savedRecipe.name },
-      `/retetar/${savedRecipe.id}`  // Add target_url
+      { recipeName: savedRecipe.name, audience: 'admin_only' },
+      `/retetar/${savedRecipe.id}`,
+      location_id,
     );
     
     // expunem `is_consumable` în payload ca valoare per locația curentă (dacă există)
@@ -187,7 +193,15 @@ export class RecipeService {
   async findOne(id: number, location_id?: number): Promise<Recipe> {
     const recipe = await this.recipesRepository.findOne({
       where: { id },
-      relations: ['category', 'recipe_products', 'recipe_recipes', 'recipe_recipes.ingredient_recipe', 'recipeMedia', 'recipeLocations'],
+      relations: [
+        'category',
+        'recipe_products',
+        'recipe_recipes',
+        'recipe_recipes.ingredient_recipe',
+        'recipe_recipes.ingredient_recipe.recipe_products',
+        'recipeMedia',
+        'recipeLocations',
+      ],
     });
     
     if (!recipe) {
@@ -213,7 +227,7 @@ export class RecipeService {
       (recipe as any).consumabil_pentru_angajat = consumable;
     }
 
-    // Populate product data
+    // Populate product data for main recipe_products
     if (recipe.recipe_products && recipe.recipe_products.length > 0) {
       for (const recipeProduct of recipe.recipe_products) {
         if (recipeProduct.product_id) {
@@ -228,13 +242,38 @@ export class RecipeService {
             );
             recipeProduct.product = response.data;
           } catch (error) {
-            // Handle case where product might not exist
             recipeProduct.product = null;
           }
         }
       }
     }
-    
+
+    // Populate product data for ingredient_recipe.recipe_products (rețete ca ingrediente)
+    if (recipe.recipe_recipes && recipe.recipe_recipes.length > 0) {
+      for (const rr of recipe.recipe_recipes) {
+        const subRecipe = rr.ingredient_recipe;
+        if (subRecipe?.recipe_products && subRecipe.recipe_products.length > 0) {
+          for (const rp of subRecipe.recipe_products) {
+            if (rp.product_id) {
+              try {
+                const response = await lastValueFrom(
+                  this.httpService.get(`${this.stockServiceUrl}/stock/products/${rp.product_id}`, {
+                    headers: {
+                      'x-internal-service': 'recipes',
+                      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                    }
+                  })
+                );
+                rp.product = response.data;
+              } catch (error) {
+                rp.product = null;
+              }
+            }
+          }
+        }
+      }
+    }
+
     return recipe;
   }
 
@@ -265,36 +304,31 @@ export class RecipeService {
       (updatedRecipe as any).is_consumable = !!is_consumable;
     }
     
-    // Send notification for updated recipe
     await this.sendRecipeNotification(
       'recipe_updated',
-      'Reteta modificata',
-      `Reteta ${oldName} a fost modificata`,
+      'S-a modificat rețeta',
+      `S-a modificat rețeta ${updatedRecipe.name}`,
       updatedRecipe.id,
-      { 
-        oldName,
-        newName: updatedRecipe.name,
-        updatedFields: Object.keys(updateRecipeDto)
-      },
-      `/retetar/${updatedRecipe.id}`  // Add target_url
+      { oldName, newName: updatedRecipe.name, audience: 'admin_only' },
+      `/retetar/${updatedRecipe.id}`,
+      location_id,
     );
     
     return updatedRecipe;
   }
 
-  async remove(id: number): Promise<void> {
-    const recipe = await this.findOne(id, undefined); // Nu verificăm location_id la delete
+  async remove(id: number, selectedWorkLocationId?: number): Promise<void> {
+    const recipe = await this.findOne(id, undefined);
     const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
-    
-    // Send notification for deleted recipe
     await this.sendRecipeNotification(
       'recipe_deleted',
-      'Reteta stearsa',
-      `Reteta ${recipeName} a fost stearsa`,
+      'S-a șters rețeta',
+      `S-a șters rețeta ${recipeName}`,
       id,
-      { recipeName },
-      `/retetar/${id}`  // Add target_url
+      { recipeName, audience: 'admin_only' },
+      undefined,
+      selectedWorkLocationId,
     );
   }
 

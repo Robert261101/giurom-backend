@@ -35,20 +35,22 @@ export class ShiftChangeRequestsService {
     description: string,
     userId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    work_location_id?: number,
   ): Promise<void> {
     try {
+      const payload: any = {
+        type,
+        title,
+        description,
+        user_id: userId,
+        entity_type: 'shift_change_request',
+        metadata: { ...metadata, ...(work_location_id != null ? { work_location_id } : {}) },
+        priority: 'medium',
+        target_url,
+      };
       await firstValueFrom(
-        this.notificationsClient.emit({ cmd: 'shift-change.notification' }, {
-          type,
-          title,
-          description,
-          user_id: userId,
-          entity_type: 'shift_change_request',
-          metadata,
-          priority: 'medium',
-          target_url,  // Add target_url to notification data
-        })
+        this.notificationsClient.emit({ cmd: 'shift-change.notification' }, payload)
       );
     } catch (error) {
       this.logger.warn(`Failed to send shift change notification: ${error?.message || error}`);
@@ -171,7 +173,7 @@ export class ShiftChangeRequestsService {
 
     const savedRequest: ShiftChangeRequest = await this.shiftChangeRepo.save(shiftChangeRequest);
     
-    // Send notification to admins/managers about new shift change request
+    // Send notification to admins/managers (work_location_id pentru filtrare pe locație)
     await this.sendShiftChangeNotification(
       'shift_change_request_created',
       'Cerere de schimb de tura noua',
@@ -184,7 +186,8 @@ export class ShiftChangeRequestsService {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
       },
-      `/pontaj/${dto.employee_id}`  // Add target_url
+      `/pontaj/${dto.employee_id}`,
+      locationId,
     );
 
     return this.findOne(savedRequest.id);
@@ -334,6 +337,7 @@ export class ShiftChangeRequestsService {
     try {
       if (dto.status === ShiftChangeStatus.APPROVED) {
         // Notify employee who requested the change
+        const locId = shiftChangeRequest.location_id ?? undefined;
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
           'Cerere de schimb de tura aprobata',
@@ -346,10 +350,10 @@ export class ShiftChangeRequestsService {
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
           },
-          `/pontaj/${shiftChangeRequest.employee_id}`  // Add target_url
+          `/pontaj/${shiftChangeRequest.employee_id}`,
+          locId,
         );
 
-        // Notify replacement employee
         await this.sendShiftChangeNotification(
           'shift_change_request_approved',
           'Cerere de schimb de tura aprobata',
@@ -362,10 +366,11 @@ export class ShiftChangeRequestsService {
             endDate: shiftChangeRequest.end_datetime.toISOString(),
             reviewerId: dto.reviewed_by_id,
           },
-          `/pontaj/${shiftChangeRequest.replacement_id}`  // Add target_url
+          `/pontaj/${shiftChangeRequest.replacement_id}`,
+          locId,
         );
       } else if (dto.status === ShiftChangeStatus.REJECTED) {
-        // Notify employee who requested the change
+        const locId = shiftChangeRequest.location_id ?? undefined;
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
           'Cerere de schimb de tura respinsa',
@@ -379,10 +384,10 @@ export class ShiftChangeRequestsService {
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           },
-          `/pontaj/${shiftChangeRequest.employee_id}`  // Add target_url
+          `/pontaj/${shiftChangeRequest.employee_id}`,
+          locId,
         );
 
-        // Notify replacement employee
         await this.sendShiftChangeNotification(
           'shift_change_request_rejected',
           'Cerere de schimb de tura respinsa',
@@ -396,7 +401,8 @@ export class ShiftChangeRequestsService {
             reviewerId: dto.reviewed_by_id,
             comment: dto.review_comment,
           },
-          `/pontaj/${shiftChangeRequest.replacement_id}`  // Add target_url
+          `/pontaj/${shiftChangeRequest.replacement_id}`,
+          locId,
         );
       }
     } catch (error) {

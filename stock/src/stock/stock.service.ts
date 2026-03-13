@@ -12,7 +12,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, MoreThan, DeepPartial } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { firstValueFrom } from "rxjs";
+import { firstValueFrom, defaultIfEmpty } from "rxjs";
 import * as fs from "fs";
 import * as path from "path";
 import { Product } from "./entities/product.entity";
@@ -35,6 +35,9 @@ import { CreateConsumptionRecordDto } from "./dto/create-consumption-record.dto"
 import { UpdateConsumptionRecordDto } from "./dto/update-consumption-record.dto";
 import { AssignCategoryDto } from "./dto/assign-category.dto";
 import { Category } from "./entities/category.entity";
+import { OrderList } from "./entities/order-list.entity";
+import { CreateOrderListDto } from "./dto/create-order-list.dto";
+import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 
 @Injectable()
 export class StockService {
@@ -52,21 +55,29 @@ export class StockService {
     private readonly consumptionRecordRepo: Repository<ConsumptionRecord>,
     @InjectRepository(Category)
     private readonly categoryRepo: Repository<Category>,
+    @InjectRepository(OrderList)
+    private readonly orderListRepo: Repository<OrderList>,
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
     private readonly httpService?: HttpService,
     private readonly configService?: ConfigService
   ) {}
 
+  /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus). */
   private async sendStockNotification(
     type: string,
     title: string,
     description: string,
     productId: number,
     metadata?: any,
-    target_url?: string // Add target_url parameter
+    target_url?: string,
+    selectedWorkLocationId?: number,
   ): Promise<void> {
     try {
+      const payloadMetadata = {
+        ...metadata,
+        ...(selectedWorkLocationId != null && { work_location_id: selectedWorkLocationId }),
+      };
       await firstValueFrom(
         this.notificationsClient.emit(
           { cmd: "stock.notification" },
@@ -76,9 +87,9 @@ export class StockService {
             description,
             entity_id: productId,
             entity_type: "stock_product",
-            metadata,
+            metadata: payloadMetadata,
             priority: "high",
-            target_url, // Add target_url to notification data
+            target_url,
           }
         )
       );
@@ -268,6 +279,19 @@ export class StockService {
     const savedStock = await this.stockRepo.save<Stock>(stock);
     this.logger.log(
       `✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ""}`
+    );
+
+    const sourceLabel = payload.source === StockSource.COMANDA ? "preluare comanda furnizor" : "introducere manuală";
+    const qty = Number(dto.quantity) ?? 0;
+    const unit = (product as any).unit ? ` ${(product as any).unit}` : "";
+    await this.sendStockNotification(
+      payload.source === StockSource.COMANDA ? "stock_in_comanda" : "stock_in_manual",
+      "Stoc intrare",
+      `A intrat ${qty}${unit} ${product.name} prin ${sourceLabel}.`,
+      product.id,
+      { stockId: savedStock.id, quantity: qty, source: payload.source, productName: product.name },
+      "/stoc",
+      (dto as any).location_id,
     );
     return savedStock;
   }
@@ -502,6 +526,29 @@ export class StockService {
 
       // Commit transaction
       await queryRunner.commitTransaction();
+
+      // Notificare ieșire stoc către admin + manager (aruncat este notificat din createWasteRecord)
+      const isWasteTarget =
+        target === "waste" ||
+        (target && (target.toLowerCase().includes("waste") || target.toLowerCase().includes("aruncat")));
+      if (!isWasteTarget && product) {
+        const exitType =
+          target === "recipe-preparation" || (target && target.toLowerCase().includes("recipe"))
+            ? "stock_out_preparation"
+            : "stock_out_consumed";
+        const exitLabel =
+          exitType === "stock_out_preparation" ? "preparare" : "consumat";
+        const unit = (product as any).unit ? ` ${(product as any).unit}` : "";
+        await this.sendStockNotification(
+          exitType,
+          "Stoc ieșire",
+          `A ieșit ${quantity}${unit} ${product.name} prin ${exitLabel}.`,
+          productId,
+          { quantity, target, productName: product.name },
+          "/stoc",
+          locationId,
+        );
+      }
     } catch (error) {
       // Rollback transaction in case of error
       await queryRunner.rollbackTransaction();
@@ -895,28 +942,57 @@ export class StockService {
       `✅ [WasteRecord] Created: ID=${savedWasteRecord.id}, product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}`
     );
 
-    // Send notification for wasted product/preparation
     const entityName = dto.recipe_preparation_id
       ? `Preparatul (ID: ${dto.recipe_preparation_id})`
       : product?.name || "Produs necunoscut";
-
-    const displayUnit = product?.unit || "";
+    const displayUnit = product?.unit ? ` ${product.unit}` : "";
 
     await this.sendStockNotification(
-      "stock_wasted",
-      "Produs/Preparat aruncat",
-      `${entityName} a fost inregistrat ca deseu (cantitate: ${dto.quantity}${displayUnit ? ` ${displayUnit}` : ""})`,
+      "stock_out_waste",
+      "Stoc ieșire",
+      `A ieșit ${dto.quantity}${displayUnit} ${entityName} prin aruncat.`,
       product?.id || 0,
       {
         productName: product?.name || "Preparat",
         quantity: dto.quantity,
-        unit: displayUnit,
         reason: dto.reason,
         wasteRecordId: savedWasteRecord.id,
         recipePreparationId: dto.recipe_preparation_id,
       },
-      "/stoc" // Add target_url
+      "/stoc",
+      (dto as any).location_id,
     );
+
+    // Notificare waste-records către manageri/admins de la locație (format [Locatie Nume]: ... în notifications-ms)
+    const workLocationId = dto.location_id ?? (dto as any).work_location_id;
+    try {
+      await firstValueFrom(
+        this.notificationsClient
+          .emit(
+            { cmd: "waste-records.notification" },
+            {
+              type: "waste_record_created",
+              title: "Înregistrare deșeu nouă",
+              description: `S-a înregistrat un deșeu: ${dto.quantity}${displayUnit} ${entityName}${dto.reason ? ` - ${dto.reason}` : ""}`,
+              entity_id: savedWasteRecord.id,
+              entity_type: "waste_record",
+              metadata: {
+                wasteRecordId: savedWasteRecord.id,
+                work_location_id: workLocationId,
+                product_id: dto.product_id,
+                recipe_preparation_id: dto.recipe_preparation_id,
+                quantity: dto.quantity,
+                reason: dto.reason,
+              },
+              priority: "medium",
+              target_url: "/stoc",
+            },
+          )
+          .pipe(defaultIfEmpty(undefined)),
+      );
+    } catch (err) {
+      this.logger.warn("Failed to send waste-records notification: " + (err as Error)?.message);
+    }
 
     return savedWasteRecord;
   }
@@ -1668,5 +1744,43 @@ export class StockService {
         `Eroare la salvarea PDF-ului: ${error?.message || "Unknown error"}`
       );
     }
+  }
+
+  // === ORDER LISTS (lista de comenzi) - CRUD simplu ===
+  async findAllOrderLists(workLocationId?: number): Promise<OrderList[]> {
+    const qb = this.orderListRepo.createQueryBuilder('ol').orderBy('ol.list_date', 'DESC').addOrderBy('ol.created_at', 'DESC');
+    if (workLocationId != null) {
+      qb.andWhere('ol.work_location_id = :wid', { wid: workLocationId });
+    }
+    return qb.getMany();
+  }
+
+  async findOneOrderList(id: number): Promise<OrderList> {
+    const one = await this.orderListRepo.findOne({ where: { id } });
+    if (!one) throw new NotFoundException(`Order list ${id} not found`);
+    return one;
+  }
+
+  async createOrderList(dto: CreateOrderListDto): Promise<OrderList> {
+    const entity = this.orderListRepo.create({
+      work_location_id: dto.work_location_id,
+      list_date: dto.list_date,
+      status: dto.status ?? 'in_asteptare',
+      items: dto.items ?? [],
+    });
+    return this.orderListRepo.save(entity);
+  }
+
+  async updateOrderList(id: number, dto: UpdateOrderListDto): Promise<OrderList> {
+    const existing = await this.findOneOrderList(id);
+    if (dto.list_date != null) existing.list_date = dto.list_date;
+    if (dto.status != null) existing.status = dto.status;
+    if (dto.items != null) existing.items = dto.items;
+    return this.orderListRepo.save(existing);
+  }
+
+  async deleteOrderList(id: number): Promise<void> {
+    const existing = await this.findOneOrderList(id);
+    await this.orderListRepo.remove(existing);
   }
 }

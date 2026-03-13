@@ -51,27 +51,31 @@ export class SuppliersService {
     this.locationsServiceUrl = this.configService.get<string>('API_GATEWAY_URL') || 'http://localhost:3002';
   }
 
+  /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus), pentru notificări pe locație. */
   private async sendSupplierNotification(
     type: string,
     title: string,
     description: string,
     supplierId: number,
     metadata?: any,
-    target_url?: string  // Add target_url parameter
+    target_url?: string,
+    selectedWorkLocationId?: number,
   ): Promise<void> {
     try {
       this.logger.log(`🔍 [SUPPLIERS SERVICE] Attempting to send notification - Type: ${type}, Supplier ID: ${supplierId}`);
-      this.logger.log(`📝 Notification details - Title: ${title}, Description: ${description}`);
-      
+      const payloadMetadata = {
+        ...metadata,
+        ...(selectedWorkLocationId != null && { work_location_id: selectedWorkLocationId }),
+      };
       const notificationData = {
         type,
         title,
         description,
         entity_id: supplierId,
         entity_type: 'supplier',
-        metadata,
+        metadata: payloadMetadata,
         priority: 'medium',
-        target_url,  // Add target_url to notification data
+        target_url,
       };
       
       this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
@@ -83,6 +87,36 @@ export class SuppliersService {
       this.logger.log(`✅ [SUPPLIERS SERVICE] Successfully sent notification for supplier ${supplierId}`);
     } catch (error: any) {
       this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to send supplier notification: ${error?.message || error}`, error?.stack);
+    }
+  }
+
+  /** Notificări comenzi: doar admini/manageri (sau doar admini) din locația comenzii */
+  private async sendOrderNotification(
+    type: string,
+    title: string,
+    description: string,
+    work_location_id: number,
+    orderId: number,
+    metadata?: any,
+    target_url?: string
+  ): Promise<void> {
+    try {
+      this.logger.log(`🔔 [SUPPLIERS SERVICE] Order notification - type: ${type}, orderId: ${orderId}, work_location_id: ${work_location_id}`);
+      await firstValueFrom(
+        this.notificationsClient.emit({ cmd: 'orders.notification' }, {
+          type,
+          title,
+          description,
+          work_location_id,
+          entity_id: orderId,
+          entity_type: 'supplier_order',
+          metadata,
+          priority: 'medium',
+          target_url,
+        })
+      );
+    } catch (error: any) {
+      this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to send order notification: ${error?.message || error}`, error?.stack);
     }
   }
 
@@ -158,7 +192,8 @@ export class SuppliersService {
       `A fost creat un nou furnizor: ${savedSupplier.supplier_name}`,
       savedSupplier.id,
       { supplierName: savedSupplier.supplier_name },
-      `/furnizori/${savedSupplier.id}`  // Add target_url
+      `/furnizori/${savedSupplier.id}`,
+      location_id,
     );
     
     return savedSupplier;
@@ -333,6 +368,27 @@ export class SuppliersService {
 
   private simplifySupplierName(name: string): string {
     return name.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').substring(0, 50);
+  }
+
+  /** Mapează cheile DTO furnizor la etichete în română pentru notificare „ce s-a modificat”. */
+  private getSupplierFieldLabelsRo(keys: string[]): string {
+    const labels: Record<string, string> = {
+      supplier_name: 'Denumire',
+      registration_number: 'Nr. înregistrare',
+      vat_number: 'CUI',
+      address: 'Adresă',
+      city: 'Oraș',
+      region: 'Județ/Regiune',
+      country: 'Țara',
+      postal_code: 'Cod poștal',
+      phone: 'Telefon',
+      email: 'Email',
+      contact_person: 'Persoană de contact',
+      bank_name: 'Bancă',
+      bank_account_number: 'Cont bancar',
+      is_active: 'Activ',
+    };
+    return keys.map((k) => labels[k] ?? k).join(', ');
   }
 
   async serveDocument(fileId: number, forceDownload: boolean): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
@@ -518,7 +574,7 @@ export class SuppliersService {
     return supplier;
   }
 
-  async update(id: number, dto: UpdateSupplierDto): Promise<Supplier> {
+  async update(id: number, dto: UpdateSupplierDto, selectedWorkLocationId?: number): Promise<Supplier> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier ${id} with data: ${JSON.stringify(dto, null, 2)}`);
     
     const supplier = await this.findOne(id, undefined); // Nu verificăm location_id la update
@@ -539,25 +595,25 @@ export class SuppliersService {
     const updatedSupplier = await this.supplierRepo.save(supplier);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier ${id} updated successfully`);
 
-    // Send notification for updated supplier
+    // Send notification for updated supplier (mesaj simplu, fără lista de câmpuri)
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for updated supplier ${updatedSupplier.id}`);
     await this.sendSupplierNotification(
       'supplier_updated',
       'Furnizor modificat',
-      `Furnizorul ${oldName} a fost modificat`,
+      `Furnizorul ${oldName} a fost modificat.`,
       updatedSupplier.id,
-      { 
+      {
         oldName,
         newName: updatedSupplier.supplier_name,
-        updatedFields: Object.keys(dto)
       },
-      `/furnizori/${updatedSupplier.id}`  // Add target_url
+      `/furnizori/${updatedSupplier.id}`,
+      selectedWorkLocationId,
     );
 
     return updatedSupplier;
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, selectedWorkLocationId?: number): Promise<void> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier ${id}`);
     
     const supplier = await this.findOne(id);
@@ -601,7 +657,9 @@ export class SuppliersService {
       'Furnizor sters',
       `Furnizorul ${supplierName} a fost sters`,
       id,
-      { supplierName }
+      { supplierName },
+      undefined,
+      selectedWorkLocationId,
     );
   }
 
@@ -678,12 +736,13 @@ export class SuppliersService {
       'Comanda furnizor noua',
       `A fost creata o comanda noua pentru furnizorul ${supplier.supplier_name}`,
       supplier.id,
-      { 
+      {
         orderId: savedOrder.id,
         supplierName: supplier.supplier_name,
-        orderDate: savedOrder.order_date.toISOString()
+        orderDate: savedOrder.order_date.toISOString(),
       },
-      `/furnizori/${supplier.id}`  // Add target_url
+      `/furnizori/${supplier.id}`,
+      dto.supplier_location_id ?? undefined,
     );
     
     let totalAmountWithoutVat = 0;
@@ -803,13 +862,25 @@ export class SuppliersService {
       'Comanda furnizor livrata',
       `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost livrata`,
       supplier.id,
-      { 
+      {
         orderId: updatedOrder.id,
         supplierName: supplier.supplier_name,
-        orderDate: updatedOrder.order_date.toISOString()
+        orderDate: updatedOrder.order_date.toISOString(),
       },
-      `/furnizori/${supplier.id}`  // Add target_url
+      `/furnizori/${supplier.id}`,
+      order.supplier_location_id ?? undefined,
     );
+    if (order.supplier_location_id != null) {
+      await this.sendOrderNotification(
+        'order_received_total',
+        'Comandă recepționată (total)',
+        `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată în totalitate`,
+        order.supplier_location_id,
+        updatedOrder.id,
+        { orderId: updatedOrder.id, supplierName: supplier.supplier_name },
+        '/comenzi'
+      );
+    }
 
     return updatedOrder;
   }
@@ -984,20 +1055,40 @@ export class SuppliersService {
       throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
     }
 
-    // Send notification
-    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for partially received order ${updatedOrder.id}`);
+    // Detectează dacă, după această recepție, comanda este complet recepționată (toate item-urile au received >= ordered)
+    const allItemsFullyReceivedInThisReception = (order.items || []).every((item) => {
+      const inDto = dto.items.find((i) => i.itemId === item.id);
+      const totalReceivedDeclared = inDto != null ? Number(inDto.receivedQuantity) || 0 : Number(item.received_quantity) || 0;
+      const ordered = Number(item.quantity) || 0;
+      return ordered <= 0 || totalReceivedDeclared >= ordered - 0.01;
+    });
+    const isFullReception = allItemsFullyReceivedInThisReception && (order.items?.length ?? 0) > 0;
+
+    this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for ${isFullReception ? 'fully' : 'partially'} received order ${updatedOrder.id}`);
     await this.sendSupplierNotification(
-      'supplier_order_partially_received',
-      'Comanda furnizor recepționată parțial',
-      `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată parțial${hasReturnedItems ? ' cu returnări' : ''}`,
+      isFullReception ? 'supplier_order_delivered' : 'supplier_order_partially_received',
+      isFullReception ? 'Comanda furnizor recepționată' : 'Comanda furnizor recepționată parțial',
+      isFullReception
+        ? `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată în totalitate`
+        : `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată parțial${hasReturnedItems ? ' cu returnări' : ''}`,
       supplier.id,
-      { 
-        orderId: updatedOrder.id,
-        supplierName: supplier.supplier_name,
-        orderDate: updatedOrder.order_date.toISOString(),
-        hasReturns: hasReturnedItems
-      }
+      { orderId: updatedOrder.id, supplierName: supplier.supplier_name, orderDate: updatedOrder.order_date.toISOString(), hasReturns: hasReturnedItems },
+      `/furnizori/${supplier.id}`,
+      order.supplier_location_id ?? undefined,
     );
+    if (order.supplier_location_id != null) {
+      await this.sendOrderNotification(
+        isFullReception ? 'order_received_total' : 'order_received_partial',
+        isFullReception ? 'Comandă recepționată (total)' : 'Comandă recepționată (parțial)',
+        isFullReception
+          ? `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată în totalitate`
+          : `Comanda ${updatedOrder.id} pentru furnizorul ${supplier.supplier_name} a fost recepționată parțial`,
+        order.supplier_location_id,
+        updatedOrder.id,
+        { orderId: updatedOrder.id, supplierName: supplier.supplier_name, hasReturns: hasReturnedItems },
+        '/comenzi'
+      );
+    }
 
     return updatedOrder;
   }
@@ -1016,6 +1107,18 @@ export class SuppliersService {
     await this.orderRepo.update(order.id, updateData);
     const updated = await this.orderRepo.findOne({ where: { id: order.id } });
     if (!updated) throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
+    if (status === OrderStatus.CANCELLED && order.supplier_location_id != null) {
+      const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
+      await this.sendOrderNotification(
+        'order_cancelled',
+        'Comandă anulată',
+        `Comanda ${order.id} pentru furnizorul ${supplier?.supplier_name ?? 'N/A'} a fost anulată`,
+        order.supplier_location_id,
+        order.id,
+        { orderId: order.id, supplierName: supplier?.supplier_name },
+        '/comenzi'
+      );
+    }
     return updated;
   }
 
@@ -1352,6 +1455,18 @@ export class SuppliersService {
       orderAfterReception.status = OrderStatus.CANCELLED;
       orderAfterReception.cancelled_at = new Date();
       await this.orderRepo.save(orderAfterReception);
+      if (orderAfterReception.supplier_location_id != null) {
+        const supplier = await this.supplierRepo.findOne({ where: { id: orderAfterReception.supplier_id } });
+        await this.sendOrderNotification(
+          'order_cancelled',
+          'Comandă anulată',
+          `Comanda ${orderId} pentru furnizorul ${supplier?.supplier_name ?? 'N/A'} a fost anulată`,
+          orderAfterReception.supplier_location_id,
+          orderId,
+          { orderId, supplierName: supplier?.supplier_name },
+          '/comenzi'
+        );
+      }
     }
     
     // Reîncarcă comanda finală cu toate relațiile
@@ -1435,22 +1550,24 @@ export class SuppliersService {
       }
 
       const quantities = updatedItemQuantities.get(reception.supplier_order_item_id)!;
-      
+      const receivedDelta = Number(reception.received_delta) || 0;
+
       // Adaugă delta-urile recepției aprobate
-      if (reception.received_delta > 0) {
-        quantities.received += Number(reception.received_delta);
-        
-        // Creează stock item pentru recepția aprobată
+      if (receivedDelta > 0) {
+        quantities.received += receivedDelta;
+
+        const locationId = reception.location_id ?? order.supplier_location_id ?? undefined;
         const stockItemDto: CreateStockItemDto = {
           product_id: reception.product_id,
           supplier_order_item_id: reception.supplier_order_item_id,
-          quantity: Number(reception.received_delta),
+          quantity: receivedDelta,
           price: Number(orderItem.price_per_unit),
-          entry_date: reception.occurred_at.toISOString(),
+          entry_date: reception.occurred_at instanceof Date ? reception.occurred_at.toISOString() : new Date(reception.occurred_at).toISOString(),
           status: 'valid',
-          location_id: reception.location_id || undefined,
+          location_id: locationId,
         };
         stockItems.push(stockItemDto);
+        this.logger.log(`📦 [SUPPLIERS SERVICE] Queued stock item: product_id=${reception.product_id}, quantity=${receivedDelta}, location_id=${locationId}`);
       }
       
       if (reception.returned_delta > 0) {
@@ -1485,6 +1602,9 @@ export class SuppliersService {
 
     // Creează stock items pentru recepțiile aprobate
     let stockCreated = 0;
+    if (stockItems.length === 0) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Niciun stock item de creat: toate recepțiile aprobate au received_delta <= 0. Recepții: ${receptions.map(r => `id=${r.id} received_delta=${r.received_delta}`).join(', ')}`);
+    }
     if (stockItems.length > 0) {
       this.logger.log(`📦 [SUPPLIERS SERVICE] Creating ${stockItems.length} stock items for approved receptions...`);
       const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
@@ -1494,9 +1614,9 @@ export class SuppliersService {
       for (let i = 0; i < stockItems.length; i++) {
         const stockItem = createdStockItems[i];
         if (stockItem) {
-          const reception = receptions.find(r => 
+          const reception = receptions.find(r =>
             r.supplier_order_item_id === stockItem.supplier_order_item_id &&
-            r.received_delta > 0
+            (Number(r.received_delta) || 0) > 0
           );
           if (reception) {
             reception.stock_item_id = stockItem.id;
@@ -1539,6 +1659,19 @@ export class SuppliersService {
       }
     }
 
+    if (order.supplier_location_id != null) {
+      const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
+      await this.sendOrderNotification(
+        'order_reception_approved',
+        'Comandă aprobată',
+        `Recepțiile pentru comanda ${orderId} (${supplier?.supplier_name ?? 'N/A'}) au fost aprobate`,
+        order.supplier_location_id,
+        orderId,
+        { orderId, supplierName: supplier?.supplier_name },
+        '/comenzi'
+      );
+    }
+
     return {
       approved: receptions.length,
       stockCreated,
@@ -1578,6 +1711,20 @@ export class SuppliersService {
     }
 
     this.logger.log(`✅ [SUPPLIERS SERVICE] Rejected ${receptions.length} receptions`);
+
+    const order = await this.orderRepo.findOne({ where: { id: orderId } });
+    if (order?.supplier_location_id != null) {
+      const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
+      await this.sendOrderNotification(
+        'order_reception_rejected',
+        'Comandă respinsă',
+        `Recepțiile pentru comanda ${orderId} (${supplier?.supplier_name ?? 'N/A'}) au fost respinse${reason ? `: ${reason}` : ''}`,
+        order.supplier_location_id,
+        orderId,
+        { orderId, reason },
+        '/comenzi'
+      );
+    }
     
     return {
       rejected: receptions.length,
