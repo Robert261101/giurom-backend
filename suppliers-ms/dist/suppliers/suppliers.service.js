@@ -698,10 +698,7 @@ let SuppliersService = SuppliersService_1 = class SuppliersService {
             const isCancellingRemaining = receptionItem.returnReason?.includes('Anulat - partea rămasă') ||
                 receptionItem.returnReason?.includes('anulat') ||
                 receptionItem.returnReason?.includes('Anulat');
-            if (receivedQty + returnedQty > originalQty && !isCancellingRemaining) {
-                throw new common_1.BadRequestException(`Pentru item-ul ${orderItem.id}: cantitatea recepționată (${receivedQty}) + returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`);
-            }
-            if (isCancellingRemaining && returnedQty > originalQty) {
+            if (!isCancellingRemaining && returnedQty > originalQty) {
                 throw new common_1.BadRequestException(`Pentru item-ul ${orderItem.id}: cantitatea returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`);
             }
             if (isReturnedQuantityExplicit && returnedQty > 0 && !receptionItem.returnReason?.trim()) {

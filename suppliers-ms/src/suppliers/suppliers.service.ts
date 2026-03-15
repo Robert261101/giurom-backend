@@ -936,22 +936,13 @@ export class SuppliersService {
         returnedQty = Math.max(0, originalQty - receivedQty);
       }
 
-      // Validare: received + returned <= original
-      // EXCEPȚIE: Dacă există returnReason și este pentru anularea părții rămase,
-      // permitem received + returned > original (pentru că returnăm partea rămasă de recepționat)
-      const isCancellingRemaining = receptionItem.returnReason?.includes('Anulat - partea rămasă') || 
+      // Acceptăm cazurile în care s-a recepționat mai mult decât a fost comandat
+      // Nu mai validăm strict received + returned <= ordered. 
+      const isCancellingRemaining = receptionItem.returnReason?.includes('Anulat - partea rămasă') ||
                                      receptionItem.returnReason?.includes('anulat') ||
                                      receptionItem.returnReason?.includes('Anulat');
-      
-      if (receivedQty + returnedQty > originalQty && !isCancellingRemaining) {
-        throw new BadRequestException(
-          `Pentru item-ul ${orderItem.id}: cantitatea recepționată (${receivedQty}) + returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`
-        );
-      }
-      
-      // Pentru anularea părții rămase, validăm doar că returned nu depășește ordered
-      // (nu verificăm received + returned <= ordered, pentru că returnăm partea rămasă)
-      if (isCancellingRemaining && returnedQty > originalQty) {
+
+      if (!isCancellingRemaining && returnedQty > originalQty) {
         throw new BadRequestException(
           `Pentru item-ul ${orderItem.id}: cantitatea returnată (${returnedQty}) depășește cantitatea comandată (${originalQty})`
         );
