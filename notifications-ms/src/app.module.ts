@@ -11,6 +11,7 @@ import { NotificationsGateway } from './notifications.gateway';
 import { UserResolutionService } from './user-resolution.service';
 import { NotificationEntity } from './notification.entity';
 import { PushSubscriptionEntity } from './push-subscription.entity';
+import { PushDeliveryLogEntity } from './push-delivery-log.entity';
 import { PushModule } from './push/push.module';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
@@ -32,7 +33,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [NotificationEntity, PushSubscriptionEntity],
+      entities: [NotificationEntity, PushSubscriptionEntity, PushDeliveryLogEntity],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
     }),

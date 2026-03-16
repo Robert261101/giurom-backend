@@ -3,6 +3,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { PushSubscriptionEntity } from "../push-subscription.entity";
+import { PushDeliveryLogEntity } from "../push-delivery-log.entity";
 
 // Firebase Admin este importat dinamic; tipul e any ca să nu ceară @types/firebase-admin
 export interface WebPushPayload {
@@ -21,6 +22,8 @@ export class PushService implements OnModuleInit {
   constructor(
     @InjectRepository(PushSubscriptionEntity)
     private readonly repo: Repository<PushSubscriptionEntity>,
+    @InjectRepository(PushDeliveryLogEntity)
+    private readonly deliveryLogRepo: Repository<PushDeliveryLogEntity>,
   ) {}
 
   onModuleInit() {
@@ -124,10 +127,7 @@ export class PushService implements OnModuleInit {
   }
 
   /** Verifică dacă utilizatorul are un abonament push; opțional doar pentru tokenul dat. */
-  async hasSubscription(
-    userId: number,
-    fcmToken?: string,
-  ): Promise<boolean> {
+  async hasSubscription(userId: number, fcmToken?: string): Promise<boolean> {
     if (fcmToken) {
       const one = await this.repo.findOne({
         where: { user_id: userId, fcm_token: fcmToken } as any,
@@ -149,10 +149,12 @@ export class PushService implements OnModuleInit {
   /**
    * Trimite notificare Web Push către toate dispozitivele utilizatorului.
    * Apelat din NotificationsService.create() după salvare și emit WebSocket.
+   * La eșecuri, scrie în push_delivery_log ca să poți vedea în app.
    */
   async sendToUser(
     userId: number,
     payload: WebPushPayload,
+    notificationId?: number,
   ): Promise<{ sent: number; failed: number }> {
     if (!this.messaging) {
       this.logger.warn(
@@ -182,6 +184,7 @@ export class PushService implements OnModuleInit {
 
     let sent = 0;
     let failed = 0;
+    const failureReasons: string[] = [];
 
     // Trimitem doar `data`, fără `notification`, ca doar service worker-ul să afișeze notificarea (o singură dată).
     // Dacă trimitem și notification, FCM afișează automat + SW afișează din onBackgroundMessage = dublu.
@@ -202,17 +205,25 @@ export class PushService implements OnModuleInit {
         } else {
           failed++;
           const token = tokens[i];
+          const reason =
+            (r as any).error?.code ||
+            (r as any).error?.message ||
+            "unknown";
+          failureReasons.push(reason);
           if (
-            r.error?.code === "messaging/invalid-registration-token" ||
-            r.error?.code === "messaging/registration-token-not-registered"
+            (r as any).error?.code === "messaging/invalid-registration-token" ||
+            (r as any).error?.code ===
+              "messaging/registration-token-not-registered"
           ) {
             await this.repo.delete({ fcm_token: token } as any).catch(() => {});
           }
         }
       }
     } catch (err: any) {
-      this.logger.warn(`FCM sendToUser(${userId}): ${err?.message || err}`);
+      const msg = err?.message || String(err);
+      this.logger.warn(`FCM sendToUser(${userId}): ${msg}`);
       failed = tokens.length;
+      failureReasons.push(`exception: ${msg}`);
     }
 
     if (sent > 0 || failed > 0) {
@@ -220,6 +231,53 @@ export class PushService implements OnModuleInit {
         `FCM sendToUser(${userId}): trimise=${sent}, eșecuri=${failed}`,
       );
     }
+
+    if (failed > 0) {
+      await this.logDeliveryFailure(
+        userId,
+        notificationId ?? null,
+        sent,
+        failed,
+        failureReasons,
+      );
+    }
+
     return { sent, failed };
+  }
+
+  /** Salvează în DB un log de eșec push ca să poți vedea când nu au ajuns mesajele. */
+  private async logDeliveryFailure(
+    userId: number,
+    notificationId: number | null,
+    sent: number,
+    failed: number,
+    failureReasons: string[],
+  ): Promise<void> {
+    try {
+      const entry = this.deliveryLogRepo.create({
+        user_id: userId,
+        notification_id: notificationId,
+        sent,
+        failed,
+        failure_reasons: failureReasons.length ? failureReasons : null,
+      } as any);
+      await this.deliveryLogRepo.save(entry);
+    } catch (e: any) {
+      this.logger.warn(
+        `Nu s-a putut salva push_delivery_log: ${e?.message || e}`,
+      );
+    }
+  }
+
+  /** Ultimele N înregistrări din push_delivery_log pentru un user (pentru afișare în app). */
+  async getDeliveryLog(
+    userId: number,
+    limit: number = 50,
+  ): Promise<PushDeliveryLogEntity[]> {
+    return this.deliveryLogRepo.find({
+      where: { user_id: userId } as any,
+      order: { created_at: "DESC" },
+      take: Math.min(limit, 100),
+    });
   }
 }
