@@ -21,6 +21,7 @@ import { UpdateStockDto } from "./dto/update-stock.dto";
 import { CreateStockTransactionDto } from "./dto/create-stock-transaction.dto";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
 import { UpdateWasteRecordDto } from "./dto/update-waste-record.dto";
+import { CreateWasteRequestDto } from "./dto/create-waste-request.dto";
 import { CreateConsumptionRecordDto } from "./dto/create-consumption-record.dto";
 import { UpdateConsumptionRecordDto } from "./dto/update-consumption-record.dto";
 import { AssignCategoryDto } from "./dto/assign-category.dto";
@@ -222,6 +223,41 @@ export class StockHttpController {
       console.error(`❌ [WasteRecord] Error:`, error?.message || error);
       throw error;
     }
+  }
+
+  // === WASTE REQUESTS ===
+  @Post('waste-requests')
+  @Permissions('stock.waste_own')
+  async createWasteRequest(@Body() dto: CreateWasteRequestDto, @Request() req?: any) {
+    const createdBy = req?.user?.id || req?.user?.employee_id || undefined;
+    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
+    return await this.service.createWasteRequest(dtoWithLocation, createdBy);
+  }
+
+  @Get('waste-requests')
+  @Permissions('stock.waste_approve')
+  async listWasteRequests(@Query('status') status?: string, @Query('location_id') locationId?: string) {
+    const filters: any = {};
+    if (status) filters.status = status;
+    if (locationId) filters.location_id = Number(locationId);
+    return await this.service.getWasteRequests(Object.keys(filters).length > 0 ? filters : undefined);
+  }
+
+  @Post('waste-requests/:id/approve')
+  @Permissions('stock.waste_approve')
+  async approveWasteRequest(@Param('id') id: string, @Request() req?: any) {
+    const approverId = req?.user?.id || req?.user?.employee_id || undefined;
+    await this.service.approveWasteRequest(Number(id), approverId);
+    return { success: true };
+  }
+
+  @Post('waste-requests/:id/reject')
+  @Permissions('stock.waste_approve')
+  async rejectWasteRequest(@Param('id') id: string, @Request() req?: any) {
+    const approverId = req?.user?.id || req?.user?.employee_id || undefined;
+    await this.service.rejectWasteRequest(Number(id), approverId);
+    return { success: true };
   }
 
   @Get("waste-records")
