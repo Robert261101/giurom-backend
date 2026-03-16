@@ -1473,16 +1473,20 @@ export class NotificationsService {
         try {
           const baseUrl = process.env.FRONTEND_BASE_URL || '';
           const targetUrl = saved.target_url ? `${baseUrl}${saved.target_url.startsWith('/') ? '' : '/'}${saved.target_url}` : '';
-          await this.pushService.sendToUser(saved.user_id, {
-            title: saved.title,
-            body: saved.description ?? undefined,
-            data: {
-              notificationId: String(saved.id),
-              type: saved.type,
-              target_url: saved.target_url ?? '',
-              url: targetUrl,
+          await this.pushService.sendToUser(
+            saved.user_id,
+            {
+              title: saved.title,
+              body: saved.description ?? undefined,
+              data: {
+                notificationId: String(saved.id),
+                type: saved.type,
+                target_url: saved.target_url ?? '',
+                url: targetUrl,
+              },
             },
-          });
+            saved.id,
+          );
         } catch (pushErr: any) {
           this.logger.warn(`Web Push send failed: ${pushErr?.message || pushErr}`);
         }

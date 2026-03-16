@@ -174,6 +174,22 @@ export class NotificationsController {
     return { success: true };
   }
 
+  /** Log eșecuri push pentru user-ul curent (ca să vezi când nu au ajuns mesajele). */
+  @Get("push-delivery-log")
+  @Permissions("notifications.read")
+  async getPushDeliveryLog(
+    @Request() req,
+    @Query("limit") limit?: string,
+  ) {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return [];
+    }
+    const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+    const limitNum = limit ? Math.min(parseInt(limit, 10) || 50, 100) : 50;
+    return this.pushService.getDeliveryLog(resolvedUserId, limitNum);
+  }
+
   @Get("health")
   healthHttp() {
     return {
