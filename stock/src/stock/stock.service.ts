@@ -22,6 +22,7 @@ import {
   TransactionType,
 } from "./entities/stock-transaction.entity";
 import { WasteRecord } from "./entities/waste-record.entity";
+import { WasteRequest } from "./entities/waste-request.entity";
 import { ConsumptionRecord } from "./entities/consumption-record.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
@@ -51,6 +52,8 @@ export class StockService {
     private readonly txRepo: Repository<StockTransaction>,
     @InjectRepository(WasteRecord)
     private readonly wasteRecordRepo: Repository<WasteRecord>,
+    @InjectRepository(WasteRequest)
+    private readonly wasteRequestRepo: Repository<WasteRequest>,
     @InjectRepository(ConsumptionRecord)
     private readonly consumptionRecordRepo: Repository<ConsumptionRecord>,
     @InjectRepository(Category)
@@ -62,6 +65,126 @@ export class StockService {
     private readonly httpService?: HttpService,
     private readonly configService?: ConfigService
   ) {}
+
+  // === WASTE REQUESTS ===
+  async createWasteRequest(dto: any, createdBy?: number): Promise<WasteRequest> {
+    if (!dto.product_id && !dto.recipe_preparation_id) {
+      throw new BadRequestException(
+        'Either product_id or recipe_preparation_id must be provided'
+      );
+    }
+
+    const entity = this.wasteRequestRepo.create({
+      ...dto,
+      created_by: createdBy,
+      status: 'pending',
+    });
+
+    const result = await this.wasteRequestRepo.save(entity);
+    const saved = Array.isArray(result) ? result[0] : result;
+    this.logger.log(`✅ [WasteRequest] Created ID=${saved.id} by ${createdBy || 'unknown'}`);
+    return saved;
+  }
+
+  async getWasteRequests(filters?: { status?: string; location_id?: number }): Promise<WasteRequest[]> {
+    const qb = this.wasteRequestRepo.createQueryBuilder('wr').leftJoinAndSelect('wr.product', 'product').orderBy('wr.created_at', 'DESC');
+    if (filters?.status) {
+      qb.andWhere('wr.status = :status', { status: filters.status });
+    }
+    if (filters?.location_id) {
+      qb.andWhere('wr.location_id = :lid', { lid: filters.location_id });
+    }
+    return qb.getMany();
+  }
+
+  async approveWasteRequest(id: number, approverId?: number): Promise<void> {
+    const req = await this.wasteRequestRepo.findOne({ where: { id } });
+    if (!req) throw new NotFoundException('Waste request not found');
+    if (req.status !== 'pending') throw new BadRequestException('Waste request is not pending');
+
+    // Approve product waste
+    if (req.product_id) {
+      // Create waste record
+      const wrDto: any = {
+        product_id: req.product_id,
+        quantity: Number(req.quantity) || 0,
+        reason: req.reason || null,
+        photos: req.photos || undefined,
+        location_id: req.location_id || undefined,
+      };
+      const wasteRecord = this.wasteRecordRepo.create({ ...wrDto, product: undefined });
+      await this.wasteRecordRepo.save(wasteRecord);
+
+      // Consume product from stock (uses existing consumeProduct logic)
+      try {
+        await this.consumeProduct(req.product_id, Number(req.quantity) || 0, 'waste', approverId, req.location_id);
+      } catch (err) {
+        this.logger.error(`Error consuming stock during approveWasteRequest ${id}: ${err}`);
+        throw err;
+      }
+    }
+
+    // Approve preparation waste (consume ingredients)
+    if (req.recipe_preparation_id && this.httpService) {
+      try {
+        let recipesUrl = this.configService?.get<string>('RECIPES_HTTP_URL') || 'http://localhost:3003';
+        // convert external to internal if necessary 
+        if (recipesUrl.includes('bitap.ro') || recipesUrl.includes('89.46.6.45')) {
+          const portMatch = recipesUrl.match(/:(\d+)/);
+          const port = portMatch ? portMatch[1] : '3003';
+          recipesUrl = `http://localhost:${port}`;
+        }
+        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const headers = { 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
+
+        // Get preparation to obtain produced quantity and recipe id
+        const prepResp: any = await firstValueFrom(this.httpService.get(`${recipesUrl}/recipe-preparations/${req.recipe_preparation_id}`, { headers }));
+        const preparation = prepResp?.data || prepResp;
+        const prepQuantity = Number(preparation?.quantity) || 1;
+        const recipeId = preparation?.recipe?.id || preparation?.recipe_id;
+
+        if (!recipeId) {
+          throw new BadRequestException('Could not determine recipe for preparation');
+        }
+
+        // Fetch scaled ingredients for the produced quantity
+        const scaledResp: any = await firstValueFrom(this.httpService.get(`${recipesUrl}/recipes/${recipeId}/scaled-ingredients-with-stock`, { headers, params: { quantity: prepQuantity } }));
+        const ingredients = scaledResp?.data || scaledResp;
+
+        if (Array.isArray(ingredients)) {
+          for (const ing of ingredients) {
+            const productId = ing.product_id || ing.productId || ing.product;
+            const qty = Number(ing.quantity || ing.qty || 0);
+            if (!productId || !qty) continue;
+
+            // Create waste record per ingredient linking to preparation
+            const wr = this.wasteRecordRepo.create({ product_id: productId, recipe_preparation_id: req.recipe_preparation_id, quantity: qty, reason: req.reason || null, location_id: req.location_id });
+            await this.wasteRecordRepo.save(wr);
+
+            // Consume product from stock
+            await this.consumeProduct(productId, qty, 'waste', approverId, req.location_id);
+          }
+        }
+      } catch (err) {
+        this.logger.error(`Error approving preparation waste request ${id}: ${err}`);
+        throw err;
+      }
+    }
+
+    // Update request status
+    req.status = 'approved';
+    await this.wasteRequestRepo.save(req);
+    this.logger.log(`✅ [WasteRequest] Approved ID=${id} by ${approverId || 'unknown'}`);
+  }
+
+  async rejectWasteRequest(id: number, approverId?: number): Promise<void> {
+    const req = await this.wasteRequestRepo.findOne({ where: { id } });
+    if (!req) throw new NotFoundException('Waste request not found');
+    if (req.status !== 'pending') throw new BadRequestException('Waste request is not pending');
+    req.status = 'rejected';
+    await this.wasteRequestRepo.save(req);
+    this.logger.log(`🚫 [WasteRequest] Rejected ID=${id} by ${approverId || 'unknown'}`);
+  }
 
   /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus). */
   private async sendStockNotification(
