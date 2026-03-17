@@ -83,6 +83,38 @@ export class StockService {
     const result = await this.wasteRequestRepo.save(entity);
     const saved = Array.isArray(result) ? result[0] : result;
     this.logger.log(`✅ [WasteRequest] Created ID=${saved.id} by ${createdBy || 'unknown'}`);
+    // Trimite notificare pentru cererea de aruncare
+    const workLocationId = dto.location_id ?? (dto as any).work_location_id;
+    try {
+      await firstValueFrom(
+        this.notificationsClient
+          .emit(
+            { cmd: 'waste-requests.notification' },
+            {
+              type: 'waste_request_created',
+              title: 'Cerere aruncare produs nouă',
+              description: `S-a cerut aruncarea: ${dto.quantity || 0} ${dto.product_id ? 'unități produs' : 'preparat'}${dto.reason ? ` - ${dto.reason}` : ''}`,
+              entity_id: saved.id,
+              entity_type: 'waste_request',
+              metadata: {
+                wasteRequestId: saved.id,
+                work_location_id: workLocationId,
+                product_id: dto.product_id,
+                recipe_preparation_id: dto.recipe_preparation_id,
+                quantity: dto.quantity,
+                reason: dto.reason,
+                created_by: createdBy,
+              },
+              priority: 'medium',
+              target_url: '/stoc/waste-requests',
+            }
+          )
+          .pipe(defaultIfEmpty(undefined)),
+      );
+    } catch (err) {
+      this.logger.warn('Failed to emit waste-request notification: ' + (err as Error)?.message);
+    }
+
     return saved;
   }
 
