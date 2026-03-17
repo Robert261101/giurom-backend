@@ -12,8 +12,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    // sub din auth este id_employee; id și employee_id sunt folosite în controller-e (ex. waste-requests)
+    const sub = payload.sub;
     return {
-      userId: payload.sub,
+      id: sub,
+      userId: sub,
+      employee_id: sub,
       username: payload.username,
       permissions: payload.permissions || [],
       work_location_id: payload.work_location_id ?? undefined,

@@ -232,7 +232,11 @@ export class PushService implements OnModuleInit {
       );
     }
 
-    if (failed > 0) {
+    // Log doar când eșecul nu e doar token invalid (tokenul e deja șters, nu mai poluăm log-ul)
+    const onlyTokenInvalid = failureReasons.length > 0 && failureReasons.every(
+      (r) => r === "messaging/invalid-registration-token" || r === "messaging/registration-token-not-registered"
+    );
+    if (failed > 0 && !onlyTokenInvalid) {
       await this.logDeliveryFailure(
         userId,
         notificationId ?? null,

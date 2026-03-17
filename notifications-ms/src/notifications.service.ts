@@ -1104,29 +1104,39 @@ export class NotificationsService {
 
     let userId = event.user_id;
     if (userId == null && event.metadata?.assignedToId != null) {
-      try {
-        const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-        const url = `${apiGatewayUrl}/users/employee/${event.metadata.assignedToId}`;
-        this.logger.log(`🔍 [tasks.notification] Rezolv user_id pentru employee ${event.metadata.assignedToId}: GET ${url}`);
-        const res = await firstValueFrom(
-          this.httpService.get(url, {
-            headers: {
-              'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
-            },
-          })
-        );
-        // API Gateway poate returna { success, data: { id, id_employee, ... } } sau direct user
-        const user = res.data?.data ?? res.data;
-        if (user?.id) {
-          userId = user.id;
-          this.logger.log(`✅ [tasks.notification] Rezolvat: employee ${event.metadata.assignedToId} -> user_id=${userId}`);
-        } else {
+      const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
+      const url = `${apiGatewayUrl}/users/employee/${event.metadata.assignedToId}`;
+      const maxAttempts = 3;
+      const retryDelayMs = 400;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          this.logger.log(`🔍 [tasks.notification] Rezolv user_id pentru employee ${event.metadata.assignedToId} (încercare ${attempt}/${maxAttempts}): GET ${url}`);
+          const res = await firstValueFrom(
+            this.httpService.get(url, {
+              headers: {
+                'x-internal-service': 'notifications',
+                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              },
+              timeout: 8000,
+            })
+          );
+          const user = res.data?.data ?? res.data;
+          if (user?.id) {
+            userId = user.id;
+            this.logger.log(`✅ [tasks.notification] Rezolvat: employee ${event.metadata.assignedToId} -> user_id=${userId}`);
+            break;
+          }
           this.logger.warn(`[tasks.notification] Răspuns fără user.id: ${JSON.stringify(res.data)}`);
+        } catch (e: any) {
+          this.logger.warn(`[tasks.notification] Încercare ${attempt}/${maxAttempts} eșuată pentru employee ${event.metadata.assignedToId}: ${e?.message || e}`);
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, retryDelayMs));
+          } else {
+            this.logger.error(`[tasks.notification] Nu s-a putut rezolva user_id pentru employee ${event.metadata.assignedToId} după ${maxAttempts} încercări – notificarea nu va fi trimisă`);
+            return;
+          }
         }
-      } catch (e: any) {
-        this.logger.warn(`[tasks.notification] Could not resolve user_id for employee ${event.metadata.assignedToId}: ${e?.message || e}`);
-        return;
       }
     }
     const entityType = event.entity_type ?? (event.type?.startsWith?.('template.') ? 'task_template' : 'task_assignment');

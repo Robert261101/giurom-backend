@@ -4180,6 +4180,7 @@ export class AssignmentService {
         assignedToId: targetAssigneeId,
         previousAssigneeId: assignment.assigned_to_id,
       },
+      (assignment as any).location_id ?? undefined,
     ).catch((err) => this.logger.warn('Notificare reatribuire nereușită', err));
     this.notifyManagersReallocated(
       assignmentId,
@@ -4410,6 +4411,7 @@ export class AssignmentService {
         assignedToId: targetAssigneeId,
         previousAssigneeId: assignment.assigned_to_id,
       },
+      (assignment as any).location_id ?? undefined,
     ).catch((err) =>
       this.logger.warn(
         'Notificare reatribuire nereușită (nu blochează răspunsul)',

@@ -247,16 +247,24 @@ export class StockHttpController {
   @Post('waste-requests/:id/approve')
   @Permissions('stock.waste_approve')
   async approveWasteRequest(@Param('id') id: string, @Request() req?: any) {
+    const numId = Number(id);
+    if (Number.isNaN(numId) || numId < 1) {
+      throw new BadRequestException('ID cerere invalid');
+    }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
-    await this.service.approveWasteRequest(Number(id), approverId);
+    await this.service.approveWasteRequest(numId, approverId);
     return { success: true };
   }
 
   @Post('waste-requests/:id/reject')
   @Permissions('stock.waste_approve')
   async rejectWasteRequest(@Param('id') id: string, @Request() req?: any) {
+    const numId = Number(id);
+    if (Number.isNaN(numId) || numId < 1) {
+      throw new BadRequestException('ID cerere invalid');
+    }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
-    await this.service.rejectWasteRequest(Number(id), approverId);
+    await this.service.rejectWasteRequest(numId, approverId);
     return { success: true };
   }
 

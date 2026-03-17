@@ -86,7 +86,7 @@ export class StockService {
     return saved;
   }
 
-  async getWasteRequests(filters?: { status?: string; location_id?: number }): Promise<WasteRequest[]> {
+  async getWasteRequests(filters?: { status?: string; location_id?: number }): Promise<(WasteRequest & { created_by_name?: string })[]> {
     const qb = this.wasteRequestRepo.createQueryBuilder('wr').leftJoinAndSelect('wr.product', 'product').orderBy('wr.created_at', 'DESC');
     if (filters?.status) {
       qb.andWhere('wr.status = :status', { status: filters.status });
@@ -94,7 +94,41 @@ export class StockService {
     if (filters?.location_id) {
       qb.andWhere('wr.location_id = :lid', { lid: filters.location_id });
     }
-    return qb.getMany();
+    const list = await qb.getMany();
+
+    const creatorIds = [...new Set(list.map((r) => r.created_by).filter((id): id is number => id != null))];
+    const employeesMap = new Map<number, any>();
+
+    if (creatorIds.length > 0 && this.httpService) {
+      let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
+      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+        const portMatch = employeesServiceUrl.match(/:(\d+)/);
+        const port = portMatch ? portMatch[1] : '3012';
+        employeesServiceUrl = `http://localhost:${port}`;
+      }
+      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const headers = { 'Content-Type': 'application/json', 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
+      try {
+        const idsParam = creatorIds.join(',');
+        const employeeResponse: any = await firstValueFrom(
+          this.httpService.get(`${employeesServiceUrl}/employees/batch`, { headers, params: { ids: idsParam } })
+        );
+        const employees = employeeResponse?.data || [];
+        for (const emp of employees) {
+          if (emp && typeof emp.id === 'number') employeesMap.set(emp.id, emp);
+        }
+      } catch (err: any) {
+        this.logger?.warn(`Could not fetch employees batch for waste requests: ${err?.message}`);
+      }
+    }
+
+    return list.map((req) => {
+      const employee = employeesMap.get(req.created_by!);
+      const created_by_name = employee
+        ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.email || `Angajat #${req.created_by}`
+        : req.created_by ? `Angajat #${req.created_by}` : undefined;
+      return { ...req, created_by_name };
+    });
   }
 
   async approveWasteRequest(id: number, approverId?: number): Promise<void> {
