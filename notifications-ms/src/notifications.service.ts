@@ -1358,7 +1358,7 @@ export class NotificationsService {
         metadata: { workLocationId: event.workLocationId, revenueDate: datePart, amount, employeeId },
         priority: 'medium',
         status: 'unread',
-        target_url: `/locatii/${event.workLocationId}/incasari`,
+        target_url: `/locatii/${event.workLocationId}`,
       } as any);
       notifications.push(saved);
     }

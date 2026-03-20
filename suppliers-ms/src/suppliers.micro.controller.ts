@@ -1,4 +1,4 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { SuppliersService } from './suppliers/suppliers.service';
 import { CreateSupplierDto } from './suppliers/dto/create-supplier.dto';
@@ -11,6 +11,11 @@ import { CreateSupplierOrderDto } from './suppliers/dto/create-supplier-order.dt
 @Controller()
 export class SuppliersMicroController {
   constructor(private readonly service: SuppliersService) {}
+
+  @Get()
+  root() {
+    return { ok: true };
+  }
 
   // Suppliers CRUD
   @MessagePattern('suppliers.create')
