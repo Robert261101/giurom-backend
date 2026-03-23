@@ -40,7 +40,15 @@ export class StockHttpController {
   }
   @Get("products")
   @Permissions("products.read")
-  async getProducts() {
+  async getProducts(
+    @Query("location_id") locationId?: string,
+  ) {
+    const parsedLocationId = locationId ? Number(locationId) : undefined;
+
+    if (parsedLocationId !== undefined && Number.isFinite(parsedLocationId)) {
+      return await this.service.findProductsByLocation(parsedLocationId);
+    }
+
     return await this.service.findAllProducts();
   }
   @Get("products/:id") @Permissions("products.read") async getProduct(
