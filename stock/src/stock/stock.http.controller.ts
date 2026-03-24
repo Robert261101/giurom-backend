@@ -34,67 +34,73 @@ export class StockHttpController {
 
   // Products
   @Post("products") @Permissions("stock.create") async createProduct(
-    @Body() dto: CreateProductDto
+    @Body() dto: CreateProductDto,
   ) {
     return await this.service.createProduct(dto);
   }
   @Get("products")
   @Permissions("products.read")
-  async getProducts() {
+  async getProducts(@Query("location_id") locationId?: string) {
+    const parsedLocationId = locationId ? Number(locationId) : undefined;
+
+    if (parsedLocationId !== undefined && Number.isFinite(parsedLocationId)) {
+      return await this.service.findProductsByLocation(parsedLocationId);
+    }
+
     return await this.service.findAllProducts();
   }
   @Get("products/:id") @Permissions("products.read") async getProduct(
-    @Param("id") id: string
+    @Param("id") id: string,
   ) {
     return await this.service.findProduct(Number(id));
   }
   @Patch("products/:id") @Permissions("stock.update") async updateProduct(
     @Param("id") id: string,
-    @Body() dto: UpdateProductDto
+    @Body() dto: UpdateProductDto,
   ) {
     return await this.service.updateProduct(Number(id), dto);
   }
   @Delete("products/:id") @Permissions("stock.delete") async deleteProduct(
-    @Param("id") id: string
+    @Param("id") id: string,
   ) {
     return await this.service.deleteProduct(Number(id));
   }
 
   // Stock items
   @Post("items") @Permissions("stock.create") async createStock(
-    @Body() dto: CreateStockDto
+    @Body() dto: CreateStockDto,
   ) {
     return await this.service.createStock(dto);
   }
   @Get("items") @Permissions("stock.read") async getStocks(
     @Query("location_id") locationId?: string,
-    @Query("product_id") productId?: string
+    @Query("product_id") productId?: string,
   ) {
     return await this.service.findAllStocks(
       locationId ? Number(locationId) : undefined,
-      productId ? Number(productId) : undefined
+      productId ? Number(productId) : undefined,
     );
   }
   @Get("items/:id") @Permissions("stock.read") async getStock(
-    @Param("id") id: string
+    @Param("id") id: string,
   ) {
     return await this.service.findStock(Number(id));
   }
   @Patch("items/:id") @Permissions("stock.update") async updateStock(
     @Param("id") id: string,
-    @Body() dto: UpdateStockDto
+    @Body() dto: UpdateStockDto,
   ) {
     return await this.service.updateStock(Number(id), dto);
   }
   @Delete("items/:id") @Permissions("stock.delete") async deleteStock(
-    @Param("id") id: string
+    @Param("id") id: string,
   ) {
     return await this.service.deleteStock(Number(id));
   }
 
   // Transactions
   @Post("transactions") @Permissions("stock.create") async createTx(
-    @Body() dto: CreateStockTransactionDto
+    @Body() dto: CreateStockTransactionDto,
   ) {
     return await this.service.createTransaction(dto);
   }
@@ -106,10 +112,10 @@ export class StockHttpController {
   @Post("check-availability")
   @Permissions("stock.read")
   async checkAvailability(
-    @Body() dto: { products: Array<{ product_id: number; quantity: number }> }
+    @Body() dto: { products: Array<{ product_id: number; quantity: number }> },
   ) {
     console.log(
-      `📡 [StockHttpController] Checking availability for ${dto.products?.length || 0} products`
+      `📡 [StockHttpController] Checking availability for ${dto.products?.length || 0} products`,
     );
     return await this.service.checkStockAvailability(dto.products || []);
   }
@@ -126,7 +132,7 @@ export class StockHttpController {
       employee_id?: number;
       location_id?: number;
       recipe_preparation_id?: number;
-    }
+    },
   ) {
     console.log(`📡 [StockHttpController] Received consume request:`, dto);
     const result = await this.service.consumeProduct(
@@ -135,10 +141,10 @@ export class StockHttpController {
       dto.target,
       dto.employee_id,
       dto.location_id,
-      dto.recipe_preparation_id
+      dto.recipe_preparation_id,
     );
     console.log(
-      `📡 [StockHttpController] Completed consume request for product ${dto.product_id}`
+      `📡 [StockHttpController] Completed consume request for product ${dto.product_id}`,
     );
     return result;
   }
@@ -156,11 +162,11 @@ export class StockHttpController {
       employee_id?: number;
       location_id?: number;
       recipe_preparation_id?: number;
-    }
+    },
   ) {
     console.log(
       `📡 [StockHttpController] Received employee consume request:`,
-      dto
+      dto,
     );
     const result = await this.service.consumeProduct(
       Number(dto.product_id),
@@ -168,10 +174,10 @@ export class StockHttpController {
       dto.target || "employee-consumption",
       dto.employee_id,
       dto.location_id,
-      dto.recipe_preparation_id
+      dto.recipe_preparation_id,
     );
     console.log(
-      `📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`
+      `📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`,
     );
     return result;
   }
@@ -180,10 +186,14 @@ export class StockHttpController {
   @Post("employee/waste")
   @Permissions("stock.waste_own")
   async employeeWaste(@Body() dto: CreateWasteRecordDto, @Request() req?: any) {
-    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
+    const locationId =
+      dto.location_id ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
+    const dtoWithLocation =
+      locationId != null ? { ...dto, location_id: locationId } : dto;
     console.log(
-      `📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`
+      `📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,
     );
     const result = await this.service.createWasteRecord(dtoWithLocation);
 
@@ -197,7 +207,7 @@ export class StockHttpController {
           dto.quantity,
           "waste",
           undefined,
-          locationId ?? undefined
+          locationId ?? undefined,
         );
       } catch (error) {
         // Nu aruncăm eroare aici pentru că waste record-ul a fost deja creat
@@ -210,11 +220,18 @@ export class StockHttpController {
   // === WASTE RECORDS ===
   @Post("waste-records")
   @Permissions("stock.create")
-  async createWasteRecord(@Body() dto: CreateWasteRecordDto, @Request() req?: any) {
-    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
+  async createWasteRecord(
+    @Body() dto: CreateWasteRecordDto,
+    @Request() req?: any,
+  ) {
+    const locationId =
+      dto.location_id ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
+    const dtoWithLocation =
+      locationId != null ? { ...dto, location_id: locationId } : dto;
     console.log(
-      `📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`
+      `📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,
     );
     try {
       const result = await this.service.createWasteRecord(dtoWithLocation);
@@ -226,42 +243,54 @@ export class StockHttpController {
   }
 
   // === WASTE REQUESTS ===
-  @Post('waste-requests')
-  @Permissions('stock.waste_own')
-  async createWasteRequest(@Body() dto: CreateWasteRequestDto, @Request() req?: any) {
+  @Post("waste-requests")
+  @Permissions("stock.waste_own")
+  async createWasteRequest(
+    @Body() dto: CreateWasteRequestDto,
+    @Request() req?: any,
+  ) {
     const createdBy = req?.user?.id || req?.user?.employee_id || undefined;
-    const locationId = dto.location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    const dtoWithLocation = locationId != null ? { ...dto, location_id: locationId } : dto;
+    const locationId =
+      dto.location_id ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
+    const dtoWithLocation =
+      locationId != null ? { ...dto, location_id: locationId } : dto;
     return await this.service.createWasteRequest(dtoWithLocation, createdBy);
   }
 
-  @Get('waste-requests')
-  @Permissions('stock.waste_approve')
-  async listWasteRequests(@Query('status') status?: string, @Query('location_id') locationId?: string) {
+  @Get("waste-requests")
+  @Permissions("stock.waste_approve")
+  async listWasteRequests(
+    @Query("status") status?: string,
+    @Query("location_id") locationId?: string,
+  ) {
     const filters: any = {};
     if (status) filters.status = status;
     if (locationId) filters.location_id = Number(locationId);
-    return await this.service.getWasteRequests(Object.keys(filters).length > 0 ? filters : undefined);
+    return await this.service.getWasteRequests(
+      Object.keys(filters).length > 0 ? filters : undefined,
+    );
   }
 
-  @Post('waste-requests/:id/approve')
-  @Permissions('stock.waste_approve')
-  async approveWasteRequest(@Param('id') id: string, @Request() req?: any) {
+  @Post("waste-requests/:id/approve")
+  @Permissions("stock.waste_approve")
+  async approveWasteRequest(@Param("id") id: string, @Request() req?: any) {
     const numId = Number(id);
     if (Number.isNaN(numId) || numId < 1) {
-      throw new BadRequestException('ID cerere invalid');
+      throw new BadRequestException("ID cerere invalid");
     }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
     await this.service.approveWasteRequest(numId, approverId);
     return { success: true };
   }
 
-  @Post('waste-requests/:id/reject')
-  @Permissions('stock.waste_approve')
-  async rejectWasteRequest(@Param('id') id: string, @Request() req?: any) {
+  @Post("waste-requests/:id/reject")
+  @Permissions("stock.waste_approve")
+  async rejectWasteRequest(@Param("id") id: string, @Request() req?: any) {
     const numId = Number(id);
     if (Number.isNaN(numId) || numId < 1) {
-      throw new BadRequestException('ID cerere invalid');
+      throw new BadRequestException("ID cerere invalid");
     }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
     await this.service.rejectWasteRequest(numId, approverId);
@@ -284,7 +313,7 @@ export class StockHttpController {
   @Permissions("stock.update")
   async updateWasteRecord(
     @Param("id") id: string,
-    @Body() dto: UpdateWasteRecordDto
+    @Body() dto: UpdateWasteRecordDto,
   ) {
     return await this.service.updateWasteRecord(Number(id), dto);
   }
@@ -315,11 +344,11 @@ export class StockHttpController {
   @Post("products/:id/categories")
   async assignCategoriesToProduct(
     @Param("id") id: string,
-    @Body() assignCategoryDto: AssignCategoryDto
+    @Body() assignCategoryDto: AssignCategoryDto,
   ) {
     return await this.service.assignCategoriesToProduct(
       Number(id),
-      assignCategoryDto
+      assignCategoryDto,
     );
   }
 
@@ -350,7 +379,7 @@ export class StockHttpController {
     @Query("location_id") locationId?: string,
     @Query("employee_id") employeeId?: string,
     @Query("start_date") startDate?: string,
-    @Query("end_date") endDate?: string
+    @Query("end_date") endDate?: string,
   ) {
     const filters = {
       ...(productId && { product_id: Number(productId) }),
@@ -360,7 +389,7 @@ export class StockHttpController {
       ...(endDate && { end_date: endDate }),
     };
     return await this.service.findAllConsumptionRecords(
-      Object.keys(filters).length > 0 ? filters : undefined
+      Object.keys(filters).length > 0 ? filters : undefined,
     );
   }
 
@@ -374,7 +403,7 @@ export class StockHttpController {
   @Permissions("stock.update")
   async updateConsumptionRecord(
     @Param("id") id: string,
-    @Body() dto: UpdateConsumptionRecordDto
+    @Body() dto: UpdateConsumptionRecordDto,
   ) {
     return await this.service.updateConsumptionRecord(Number(id), dto);
   }
@@ -392,7 +421,7 @@ export class StockHttpController {
     @Query("location_id") locationId?: string,
     @Query("employee_id") employeeId?: string,
     @Query("start_date") startDate?: string,
-    @Query("end_date") endDate?: string
+    @Query("end_date") endDate?: string,
   ) {
     const filters = {
       ...(productId && { product_id: Number(productId) }),
@@ -402,7 +431,7 @@ export class StockHttpController {
       ...(endDate && { end_date: endDate }),
     };
     return await this.service.getConsumptionStats(
-      Object.keys(filters).length > 0 ? filters : undefined
+      Object.keys(filters).length > 0 ? filters : undefined,
     );
   }
 
@@ -415,7 +444,7 @@ export class StockHttpController {
       ingredients: Array<{ product_id: number; quantity: number }>;
       employee_id: number;
       location_id: number;
-    }
+    },
   ) {
     return await this.service.consumeForRecipePreparation(payload);
   }
@@ -424,11 +453,11 @@ export class StockHttpController {
   @Post("products/upload-image")
   @Permissions("stock.update")
   async uploadProductImage(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const imageUrl = await this.service.uploadProductImage(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { imageUrl };
   }
@@ -437,11 +466,11 @@ export class StockHttpController {
   @Post("insert/upload-pdf")
   @Permissions("stock.create")
   async uploadStockInsertPdf(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const pdfUrl = await this.service.uploadStockInsertPdf(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { pdfUrl };
   }
@@ -451,7 +480,7 @@ export class StockHttpController {
   @Permissions("products.read")
   async serveProductImage(
     @Param("fileName") fileName: string,
-    @Res() res: Response
+    @Res() res: Response,
   ) {
     const { buffer, mimeType } = await this.service.serveProductImage(fileName);
     res.setHeader("Content-Type", mimeType);
@@ -463,11 +492,11 @@ export class StockHttpController {
   @Post("waste/upload-image")
   @Permissions("stock.update")
   async uploadWasteImage(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const imageUrl = await this.service.uploadWasteImage(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { imageUrl };
   }
@@ -476,11 +505,11 @@ export class StockHttpController {
   @Post("employee/waste/upload-image")
   @Permissions("stock.waste_own")
   async employeeUploadWasteImage(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const imageUrl = await this.service.uploadWasteImage(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { imageUrl };
   }
@@ -490,7 +519,7 @@ export class StockHttpController {
   @Permissions("stock.read")
   async serveWasteImage(
     @Param("fileName") fileName: string,
-    @Res() res: Response
+    @Res() res: Response,
   ) {
     const { buffer, mimeType } = await this.service.serveWasteImage(fileName);
     res.setHeader("Content-Type", mimeType);
@@ -510,11 +539,11 @@ export class StockHttpController {
   @Post("consume/upload-image")
   @Permissions("stock.update")
   async uploadConsumeImage(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const imageUrl = await this.service.uploadConsumeImage(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { imageUrl };
   }
@@ -523,11 +552,11 @@ export class StockHttpController {
   @Post("employee/consume/upload-image")
   @Permissions("stock.consume_own")
   async employeeUploadConsumeImage(
-    @Body() payload: { fileName: string; content: string }
+    @Body() payload: { fileName: string; content: string },
   ) {
     const imageUrl = await this.service.uploadConsumeImage(
       payload.fileName,
-      payload.content
+      payload.content,
     );
     return { imageUrl };
   }
@@ -537,7 +566,7 @@ export class StockHttpController {
   @Permissions("stock.read")
   async serveConsumeImage(
     @Param("fileName") fileName: string,
-    @Res() res: Response
+    @Res() res: Response,
   ) {
     const { buffer, mimeType } = await this.service.serveConsumeImage(fileName);
     res.setHeader("Content-Type", mimeType);
@@ -557,9 +586,11 @@ export class StockHttpController {
   @Get("order-lists")
   async getOrderLists(
     @Query("work_location_id") workLocationId?: string,
-    @Request() req?: any
+    @Request() req?: any,
   ) {
-    const locId = workLocationId ? Number(workLocationId) : (req?.user?.work_location_id ?? req?.user?.work_location_default_id);
+    const locId = workLocationId
+      ? Number(workLocationId)
+      : (req?.user?.work_location_id ?? req?.user?.work_location_default_id);
     return this.service.findAllOrderLists(locId ?? undefined);
   }
 
@@ -570,17 +601,23 @@ export class StockHttpController {
 
   @Post("order-lists")
   async createOrderList(@Body() dto: CreateOrderListDto, @Request() req?: any) {
-    const workLocationId = dto.work_location_id ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
+    const workLocationId =
+      dto.work_location_id ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
     if (workLocationId == null) {
       throw new BadRequestException("work_location_id este obligatoriu");
     }
-    return this.service.createOrderList({ ...dto, work_location_id: workLocationId });
+    return this.service.createOrderList({
+      ...dto,
+      work_location_id: workLocationId,
+    });
   }
 
   @Patch("order-lists/:id")
   async updateOrderList(
     @Param("id") id: string,
-    @Body() dto: UpdateOrderListDto
+    @Body() dto: UpdateOrderListDto,
   ) {
     return this.service.updateOrderList(Number(id), dto);
   }
