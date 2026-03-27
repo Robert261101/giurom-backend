@@ -76,6 +76,70 @@ export class ScheduledTasksService {
     return this.jwtService.sign(payload, { expiresIn: '24h' });
   }
 
+  /**
+   * Calculează due_date pentru task-urile recurente.
+   * - Dacă există element `finalized_in` -> adaugă durata la `assignedAt`
+   * - Altfel -> fallback la sfârșitul zilei (23:59:59.999)
+   */
+  private computeDueDateForRecurring(
+    parentTask: TaskAssignment,
+    assignedAt: Date,
+  ): Date {
+    try {
+      const elements = (parentTask.elements as any[]) || [];
+
+      // 1) finalized_in (ore/minute) -> assignedAt + finalized_in
+      const finalizedInEl = elements.find(
+        (e: any) => e.task_element?.element_type === 'finalized_in',
+      );
+      if (finalizedInEl?.value) {
+        const v = finalizedInEl.value;
+        const due = new Date(assignedAt);
+        // Already an object { hours, minutes }
+        if (typeof v === 'object') {
+          const hours = Number(v.hours || 0) || 0;
+          const minutes = Number(v.minutes || 0) || 0;
+          due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
+          return due;
+        }
+        if (typeof v === 'string') {
+          try {
+            const parsedJson = JSON.parse(v);
+            if (parsedJson && typeof parsedJson === 'object') {
+              const hours = Number(parsedJson.hours || 0) || 0;
+              const minutes = Number(parsedJson.minutes || 0) || 0;
+              due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
+              return due;
+            }
+          } catch (_err) {
+            // not JSON, continue
+          }
+          // Try HH:MM format
+          const hhmm = (v as string).match(/^(\d{1,2}):(\d{1,2})$/);
+          if (hhmm) {
+            const hours = Number(hhmm[1]);
+            const minutes = Number(hhmm[2]);
+            due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
+            return due;
+          }
+          // Try minutes as number
+          const minutesNum = Number(v);
+          if (!Number.isNaN(minutesNum)) {
+            due.setMinutes(due.getMinutes() + minutesNum);
+            return due;
+          }
+        }
+      }
+    } catch (_e) {
+      // Ignore parsing errors and fallback
+    }
+
+    // Fallback: sfârșitul zilei
+    const end = new Date(assignedAt);
+    end.setHours(23, 59, 59, 999);
+    return end;
+  }
+
   async getScheduledTasks(): Promise<TaskAssignment[]> {
     return this.assignmentRepository.find({
       where: {
@@ -709,8 +773,7 @@ export class ScheduledTasksService {
     assignedAt: Date,
     recurrenceId: string,
   ): Promise<void> {
-    const dueDate = new Date(assignedAt);
-    dueDate.setHours(18, 0, 0, 0); // 18:00 seara
+    const dueDate = this.computeDueDateForRecurring(parentTask, assignedAt);
 
     // IMPORTANT: Pentru task-urile recurente, nu folosim assigned_to_id din părinte
     // dacă părintele este un sablon recurent (nu are parent_recurrence_id)
@@ -850,8 +913,7 @@ export class ScheduledTasksService {
         return;
       }
 
-      const dueDate = new Date(assignedAt);
-      dueDate.setHours(18, 0, 0, 0);
+      const dueDate = this.computeDueDateForRecurring(parentTask, assignedAt);
 
       console.log(
         `🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`,
