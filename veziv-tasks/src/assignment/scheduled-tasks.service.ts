@@ -76,6 +76,85 @@ export class ScheduledTasksService {
     return this.jwtService.sign(payload, { expiresIn: '24h' });
   }
 
+  /**
+   * Calculează due_date pentru task-urile recurente.
+   * - Dacă există element `finalized_in` -> adaugă durata la `assignedAt`
+   * - Altfel -> fallback la sfârșitul zilei (23:59:59.999)
+   */
+  private computeDueDateForRecurring(
+    parentTask: TaskAssignment,
+    assignedAt: Date,
+  ): Date {
+    try {
+      const elements = (parentTask.elements as any[]) || [];
+
+      // 1) finalized_in (ore/minute) -> assignedAt + finalized_in
+      const finalizedInEl = elements.find(
+        (e: any) => e.task_element?.element_type === 'finalized_in',
+      );
+      if (finalizedInEl?.value) {
+        const v = finalizedInEl.value;
+        const due = new Date(assignedAt);
+        // Already an object { hours, minutes }
+        if (typeof v === 'object') {
+          const hours = Number(v.hours || 0) || 0;
+          const minutes = Number(v.minutes || 0) || 0;
+          due.setHours(
+            due.getHours() + hours,
+            due.getMinutes() + minutes,
+            0,
+            0,
+          );
+          return due;
+        }
+        if (typeof v === 'string') {
+          try {
+            const parsedJson = JSON.parse(v);
+            if (parsedJson && typeof parsedJson === 'object') {
+              const hours = Number(parsedJson.hours || 0) || 0;
+              const minutes = Number(parsedJson.minutes || 0) || 0;
+              due.setHours(
+                due.getHours() + hours,
+                due.getMinutes() + minutes,
+                0,
+                0,
+              );
+              return due;
+            }
+          } catch (_err) {
+            // not JSON, continue
+          }
+          // Try HH:MM format
+          const hhmm = (v as string).match(/^(\d{1,2}):(\d{1,2})$/);
+          if (hhmm) {
+            const hours = Number(hhmm[1]);
+            const minutes = Number(hhmm[2]);
+            due.setHours(
+              due.getHours() + hours,
+              due.getMinutes() + minutes,
+              0,
+              0,
+            );
+            return due;
+          }
+          // Try minutes as number
+          const minutesNum = Number(v);
+          if (!Number.isNaN(minutesNum)) {
+            due.setMinutes(due.getMinutes() + minutesNum);
+            return due;
+          }
+        }
+      }
+    } catch (_e) {
+      // Ignore parsing errors and fallback
+    }
+
+    // Fallback: sfârșitul zilei
+    const end = new Date(assignedAt);
+    end.setHours(23, 59, 59, 999);
+    return end;
+  }
+
   async getScheduledTasks(): Promise<TaskAssignment[]> {
     return this.assignmentRepository.find({
       where: {
@@ -157,7 +236,9 @@ export class ScheduledTasksService {
                     (el: any) => el.task_element?.element_type === 'task_name',
                   );
                   const displayName =
-                    taskNameEl?.value?.trim() || updated.template?.template_name || 'Sarcină';
+                    taskNameEl?.value?.trim() ||
+                    updated.template?.template_name ||
+                    'Sarcină';
                   await this.assignmentService.sendTaskNotificationForEmployee(
                     'assignment.became_visible',
                     'Task activ',
@@ -554,7 +635,9 @@ export class ScheduledTasksService {
       if (parentTask.department_group_id) {
         const groupId = parentTask.department_group_id;
         // Mai multe departamente: depts_4_9_timestamp_random (ID-uri 1-6 cifre, apoi timestamp 10+ cifre)
-        const deptsMatch = groupId.match(/^depts_((?:\d{1,6}_)*\d{1,6})_\d{10,}_/);
+        const deptsMatch = groupId.match(
+          /^depts_((?:\d{1,6}_)*\d{1,6})_\d{10,}_/,
+        );
         if (deptsMatch) {
           const idsStr = deptsMatch[1];
           departmentIdsForGroup = idsStr
@@ -709,8 +792,7 @@ export class ScheduledTasksService {
     assignedAt: Date,
     recurrenceId: string,
   ): Promise<void> {
-    const dueDate = new Date(assignedAt);
-    dueDate.setHours(18, 0, 0, 0); // 18:00 seara
+    const dueDate = this.computeDueDateForRecurring(parentTask, assignedAt);
 
     // IMPORTANT: Pentru task-urile recurente, nu folosim assigned_to_id din părinte
     // dacă părintele este un sablon recurent (nu are parent_recurrence_id)
@@ -789,7 +871,8 @@ export class ScheduledTasksService {
             `🔍 [RECURENTA] Location ID extras din group_id: ${locationId} (toți angajații pontați)`,
           );
         } else {
-          const deptMatch = parentTask.department_group_id.match(/^dept_(\d+)_/);
+          const deptMatch =
+            parentTask.department_group_id.match(/^dept_(\d+)_/);
           if (deptMatch) {
             departmentId = parseInt(deptMatch[1]);
             console.log(
@@ -816,14 +899,20 @@ export class ScheduledTasksService {
         console.log(
           `🔍 [RECURENTA] Obțin toți angajații pontați la locația ${locationId} pentru data ${assignedAt.toISOString().split('T')[0]}`,
         );
-        workingEmployees = await this.getLocationEmployees(locationId, assignedAt);
+        workingEmployees = await this.getLocationEmployees(
+          locationId,
+          assignedAt,
+        );
       } else if (departmentId) {
         // Obține angajații din departament pentru data respectivă (la postare); dacă nu există, nu creăm task – fără eroare
         console.log(
           `🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId} pentru data ${assignedAt.toISOString().split('T')[0]}`,
         );
         try {
-          workingEmployees = await this.getDepartmentEmployees(departmentId, assignedAt);
+          workingEmployees = await this.getDepartmentEmployees(
+            departmentId,
+            assignedAt,
+          );
         } catch (err) {
           console.warn(
             `⚠️ [RECURENTA] Nu s-au putut obține angajații pentru departamentul ${departmentId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -850,8 +939,7 @@ export class ScheduledTasksService {
         return;
       }
 
-      const dueDate = new Date(assignedAt);
-      dueDate.setHours(18, 0, 0, 0);
+      const dueDate = this.computeDueDateForRecurring(parentTask, assignedAt);
 
       console.log(
         `🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`,
@@ -1503,7 +1591,9 @@ export class ScheduledTasksService {
 
               // Emit WebSocket (invizibil -> vizibil) – asigură is_visible_for_employee: true în payload
               try {
-                const updated = await this.assignmentService.findOne(assignment.id);
+                const updated = await this.assignmentService.findOne(
+                  assignment.id,
+                );
                 if (updated) {
                   const payload = { ...updated, is_visible_for_employee: true };
                   this.taskGateway.notifyTaskUpdate(payload);
@@ -1518,7 +1608,9 @@ export class ScheduledTasksService {
                     (el: any) => el.task_element?.element_type === 'task_name',
                   );
                   const displayName =
-                    taskNameEl?.value?.trim() || assignment.template?.template_name || 'Sarcină';
+                    taskNameEl?.value?.trim() ||
+                    assignment.template?.template_name ||
+                    'Sarcină';
                   await this.assignmentService.sendTaskNotificationForEmployee(
                     'assignment.became_visible',
                     'Task activ',
@@ -1596,11 +1688,14 @@ export class ScheduledTasksService {
       );
       const displayName =
         taskNameEl?.value?.trim() || saved.template?.template_name || 'Sarcină';
-      const scheduledStr = new Date(saved.scheduled_datetime!).toLocaleString('ro-RO', {
-        timeZone: 'Europe/Bucharest',
-        dateStyle: 'short',
-        timeStyle: 'short',
-      });
+      const scheduledStr = new Date(saved.scheduled_datetime!).toLocaleString(
+        'ro-RO',
+        {
+          timeZone: 'Europe/Bucharest',
+          dateStyle: 'short',
+          timeStyle: 'short',
+        },
+      );
       await this.assignmentService.sendTaskNotificationForEmployee(
         'assignment.scheduled',
         'Task programat',
