@@ -99,12 +99,7 @@ export class ScheduledTasksService {
         if (typeof v === 'object') {
           const hours = Number(v.hours || 0) || 0;
           const minutes = Number(v.minutes || 0) || 0;
-          due.setHours(
-            due.getHours() + hours,
-            due.getMinutes() + minutes,
-            0,
-            0,
-          );
+          due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
           return due;
         }
         if (typeof v === 'string') {
@@ -113,12 +108,7 @@ export class ScheduledTasksService {
             if (parsedJson && typeof parsedJson === 'object') {
               const hours = Number(parsedJson.hours || 0) || 0;
               const minutes = Number(parsedJson.minutes || 0) || 0;
-              due.setHours(
-                due.getHours() + hours,
-                due.getMinutes() + minutes,
-                0,
-                0,
-              );
+              due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
               return due;
             }
           } catch (_err) {
@@ -129,12 +119,7 @@ export class ScheduledTasksService {
           if (hhmm) {
             const hours = Number(hhmm[1]);
             const minutes = Number(hhmm[2]);
-            due.setHours(
-              due.getHours() + hours,
-              due.getMinutes() + minutes,
-              0,
-              0,
-            );
+            due.setHours(due.getHours() + hours, due.getMinutes() + minutes, 0, 0);
             return due;
           }
           // Try minutes as number
