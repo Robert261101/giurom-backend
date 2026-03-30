@@ -498,6 +498,30 @@ export class AssignmentService {
         );
       }
 
+      // Dacă nu există schimb „Manager” în prezență pentru ziua încasării (ex. ture negenerate după o dată),
+      // folosim angajatul setat pe locație (work_location.employee_id) — același câmp folosit ca responsabil.
+      if (managerIds.length === 0) {
+        try {
+          const locRes = await firstValueFrom(
+            this.httpService.get(`${locationsBase}/locations/${workLocationId}`, {
+              headers: authHeaders,
+              timeout: REALLOC_HTTP_TIMEOUT_MS,
+            }),
+          );
+          const empId = Number(locRes?.data?.employee_id);
+          if (!Number.isNaN(empId) && empId > 0) {
+            this.logger.log(
+              `[Manager] Locația ${workLocationId}: fără schimb Manager în ziua ${dateTime.toISOString().split('T')[0]} — fallback employee_id locație: ${empId}`,
+            );
+            return [empId];
+          }
+        } catch (e) {
+          this.logger.warn(
+            `[Manager] Fallback employee_id locație eșuat (${workLocationId}): ${(e as Error)?.message || e}`,
+          );
+        }
+      }
+
       return managerIds;
     } catch (e) {
       this.logger.warn(
@@ -3384,7 +3408,8 @@ export class AssignmentService {
   }
 
   /**
-   * Respinge un task cu requires_manager_check și îl returnează la status assigned
+   * Marchează task-ul verificat de manager ca nefinalizat pentru eficiență.
+   * Punctele rămân neschimbate.
    */
   async rejectTask(id: number, managerId: number): Promise<TaskAssignment> {
     console.log(`🔍 [REJECT] Manager ${managerId} respinge task-ul ${id}`);
@@ -3409,54 +3434,57 @@ export class AssignmentService {
       throw new Error(`Task-ul ${id} nu are requires_manager_check activat`);
     }
 
-    // ȘTERGE EXECUȚIA ȘI PUNCTELE - Găsește execuția pentru acest assignment
-    // Folosim ExecutionService.remove() care gestionează automat ștergerea punctelor
+    // Nu mai ștergem execuția/punctele.
+    // Marcăm execuția pentru a fi exclusă din calculul de eficiență.
     const executions = await this.executionService.findAll(null, false);
     const execution = executions.find((e) => e.task_assignment_id === id);
 
     if (execution) {
-      console.log(
-        `🔍 [REJECT] Găsită execuție ${execution.id} pentru task ${id} - va fi ștearsă`,
-      );
-
       try {
-        // Folosește metoda remove din ExecutionService care gestionează automat punctele
-        await this.executionService.remove(execution.id);
+        const currentComment = (execution as any).comment || '';
+        const marker = '[manager-marked-unfinished]';
+        const updatedComment = currentComment.includes(marker)
+          ? currentComment
+          : `${currentComment}${currentComment ? ' | ' : ''}${marker} manager_id=${managerId} at=${new Date().toISOString()}`;
+
+        await this.executionRepository.update(execution.id, {
+          comment: updatedComment,
+        } as any);
         console.log(
-          `✅ [REJECT] Execuția ${execution.id} și punctele au fost șterse cu succes`,
+          `✅ [REJECT] Execuția ${execution.id} a fost marcată ca nefinalizată pentru eficiență (puncte păstrate)`,
         );
       } catch (error) {
         console.error(
-          `❌ [REJECT] Eroare la ștergerea execuției ${execution.id}:`,
+          `❌ [REJECT] Eroare la marcarea execuției ${execution.id}:`,
           error,
         );
-        // Nu aruncăm eroarea pentru a nu bloca reactivarea task-ului
+        // Nu aruncăm eroarea pentru a nu bloca actualizarea task-ului
       }
     } else {
       console.log(
-        `ℹ️ [REJECT] Nu există execuție pentru task ${id} - continuăm cu reactivarea`,
+        `ℹ️ [REJECT] Nu există execuție pentru task ${id} - continuăm fără marker`,
       );
     }
 
-    // Incrementează rejecting_times și actualizează statusul la assigned
+    // Închidem task-ul; la eficiență va conta nefinalizat datorită marker-ului din execuție.
     const currentRejectingTimes = assignment.rejecting_times || 0;
     const newRejectingTimes = currentRejectingTimes + 1;
 
     await this.assignmentRepository.update(id, {
-      status: 'assigned' as any,
-      completed_at: undefined,
+      status: 'completed' as any,
+      completed_at: new Date(),
       rejecting_times: newRejectingTimes,
     });
 
     console.log(
-      `✅ [REJECT] Task ${id} respins de manager ${managerId} (respingere #${newRejectingTimes}) și returnat la assigned`,
+      `✅ [REJECT] Task ${id} marcat de manager ${managerId} ca nefinalizat pentru eficiență (respingere #${newRejectingTimes})`,
     );
 
-    // Notificare pentru angajat: task respins de manager
+    // Notificare pentru angajat
     await this.sendAssignmentNotification(
       'assignment.rejected',
-      'Task respins',
-      `Task-ul "${assignment.template?.template_name || 'Nou'}" a fost respins de manager. Poți să-l completezi din nou.`,
+      'Task marcat nefinalizat',
+      `Task-ul "${assignment.template?.template_name || 'Nou'}" a fost marcat de manager ca nefinalizat pentru eficiență.`,
       id,
       {
         templateId: assignment.template_id,
@@ -3846,17 +3874,24 @@ export class AssignmentService {
 
       const total = countAsCurrent + countAsPrevious;
 
-      // Completed: doar unde angajatul e assignee curent, status completed ȘI execuția NU e „finalizat automat”
+      // Completed pentru eficiență:
+      // - status completed
+      // - execuția NU e „finalizat automat”
+      // - execuția NU este marcată explicit de manager ca nefinalizată
       const completedQb = this.assignmentRepository
         .createQueryBuilder('a')
         .innerJoin(TaskExecution, 'e', 'e.task_assignment_id = a.id')
         .select('COUNT(a.id)', 'completed')
         .where('a.assigned_to_id = :employeeId', { employeeId })
         .andWhere("a.status = 'completed'")
-        .andWhere('(e.comment NOT LIKE :auto1 AND e.comment NOT LIKE :auto2)', {
-          auto1: '%finalizat automat%',
-          auto2: '%puncte deduse pentru nefinalizare%',
-        });
+        .andWhere(
+          '(e.comment NOT LIKE :auto1 AND e.comment NOT LIKE :auto2 AND e.comment NOT LIKE :mgrUnfinished)',
+          {
+            auto1: '%finalizat automat%',
+            auto2: '%puncte deduse pentru nefinalizare%',
+            mgrUnfinished: '%[manager-marked-unfinished]%',
+          },
+        );
       const completedRaw = await completedQb.getRawOne<{ completed: string }>();
       const completed = Math.max(
         0,

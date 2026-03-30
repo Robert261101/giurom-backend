@@ -342,7 +342,7 @@ export class AssignmentController {
   @Post(':id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Permissions('assignment.read_location', 'assignment.read_company', 'assignment.read_all')
-  @ApiOperation({ summary: 'Respinge un task cu requires_manager_check și îl returnează la status assigned' })
+  @ApiOperation({ summary: 'Marchează task-ul verificat de manager ca nefinalizat pentru eficiență (fără modificare puncte)' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de respins' })
   @ApiResponse({ 
     status: 200, 
