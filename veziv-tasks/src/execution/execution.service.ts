@@ -1246,7 +1246,9 @@ export class ExecutionService {
   async createEmployeeDailyPoints(
     createDto: CreateEmployeeDailyPointsDto,
   ): Promise<EmployeeDailyPoints> {
-    // Verifică dacă există deja un punctaj pentru această zi și angajat
+    // Verifică dacă există deja un punctaj pentru această zi și angajat.
+    // Pentru surse externe (ex. punctualitate din attendance), comportamentul trebuie să fie aditiv:
+    // dacă rândul există, adăugăm punctele primite peste totalul existent.
     const existingPoints = await this.employeeDailyPointsRepository.findOne({
       where: {
         employee_id: createDto.employee_id,
@@ -1255,9 +1257,23 @@ export class ExecutionService {
     });
 
     if (existingPoints) {
-      throw new BadRequestException(
-        `Există deja un punctaj pentru angajatul ${createDto.employee_id} în data ${createDto.work_date}`,
-      );
+      const before = Number(existingPoints.total_points || 0);
+      const delta = Number(createDto.total_points || 0);
+      existingPoints.total_points =
+        before + delta;
+      if ((existingPoints as any).location_id == null && createDto.location_id != null) {
+        (existingPoints as any).location_id = createDto.location_id as any;
+      }
+      const saved = await this.employeeDailyPointsRepository.save(existingPoints);
+      console.log('✅ [daily-points] update aditiv:', {
+        employee_id: createDto.employee_id,
+        work_date: createDto.work_date,
+        location_id: (saved as any).location_id,
+        before,
+        delta,
+        after: Number(saved.total_points || 0),
+      });
+      return saved;
     }
 
     const dailyPoints = this.employeeDailyPointsRepository.create({
@@ -1267,7 +1283,14 @@ export class ExecutionService {
       location_id: createDto.location_id,
     });
 
-    return await this.employeeDailyPointsRepository.save(dailyPoints);
+    const saved = await this.employeeDailyPointsRepository.save(dailyPoints);
+    console.log('✅ [daily-points] creat nou:', {
+      employee_id: createDto.employee_id,
+      work_date: createDto.work_date,
+      location_id: (saved as any).location_id,
+      total_points: Number(saved.total_points || 0),
+    });
+    return saved;
   }
 
   async getEmployeeDailyPoints(

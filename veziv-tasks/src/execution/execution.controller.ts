@@ -317,6 +317,12 @@ export class ExecutionController {
   })
   @ApiResponse({ status: 400, description: 'Date invalide sau punctaj existent' })
   createDailyPoints(@Body() createDto: CreateEmployeeDailyPointsDto): Promise<EmployeeDailyPoints> {
+    console.log('📥 [daily-points] request primit:', {
+      employee_id: createDto.employee_id,
+      work_date: createDto.work_date,
+      location_id: (createDto as any).location_id,
+      total_points: createDto.total_points,
+    });
     return this.executionService.createEmployeeDailyPoints(createDto);
   }
 

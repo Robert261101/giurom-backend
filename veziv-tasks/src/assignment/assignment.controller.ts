@@ -77,9 +77,15 @@ export class AssignmentController {
   @Get('stats/efficiency')
   @ApiOperation({ summary: 'Eficiență angajat: câte task-uri finalizate din total (doar count-uri)' })
   @ApiQuery({ name: 'employee_id', required: true, description: 'ID angajat' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD (opțional, filtru de la data)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD (opțional, filtru până la data)' })
   @ApiResponse({ status: 200, description: 'total_count, completed_count, percentage' })
-  getEfficiency(@Query('employee_id', ParseIntPipe) employeeId: number) {
-    return this.assignmentService.getEfficiencyForEmployee(employeeId);
+  getEfficiency(
+    @Query('employee_id', ParseIntPipe) employeeId: number,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.assignmentService.getEfficiencyForEmployee(employeeId, startDate, endDate);
   }
 
   @Get(':id')

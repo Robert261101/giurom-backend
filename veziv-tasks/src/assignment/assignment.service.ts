@@ -904,9 +904,9 @@ export class AssignmentService {
       `✅ [BATCH ENRICH] Completed in ${duration}ms (${assignments.length} assignments)`,
     );
 
-    if (duration > 500) {
+    if (duration > 2000) {
       console.warn(
-        `⚠️ [BATCH ENRICH] Performance warning: ${duration}ms > 500ms target`,
+        `⚠️ [BATCH ENRICH] Performance warning: ${duration}ms > 2000ms target`,
       );
     }
 
@@ -3839,27 +3839,38 @@ export class AssignmentService {
    * Eficiență angajat: număr total de task-uri (inclusiv cele unde a fost realocat = previous_assignee)
    * și câte sunt finalizate efectiv (exclude finalizare automată / puncte deduse).
    */
-  async getEfficiencyForEmployee(employeeId: number): Promise<{
+  async getEfficiencyForEmployee(
+    employeeId: number,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{
     total_count: number;
     completed_count: number;
     percentage: number;
   }> {
     try {
+      const normStart = startDate ? startDate.split('T')[0].split(' ')[0] : undefined;
+      const normEnd = endDate ? endDate.split('T')[0].split(' ')[0] : undefined;
+
       // Total (parte 1): assignments unde angajatul e assignee curent
-      const asCurrent = await this.assignmentRepository
+      const totalCurrentQb = this.assignmentRepository
         .createQueryBuilder('a')
         .select('COUNT(a.id)', 'total')
-        .where('a.assigned_to_id = :employeeId', { employeeId })
-        .getRawOne<{ total: string }>();
+        .where('a.assigned_to_id = :employeeId', { employeeId });
+      if (normStart) totalCurrentQb.andWhere('DATE(a.assigned_at) >= :normStart', { normStart });
+      if (normEnd) totalCurrentQb.andWhere('DATE(a.assigned_at) <= :normEnd', { normEnd });
+      const asCurrent = await totalCurrentQb.getRawOne<{ total: string }>();
       const countAsCurrent = Math.max(0, parseInt(asCurrent?.total ?? '0', 10));
 
       // Total (parte 2): assignments unde angajatul apare în previous_assignee_ids (fără JSON_CONTAINS în SQL)
-      const withPrevious = await this.assignmentRepository
+      const withPreviousQb = this.assignmentRepository
         .createQueryBuilder('a')
         .select('a.id', 'id')
         .addSelect('a.previous_assignee_ids', 'previous_assignee_ids')
-        .where('a.previous_assignee_ids IS NOT NULL')
-        .getRawMany<{ id: number; previous_assignee_ids: string }>();
+        .where('a.previous_assignee_ids IS NOT NULL');
+      if (normStart) withPreviousQb.andWhere('DATE(a.assigned_at) >= :normStart', { normStart });
+      if (normEnd) withPreviousQb.andWhere('DATE(a.assigned_at) <= :normEnd', { normEnd });
+      const withPrevious = await withPreviousQb.getRawMany<{ id: number; previous_assignee_ids: string }>();
       const countAsPrevious = (withPrevious || []).filter((row) => {
         try {
           const arr =
@@ -3892,6 +3903,8 @@ export class AssignmentService {
             mgrUnfinished: '%[manager-marked-unfinished]%',
           },
         );
+      if (normStart) completedQb.andWhere('DATE(e.completed_at) >= :normStart', { normStart });
+      if (normEnd) completedQb.andWhere('DATE(e.completed_at) <= :normEnd', { normEnd });
       const completedRaw = await completedQb.getRawOne<{ completed: string }>();
       const completed = Math.max(
         0,
@@ -3906,15 +3919,19 @@ export class AssignmentService {
         `getEfficiencyForEmployee(${employeeId}) failed, using fallback: ${err instanceof Error ? err.message : String(err)}`,
       );
       // Fallback: logica veche (doar assigned_to_id, completed = status completed)
-      const raw = await this.assignmentRepository
+      const normStart = startDate ? startDate.split('T')[0].split(' ')[0] : undefined;
+      const normEnd = endDate ? endDate.split('T')[0].split(' ')[0] : undefined;
+      const fallbackQb = this.assignmentRepository
         .createQueryBuilder('a')
         .select('COUNT(a.id)', 'total')
         .addSelect(
           "SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END)",
           'completed',
         )
-        .where('a.assigned_to_id = :employeeId', { employeeId })
-        .getRawOne<{ total: string; completed: string }>();
+        .where('a.assigned_to_id = :employeeId', { employeeId });
+      if (normStart) fallbackQb.andWhere('DATE(a.assigned_at) >= :normStart', { normStart });
+      if (normEnd) fallbackQb.andWhere('DATE(a.assigned_at) <= :normEnd', { normEnd });
+      const raw = await fallbackQb.getRawOne<{ total: string; completed: string }>();
       const total = Math.max(0, parseInt(raw?.total ?? '0', 10));
       const completed = Math.max(0, parseInt(raw?.completed ?? '0', 10));
       const percentage =

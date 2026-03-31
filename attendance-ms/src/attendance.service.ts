@@ -14,7 +14,9 @@ import { CreatePresenceDto } from './dto/create-presence.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto';
 import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
-import { toZonedTime } from 'date-fns-tz';
+import { toZonedTime, formatInTimeZone, toDate } from 'date-fns-tz';
+
+const ROMANIA_TZ = 'Europe/Bucharest';
 
 @Injectable()
 export class AttendanceService implements OnModuleInit {
@@ -64,13 +66,23 @@ export class AttendanceService implements OnModuleInit {
     }
   }
 
-  private async addEmployeePoints(employeeId: number, points: number, reason: string): Promise<void> {
+  private async addEmployeePoints(
+    employeeId: number,
+    points: number,
+    reason: string,
+    workDateRoz?: string,
+    locationId?: number,
+  ): Promise<void> {
     try {
+      const workDate =
+        workDateRoz ??
+        formatInTimeZone(new Date(), ROMANIA_TZ, 'yyyy-MM-dd');
       const response = await firstValueFrom(
         this.httpService.post('http://giurom.bitap.ro:3002/tasks/executions/daily-points', {
           employee_id: employeeId,
           total_points: points,
-          work_date: new Date().toISOString().split('T')[0] // YYYY-MM-DD format
+          work_date: workDate,
+          location_id: locationId,
         })
       );
       console.log(`✅ Added ${points} points to employee ${employeeId}: ${reason}`);
@@ -390,38 +402,54 @@ export class AttendanceService implements OnModuleInit {
     }
     
     // Logica pentru puncte - doar dacă există check_in
+    // Ora de început a turei și ziua se interpretează mereu în Europe/Bucharest (nu în TZ server),
+    // altfel la tură 10:00 RO pe server UTC pragul de „≥1h înainte” este calculat greșit.
     if (check_in) {
-      const checkInTime = savedPresence.check_in ? new Date(savedPresence.check_in) : new Date(check_in);
-      const shiftStartTime = new Date(shift.start_datetime);
+      const checkInInstantMs = new Date(check_in).getTime();
+      const ymdRo = formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'yyyy-MM-dd');
+      const shiftHmRo = formatInTimeZone(
+        new Date(shift.start_datetime),
+        ROMANIA_TZ,
+        'HH:mm',
+      );
+      const [shHraw, shMraw] = shiftHmRo.split(':').map((x) => parseInt(x, 10));
+      const shH = Number.isFinite(shHraw) ? shHraw : 0;
+      const shM = Number.isFinite(shMraw) ? shMraw : 0;
 
-      // Extrag doar ora din shift (ignorăm data pentru pontajul curent)
-      const shiftStartHour = shiftStartTime.getHours();
-      const shiftStartMinute = shiftStartTime.getMinutes();
+      const shiftStartRo = toDate(
+        `${ymdRo} ${String(shH).padStart(2, '0')}:${String(shM).padStart(2, '0')}:00`,
+        { timeZone: ROMANIA_TZ },
+      );
 
-      // Folosim data din check_in (nu date) pentru a calcula ora de început a shift-ului
-      // Astfel funcționează corect și când check_in este după miezul nopții
-      const checkInDate = new Date(check_in);
-      const checkInDay = new Date(checkInDate.getFullYear(), checkInDate.getMonth(), checkInDate.getDate());
-      const todayShiftStart = new Date(checkInDay);
-      todayShiftStart.setHours(shiftStartHour, shiftStartMinute, 0, 0);
+      const minimumLeadTimeMs = 60 * 60 * 1000; // ≥ 60 minute înainte de start program (RO)
+      const diffMs = shiftStartRo.getTime() - checkInInstantMs;
 
-      // Pragul minim: cel puțin o oră înainte de începutul programului
-      const minimumLeadTimeMs = 60 * 60 * 1000; // 60 minute
-      const diffMs = todayShiftStart.getTime() - checkInTime.getTime();
+      console.log(
+        `🕐 [Punctualitate RO] check_in instant=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo}`,
+      );
+      console.log(
+        `🕐 [Punctualitate RO] start tură RO pe aceea zi=${shiftStartRo.toISOString()} (template oră din shift: ${shiftHmRo})`,
+      );
+      console.log(
+        `🕐 Diferență ms până la start: ${diffMs}, prag: ${minimumLeadTimeMs}`,
+      );
 
-      console.log(`🕐 Check-in time: ${checkInTime.toISOString()}`);
-      console.log(`🕐 Shift start time (pontaj): ${todayShiftStart.toISOString()}`);
-      console.log(`🕐 Diferență (ms) față de start: ${diffMs}`);
-      console.log(`🕐 Prag necesar (ms): ${minimumLeadTimeMs}`);
-
-      if (diffMs >= minimumLeadTimeMs) {
+      if (Number.isNaN(shiftStartRo.getTime())) {
+        console.warn(
+          `⚠️ [Punctualitate] Nu s-a putut calcula start tură RO pentru shift ${shift.id} – puncte oprite`,
+        );
+      } else if (diffMs >= minimumLeadTimeMs) {
         await this.addEmployeePoints(
-          shift.employee_id, 
-          5, 
-          `Punctualitate - început program cu cel puțin o oră înainte (${checkInTime.toLocaleTimeString('ro-RO')})`
+          shift.employee_id,
+          5,
+          `Punctualitate - început program cu cel puțin o oră înainte (${formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'HH:mm')})`,
+          ymdRo,
+          Number((shift as any).work_location_id),
         );
       } else {
-        console.log(`⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte - nu se acordă puncte`);
+        console.log(
+          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte (RO) – nu se acordă puncte`,
+        );
       }
     }
     
