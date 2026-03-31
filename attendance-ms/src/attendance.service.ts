@@ -319,6 +319,81 @@ export class AttendanceService implements OnModuleInit {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
+  /**
+   * Puncte + notificare după pontaj: rulează în fundal ca răspunsul POST /presences să nu aștepte HTTP către tasks / RMQ.
+   */
+  private async runCreatePresenceSideEffectsAfterSave(params: {
+    check_in: string | undefined;
+    shift: Shift;
+    shift_id: number;
+    date: string;
+    savedPresenceId: number;
+  }): Promise<void> {
+    const { check_in, shift, shift_id, date, savedPresenceId } = params;
+    const locId = (shift as any).work_location_id;
+
+    if (check_in) {
+      const checkInInstantMs = new Date(check_in).getTime();
+      const ymdRo = formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'yyyy-MM-dd');
+      const shiftHmRo = formatInTimeZone(
+        new Date(shift.start_datetime),
+        ROMANIA_TZ,
+        'HH:mm',
+      );
+      const [shHraw, shMraw] = shiftHmRo.split(':').map((x) => parseInt(x, 10));
+      const shH = Number.isFinite(shHraw) ? shHraw : 0;
+      const shM = Number.isFinite(shMraw) ? shMraw : 0;
+
+      const shiftStartRo = toDate(
+        `${ymdRo} ${String(shH).padStart(2, '0')}:${String(shM).padStart(2, '0')}:00`,
+        { timeZone: ROMANIA_TZ },
+      );
+
+      const minimumLeadTimeMs = 60 * 60 * 1000;
+      const diffMs = shiftStartRo.getTime() - checkInInstantMs;
+
+      console.log(
+        `🕐 [Punctualitate RO] check_in instant=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo}`,
+      );
+      console.log(
+        `🕐 [Punctualitate RO] start tură RO pe aceea zi=${shiftStartRo.toISOString()} (template oră din shift: ${shiftHmRo})`,
+      );
+      console.log(`🕐 Diferență ms până la start: ${diffMs}, prag: ${minimumLeadTimeMs}`);
+
+      if (Number.isNaN(shiftStartRo.getTime())) {
+        console.warn(
+          `⚠️ [Punctualitate] Nu s-a putut calcula start tură RO pentru shift ${shift.id} – puncte oprite`,
+        );
+      } else if (diffMs >= minimumLeadTimeMs) {
+        await this.addEmployeePoints(
+          shift.employee_id,
+          5,
+          `Punctualitate - început program cu cel puțin o oră înainte (${formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'HH:mm')})`,
+          ymdRo,
+          Number((shift as any).work_location_id),
+        );
+      } else {
+        console.log(
+          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte (RO) – nu se acordă puncte`,
+        );
+      }
+    }
+
+    await this.sendAttendanceNotification(
+      'attendance_created',
+      'Pontaj creat',
+      `A fost creat un nou pontaj pentru data de ${new Date(date).toLocaleDateString('ro-RO')}`,
+      shift.employee_id,
+      {
+        presenceId: savedPresenceId,
+        shiftId: shift_id,
+        date: date,
+        employeeId: shift.employee_id,
+      },
+      locId,
+    );
+  }
+
   async createPresence(createPresenceDto: CreatePresenceDto): Promise<Presence> {
     const { shift_id, date, check_in, check_out, ...rest } = createPresenceDto;
 
@@ -400,72 +475,15 @@ export class AttendanceService implements OnModuleInit {
       }
       throw err;
     }
-    
-    // Logica pentru puncte - doar dacă există check_in
-    // Ora de început a turei și ziua se interpretează mereu în Europe/Bucharest (nu în TZ server),
-    // altfel la tură 10:00 RO pe server UTC pragul de „≥1h înainte” este calculat greșit.
-    if (check_in) {
-      const checkInInstantMs = new Date(check_in).getTime();
-      const ymdRo = formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'yyyy-MM-dd');
-      const shiftHmRo = formatInTimeZone(
-        new Date(shift.start_datetime),
-        ROMANIA_TZ,
-        'HH:mm',
-      );
-      const [shHraw, shMraw] = shiftHmRo.split(':').map((x) => parseInt(x, 10));
-      const shH = Number.isFinite(shHraw) ? shHraw : 0;
-      const shM = Number.isFinite(shMraw) ? shMraw : 0;
 
-      const shiftStartRo = toDate(
-        `${ymdRo} ${String(shH).padStart(2, '0')}:${String(shM).padStart(2, '0')}:00`,
-        { timeZone: ROMANIA_TZ },
-      );
-
-      const minimumLeadTimeMs = 60 * 60 * 1000; // ≥ 60 minute înainte de start program (RO)
-      const diffMs = shiftStartRo.getTime() - checkInInstantMs;
-
-      console.log(
-        `🕐 [Punctualitate RO] check_in instant=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo}`,
-      );
-      console.log(
-        `🕐 [Punctualitate RO] start tură RO pe aceea zi=${shiftStartRo.toISOString()} (template oră din shift: ${shiftHmRo})`,
-      );
-      console.log(
-        `🕐 Diferență ms până la start: ${diffMs}, prag: ${minimumLeadTimeMs}`,
-      );
-
-      if (Number.isNaN(shiftStartRo.getTime())) {
-        console.warn(
-          `⚠️ [Punctualitate] Nu s-a putut calcula start tură RO pentru shift ${shift.id} – puncte oprite`,
-        );
-      } else if (diffMs >= minimumLeadTimeMs) {
-        await this.addEmployeePoints(
-          shift.employee_id,
-          5,
-          `Punctualitate - început program cu cel puțin o oră înainte (${formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'HH:mm')})`,
-          ymdRo,
-          Number((shift as any).work_location_id),
-        );
-      } else {
-        console.log(
-          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte (RO) – nu se acordă puncte`,
-        );
-      }
-    }
-    
-    const locId = (shift as any).work_location_id;
-    await this.sendAttendanceNotification(
-      'attendance_created',
-      'Pontaj creat',
-      `A fost creat un nou pontaj pentru data de ${new Date(date).toLocaleDateString('ro-RO')}`,
-      shift.employee_id,
-      {
-        presenceId: savedPresence.id,
-        shiftId: shift_id,
-        date: date,
-        employeeId: shift.employee_id,
-      },
-      locId,
+    void this.runCreatePresenceSideEffectsAfterSave({
+      check_in,
+      shift,
+      shift_id,
+      date,
+      savedPresenceId: savedPresence.id,
+    }).catch((err) =>
+      console.error('❌ Eroare efecte după create presence (puncte/notificare):', err),
     );
 
     return savedPresence;
