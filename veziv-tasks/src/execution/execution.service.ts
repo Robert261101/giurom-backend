@@ -1311,19 +1311,9 @@ export class ExecutionService {
       );
     }
 
-    // Sursă de adevăr: SUM(employee_daily_task_points.points_awarded). Resincronizează total_points.
-    const sumResult = await this.employeeDailyTaskPointsRepository
-      .createQueryBuilder('tp')
-      .select('COALESCE(SUM(tp.points_awarded), 0)', 'total')
-      .where('tp.employee_daily_points_id = :id', { id: dailyPoints.id })
-      .getRawOne<{ total: string }>();
-    const sum = parseFloat(sumResult?.total ?? '0') || 0;
-    const currentStored = Number(dailyPoints.total_points);
-    if (currentStored !== sum) {
-      dailyPoints.total_points = sum;
-      await this.employeeDailyPointsRepository.save(dailyPoints);
-    }
-
+    // NU resincronizăm total_points doar din task_points – valoarea stocată
+    // poate include puncte din surse non-task (ex: inceperea turei mai devreme) care nu
+    // au intrări în employee_daily_task_points.
     return dailyPoints;
   }
 
@@ -1384,8 +1374,8 @@ export class ExecutionService {
       await this.employeeDailyPointsRepository.save(dailyPoints);
     }
 
-    // Actualizează punctajul total zilnic
-    const totalPoints = await this.employeeDailyTaskPointsRepository
+    // Actualizează punctajul total zilnic păstrând punctele non-task (ex: attendance)
+    const sumTaskPoints = await this.employeeDailyTaskPointsRepository
       .createQueryBuilder('taskPoints')
       .select('SUM(taskPoints.points_awarded)', 'total')
       .where('taskPoints.employee_daily_points_id = :dailyPointsId', {
@@ -1393,7 +1383,17 @@ export class ExecutionService {
       })
       .getRawOne();
 
-    dailyPoints.total_points = parseFloat(totalPoints.total) || 0;
+    const taskSum = parseFloat(sumTaskPoints.total) || 0;
+    // Recitim rândul din DB pentru a avea valoarea curentă a total_points
+    const freshDaily = await this.employeeDailyPointsRepository.findOne({
+      where: { id: createDto.employee_daily_points_id },
+    });
+    const currentTotal = parseFloat(String(freshDaily?.total_points ?? 0)) || 0;
+    // Suma anterioară a task-urilor (fără task-ul tocmai adăugat)
+    const prevTaskSum = taskSum - createDto.points_awarded;
+    // Diferența non-task = total stocat - suma anterioară a task-urilor
+    const nonTaskPoints = currentTotal - prevTaskSum;
+    dailyPoints.total_points = taskSum + Math.max(nonTaskPoints, 0);
     await this.employeeDailyPointsRepository.save(dailyPoints);
 
     return savedTaskPoints;
@@ -1535,15 +1535,9 @@ export class ExecutionService {
       .orderBy('dailyPoints.work_date', 'ASC')
       .getMany();
 
-    // Recalculăm total_points din suma task_points (inclusiv negative) pentru răspuns corect
-    for (const dp of list) {
-      const taskPoints = dp.task_points || [];
-      const sum = taskPoints.reduce(
-        (acc, tp) => acc + Number(tp.points_awarded ?? 0),
-        0,
-      );
-      (dp as any).total_points = sum;
-    }
+    // NU recalculăm total_points – valoarea stocată include și puncte din surse non-task
+    // (ex: puncte de pontaj pentru începerea turei cu mai devreme), care nu au intrări
+    // în employee_daily_task_points.
     return list;
   }
 
@@ -1657,7 +1651,7 @@ export class ExecutionService {
         });
         await this.employeeDailyTaskPointsRepository.save(taskPoints);
 
-        // Actualizează punctajul total zilnic
+        // Actualizează punctajul total zilnic păstrând punctele non-task (ex: attendance)
         const totalDailyPoints = await this.employeeDailyTaskPointsRepository
           .createQueryBuilder('taskPoints')
           .select('SUM(taskPoints.points_awarded)', 'total')
@@ -1666,7 +1660,17 @@ export class ExecutionService {
           })
           .getRawOne();
 
-        dailyPoints.total_points = parseFloat(totalDailyPoints.total) || 0;
+        const taskSum = parseFloat(totalDailyPoints.total) || 0;
+        // Recitim rândul din DB pentru total_points curent (include attendance)
+        const freshDaily = await this.employeeDailyPointsRepository.findOne({
+          where: { id: dailyPoints.id },
+        });
+        const currentTotal = parseFloat(String(freshDaily?.total_points ?? 0)) || 0;
+        // Suma anterioare a task-urilor (fără task-ul tocmai adăugat)
+        const prevTaskSum = taskSum - totalPoints;
+        // Diferența non-task = total stocat - suma anterioară a task-urilor
+        const nonTaskPoints = currentTotal - prevTaskSum;
+        dailyPoints.total_points = taskSum + Math.max(nonTaskPoints, 0);
         await this.employeeDailyPointsRepository.save(dailyPoints);
 
         const action = isOverdue ? 'scăzut' : 'adăugat';
