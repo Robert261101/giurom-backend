@@ -48,6 +48,31 @@ export class ExecutionService {
     private readonly notificationsClient: ClientProxy,
   ) {}
 
+  private async getEmployeeDisplayName(employeeId?: number | null): Promise<string> {
+    if (!employeeId) return 'Un angajat';
+    try {
+      const response = await this.httpService.axiosRef.get(
+        `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+        {
+          timeout: 5000,
+          headers: {
+            'x-internal-service': 'veziv-tasks',
+            'x-service-secret':
+              process.env.SERVICE_SECRET || 'default-service-secret',
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      const data = response?.data?.data ?? response?.data ?? {};
+      const firstName = String(data?.first_name ?? '').trim();
+      const lastName = String(data?.last_name ?? '').trim();
+      const fullName = `${firstName} ${lastName}`.trim();
+      return fullName || `Angajat #${employeeId}`;
+    } catch {
+      return `Angajat #${employeeId}`;
+    }
+  }
+
   private async sendExecutionNotification(
     type: string,
     title: string,
@@ -274,14 +299,23 @@ export class ExecutionService {
     }
 
     const locId = (assignment as any).location_id ?? undefined;
+    const taskName =
+      (assignmentWithTemplate as any)?.template?.template_name ||
+      (executionWithRelations as any)?.assignment_name ||
+      `Task #${executionWithRelations.task_assignment_id}`;
+    const employeeName = await this.getEmployeeDisplayName(
+      executionWithRelations.employee_id ?? assignment.assigned_to_id,
+    );
     await this.sendExecutionNotification(
       'execution.created',
       'Execuție creată',
-      `Execuția task-ului a fost creată${points > 0 ? ` și a primit ${points} puncte` : ''}`,
+      `${employeeName} a finalizat task-ul "${taskName}"${points > 0 ? ` și a obținut ${points} puncte` : ''}.`,
       executionWithRelations.id,
       {
         assignmentId: executionWithRelations.task_assignment_id,
         assignedToId: executionWithRelations.employee_id ?? assignment.assigned_to_id,
+        employeeName,
+        taskName,
         points,
         isOverdue,
       },
@@ -1036,6 +1070,12 @@ export class ExecutionService {
     const assignment = execution.task_assignment;
     const assignmentId = assignment.id;
     const originalAssignedToId = assignment.assigned_to_id;
+    const assignmentWithTemplate = await this.taskAssignmentRepository.findOne({
+      where: { id: assignmentId },
+      relations: ['template'],
+    });
+    const taskName =
+      assignmentWithTemplate?.template?.template_name || `Task #${assignmentId}`;
 
     // Șterge execuția (inclusiv punctele asociate)
     const executionIdToRemove = execution.id;
@@ -1087,10 +1127,14 @@ export class ExecutionService {
             {
               type: 'assignment.reactivated',
               title: 'Sarcină reactivată',
-              description: `Sarcina "${templateName}" a fost reactivată și poate fi completată din nou.`,
+              description: `Sarcina "${taskName}" a fost reactivată și trebuie refăcută.`,
               entity_id: assignmentId,
               entity_type: 'task_assignment',
-              metadata: { assignedToId: assignment.assigned_to_id },
+              metadata: {
+                assignedToId: assignment.assigned_to_id,
+                taskName,
+                work_location_id: (assignment as any).location_id ?? null,
+              },
               priority: 'medium',
               target_url: `/sarcini/${assignmentId}`,
             },
@@ -1138,6 +1182,12 @@ export class ExecutionService {
 
     const assignment = execution.task_assignment;
     const assignmentId = assignment.id;
+    const assignmentWithTemplate = await this.taskAssignmentRepository.findOne({
+      where: { id: assignmentId },
+      relations: ['template'],
+    });
+    const taskName =
+      assignmentWithTemplate?.template?.template_name || `Task #${assignmentId}`;
 
     // Verifică dacă assignment-ul este în waiting_response
     if (assignment.status !== AssignmentStatus.WAITING_RESPONSE) {
@@ -1174,6 +1224,23 @@ export class ExecutionService {
     assignment.notes = `${assignment.notes ? assignment.notes + '\n\n' : ''}✅ Aprobat de ${managerName} la ${new Date().toLocaleString('ro-RO')}`;
 
     await this.taskAssignmentRepository.save(assignment);
+
+    const employeeName = await this.getEmployeeDisplayName(
+      assignment.assigned_to_id ?? execution.employee_id,
+    );
+    await this.sendExecutionNotification(
+      'assignment.approved',
+      'Sarcină aprobată ca finalizată',
+      `Managerul a aprobat ca finalizată sarcina "${taskName}" realizată de ${employeeName}.`,
+      execution.id,
+      {
+        assignmentId,
+        assignedToId: assignment.assigned_to_id ?? execution.employee_id,
+        employeeName,
+        taskName,
+      },
+      (assignment as any).location_id ?? undefined,
+    );
 
     return {
       message: `Execuția a fost aprobată cu succes de ${managerName}`,
