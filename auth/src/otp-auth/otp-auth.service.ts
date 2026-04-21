@@ -100,7 +100,7 @@ export class TwoFactorAuthService {
         message: `OTP trimis cu succes pe numărul ${user.phone}` 
       };
     } catch (error) {
-      this.logger.error(`Eroare la trimiterea OTP: ${error.message}`);
+      this.logger.error(`Eroare la trimiterea OTP: ${this.getErrorMessage(error)}`);
       throw error;
     }
   }
@@ -155,7 +155,7 @@ export class TwoFactorAuthService {
 
       return tokens;
     } catch (error) {
-      this.logger.error(`Eroare la verificarea OTP: ${error.message}`);
+      this.logger.error(`Eroare la verificarea OTP: ${this.getErrorMessage(error)}`);
       throw error;
     }
   }
@@ -184,17 +184,32 @@ export class TwoFactorAuthService {
         return null;
       }
 
+      // Obține rolurile și permisiunile reale ale utilizatorului din baza de date
+      const rolesAndPerms = await this.usersService.getUserRolesAndPermissions(user.id);
+
+      // Construiește array-ul de roluri în formatul așteptat de generateTokens:
+      // [{ name: string, permissions: { name: string }[] }]
+      // Toate permisiunile sunt puse sub primul rol pentru a evita duplicatele la flatMap
+      const roleObjects = rolesAndPerms.roles.length > 0
+        ? rolesAndPerms.roles.map((roleName, i) => ({
+            name: roleName,
+            permissions: i === 0
+              ? rolesAndPerms.permissions.map(p => ({ name: p }))
+              : [],
+          }))
+        : [{ name: 'employee', permissions: rolesAndPerms.permissions.map(p => ({ name: p })) }];
+
       const result = {
         userId: user.id_employee,
         email: employee.email,
         phone: employee.phone,
-        roles: [] // Pentru moment, nu avem roluri implementate
+        roles: roleObjects,
       };
 
-      this.logger.log(`Utilizator găsit și procesat pentru ${email}`);
+      this.logger.log(`Utilizator găsit și procesat pentru ${email} (roluri: ${rolesAndPerms.roles.join(', ') || 'niciun rol'})`);
       return result;
     } catch (error) {
-      this.logger.error(`Eroare la căutarea utilizatorului: ${error.message}`);
+      this.logger.error(`Eroare la căutarea utilizatorului: ${this.getErrorMessage(error)}`);
       return null;
     }
   }
@@ -257,15 +272,15 @@ export class TwoFactorAuthService {
         return false;
       }
     } catch (error) {
-      this.logger.error(`❌ EROARE la trimiterea SMS: ${error.message}`);
-      
+      this.logger.error(`❌ EROARE la trimiterea SMS: ${this.getErrorMessage(error)}`);
+
       // Dacă este o eroare de la SMSAdvert, afișează detaliile
-      if (error.response) {
+      if (axios.isAxiosError(error) && error.response) {
         this.logger.error(`🚨 Status Code: ${error.response.status}`);
         this.logger.error(`📋 Răspuns de eroare de la SMSAdvert:`, JSON.stringify(error.response.data, null, 2));
       }
-      
-      this.logger.error(`Stack trace:`, error.stack);
+
+      this.logger.error(`Stack trace:`, this.getErrorStack(error));
       return false;
     }
   }
@@ -313,8 +328,28 @@ export class TwoFactorAuthService {
       this.logger.log(`Utilizator găsit și procesat pentru ${phone}`);
       return result;
     } catch (error) {
-      this.logger.error(`Eroare la căutarea utilizatorului după telefon: ${error.message}`);
+      this.logger.error(`Eroare la căutarea utilizatorului după telefon: ${this.getErrorMessage(error)}`);
       return null;
     }
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return 'Eroare necunoscută';
+    }
+  }
+
+  private getErrorStack(error: unknown): string | undefined {
+    return error instanceof Error ? error.stack : undefined;
   }
 } 
