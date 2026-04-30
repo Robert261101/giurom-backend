@@ -401,7 +401,7 @@ export class AttendanceController {
       req.user?.employee_id ??
       req.user?.id_employee ??
       req.user?.employeeId ??
-      req.user?.userId ??
+      req.user?.userId ??3
       req.user?.sub ??
       req.user?.id;
     if (!employeeId) {

@@ -14,6 +14,7 @@ import {
   PipeTransform,
   ArgumentMetadata,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
@@ -90,7 +91,7 @@ export class UsersController {
   async findByEmployeeId(@Param('id_employee', ParseIntPipe) id_employee: number): Promise<User> {
     const user = await this.usersService.findByEmployeeId(id_employee);
     if (!user) {
-      throw new Error(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
+      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
     }
     return user;
   }
@@ -564,7 +565,7 @@ export class UsersController {
   async findOne(@Param('id', ParseIntPipe) id: number): Promise<any> {
     const user = await this.usersService.findOne(id);
     if (!user) {
-      throw new Error(`Utilizatorul cu ID ${id} nu a fost găsit`);
+      throw new NotFoundException(`Utilizatorul cu ID ${id} nu a fost găsit`);
     }
     
     // Handle profile image URL properly
@@ -620,7 +621,7 @@ export class UsersController {
       // Get user by employee ID
       const user = await this.usersService.findByEmployeeId(employeeId);
       if (!user) {
-        throw new Error(`Utilizatorul cu ID angajat ${employeeId} nu a fost găsit`);
+        throw new NotFoundException(`Utilizatorul cu ID angajat ${employeeId} nu a fost găsit`);
       }
       
       console.log(`✅ Found user ${user.id} for employee ${employeeId}`);

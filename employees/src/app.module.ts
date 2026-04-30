@@ -37,6 +37,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
     HttpModule,
     TypeOrmModule.forRoot({
       type: 'mysql',
+      connectorPackage: 'mysql2',
       host: process.env.DB_HOST as string,
       port: parseInt(process.env.DB_PORT as string, 10),
       username: process.env.DB_USERNAME as string,
