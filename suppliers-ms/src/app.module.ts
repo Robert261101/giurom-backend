@@ -23,6 +23,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { PermissionsGuard } from "./permissions/permissions.guard";
 import { InternalServiceGuard } from "./auth/internal-service.guard";
+import { SupplierProductMeasurementVariant } from './suppliers/entities/supplier-product-measurement-variant.entity';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { InternalServiceGuard } from "./auth/internal-service.guard";
         Supplier,
         SupplierFolder,
         SupplierProduct,
+        SupplierProductMeasurementVariant,
         SupplierOrder,
         SupplierOrderItem,
         SupplierOrderDocument,
@@ -86,6 +88,7 @@ import { InternalServiceGuard } from "./auth/internal-service.guard";
       Supplier,
       SupplierFolder,
       SupplierProduct,
+      SupplierProductMeasurementVariant,
       SupplierOrder,
       SupplierOrderItem,
       SupplierOrderDocument,

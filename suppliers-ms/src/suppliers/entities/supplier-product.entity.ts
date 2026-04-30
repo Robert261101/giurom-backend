@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
@@ -10,6 +11,7 @@ import {
   BeforeUpdate,
 } from 'typeorm';
 import { Supplier } from './supplier.entity';
+import { SupplierProductMeasurementVariant } from './supplier-product-measurement-variant.entity';
 
 @Entity('supplier_products')
 export class SupplierProduct {
@@ -43,6 +45,12 @@ export class SupplierProduct {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  net_quantity: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  gross_quantity: number;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 
@@ -52,6 +60,9 @@ export class SupplierProduct {
   @ManyToOne(() => Supplier, (supplier) => supplier.products, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
+
+  @OneToMany(() => SupplierProductMeasurementVariant, (variant) => variant.supplierProduct)
+  measurement_variants: SupplierProductMeasurementVariant[];
 
   @BeforeInsert()
   @BeforeUpdate()

@@ -47,6 +47,19 @@ export class CreateSupplierProductDto {
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
+
+  @ApiProperty({ required: false, description: 'Cantitate neta totala disponibila la furnizor (stoc furnizor)' })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  net_quantity?: number;
+
+  @ApiProperty({ required: false, description: 'Cantitate bruta totala disponibila la furnizor (stoc furnizor)' })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  gross_quantity?: number;
+
 }
 
 

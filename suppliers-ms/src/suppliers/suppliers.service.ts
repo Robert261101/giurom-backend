@@ -8,6 +8,7 @@ import { firstValueFrom } from 'rxjs';
 import { Supplier } from './entities/supplier.entity';
 import { SupplierFolder } from './entities/supplier-folder.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
+import { SupplierProductMeasurementVariant } from './entities/supplier-product-measurement-variant.entity';
 import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import { SupplierOrderDocument } from './entities/supplier-order-document.entity';
@@ -19,6 +20,8 @@ import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
+import { CreateSupplierProductMeasurementVariantDto } from './dto/create-supplier-product-measurement-variant.dto';
+import { UpdateSupplierProductMeasurementVariantDto } from './dto/update-supplier-product-measurement-variant.dto';
 import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
 import { PartialReceptionDto } from './dto/partial-reception.dto';
 import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
@@ -34,6 +37,7 @@ export class SuppliersService {
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(SupplierFolder) private readonly folderRepo: Repository<SupplierFolder>,
     @InjectRepository(SupplierProduct) private readonly supplierProductRepo: Repository<SupplierProduct>,
+    @InjectRepository(SupplierProductMeasurementVariant) private readonly supplierProductMeasurementVariantRepo: Repository<SupplierProductMeasurementVariant>,
     @InjectRepository(SupplierOrder) private readonly orderRepo: Repository<SupplierOrder>,
     @InjectRepository(SupplierOrderItem) private readonly orderItemRepo: Repository<SupplierOrderItem>,
     @InjectRepository(SupplierOrderDocument) private readonly orderDocumentRepo: Repository<SupplierOrderDocument>,
@@ -501,16 +505,23 @@ export class SuppliersService {
   }
 
   async findAll(locationId: number): Promise<Supplier[]> {
+    this.logger.log(`[SUPPLIERS SERVICE] findAll called with locationId=${locationId}`);
     // location_id este OBLIGATORIU
     const queryBuilder = this.supplierRepo.createQueryBuilder('supplier')
       .leftJoinAndSelect('supplier.folders', 'folders')
-      .leftJoinAndSelect('supplier.products', 'products')
       .leftJoinAndSelect('supplier.orders', 'orders')
       .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
       .where('sl.id_location = :locationId', { locationId })
       .orderBy('supplier.created_at', 'DESC');
     
-    return await queryBuilder.getMany();
+    try {
+      const suppliers = await queryBuilder.getMany();
+      this.logger.log(`[SUPPLIERS SERVICE] findAll returned ${suppliers.length} suppliers for locationId=${locationId}`);
+      return suppliers;
+    } catch (error) {
+      this.logger.error(`[SUPPLIERS SERVICE] findAll failed for locationId=${locationId}:`, (error as any)?.message || error, (error as any)?.stack);
+      throw error;
+    }
   }
 
   async findForOrders(locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
@@ -679,8 +690,12 @@ export class SuppliersService {
     }
     
     const supplierProduct = this.supplierProductRepo.create(dto);
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct, null, 2)}`);
+    
     const savedProduct = await this.supplierProductRepo.save(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
+    this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct, null, 2)}`);
+    this.logger.log(`💾 [SUPPLIERS SERVICE] Persisted fields - net_quantity: ${savedProduct.net_quantity}, gross_quantity: ${savedProduct.gross_quantity}, unit_of_measure: ${savedProduct.unit_of_measure}`);
     
     // Send notification for new product
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new product ${savedProduct.id}`);
@@ -701,7 +716,11 @@ export class SuppliersService {
   }
 
   async getSupplierProducts(supplierId: number): Promise<SupplierProduct[]> {
-    return this.supplierProductRepo.find({ where: { supplier_id: supplierId }, order: { created_at: 'DESC' } });
+    return this.supplierProductRepo.find({
+      where: { supplier_id: supplierId },
+      relations: ['measurement_variants'],
+      order: { created_at: 'DESC' },
+    });
   }
 
   async createOrder(dto: CreateSupplierOrderDto): Promise<SupplierOrder> {
@@ -823,15 +842,52 @@ export class SuppliersService {
     }
 
     // Create stock items for each order item using the HTTP service
-    const stockItems: CreateStockItemDto[] = order.items?.map(item => ({
-      product_id: item.product_id,
-      supplier_order_item_id: item.id,
-      quantity: item.quantity,
-      price: item.price_per_unit,
-      entry_date: new Date().toISOString(),
-      status: 'valid',
-      location_id: order.supplier_location_id || undefined, // Adaugă location_id din comandă
-    })) || [];
+    // Convert gross quantity (from order) to net quantity (for stock) using supplier product metadata
+    const stockItems: CreateStockItemDto[] = await Promise.all(
+      (order.items || []).map(async (item) => {
+        let netQuantity = item.quantity; // Default: use as-is if no supplier product found
+        
+        try {
+          // Get supplier product to find net/gross quantity relationship and weight per unit
+          const supplierProduct = await this.supplierProductRepo.findOne({
+            where: {
+              supplier_id: order.supplier_id,
+              product_id: item.product_id
+            }
+          });
+          
+          if (supplierProduct) {
+            const productGrossQuantity = Number(supplierProduct.gross_quantity) || 0;
+            const productNetQuantity = Number(supplierProduct.net_quantity) || 0;
+            if (productGrossQuantity > 0 && productNetQuantity > 0) {
+              const grossQuantityFromOrder = Number(item.quantity) || 0;
+              netQuantity = grossQuantityFromOrder * (productNetQuantity / productGrossQuantity);
+              this.logger.log(
+                `📦 [SUPPLIERS SERVICE] Converting quantity for product ${item.product_id}: ` +
+                `gross=${grossQuantityFromOrder.toFixed(2)} → net=${netQuantity.toFixed(2)} ` +
+                `(ratio: ${productNetQuantity}/${productGrossQuantity})`
+              );
+            }
+          }
+        } catch (err) {
+          this.logger.warn(
+            `⚠️ [SUPPLIERS SERVICE] Could not fetch supplier product for conversion ` +
+            `(supplier=${order.supplier_id}, product=${item.product_id}):`,
+            err
+          );
+        }
+        
+        return {
+          product_id: item.product_id,
+          supplier_order_item_id: item.id,
+          quantity: netQuantity,
+          price: item.price_per_unit,
+          entry_date: new Date().toISOString(),
+          status: 'valid',
+          location_id: order.supplier_location_id || undefined,
+        };
+      })
+    );
 
     if (stockItems.length > 0) {
       const createdStockItems = await this.stockHttpService.createStockItems(stockItems);
@@ -1547,18 +1603,49 @@ export class SuppliersService {
       if (receivedDelta > 0) {
         quantities.received += receivedDelta;
 
+        // Convert gross quantity (from order) to net quantity (for stock)
+        let netQuantity = receivedDelta; // Default: use as-is
+        
+        try {
+          const supplierProduct = await this.supplierProductRepo.findOne({
+            where: {
+              supplier_id: order.supplier_id,
+              product_id: reception.product_id
+            }
+          });
+          
+          if (supplierProduct) {
+            const productGrossQuantity = Number(supplierProduct.gross_quantity) || 0;
+            const productNetQuantity = Number(supplierProduct.net_quantity) || 0;
+            if (productGrossQuantity > 0 && productNetQuantity > 0) {
+              netQuantity = receivedDelta * (productNetQuantity / productGrossQuantity);
+              this.logger.log(
+                `📦 [SUPPLIERS SERVICE] Converting quantity for product ${reception.product_id}: ` +
+                `gross=${receivedDelta.toFixed(2)} → net=${netQuantity.toFixed(2)} ` +
+                `(ratio: ${productNetQuantity}/${productGrossQuantity})`
+              );
+            }
+          }
+        } catch (err) {
+          this.logger.warn(
+            `⚠️ [SUPPLIERS SERVICE] Could not fetch supplier product for conversion ` +
+            `(supplier=${order.supplier_id}, product=${reception.product_id}):`,
+            err
+          );
+        }
+
         const locationId = reception.location_id ?? order.supplier_location_id ?? undefined;
         const stockItemDto: CreateStockItemDto = {
           product_id: reception.product_id,
           supplier_order_item_id: reception.supplier_order_item_id,
-          quantity: receivedDelta,
+          quantity: netQuantity,
           price: Number(orderItem.price_per_unit),
           entry_date: reception.occurred_at instanceof Date ? reception.occurred_at.toISOString() : new Date(reception.occurred_at).toISOString(),
           status: 'valid',
           location_id: locationId,
         };
         stockItems.push(stockItemDto);
-        this.logger.log(`📦 [SUPPLIERS SERVICE] Queued stock item: product_id=${reception.product_id}, quantity=${receivedDelta}, location_id=${locationId}`);
+        this.logger.log(`📦 [SUPPLIERS SERVICE] Queued stock item: product_id=${reception.product_id}, quantity=${netQuantity.toFixed(2)} (net), location_id=${locationId}`);
       }
       
       if (reception.returned_delta > 0) {
@@ -2909,16 +2996,89 @@ export class SuppliersService {
   }
 
   async updateSupplierProduct(productId: number, updateData: Partial<SupplierProduct>): Promise<SupplierProduct> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier product ${productId} with data: ${JSON.stringify(updateData, null, 2)}`);
     const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
     if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');
     Object.assign(supplierProduct, updateData);
-    return this.supplierProductRepo.save(supplierProduct);
+    const updated = await this.supplierProductRepo.save(supplierProduct);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated, null, 2)}`);
+    return updated;
   }
 
   async removeSupplierProduct(productId: number): Promise<void> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier product ${productId}`);
     const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
     if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');
     await this.supplierProductRepo.remove(supplierProduct);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product removed successfully`);
+  }
+
+  // === MEASUREMENT VARIANTS METHODS ===
+
+  async createVariant(dto: CreateSupplierProductMeasurementVariantDto): Promise<SupplierProductMeasurementVariant> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating measurement variant with data: ${JSON.stringify(dto, null, 2)}`);
+    
+    // Verify supplier product exists
+    const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: dto.supplier_product_id } });
+    if (!supplierProduct) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier product not found: ${dto.supplier_product_id}`);
+      throw new NotFoundException('Produsul furnizor nu a fost găsit');
+    }
+
+    // Validate measurement_unit compatibility with supplier_products.unit_of_measure
+    if (dto.measurement_unit && dto.measurement_unit !== supplierProduct.unit_of_measure) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement unit mismatch - variant: ${dto.measurement_unit}, supplier product: ${supplierProduct.unit_of_measure}`);
+      this.logger.log(`ℹ️ [SUPPLIERS SERVICE] Allowing mismatch for now (compatibility validation)`);
+    }
+
+    const variant = this.supplierProductMeasurementVariantRepo.create(dto);
+    const savedVariant = await this.supplierProductMeasurementVariantRepo.save(variant);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant created successfully: ${JSON.stringify(savedVariant, null, 2)}`);
+    return savedVariant;
+  }
+
+  async getVariants(supplierProductId: number): Promise<SupplierProductMeasurementVariant[]> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching variants for supplier product ${supplierProductId}`);
+    const variants = await this.supplierProductMeasurementVariantRepo.find({
+      where: { supplier_product_id: supplierProductId },
+      order: { created_at: 'DESC' },
+    });
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Found ${variants.length} variants`);
+    return variants;
+  }
+
+  async updateVariant(variantId: number, updateData: Partial<SupplierProductMeasurementVariant>): Promise<SupplierProductMeasurementVariant> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating measurement variant ${variantId} with data: ${JSON.stringify(updateData, null, 2)}`);
+    const variant = await this.supplierProductMeasurementVariantRepo.findOne({ where: { id: variantId } });
+    if (!variant) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement variant not found: ${variantId}`);
+      throw new NotFoundException('Varianta de măsură nu a fost găsită');
+    }
+
+    // If updating measurement_unit, validate against supplier product
+    if (updateData.measurement_unit) {
+      const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: variant.supplier_product_id } });
+      if (supplierProduct && updateData.measurement_unit !== supplierProduct.unit_of_measure) {
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement unit mismatch - variant: ${updateData.measurement_unit}, supplier product: ${supplierProduct.unit_of_measure}`);
+        this.logger.log(`ℹ️ [SUPPLIERS SERVICE] Allowing mismatch for now (compatibility validation)`);
+      }
+    }
+
+    Object.assign(variant, updateData);
+    const updated = await this.supplierProductMeasurementVariantRepo.save(variant);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant updated successfully: ${JSON.stringify(updated, null, 2)}`);
+    return updated;
+  }
+
+  async deleteVariant(variantId: number): Promise<void> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Deleting measurement variant ${variantId}`);
+    const variant = await this.supplierProductMeasurementVariantRepo.findOne({ where: { id: variantId } });
+    if (!variant) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement variant not found: ${variantId}`);
+      throw new NotFoundException('Varianta de măsură nu a fost găsită');
+    }
+    await this.supplierProductMeasurementVariantRepo.remove(variant);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant deleted successfully`);
   }
 
   async addDocument(

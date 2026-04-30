@@ -25,6 +25,10 @@ import {
 import { SuppliersService } from "./suppliers.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { CreateSupplierWithDocumentsDto } from "./dto/create-supplier-with-documents.dto";
+import { CreateSupplierProductDto } from "./dto/create-supplier-product.dto";
+import { UpdateSupplierProductDto } from "./dto/update-supplier-product.dto";
+import { CreateSupplierProductMeasurementVariantDto } from "./dto/create-supplier-product-measurement-variant.dto";
+import { UpdateSupplierProductMeasurementVariantDto } from "./dto/update-supplier-product-measurement-variant.dto";
 import {
   ApproveReceptionDto,
   RejectReceptionDto,
@@ -45,7 +49,7 @@ export class SuppliersHttpController {
 
   @Get()
   @Permissions("suppliers.read")
-  getSuppliers(
+  async getSuppliers(
     @Query("page") _page?: string,
     @Query("limit") _limit?: string,
     @Query("search") _search?: string,
@@ -64,14 +68,40 @@ export class SuppliersHttpController {
       locationId = user?.work_location_id || user?.work_location_default_id;
     }
 
+    this.logger.log(`[SUPPLIERS HTTP] GET /suppliers called with query location_id=${location_id} resolved locationId=${locationId}`);
+    this.logger.log(`[SUPPLIERS HTTP] Authorization header: ${req?.headers?.authorization ? 'PRESENT' : 'MISSING'}`);
+    if (req?.headers?.authorization) {
+      this.logger.log(`[SUPPLIERS HTTP] Authorization header value: Bearer ${req.headers.authorization.substring(0, 50)}...`);
+      // Decode JWT to log permissions
+      try {
+        const jwt = require('jsonwebtoken');
+        const token = req.headers.authorization.replace('Bearer ', '');
+        const decoded = jwt.decode(token);
+        this.logger.log(`[SUPPLIERS HTTP] JWT decoded payload: ${JSON.stringify(decoded)}`);
+        this.logger.log(`[SUPPLIERS HTTP] JWT permissions: ${JSON.stringify(decoded?.permissions || [])}`);
+      } catch (error) {
+        this.logger.error(`[SUPPLIERS HTTP] Failed to decode JWT: ${(error as any)?.message || error}`);
+      }
+    }
+    this.logger.log(`[SUPPLIERS HTTP] User from JWT: ${JSON.stringify(req?.user ?? {})}`);
+    this.logger.log(`[SUPPLIERS HTTP] Received headers: ${JSON.stringify(req?.headers ?? {})}`);
+
     // Dacă încă nu avem location_id, aruncă eroare
     if (!locationId) {
+      this.logger.error('[SUPPLIERS HTTP] Missing location_id for GET /suppliers');
       throw new BadRequestException(
         "Parametrul location_id este obligatoriu pentru a obține furnizorii",
       );
     }
 
-    return this.service.findAll(locationId);
+    try {
+      const result = await this.service.findAll(locationId);
+      this.logger.log(`[SUPPLIERS HTTP] GET /suppliers result count=${result?.length}`);
+      return result;
+    } catch (error) {
+      this.logger.error('[SUPPLIERS HTTP] GET /suppliers failed', (error as any)?.message || error, (error as any)?.stack);
+      throw error;
+    }
   }
 
   @Get("for-orders")
@@ -227,13 +257,13 @@ export class SuppliersHttpController {
 
   @Post("products")
   @Permissions("suppliers.create")
-  addProduct(@Body() dto: any) {
+  addProduct(@Body() dto: CreateSupplierProductDto) {
     return this.service.addProduct(dto);
   }
 
   @Patch("products/:productId")
   @Permissions("suppliers.update")
-  updateProduct(@Param("productId") productId: string, @Body() dto: any) {
+  updateProduct(@Param("productId") productId: string, @Body() dto: UpdateSupplierProductDto) {
     return this.service.updateSupplierProduct(Number(productId), dto);
   }
 
@@ -241,6 +271,36 @@ export class SuppliersHttpController {
   @Permissions("suppliers.delete")
   removeProduct(@Param("productId") productId: string) {
     return this.service.removeSupplierProduct(Number(productId));
+  }
+
+  // Measurement Variants
+  @Get("products/:productId/variants")
+  @Permissions("suppliers.read")
+  @ApiOperation({ summary: "List measurement variants for a supplier product" })
+  getVariants(@Param("productId") productId: string) {
+    return this.service.getVariants(Number(productId));
+  }
+
+  @Post("products/:productId/variants")
+  @Permissions("suppliers.create")
+  @ApiOperation({ summary: "Create a measurement variant for a supplier product" })
+  createVariant(@Param("productId") productId: string, @Body() dto: CreateSupplierProductMeasurementVariantDto) {
+    const variantDto = { ...dto, supplier_product_id: Number(productId) };
+    return this.service.createVariant(variantDto);
+  }
+
+  @Patch("variants/:variantId")
+  @Permissions("suppliers.update")
+  @ApiOperation({ summary: "Update a measurement variant" })
+  updateVariant(@Param("variantId") variantId: string, @Body() dto: UpdateSupplierProductMeasurementVariantDto) {
+    return this.service.updateVariant(Number(variantId), dto);
+  }
+
+  @Delete("variants/:variantId")
+  @Permissions("suppliers.delete")
+  @ApiOperation({ summary: "Delete a measurement variant" })
+  deleteVariant(@Param("variantId") variantId: string) {
+    return this.service.deleteVariant(Number(variantId));
   }
 
   // Orders
@@ -568,7 +628,10 @@ export class SuppliersHttpController {
     @Query("location_id") location_id?: string,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.service.createFolder(Number(supplierId), body || {}, locationId);
+    if (!body || !body.description) {
+      throw new BadRequestException('description is required');
+    }
+    return this.service.createFolder(Number(supplierId), body, locationId);
   }
 
   /** Actualizează numele unui folder (nu permite duplicate). */
@@ -579,7 +642,10 @@ export class SuppliersHttpController {
     @Param("folderId") folderId: string,
     @Body() body: { description: string },
   ) {
-    return this.service.updateFolder(Number(supplierId), Number(folderId), body || {});
+    if (!body || !body.description) {
+      throw new BadRequestException('description is required');
+    }
+    return this.service.updateFolder(Number(supplierId), Number(folderId), body);
   }
 
   /** Șterge un folder al furnizorului (și documentele asociate). */

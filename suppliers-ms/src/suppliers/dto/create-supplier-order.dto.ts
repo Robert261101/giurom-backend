@@ -9,7 +9,7 @@ export class CreateSupplierOrderItemDto {
   @IsPositive()
   product_id: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Cantitate bruta (greutate bruta cu ambalaj)' })
   @IsNumber()
   @IsPositive()
   quantity: number;
