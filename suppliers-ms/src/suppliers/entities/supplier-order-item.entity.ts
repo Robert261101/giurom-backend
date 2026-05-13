@@ -20,6 +20,9 @@ export class SupplierOrderItem {
   @Column()
   product_id: number;
 
+  @Column({ nullable: true })
+  variant_id?: number;
+
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
@@ -43,6 +46,9 @@ export class SupplierOrderItem {
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   returned_quantity: number;
+
+  @Column({ type: 'varchar', length: 20, default: 'available' })
+  availability_status: string;
 
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   return_reason?: string;

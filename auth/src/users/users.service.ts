@@ -465,7 +465,7 @@ export class UsersService {
       // Add internal service authentication header
       const response = await firstValueFrom(
         this.httpService.get(
-          `http://localhost:3012/employees/email/${encodeURIComponent(email)}`,
+          `${process.env.EMPLOYEES_SERVICE_URL}/employees/email/${encodeURIComponent(email)}`,
           {
             headers: {
               'X-Internal-Service': 'auth-service',
@@ -507,7 +507,7 @@ export class UsersService {
   } | null> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`http://localhost:3012/employees/${employeeId}`, {
+        this.httpService.get(`${process.env.EMPLOYEES_SERVICE_URL}/employees/${employeeId}`, {
           headers: {
             'X-Internal-Service': 'auth-service',
             'X-Service-Secret':
@@ -560,7 +560,7 @@ export class UsersService {
       // Add internal service authentication header
       const response = await firstValueFrom(
         this.httpService.get(
-          `http://localhost:3012/employees/phone/${encodeURIComponent(phone)}`,
+          `${process.env.EMPLOYEES_SERVICE_URL}/employees/phone/${encodeURIComponent(phone)}`,
           {
             headers: {
               'X-Internal-Service': 'auth-service',

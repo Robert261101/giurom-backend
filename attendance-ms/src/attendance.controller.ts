@@ -395,15 +395,14 @@ export class AttendanceController {
     description: 'Status tură activă',
   })
   async getMyActiveShift(@Request() req: any) {
-    // IMPORTANT: JwtStrategy (auth/jwt.strategy.ts) mapează payload.sub → req.user.userId.
-    // Alte gateway-uri pot pune explicit employee_id / id_employee — le prioritizăm dacă există.
+    // IMPORTANT:
+    // userId din token/JWT este de regulă ID-ul de user, nu ID-ul de employee.
+    // Pentru verificarea turei active trebuie să prioritizăm employee_id.
     const employeeId =
-      req.user?.employee_id ??
-      req.user?.id_employee ??
-      req.user?.employeeId ??
-      req.user?.userId ??3
-      req.user?.sub ??
-      req.user?.id;
+      req.user?.employee_id ||
+      req.user?.id_employee ||
+      req.user?.employeeId ||
+      req.user?.sub;
     if (!employeeId) {
       return { hasActiveShift: false, shift: null, presence: null };
     }

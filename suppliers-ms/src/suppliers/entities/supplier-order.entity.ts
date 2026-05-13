@@ -12,13 +12,22 @@ import { Supplier } from './supplier.entity';
 import { SupplierOrderItem } from './supplier-order-item.entity';
 import { SupplierOrderDocument } from './supplier-order-document.entity';
 import { SupplierOrderItemReception } from './supplier-order-item-reception.entity';
+import { SupplierOrderAssignment } from './supplier-order-assignment.entity';
+import { SupplierOrderDriverAssignment } from './supplier-order-driver-assignment.entity';
+import { SupplierOrderWarehouseReview } from './supplier-order-warehouse-review.entity';
+import { SupplierOrderItemChange } from './supplier-order-item-change.entity';
 
 export enum OrderStatus {
   DRAFT = 'draft',
   SENT = 'sent',
+  MAGAZIONER = 'magazioner',
+  SOFER = 'sofer',
   CONFIRMED = 'confirmed',
   CANCELLED = 'cancelled',
   DELIVERED = 'delivered',
+  RECEIVED = 'received',
+  RETURNED_TO_SUPPLIER = 'returned_to_supplier',
+  RETURNED_FROM_SUPPLIER = 'returned_from_supplier',
 }
 
 @Entity('supplier_orders')
@@ -53,6 +62,21 @@ export class SupplierOrder {
   @Column({ type: 'int', nullable: true })
   supplier_location_id: number;
 
+  @Column({ type: 'int', nullable: true })
+  company_id: number;
+
+  @Column({ type: 'int', nullable: true })
+  location_id: number;
+
+  company_name?: string | null;
+  location_name?: string | null;
+  location_address?: string | null;
+  location_city?: string | null;
+  location_county?: string | null;
+  location_postal_code?: string | null;
+  location_country?: string | null;
+  supplier_name?: string | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 
@@ -74,6 +98,27 @@ export class SupplierOrder {
 
   @OneToMany(() => SupplierOrderItemReception, (reception) => reception.order)
   receptions: SupplierOrderItemReception[];
+
+  @OneToMany(() => SupplierOrderAssignment, (assignment) => assignment.order)
+  assignments: SupplierOrderAssignment[];
+
+  @OneToMany(
+    () => SupplierOrderDriverAssignment,
+    (driverAssignment) => driverAssignment.order,
+  )
+  driverAssignments: SupplierOrderDriverAssignment[];
+
+  @OneToMany(
+    () => SupplierOrderWarehouseReview,
+    (review) => review.order,
+  )
+  warehouseReviews: SupplierOrderWarehouseReview[];
+
+  @OneToMany(
+    () => SupplierOrderItemChange,
+    (change) => change.order,
+  )
+  itemChanges: SupplierOrderItemChange[];
 }
 
 

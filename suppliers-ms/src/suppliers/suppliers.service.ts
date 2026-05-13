@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
-import { Repository, Connection, In, IsNull } from 'typeorm';
+import { Repository, Connection, In, IsNull, EntityManager, InsertResult, Between } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
@@ -11,18 +11,41 @@ import { SupplierProduct } from './entities/supplier-product.entity';
 import { SupplierProductMeasurementVariant } from './entities/supplier-product-measurement-variant.entity';
 import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
+import {
+  SupplierOrderWarehouseReview,
+  WarehouseReviewStatus,
+} from './entities/supplier-order-warehouse-review.entity';
+import {
+  SupplierOrderItemChange,
+  SupplierOrderItemChangeType,
+} from './entities/supplier-order-item-change.entity';
 import { SupplierOrderDocument } from './entities/supplier-order-document.entity';
 import { SupplierOrderItemReception, ReceptionStatus } from './entities/supplier-order-item-reception.entity';
 import { SupplierOrderCancelledItem } from './entities/supplier-order-cancelled-item.entity';
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
 import { SupplierLocations } from './entities/supplier-locations.entity';
+import { EmployeeSupplier } from './entities/employee-supplier.entity';
+import {
+  SupplierOrderAssignment,
+  SupplierOrderAssignmentStatus,
+} from './entities/supplier-order-assignment.entity';
+import {
+  SupplierOrderDriverAssignment,
+  SupplierOrderDriverAssignmentStatus,
+} from './entities/supplier-order-driver-assignment.entity';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
+import { UpdateSupplierProductDto } from './dto/update-supplier-product.dto';
 import { CreateSupplierProductMeasurementVariantDto } from './dto/create-supplier-product-measurement-variant.dto';
 import { UpdateSupplierProductMeasurementVariantDto } from './dto/update-supplier-product-measurement-variant.dto';
 import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
+import { WarehouseReviewDto } from './dto/warehouse-review.dto';
+import { SendBackToMagazionerDto } from './dto/send-back-to-magazioner.dto';
+import { CreateSupplierOrderAssignmentDto } from './dto/create-supplier-order-assignment.dto';
+import { CreateSupplierOrderDriverAssignmentDto } from './dto/create-supplier-order-driver-assignment.dto';
+import { UpdateOrderDeliveryDateDto } from './dto/update-order-delivery-date.dto';
 import { PartialReceptionDto } from './dto/partial-reception.dto';
 import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
 import { StockHttpService, CreateStockItemDto } from './stock-http.service';
@@ -45,6 +68,9 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderCancelledItem) private readonly cancelledItemRepo: Repository<SupplierOrderCancelledItem>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
+    @InjectRepository(EmployeeSupplier) private readonly employeeSupplierRepo: Repository<EmployeeSupplier>,
+    @InjectRepository(SupplierOrderAssignment)
+    private readonly orderAssignmentRepo: Repository<SupplierOrderAssignment>,
     @InjectConnection() private readonly connection: Connection,
     private readonly stockHttpService: StockHttpService,
     private readonly httpService: HttpService,
@@ -201,6 +227,613 @@ export class SuppliersService {
     );
     
     return savedSupplier;
+  }
+
+  async getSupplierDrivers(
+    supplierId: number,
+  ): Promise<Array<{ employee_id: number; role: string }>> {
+    const rows = await this.employeeSupplierRepo.find({
+      where: { supplier_id: supplierId, role: 'driver' },
+      order: { employee_id: 'ASC' },
+    });
+    return rows.map((row) => ({
+      employee_id: row.employee_id,
+      role: row.role,
+    }));
+  }
+
+  async getSupplierWarehouseEmployees(
+    supplierId: number,
+  ): Promise<Array<{ employee_id: number; role: string }>> {
+    const rows = await this.employeeSupplierRepo.find({
+      where: { supplier_id: supplierId, role: 'warehouse' },
+      order: { employee_id: 'ASC' },
+    });
+    return rows.map((row) => ({
+      employee_id: row.employee_id,
+      role: row.role,
+    }));
+  }
+
+  async returnOrderToSupplier(orderId: number): Promise<SupplierOrder> {
+    throw new NotImplementedException('returnOrderToSupplier not implemented yet');
+  }
+
+  async sendOrderBackToMagazioner(orderId: number, dto: SendBackToMagazionerDto): Promise<SupplierOrder> {
+    const order = await this.orderRepo.findOne({
+      where: { id: orderId },
+      relations: ['items', 'supplier'],
+    });
+    if (!order) {
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+
+    order.status = OrderStatus.MAGAZIONER;
+    if (dto.notes) {
+      order.notes = dto.notes;
+    }
+    await this.orderRepo.save(order);
+
+    if (order.supplier_location_id != null) {
+      await this.sendOrderNotification(
+        'order_returned_to_magazioner',
+        'Comandă retrimisă la magazioner',
+        `Comanda ${orderId} (${order.supplier?.supplier_name ?? 'N/A'}) a fost retrimisă la magazioner`,
+        order.supplier_location_id,
+        orderId,
+        { orderId, supplierName: order.supplier?.supplier_name, notes: dto.notes },
+        '/magazioner/dashboard',
+      );
+    }
+
+    return order;
+  }
+
+  async toggleItemAvailability(itemId: number): Promise<SupplierOrderItem> {
+    const item = await this.orderItemRepo.findOne({ where: { id: itemId } });
+    if (!item) {
+      throw new NotFoundException(`Item-ul ${itemId} nu a fost găsit`);
+    }
+    const current = item.availability_status || 'available';
+    const newStatus = current === 'unavailable' ? 'available' : 'unavailable';
+    await this.orderItemRepo.update(itemId, { availability_status: newStatus });
+
+    const order = await this.orderRepo.findOne({
+      where: { id: item.order_id },
+      relations: ['items'],
+    });
+    if (order) {
+      let totalAmount = 0;
+      let totalAmountWithVat = 0;
+      for (const line of order.items ?? []) {
+        const lineAvail = line.id === itemId ? newStatus : (line.availability_status || 'available');
+        if (lineAvail === 'unavailable') continue;
+        totalAmount += Number(line.subtotal);
+        totalAmountWithVat += Number(line.total ?? line.subtotal);
+      }
+      await this.orderRepo.update(order.id, {
+        total_amount: totalAmount,
+        total_amount_with_vat: totalAmountWithVat,
+      });
+    }
+
+    const updated = await this.orderItemRepo.findOne({ where: { id: itemId } });
+    return updated as SupplierOrderItem;
+  }
+
+  async warehouseReview(orderId: number, dto: WarehouseReviewDto): Promise<SupplierOrder> {
+    return this.connection.transaction(async (manager) => {
+      const order = await manager.findOne(SupplierOrder, {
+        where: { id: orderId },
+        relations: ['items'],
+      });
+      if (!order) {
+        throw new NotFoundException('Comanda nu a fost găsită');
+      }
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new BadRequestException('Comanda este anulată');
+      }
+
+      const reviewTs = new Date();
+      /** Nu folosi QueryBuilder + `order_id` în values: e RelationId-only în entitate și MySQL primea DEFAULT. */
+      const reviewInsertResult = await manager.insert(SupplierOrderWarehouseReview, {
+        status: WarehouseReviewStatus.SENT_TO_SUPPLIER,
+        warehouse_employee_id: dto.warehouseEmployeeId ?? undefined,
+        warehouse_notes:
+          dto.notes != null && dto.notes !== '' ? dto.notes : undefined,
+        created_at: reviewTs,
+        updated_at: reviewTs,
+        order: { id: orderId } as SupplierOrder,
+      });
+      console.log('warehouse review insert result', reviewInsertResult);
+      const reviewId = this.resolveInsertId(reviewInsertResult);
+      console.log('created warehouse review id', reviewId);
+
+      const itemsById = new Map((order.items ?? []).map((i) => [i.id, i]));
+      const changeTs = reviewTs;
+
+      const computeLineMoney = async (
+        em: EntityManager,
+        supplierId: number,
+        productId: number,
+        pricePerUnit: number,
+        qty: number,
+      ): Promise<{ subtotal: number; total: number }> => {
+        const sp = await em.findOne(SupplierProduct, {
+          where: { supplier_id: supplierId, product_id: productId },
+        });
+        const vat = Number(sp?.vat) || 0;
+        const subtotal = qty * pricePerUnit;
+        const total = subtotal + (subtotal * vat) / 100;
+        return { subtotal, total };
+      };
+
+      for (const entry of dto.items ?? []) {
+        const item = itemsById.get(entry.itemId);
+        if (!item) {
+          throw new BadRequestException(`Articolul ${entry.itemId} nu aparține comenzii`);
+        }
+        const originalQuantity = Number(item.quantity);
+        const currentAvailability = item.availability_status || 'available';
+
+        // Skip items that are unavailable — their status is managed only by toggleItemAvailability
+        if (currentAvailability === 'unavailable') {
+          continue;
+        }
+
+        // Skip items sent as available with no quantity change
+        if (entry.available) {
+          continue;
+        }
+
+        // Partial availability: available=false with availableQuantity > 0
+        const rawFinal = Number(entry.availableQuantity ?? 0);
+        const finalQuantity = Math.max(0, Math.min(originalQuantity, rawFinal));
+
+        if (finalQuantity === originalQuantity || finalQuantity <= 0) {
+          continue;
+        }
+
+        const pricePerUnit = Number(item.price_per_unit);
+        const { subtotal, total } = await computeLineMoney(
+          manager,
+          order.supplier_id,
+          item.product_id,
+          pricePerUnit,
+          finalQuantity,
+        );
+        await manager.update(SupplierOrderItem, { id: item.id }, {
+          quantity: finalQuantity,
+          returned_quantity: originalQuantity - finalQuantity,
+          subtotal,
+          total,
+        });
+        const changePayload = {
+          order_id: orderId,
+          review_id: reviewId,
+          change_type: SupplierOrderItemChangeType.PARTIAL_AVAILABLE,
+          original_order_item_id: item.id,
+          final_order_item_id: item.id,
+          original_product_id: item.product_id,
+          final_product_id: item.product_id,
+          original_quantity: originalQuantity,
+          final_quantity: finalQuantity,
+        };
+        await this.insertOrderItemChangeRaw(manager, {
+          ...changePayload,
+          created_at: changeTs,
+          updated_at: changeTs,
+        });
+        console.log('inserted item change', changePayload);
+      }
+
+      for (const added of dto.additionalProducts ?? []) {
+        const units = added.units;
+        const variantWeight = added.variantWeight;
+        const hasVariantQty =
+          units != null &&
+          variantWeight != null &&
+          Number.isFinite(Number(units)) &&
+          Number.isFinite(Number(variantWeight)) &&
+          Number(units) > 0 &&
+          Number(variantWeight) > 0;
+        const quantityToSave = hasVariantQty
+          ? Number(units) * Number(variantWeight)
+          : Number(added.quantity);
+
+        if (!Number.isFinite(quantityToSave) || quantityToSave <= 0) {
+          throw new BadRequestException('Cantitate invalidă pentru produsul adăugat');
+        }
+
+        const sp = await manager.findOne(SupplierProduct, {
+          where: { supplier_id: order.supplier_id, product_id: added.productId },
+        });
+        if (!sp) {
+          throw new BadRequestException(
+            `Produsul furnizor nu a fost găsit pentru product_id=${added.productId}`,
+          );
+        }
+        const pricePerUnit = Number(sp.price_per_unit);
+        const { subtotal, total } = await computeLineMoney(
+          manager,
+          order.supplier_id,
+          added.productId,
+          pricePerUnit,
+          quantityToSave,
+        );
+
+        const itemInsert = await manager.insert(SupplierOrderItem, {
+          order_id: orderId,
+          product_id: added.productId,
+          quantity: quantityToSave,
+          price_per_unit: pricePerUnit,
+          subtotal,
+          total,
+          received_quantity: 0,
+          returned_quantity: 0,
+          ...(added.variantId != null ? { variant_id: added.variantId } : {}),
+        });
+        const newItemId = this.resolveInsertId(itemInsert);
+
+        const changePayload = {
+          order_id: orderId,
+          review_id: reviewId,
+          change_type: SupplierOrderItemChangeType.ADDED_BY_WAREHOUSE,
+          final_order_item_id: newItemId,
+          final_product_id: added.productId,
+          original_quantity: 0,
+          final_quantity: quantityToSave,
+          final_total_weight: quantityToSave,
+          ...(added.units != null ? { final_units: added.units } : {}),
+          ...(added.variantId != null ? { final_variant_id: added.variantId } : {}),
+          ...(added.variantLabel != null && added.variantLabel !== ''
+            ? { final_variant_label: added.variantLabel }
+            : {}),
+        };
+        await this.insertOrderItemChangeRaw(manager, {
+          ...changePayload,
+          created_at: changeTs,
+          updated_at: changeTs,
+        });
+        console.log('inserted item change', changePayload);
+      }
+
+      const allItems = await manager.find(SupplierOrderItem, {
+        where: { order_id: orderId },
+      });
+      let totalAmount = 0;
+      let totalAmountWithVat = 0;
+      for (const line of allItems) {
+        const lineAvailability = (line as any).availability_status || 'available';
+        if (lineAvailability === 'unavailable') continue;
+        totalAmount += Number(line.subtotal);
+        totalAmountWithVat += Number(line.total ?? line.subtotal);
+      }
+      const totals = { total_amount: totalAmount, total_amount_with_vat: totalAmountWithVat };
+      console.log('warehouse review totals', totals);
+
+      await manager.update(SupplierOrder, { id: orderId }, {
+        total_amount: totalAmount,
+        total_amount_with_vat: totalAmountWithVat,
+        status: OrderStatus.RETURNED_TO_SUPPLIER,
+      });
+
+      const updated = await manager.findOne(SupplierOrder, {
+        where: { id: orderId },
+        relations: ['items', 'supplier'],
+      });
+      if (updated) {
+        await this.attachOrderChangesArray([updated], manager);
+      }
+      return updated as SupplierOrder;
+    });
+  }
+
+  private resolveInsertId(result: InsertResult): number {
+    const ids = result.identifiers;
+    if (ids?.length) {
+      const row = ids[0] as Record<string, unknown>;
+      const v = row.id ?? row.Id;
+      if (v != null && v !== '') {
+        return Number(v);
+      }
+    }
+    const raw = result.raw as { insertId?: number | bigint } | undefined;
+    if (raw && raw.insertId != null) {
+      return Number(raw.insertId);
+    }
+    if (Array.isArray(result.raw) && result.raw.length > 0) {
+      const first = result.raw[0] as { insertId?: number | bigint };
+      if (first?.insertId != null) {
+        return Number(first.insertId);
+      }
+    }
+    throw new Error('Nu s-a putut determina id-ul înregistrării create');
+  }
+
+  /**
+   * Inserează rând în `supplier_order_item_changes`.
+   * Nu folosi QueryBuilder `.into('supplier_order_item_changes')`: string-ul se potrivește cu metadata
+   * entității și TypeORM omite `order_id` (e doar RelationId lângă `order`), iar MySQL dă
+   * "Field 'order_id' doesn't have a default value".
+   */
+  private async insertOrderItemChangeRaw(
+    manager: EntityManager,
+    row: Record<string, unknown>,
+  ): Promise<void> {
+    const orderId = row.order_id;
+    const reviewId = row.review_id;
+    if (orderId == null || reviewId == null) {
+      throw new Error('insertOrderItemChangeRaw: lipsește order_id sau review_id');
+    }
+    const { order_id: _oid, review_id: _rid, ...rest } = row;
+    await manager.insert(SupplierOrderItemChange, {
+      ...rest,
+      order: { id: Number(orderId) } as SupplierOrder,
+      review: { id: Number(reviewId) } as SupplierOrderWarehouseReview,
+    } as Partial<SupplierOrderItemChange>);
+  }
+
+  /**
+   * PAS 1: atașează `changes` (istoric modificări magazioner) pe fiecare comandă, sortat după created_at.
+   * Nu folosim relația `itemChanges` în find-uri (evită join-uri duplicate); încărcăm batch după order_id.
+   * `em` opțional: același EntityManager ca într-o tranzacție (ex. warehouseReview) ca să vadă rândurile tocmai inserate.
+   */
+  private async attachOrderChangesArray(
+    orders: SupplierOrder[],
+    em?: EntityManager,
+  ): Promise<void> {
+    if (!orders?.length) {
+      return;
+    }
+    const ids = [
+      ...new Set(orders.map((o) => o.id).filter((id) => Number.isFinite(id) && Number(id) > 0)),
+    ];
+    if (ids.length === 0) {
+      return;
+    }
+    const changeRepo = em
+      ? em.getRepository(SupplierOrderItemChange)
+      : this.connection.getRepository(SupplierOrderItemChange);
+    const all = await changeRepo.find({
+      where: { order: { id: In(ids) } },
+      order: { created_at: 'ASC', id: 'ASC' },
+    });
+    const byOrder = new Map<number, SupplierOrderItemChange[]>();
+    for (const ch of all) {
+      const oid = Number((ch as any).order_id);
+      if (!Number.isFinite(oid)) {
+        continue;
+      }
+      const list = byOrder.get(oid) ?? [];
+      list.push(ch);
+      byOrder.set(oid, list);
+    }
+    for (const o of orders) {
+      (o as SupplierOrder & { changes?: SupplierOrderItemChange[] }).changes = byOrder.get(o.id) ?? [];
+    }
+  }
+
+  async createOrderAssignment(
+    supplierOrderId: number,
+    dto: CreateSupplierOrderAssignmentDto,
+    createdByUserId?: number,
+  ): Promise<SupplierOrderAssignment> {
+    return this.connection.transaction(async (manager) => {
+      const order = await manager.findOne(SupplierOrder, {
+        where: { id: supplierOrderId },
+      });
+      if (!order) {
+        throw new NotFoundException('Comanda nu a fost găsită');
+      }
+
+      const assignment = manager.create(SupplierOrderAssignment, {
+        supplier_order_id: supplierOrderId,
+        employee_id: dto.employee_id,
+        notes: dto.notes,
+        status: SupplierOrderAssignmentStatus.ASSIGNED,
+        assigned_at: new Date(),
+        ...(createdByUserId != null && { created_by_user_id: createdByUserId }),
+      });
+      const saved = await manager.save(SupplierOrderAssignment, assignment);
+
+      order.status = OrderStatus.MAGAZIONER;
+      await manager.save(SupplierOrder, order);
+
+      return saved;
+    });
+  }
+
+  async approveOrderAssignment(
+    assignmentId: number,
+    _approverUserId?: number,
+  ): Promise<SupplierOrderAssignment> {
+    throw new NotImplementedException('approveOrderAssignment not implemented yet');
+  }
+
+  async createDriverAssignment(
+    orderId: number,
+    dto: CreateSupplierOrderDriverAssignmentDto,
+    assignedByUserId?: number,
+  ): Promise<SupplierOrderDriverAssignment> {
+    return this.connection.transaction(async (manager) => {
+      const order = await manager.findOne(SupplierOrder, { where: { id: orderId } });
+      if (!order) {
+        throw new NotFoundException('Comanda nu a fost găsită');
+      }
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new BadRequestException('Comanda este anulată');
+      }
+      if (order.status !== OrderStatus.CONFIRMED) {
+        throw new BadRequestException(
+          `Atribuirea șoferului este permisă doar pentru comenzi confirmate (status curent: ${order.status}).`,
+        );
+      }
+
+      const driverLink = await manager.findOne(EmployeeSupplier, {
+        where: {
+          supplier_id: order.supplier_id,
+          employee_id: dto.driver_id,
+          role: 'driver',
+        },
+      });
+      if (!driverLink) {
+        throw new BadRequestException('Șoferul nu este asociat acestui furnizor');
+      }
+
+      const scheduledAt = new Date(dto.scheduled_at);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        throw new BadRequestException('Data/ora programării nu este validă');
+      }
+
+      const active = await manager.findOne(SupplierOrderDriverAssignment, {
+        where: {
+          supplier_order_id: orderId,
+          status: SupplierOrderDriverAssignmentStatus.ASSIGNED,
+        },
+      });
+      if (active) {
+        throw new BadRequestException('Există deja o atribuire șofer activă pentru această comandă');
+      }
+
+      const row = manager.create(SupplierOrderDriverAssignment, {
+        supplier_order_id: orderId,
+        driver_id: dto.driver_id,
+        scheduled_at: scheduledAt,
+        notes: dto.notes,
+        status: SupplierOrderDriverAssignmentStatus.ASSIGNED,
+        ...(assignedByUserId != null &&
+        Number.isFinite(Number(assignedByUserId)) &&
+        Number(assignedByUserId) > 0
+          ? { assigned_by_user_id: Number(assignedByUserId) }
+          : {}),
+      });
+      const saved = await manager.save(SupplierOrderDriverAssignment, row);
+
+      order.status = OrderStatus.SOFER;
+      await manager.save(SupplierOrder, order);
+
+      return saved;
+    });
+  }
+
+  async getDriverAssignments(driverId: number, locationId?: number): Promise<SupplierOrderDriverAssignment[]> {
+    const repo = this.connection.getRepository(SupplierOrderDriverAssignment);
+    const list = await repo.find({
+      where: {
+        driver_id: driverId,
+        status: In([
+          SupplierOrderDriverAssignmentStatus.ASSIGNED,
+          SupplierOrderDriverAssignmentStatus.DONE,
+        ]),
+      },
+      relations: ['order', 'order.supplier', 'order.items'],
+      order: { scheduled_at: 'DESC' },
+      relationLoadStrategy: 'query',
+    });
+
+    const lid =
+      locationId != null && Number.isFinite(locationId) && locationId > 0
+        ? locationId
+        : undefined;
+    const filtered =
+      lid === undefined
+        ? list
+        : list.filter(
+            (da) =>
+              Number(da.order?.location_id) === lid ||
+              Number(da.order?.supplier_location_id) === lid,
+          );
+    const drvOrders = filtered.map((da) => da.order).filter((o): o is SupplierOrder => !!o);
+    await this.attachOrderChangesArray(drvOrders);
+    return filtered;
+  }
+
+  async completeDriverAssignment(assignmentId: number): Promise<SupplierOrderDriverAssignment> {
+    return this.connection.transaction(async (manager) => {
+      const da = await manager.findOne(SupplierOrderDriverAssignment, {
+        where: { id: assignmentId },
+        relations: ['order'],
+      });
+      if (!da) {
+        throw new NotFoundException('Atribuirea nu a fost găsită');
+      }
+      if (da.status === SupplierOrderDriverAssignmentStatus.DONE) {
+        return da;
+      }
+      da.status = SupplierOrderDriverAssignmentStatus.DONE;
+      await manager.save(SupplierOrderDriverAssignment, da);
+
+      /**
+       * Nu setăm DELIVERED aici: în fluxul cu recepții, DELIVERED înseamnă „recepție completă”
+       * (vezi approveReceptions). markOrderAsPartiallyReceived refuză comenzile DELIVERED.
+       * Comanda rămâne SOFER până la recepție; recepția parțială creează PENDING, apoi DELIVERED la aprobare completă.
+       */
+
+      return da;
+    });
+  }
+
+  async getStorekeeperAssignments(
+    employeeId: number,
+    locationId?: number,
+  ): Promise<SupplierOrderAssignment[]> {
+    const activeStatuses = [
+      SupplierOrderAssignmentStatus.ASSIGNED,
+      SupplierOrderAssignmentStatus.IN_PROGRESS,
+    ];
+
+    const qb = this.orderAssignmentRepo
+      .createQueryBuilder('assignment')
+      .innerJoinAndSelect('assignment.order', 'order')
+      .leftJoinAndSelect('order.supplier', 'supplier')
+      .leftJoinAndSelect('order.items', 'items')
+      .where('assignment.employee_id = :employeeId', { employeeId })
+      .andWhere('assignment.status IN (:...activeStatuses)', { activeStatuses });
+
+    const lid =
+      locationId != null && Number.isFinite(locationId) && locationId > 0
+        ? locationId
+        : undefined;
+    if (lid !== undefined) {
+      qb.andWhere(
+        '(order.location_id = :lid OR order.supplier_location_id = :lid)',
+        { lid },
+      );
+    }
+
+    qb.orderBy('assignment.assigned_at', 'DESC');
+
+    const assignmentRows = await qb.getMany();
+    const skOrders = assignmentRows
+      .map((a) => a.order)
+      .filter((o): o is SupplierOrder => !!o);
+    await this.attachOrderChangesArray(skOrders);
+    return assignmentRows;
+  }
+
+  async updateOrderDeliveryDate(orderId: number, dto: UpdateOrderDeliveryDateDto): Promise<SupplierOrder> {
+    const order = await this.orderRepo.findOne({ where: { id: orderId } });
+    if (!order) {
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException('Comanda este anulată');
+    }
+    const next = new Date(dto.delivery_date);
+    if (Number.isNaN(next.getTime())) {
+      throw new BadRequestException('Data de livrare nu este validă');
+    }
+    await this.orderRepo.update(orderId, { delivery_date: next });
+    const updated = await this.orderRepo.findOne({
+      where: { id: orderId },
+      relations: ['items', 'supplier', 'documents'],
+      relationLoadStrategy: 'query',
+    });
+    if (!updated) {
+      throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
+    }
+    return updated;
   }
 
   private getRepoRoot(): string {
@@ -715,9 +1348,16 @@ export class SuppliersService {
     return savedProduct;
   }
 
-  async getSupplierProducts(supplierId: number): Promise<SupplierProduct[]> {
+  async getSupplierProducts(
+    supplierId: number,
+    includeInactive = true,
+  ): Promise<SupplierProduct[]> {
+    const where: any = { supplier_id: supplierId };
+    if (!includeInactive) {
+      where.is_active = true;
+    }
     return this.supplierProductRepo.find({
-      where: { supplier_id: supplierId },
+      where,
       relations: ['measurement_variants'],
       order: { created_at: 'DESC' },
     });
@@ -732,7 +1372,7 @@ export class SuppliersService {
       throw new NotFoundException('Furnizorul nu a fost găsit');
     }
     
-    // Creează comanda
+    // Creează comanda (inclusiv companie / locație muncă pentru UI și rapoarte)
     const orderData = {
       supplier_id: dto.supplier_id,
       order_date: new Date(dto.order_date),
@@ -741,6 +1381,12 @@ export class SuppliersService {
       notes: dto.notes,
       created_by_user_id: dto.created_by_user_id,
       supplier_location_id: dto.supplier_location_id,
+      ...(dto.company_id != null && Number.isFinite(Number(dto.company_id)) && Number(dto.company_id) > 0
+        ? { company_id: Number(dto.company_id) }
+        : {}),
+      ...(dto.location_id != null && Number.isFinite(Number(dto.location_id)) && Number(dto.location_id) > 0
+        ? { location_id: Number(dto.location_id) }
+        : {}),
       total_amount: 0,
     };
     const order = this.orderRepo.create(orderData);
@@ -955,8 +1601,37 @@ export class SuppliersService {
     }
     
     if (order.status === OrderStatus.DELIVERED) {
-      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order already delivered: ${dto.orderId}`);
-      throw new BadRequestException('Comanda este deja livrată complet');
+      const itemsIncomplete = (order.items || []).some((item) => {
+        const itemAvail = (item as any).availability_status || 'available';
+        if (itemAvail === 'unavailable') return false;
+        const ordered = Number(item.quantity) || 0;
+        const received = Number(item.received_quantity) || 0;
+        const returned = Number(item.returned_quantity) || 0;
+        return ordered > 0 && received + returned < ordered - 0.01;
+      });
+      if (itemsIncomplete) {
+        const driverRepo = this.connection.getRepository(SupplierOrderDriverAssignment);
+        const doneDriver = await driverRepo.findOne({
+          where: {
+            supplier_order_id: order.id,
+            status: SupplierOrderDriverAssignmentStatus.DONE,
+          },
+          order: { id: 'DESC' },
+        });
+        if (doneDriver) {
+          this.logger.warn(
+            `⚠️ [SUPPLIERS SERVICE] Order ${order.id} was DELIVERED after driver completion but reception is incomplete; resetting status to SOFER for reception flow.`,
+          );
+          await this.orderRepo.update(order.id, { status: OrderStatus.SOFER });
+          order.status = OrderStatus.SOFER;
+        } else {
+          this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order already delivered: ${dto.orderId}`);
+          throw new BadRequestException('Comanda este deja livrată complet');
+        }
+      } else {
+        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order already delivered: ${dto.orderId}`);
+        throw new BadRequestException('Comanda este deja livrată complet');
+      }
     }
 
     // Get supplier for notification
@@ -975,6 +1650,12 @@ export class SuppliersService {
       
       if (!orderItem) {
         this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order item not found: ${receptionItem.itemId}`);
+        continue;
+      }
+
+      const itemAvailability = (orderItem as any).availability_status || 'available';
+      if (itemAvailability === 'unavailable') {
+        this.logger.log(`⏭️ [SUPPLIERS SERVICE] Skipping unavailable item ${orderItem.id}`);
         continue;
       }
 
@@ -1104,6 +1785,8 @@ export class SuppliersService {
 
     // Detectează dacă, după această recepție, comanda este complet recepționată (toate item-urile au received >= ordered)
     const allItemsFullyReceivedInThisReception = (order.items || []).every((item) => {
+      const itemAvail = (item as any).availability_status || 'available';
+      if (itemAvail === 'unavailable') return true;
       const inDto = dto.items.find((i) => i.itemId === item.id);
       const totalReceivedDeclared = inDto != null ? Number(inDto.receivedQuantity) || 0 : Number(item.received_quantity) || 0;
       const ordered = Number(item.quantity) || 0;
@@ -1582,6 +2265,14 @@ export class SuppliersService {
         continue;
       }
 
+      const itemAvailability = (orderItem as any).availability_status || 'available';
+      if (itemAvailability === 'unavailable') {
+        this.logger.log(`⏭️ [SUPPLIERS SERVICE] Skipping stock creation for unavailable item ${orderItem.id}`);
+        reception.status = ReceptionStatus.APPROVED;
+        await this.orderItemReceptionRepo.save(reception);
+        continue;
+      }
+
       // Actualizează statusul recepției la APPROVED
       reception.status = ReceptionStatus.APPROVED;
       await this.orderItemReceptionRepo.save(reception);
@@ -1724,8 +2415,10 @@ export class SuppliersService {
     const hasPendingReceptions = allReceptions.some(r => r.status === ReceptionStatus.PENDING);
     
     if (!hasPendingReceptions && order.items) {
-      // Verifică dacă toate itemele sunt complet recepționate
+      // Verifică dacă toate itemele sunt complet recepționate (skip unavailable)
       const allItemsFullyReceived = order.items.every(item => {
+        const itemAvail = (item as any).availability_status || 'available';
+        if (itemAvail === 'unavailable') return true;
         const received = Number(item.received_quantity) || 0;
         const original = Number(item.quantity);
         return received >= original;
@@ -2806,12 +3499,20 @@ export class SuppliersService {
       console.log('🔍 [SuppliersService] Filtrăm orders după supplier_location_id:', locationId);
     }
     
-    return this.orderRepo.find({ where: whereClause, relations: ['items', 'documents'], order: { created_at: 'DESC' } });
+    const list = await this.orderRepo.find({
+      where: whereClause,
+      relations: ['items', 'documents', 'supplier', 'driverAssignments'],
+      order: { created_at: 'DESC' },
+      relationLoadStrategy: 'query',
+    });
+    await this.attachOrderChangesArray(list);
+    return list;
   }
 
   /**
    * Batch: toate comenzile pentru mai mulți furnizori, cu filtre opționale de perioadă și locație.
    * Folosit pentru rapoarte (evităm N+1 calls din frontend).
+   * Folosește relationLoadStrategy: 'query' ca item-urile să nu se amestece la join-uri multiple.
    */
   async getSupplierOrdersBatch(
     supplierIds: number[],
@@ -2825,27 +3526,26 @@ export class SuppliersService {
       return [];
     }
 
-    const qb = this.orderRepo
-      .createQueryBuilder('order')
-      .leftJoinAndSelect('order.items', 'items')
-      .leftJoinAndSelect('order.documents', 'documents')
-      .where('order.supplier_id IN (:...supplierIds)', { supplierIds })
-      .orderBy('order.created_at', 'DESC');
+    const where: Record<string, unknown> = {
+      supplier_id: In(supplierIds),
+    };
 
     if (options?.locationId !== undefined) {
-      qb.andWhere('order.supplier_location_id = :locationId', {
-        locationId: options.locationId,
-      });
+      where.supplier_location_id = options.locationId;
     }
 
     if (options?.dateFrom && options?.dateTo) {
-      qb.andWhere('order.order_date BETWEEN :dateFrom AND :dateTo', {
-        dateFrom: options.dateFrom,
-        dateTo: options.dateTo,
-      });
+      where.order_date = Between(new Date(options.dateFrom), new Date(options.dateTo));
     }
 
-    return qb.getMany();
+    const batchList = await this.orderRepo.find({
+      where: where as any,
+      relations: ['items', 'documents', 'supplier', 'driverAssignments', 'assignments'],
+      order: { created_at: 'DESC' },
+      relationLoadStrategy: 'query',
+    });
+    await this.attachOrderChangesArray(batchList);
+    return batchList;
   }
 
   /**
@@ -2902,6 +3602,8 @@ export class SuppliersService {
         });
         if (order.items?.length) {
           const allProcessed = order.items.every((item: any) => {
+            const itemAvail = item.availability_status || 'available';
+            if (itemAvail === 'unavailable') return true;
             const ordered = Number(item.quantity) || 0;
             const receivedApproved = Number(item.received_quantity) || 0;
             const pendingForItem = pendingReceptionsForOrder
@@ -2995,7 +3697,11 @@ export class SuppliersService {
     return { data, total };
   }
 
-  async updateSupplierProduct(productId: number, updateData: Partial<SupplierProduct>): Promise<SupplierProduct> {
+  async updateSupplierProduct(
+    productId: number,
+    _supplierId: number,
+    updateData: UpdateSupplierProductDto,
+  ): Promise<SupplierProduct> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier product ${productId} with data: ${JSON.stringify(updateData, null, 2)}`);
     const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
     if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');

@@ -107,6 +107,7 @@ app.use(
   }),
 );
 
+
 // Middleware pentru a ignora cererile Next.js specifice și alte cereri care nu ar trebui să ajungă la API Gateway
 app.use((req, res, next) => {
   const url = req.originalUrl || req.url;
@@ -291,23 +292,47 @@ Object.keys(microservices).forEach((path) => {
       console.log(
         `[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`,
       );
-
-      // Forward authorization headers
-      if (req.headers.authorization) {
-        proxyReq.setHeader("Authorization", req.headers.authorization);
+      if (req.originalUrl && req.originalUrl.startsWith('/suppliers')) {
+        console.log(`[${new Date().toISOString()}] API Gateway suppliers proxy active. Target: ${config.target}${req.url}`);
       }
 
-      // Forward internal service headers for microservice-to-microservice communication
-      if (req.headers["x-internal-service"]) {
-        proxyReq.setHeader(
-          "x-internal-service",
-          req.headers["x-internal-service"],
+      // Forward authorization headers - check all possible variations and case-insensitive
+      const authHeader = req.headers.authorization || 
+                        req.headers.Authorization || 
+                        req.headers['authorization'] || 
+                        req.headers['Authorization'];
+      
+      if (authHeader) {
+        console.log(`[${new Date().toISOString()}] Forwarding Authorization header: ${authHeader.substring(0, 20)}...`);
+        proxyReq.setHeader("Authorization", authHeader);
+      } else {
+        console.log(`[${new Date().toISOString()}] No Authorization header found in request`);
+        // Log all headers that contain 'auth' for debugging
+        const authHeaders = Object.keys(req.headers).filter(key => 
+          key.toLowerCase().includes('auth') || key.toLowerCase().includes('authorization')
         );
+        if (authHeaders.length > 0) {
+          console.log(`[${new Date().toISOString()}] Found auth-related headers:`, authHeaders);
+        }
       }
 
-      if (req.headers["x-service-secret"]) {
-        proxyReq.setHeader("x-service-secret", req.headers["x-service-secret"]);
-      }
+      // Forward other important headers that might be needed for authentication and context
+      const headersToForward = [
+        'x-internal-service',
+        'x-service-secret', 
+        'x-work-location-id',
+        'x-company-id',
+        'content-type',
+        'accept',
+        'user-agent'
+      ];
+
+      headersToForward.forEach(headerName => {
+        const headerValue = req.headers[headerName] || req.headers[headerName.toLowerCase()];
+        if (headerValue) {
+          proxyReq.setHeader(headerName, headerValue);
+        }
+      });
 
       // Forward body for POST/PUT/PATCH so downstream never waits for missing body (inclusiv body "{}").
       try {

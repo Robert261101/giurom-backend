@@ -12,8 +12,12 @@ import { SupplierOrderItem } from "./suppliers/entities/supplier-order-item.enti
 import { SupplierOrderDocument } from "./suppliers/entities/supplier-order-document.entity";
 import { SupplierOrderItemReception } from "./suppliers/entities/supplier-order-item-reception.entity";
 import { SupplierOrderCancelledItem } from "./suppliers/entities/supplier-order-cancelled-item.entity";
+import { SupplierOrderAssignment } from "./suppliers/entities/supplier-order-assignment.entity";
 import { SupplierDocument } from "./suppliers/entities/supplier-document.entity";
 import { SupplierLocations } from "./suppliers/entities/supplier-locations.entity";
+import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-order-driver-assignment.entity";
+import { SupplierOrderWarehouseReview } from "./suppliers/entities/supplier-order-warehouse-review.entity";
+import { SupplierOrderItemChange } from "./suppliers/entities/supplier-order-item-change.entity";
 import { SuppliersService } from "./suppliers/suppliers.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
@@ -24,6 +28,7 @@ import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { PermissionsGuard } from "./permissions/permissions.guard";
 import { InternalServiceGuard } from "./auth/internal-service.guard";
 import { SupplierProductMeasurementVariant } from './suppliers/entities/supplier-product-measurement-variant.entity';
+import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity';
 
 @Module({
   imports: [
@@ -64,8 +69,13 @@ import { SupplierProductMeasurementVariant } from './suppliers/entities/supplier
         SupplierOrderDocument,
         SupplierOrderItemReception,
         SupplierOrderCancelledItem,
+        SupplierOrderAssignment,
+        SupplierOrderDriverAssignment,
+        SupplierOrderWarehouseReview,
+        SupplierOrderItemChange,
         SupplierDocument,
         SupplierLocations,
+        EmployeeSupplier,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === "true",
       logging: process.env.DB_LOGGING === "true",
@@ -84,19 +94,24 @@ import { SupplierProductMeasurementVariant } from './suppliers/entities/supplier
         ],
       },
     }),
-    TypeOrmModule.forFeature([
-      Supplier,
-      SupplierFolder,
-      SupplierProduct,
-      SupplierProductMeasurementVariant,
-      SupplierOrder,
-      SupplierOrderItem,
-      SupplierOrderDocument,
-      SupplierOrderItemReception,
-      SupplierOrderCancelledItem,
-      SupplierDocument,
-      SupplierLocations,
-    ]),
+      TypeOrmModule.forFeature([
+        Supplier,
+        SupplierFolder,
+        SupplierProduct,
+        SupplierProductMeasurementVariant,
+        SupplierOrder,
+        SupplierOrderItem,
+        SupplierOrderDocument,
+        SupplierOrderItemReception,
+        SupplierOrderCancelledItem,
+        SupplierOrderAssignment,
+        SupplierOrderDriverAssignment,
+        SupplierOrderWarehouseReview,
+        SupplierOrderItemChange,
+        SupplierDocument,
+        SupplierLocations,
+        EmployeeSupplier,
+      ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],
   providers: [

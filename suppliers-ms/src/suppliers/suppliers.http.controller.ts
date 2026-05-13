@@ -35,6 +35,11 @@ import {
 } from "./dto/approve-reception.dto";
 import { CancelRemainingDto } from "./dto/cancel-remaining.dto";
 import { CancelOrderItemsDto } from "./dto/cancel-order-items.dto";
+import { CreateSupplierOrderAssignmentDto } from "./dto/create-supplier-order-assignment.dto";
+import { CreateSupplierOrderDriverAssignmentDto } from "./dto/create-supplier-order-driver-assignment.dto";
+import { UpdateOrderDeliveryDateDto } from "./dto/update-order-delivery-date.dto";
+import { WarehouseReviewDto } from "./dto/warehouse-review.dto";
+import { SendBackToMagazionerDto } from "./dto/send-back-to-magazioner.dto";
 import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
@@ -198,6 +203,33 @@ export class SuppliersHttpController {
     );
   }
 
+  @Get(":supplierId/drivers")
+  @Permissions("order.read")
+  getDrivers(@Param("supplierId") supplierId: string) {
+    const id = Number(supplierId);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException("Invalid supplier id");
+    }
+    return this.service.getSupplierDrivers(id);
+  }
+
+  @Get(":supplierId/warehouse")
+  @Permissions("order.read")
+  getWarehouseEmployees(@Param("supplierId") supplierId: string) {
+    const id = Number(supplierId);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException("Invalid supplier id");
+    }
+    return this.service.getSupplierWarehouseEmployees(id);
+  }
+
+  @Patch("order-items/:itemId/toggle-availability")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Toggle availability_status for a supplier order item" })
+  toggleItemAvailability(@Param("itemId") itemId: string) {
+    return this.service.toggleItemAvailability(Number(itemId));
+  }
+
   @Get(":id")
   @Permissions("suppliers.read")
   findOne(
@@ -251,8 +283,14 @@ export class SuppliersHttpController {
   // Products
   @Get(":supplierId/products")
   @Permissions("suppliers.read")
-  getProducts(@Param("supplierId") supplierId: string) {
-    return this.service.getSupplierProducts(Number(supplierId));
+  getProducts(
+    @Param("supplierId") supplierId: string,
+    @Query("include_inactive") includeInactive?: string,
+  ) {
+    const includeInactiveBool = includeInactive === undefined
+      ? true
+      : !["0", "false"].includes(includeInactive.toLowerCase());
+    return this.service.getSupplierProducts(Number(supplierId), includeInactiveBool);
   }
 
   @Post("products")
@@ -263,8 +301,16 @@ export class SuppliersHttpController {
 
   @Patch("products/:productId")
   @Permissions("suppliers.update")
-  updateProduct(@Param("productId") productId: string, @Body() dto: UpdateSupplierProductDto) {
-    return this.service.updateSupplierProduct(Number(productId), dto);
+  updateProduct(
+    @Param("productId") productId: string,
+    @Body() dto: UpdateSupplierProductDto,
+    @Query("supplier_id") supplierIdRaw?: string,
+  ) {
+    const supplierId = supplierIdRaw ? parseInt(supplierIdRaw, 10) : undefined;
+    if (!supplierId || !Number.isFinite(supplierId) || supplierId <= 0) {
+      throw new BadRequestException("Parametrul supplier_id este obligatoriu și trebuie să fie un număr valid");
+    }
+    return this.service.updateSupplierProduct(Number(productId), supplierId, dto);
   }
 
   @Delete("products/:productId")
@@ -420,6 +466,31 @@ export class SuppliersHttpController {
     return this.service.markOrderAsDelivered(Number(orderId));
   }
 
+  @Patch("orders/:orderId/return-to-supplier")
+  @Permissions("order.update")
+  returnToSupplier(@Param("orderId") orderId: string) {
+    return this.service.returnOrderToSupplier(Number(orderId));
+  }
+
+  @Patch("orders/:orderId/send-back-to-magazioner")
+  @Permissions("order.update")
+  sendBackToMagazioner(
+    @Param("orderId") orderId: string,
+    @Body() dto: SendBackToMagazionerDto,
+  ) {
+    return this.service.sendOrderBackToMagazioner(Number(orderId), dto);
+  }
+
+  @Patch("orders/:orderId/warehouse-review")
+  /** Magazionerii au `order.read` în rol; acțiunea face parte din fluxul lor. */
+  @Permissions("order.read")
+  warehouseReviewOrder(
+    @Param("orderId") orderId: string,
+    @Body() dto: WarehouseReviewDto,
+  ) {
+    return this.service.warehouseReview(Number(orderId), dto);
+  }
+
   @Post("orders/partial-reception")
   @Permissions("order.reception")
   partialReception(@Body() dto: any) {
@@ -442,6 +513,90 @@ export class SuppliersHttpController {
       dto.receptionIds,
       dto.reason,
     );
+  }
+
+  @Post("orders/:orderId/assignments")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Atribuie o comandă furnizor unui magazioner" })
+  createAssignment(
+    @Param("orderId") orderId: string,
+    @Body() dto: CreateSupplierOrderAssignmentDto,
+    @Headers("x-user-id") userId?: string,
+  ) {
+    const createdBy = userId ? Number(userId) : undefined;
+    return this.service.createOrderAssignment(Number(orderId), dto, createdBy);
+  }
+
+  @Patch("order-assignments/:assignmentId/approve")
+  @Permissions("order.approve")
+  @ApiOperation({ summary: "Marchează o atribuire ca finalizată" })
+  approveAssignment(
+    @Param("assignmentId") assignmentId: string,
+    @Headers("x-user-id") userId?: string,
+  ) {
+    const approver = userId ? Number(userId) : undefined;
+    return this.service.approveOrderAssignment(Number(assignmentId), approver);
+  }
+
+  @Post("orders/:orderId/driver-assignments")
+  @Permissions("order.update")
+  @ApiOperation({ summary: "Atribuie o comandă unui șofer" })
+  createDriverAssignment(
+    @Param("orderId") orderId: string,
+    @Body() dto: CreateSupplierOrderDriverAssignmentDto,
+    @Headers("x-user-id") userId?: string,
+  ) {
+    const assignedBy = userId ? Number(userId) : undefined;
+    return this.service.createDriverAssignment(Number(orderId), dto, assignedBy);
+  }
+
+  @Get("drivers/:driverId/orders")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Obține comenzile atribuite unui șofer" })
+  getDriverAssignments(
+    @Param("driverId") driverId: string,
+    @Query("location_id") location_id?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getDriverAssignments(Number(driverId), locationId);
+  }
+
+  @Patch("driver-assignments/:assignmentId/complete")
+  @Permissions("order.approve")
+  @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
+  completeDriverAssignment(@Param("assignmentId") assignmentId: string) {
+    return this.service.completeDriverAssignment(Number(assignmentId));
+  }
+
+  @Get("storekeepers/:employeeId/orders")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Obține comenzile atribuite unui magazioner" })
+  getStorekeeperOrders(
+    @Param("employeeId") employeeId: string,
+    @Query("location_id") location_id?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getStorekeeperAssignments(Number(employeeId), locationId);
+  }
+
+  @Patch("orders/:orderId/status")
+  @Permissions("order.update")
+  @ApiOperation({ summary: "Actualizează statusul unei comenzi" })
+  updateOrderStatus(
+    @Param("orderId") orderId: string,
+    @Body("status") status: string,
+  ) {
+    return this.service.updateOrderStatus(Number(orderId), status);
+  }
+
+  @Patch("orders/:orderId/delivery-date")
+  @Permissions("order.update")
+  @ApiOperation({ summary: "Actualizează data de livrare a comenzii" })
+  updateOrderDeliveryDate(
+    @Param("orderId") orderId: string,
+    @Body() dto: UpdateOrderDeliveryDateDto,
+  ) {
+    return this.service.updateOrderDeliveryDate(Number(orderId), dto);
   }
 
   @Get("orders/reception-report")
@@ -552,12 +707,6 @@ export class SuppliersHttpController {
     }
 
     return this.service.getOrderCancelledItemsBatch(orderIds);
-  }
-
-  @Patch("orders/:orderId/status")
-  @Permissions("order.update")
-  updateStatus(@Param("orderId") orderId: string, @Body() body: any) {
-    return this.service.updateOrderStatus(Number(orderId), body.status);
   }
 
   @Post("orders/:orderId/cancel-remaining")

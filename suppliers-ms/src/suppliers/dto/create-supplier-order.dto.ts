@@ -4,7 +4,10 @@ import { Type } from 'class-transformer';
 import { OrderStatus } from '../entities/supplier-order.entity';
 
 export class CreateSupplierOrderItemDto {
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'ID produs din catalog (coloana supplier_products.product_id), nu PK-ul supplier_products.id',
+  })
   @IsNumber()
   @IsPositive()
   product_id: number;
@@ -53,6 +56,16 @@ export class CreateSupplierOrderDto {
   @IsNumber()
   @IsOptional()
   supplier_location_id?: number;
+
+  @ApiProperty({ required: false, description: 'ID-ul companiei selectate la creare' })
+  @IsNumber()
+  @IsOptional()
+  company_id?: number;
+
+  @ApiProperty({ required: false, description: 'ID-ul locației selectate la creare' })
+  @IsNumber()
+  @IsOptional()
+  location_id?: number;
 
   @ApiProperty({ type: [CreateSupplierOrderItemDto] })
   @IsArray()

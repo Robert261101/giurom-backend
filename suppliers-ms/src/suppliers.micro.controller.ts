@@ -80,7 +80,9 @@ export class SuppliersMicroController {
   getSupplierProducts(@Payload() supplierId: number) { return this.service.getSupplierProducts(supplierId); }
 
   @MessagePattern('suppliers.products.update')
-  updateSupplierProduct(@Payload() payload: { productId: number; dto: UpdateSupplierProductDto }) { return this.service.updateSupplierProduct(payload.productId, payload.dto); }
+  updateSupplierProduct(@Payload() payload: { productId: number; supplierId: number; dto: UpdateSupplierProductDto }) {
+    return this.service.updateSupplierProduct(payload.productId, payload.supplierId, payload.dto);
+  }
 
   @MessagePattern('suppliers.products.remove')
   removeSupplierProduct(@Payload() productId: number) { return this.service.removeSupplierProduct(productId); }
