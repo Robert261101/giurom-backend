@@ -51,6 +51,9 @@ export class SupplierProduct {
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   gross_quantity: number;
 
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  image_url: string;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

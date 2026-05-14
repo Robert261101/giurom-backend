@@ -50,6 +50,9 @@ export class SupplierOrderItem {
   @Column({ type: 'varchar', length: 20, default: 'available' })
   availability_status: string;
 
+  @Column({ type: 'tinyint', default: 1 })
+  is_original: number;
+
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   return_reason?: string;
 

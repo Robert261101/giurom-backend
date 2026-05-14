@@ -471,6 +471,7 @@ export class SuppliersService {
           total,
           received_quantity: 0,
           returned_quantity: 0,
+          is_original: 0,
           ...(added.variantId != null ? { variant_id: added.variantId } : {}),
         });
         const newItemId = this.resolveInsertId(itemInsert);

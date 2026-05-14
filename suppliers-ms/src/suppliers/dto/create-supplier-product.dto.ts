@@ -60,6 +60,11 @@ export class CreateSupplierProductDto {
   @Min(0)
   gross_quantity?: number;
 
+  @ApiProperty({ required: false, description: 'URL imagine produs' })
+  @IsString()
+  @IsOptional()
+  image_url?: string;
+
 }
 
 
