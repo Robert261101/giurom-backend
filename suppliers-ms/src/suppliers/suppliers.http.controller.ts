@@ -550,6 +550,16 @@ export class SuppliersHttpController {
     return this.service.createDriverAssignment(Number(orderId), dto, assignedBy);
   }
 
+  @Get("drivers/:driverId/delivery-priorities")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Priorități de livrare deja folosite de șofer într-o zi" })
+  getDriverUsedPriorities(
+    @Param("driverId") driverId: string,
+    @Query("delivery_date") delivery_date: string,
+  ) {
+    return this.service.getDriverUsedPriorities(Number(driverId), delivery_date);
+  }
+
   @Get("drivers/:driverId/orders")
   @Permissions("order.read")
   @ApiOperation({ summary: "Obține comenzile atribuite unui șofer" })

@@ -28,6 +28,12 @@ export class SupplierOrderDriverAssignment {
   @Column({ type: "datetime" })
   scheduled_at: Date;
 
+  @Column({ type: "date", nullable: true })
+  delivery_date?: Date | null;
+
+  @Column({ type: "int", unsigned: true, nullable: true })
+  delivery_priority?: number | null;
+
   @Column({ nullable: true })
   notes?: string;
 

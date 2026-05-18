@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
-import { Repository, Connection, In, IsNull, EntityManager, InsertResult, Between } from 'typeorm';
+import { Repository, Connection, In, IsNull, Not, EntityManager, InsertResult, Between } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
@@ -687,6 +687,26 @@ export class SuppliersService {
         throw new BadRequestException('Data/ora programării nu este validă');
       }
 
+      const deliveryPriority = Number(dto.delivery_priority);
+      if (!Number.isInteger(deliveryPriority) || deliveryPriority < 1) {
+        throw new BadRequestException('Prioritatea de livrare trebuie să fie un număr întreg pozitiv');
+      }
+
+      const deliveryDate = this.deriveDeliveryDateFromScheduledAt(scheduledAt);
+
+      const priorityConflict = await manager.findOne(SupplierOrderDriverAssignment, {
+        where: {
+          driver_id: dto.driver_id,
+          delivery_date: this.parseDeliveryDateOnly(deliveryDate),
+          delivery_priority: deliveryPriority,
+        },
+      });
+      if (priorityConflict) {
+        throw new ConflictException(
+          `Prioritatea ${deliveryPriority} este deja folosită pentru acest șofer în data ${deliveryDate}.`,
+        );
+      }
+
       const active = await manager.findOne(SupplierOrderDriverAssignment, {
         where: {
           supplier_order_id: orderId,
@@ -701,6 +721,8 @@ export class SuppliersService {
         supplier_order_id: orderId,
         driver_id: dto.driver_id,
         scheduled_at: scheduledAt,
+        delivery_date: this.parseDeliveryDateOnly(deliveryDate),
+        delivery_priority: deliveryPriority,
         notes: dto.notes,
         status: SupplierOrderDriverAssignmentStatus.ASSIGNED,
         ...(assignedByUserId != null &&
@@ -709,13 +731,60 @@ export class SuppliersService {
           ? { assigned_by_user_id: Number(assignedByUserId) }
           : {}),
       });
-      const saved = await manager.save(SupplierOrderDriverAssignment, row);
+
+      let saved: SupplierOrderDriverAssignment;
+      try {
+        saved = await manager.save(SupplierOrderDriverAssignment, row);
+      } catch (err: unknown) {
+        if (this.isDuplicateDriverPriorityError(err)) {
+          throw new ConflictException(
+            `Prioritatea ${deliveryPriority} este deja folosită pentru acest șofer în data ${deliveryDate}.`,
+          );
+        }
+        throw err;
+      }
 
       order.status = OrderStatus.SOFER;
       await manager.save(SupplierOrder, order);
 
       return saved;
     });
+  }
+
+  async getDriverUsedPriorities(
+    driverId: number,
+    deliveryDate: string,
+  ): Promise<{ driver_id: number; delivery_date: string; used_priorities: number[] }> {
+    if (!Number.isFinite(driverId) || driverId < 1) {
+      throw new BadRequestException('ID șofer invalid');
+    }
+    const normalizedDate = String(deliveryDate ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      throw new BadRequestException('delivery_date trebuie să fie în formatul YYYY-MM-DD');
+    }
+
+    const rows = await this.connection.getRepository(SupplierOrderDriverAssignment).find({
+      where: {
+        driver_id: driverId,
+        delivery_date: this.parseDeliveryDateOnly(normalizedDate),
+        delivery_priority: Not(IsNull()),
+      },
+      select: ['delivery_priority'],
+    });
+
+    const used_priorities = [
+      ...new Set(
+        rows
+          .map((row) => Number(row.delivery_priority))
+          .filter((value) => Number.isInteger(value) && value >= 1),
+      ),
+    ].sort((a, b) => a - b);
+
+    return {
+      driver_id: driverId,
+      delivery_date: normalizedDate,
+      used_priorities,
+    };
   }
 
   async getDriverAssignments(driverId: number, locationId?: number): Promise<SupplierOrderDriverAssignment[]> {
@@ -729,7 +798,6 @@ export class SuppliersService {
         ]),
       },
       relations: ['order', 'order.supplier', 'order.items'],
-      order: { scheduled_at: 'DESC' },
       relationLoadStrategy: 'query',
     });
 
@@ -747,7 +815,80 @@ export class SuppliersService {
           );
     const drvOrders = filtered.map((da) => da.order).filter((o): o is SupplierOrder => !!o);
     await this.attachOrderChangesArray(drvOrders);
-    return filtered;
+    return this.sortDriverAssignmentsForDashboard(filtered);
+  }
+
+  private deriveDeliveryDateFromScheduledAt(scheduledAt: Date): string {
+    return scheduledAt.toISOString().slice(0, 10);
+  }
+
+  private parseDeliveryDateOnly(value: string): Date {
+    return new Date(`${value}T00:00:00.000Z`);
+  }
+
+  private isDuplicateDriverPriorityError(err: unknown): boolean {
+    if (!err || typeof err !== 'object') {
+      return false;
+    }
+    const code = (err as { code?: string }).code;
+    const errno = (err as { errno?: number }).errno;
+    return code === 'ER_DUP_ENTRY' || errno === 1062;
+  }
+
+  private sortDriverAssignmentsForDashboard(
+    list: SupplierOrderDriverAssignment[],
+  ): SupplierOrderDriverAssignment[] {
+    const deliveryDateKey = (assignment: SupplierOrderDriverAssignment): string => {
+      if (assignment.delivery_date) {
+        const raw =
+          assignment.delivery_date instanceof Date
+            ? assignment.delivery_date.toISOString()
+            : String(assignment.delivery_date);
+        return raw.slice(0, 10);
+      }
+      if (assignment.scheduled_at) {
+        const scheduled = new Date(assignment.scheduled_at);
+        if (!Number.isNaN(scheduled.getTime())) {
+          return scheduled.toISOString().slice(0, 10);
+        }
+      }
+      if (assignment.order?.delivery_date) {
+        const orderDelivery = new Date(assignment.order.delivery_date);
+        if (!Number.isNaN(orderDelivery.getTime())) {
+          return orderDelivery.toISOString().slice(0, 10);
+        }
+      }
+      return '';
+    };
+
+    return [...list].sort((a, b) => {
+      const dateA = deliveryDateKey(a);
+      const dateB = deliveryDateKey(b);
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+
+      const priorityA = a.delivery_priority;
+      const priorityB = b.delivery_priority;
+      const nullA =
+        priorityA == null || !Number.isFinite(Number(priorityA));
+      const nullB =
+        priorityB == null || !Number.isFinite(Number(priorityB));
+      if (nullA !== nullB) {
+        return nullA ? 1 : -1;
+      }
+      if (!nullA && !nullB && priorityA !== priorityB) {
+        return Number(priorityA) - Number(priorityB);
+      }
+
+      const scheduledA = new Date(a.scheduled_at).getTime();
+      const scheduledB = new Date(b.scheduled_at).getTime();
+      if (scheduledA !== scheduledB) {
+        return scheduledA - scheduledB;
+      }
+
+      return a.id - b.id;
+    });
   }
 
   async completeDriverAssignment(assignmentId: number): Promise<SupplierOrderDriverAssignment> {
