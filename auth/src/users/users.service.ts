@@ -32,6 +32,115 @@ export class UsersService {
     private readonly httpService: HttpService,
   ) {}
 
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      'X-Internal-Service': 'auth-service',
+      'X-Service-Secret':
+        process.env.SERVICE_SECRET || 'default-service-secret',
+    };
+  }
+
+  /**
+   * Rezolvă company_id și company_type din locația implicită a angajatului.
+   */
+  async resolveCompanyContext(idEmployee: number): Promise<{
+    company_id: number | null;
+    company_type: 'furnizor' | 'client' | null;
+  }> {
+    try {
+      const employee = await this.findEmployeeById(idEmployee);
+      const locationId = employee?.work_location_default_id;
+      if (!locationId) {
+        return { company_id: null, company_type: null };
+      }
+
+      const locationsUrl =
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      const locationResponse = await firstValueFrom(
+        this.httpService.get(`${locationsUrl}/locations/${locationId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const location = locationResponse.data?.data || locationResponse.data;
+      const companyId = location?.company_id ?? location?.companyId ?? null;
+      if (!companyId) {
+        return { company_id: null, company_type: null };
+      }
+
+      const companiesUrl =
+        process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+      const companyResponse = await firstValueFrom(
+        this.httpService.get(`${companiesUrl}/companies/${companyId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const company = companyResponse.data?.data || companyResponse.data;
+      const companyType = company?.company_type ?? company?.companyType ?? null;
+      if (companyType !== 'furnizor' && companyType !== 'client') {
+        return { company_id: companyId, company_type: null };
+      }
+
+      return { company_id: companyId, company_type: companyType };
+    } catch (error) {
+      console.error(
+        `Eroare la rezolvarea contextului companiei pentru angajat ${idEmployee}:`,
+        error,
+      );
+      return { company_id: null, company_type: null };
+    }
+  }
+
+  /**
+   * Construiește payload-ul utilizator folosit la generarea JWT (login, refresh, 2FA).
+   */
+  async buildUserDataForToken(
+    idEmployee: number,
+    usersTableId: number,
+    options?: {
+      profile_image?: string | null;
+      is_2fa_active?: boolean;
+    },
+  ): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    phone: string;
+    profile_image: string | null;
+    birth_date: string;
+    department_id: number | null;
+    work_location_id: number | null;
+    company_id: number | null;
+    company_type: 'furnizor' | 'client' | null;
+    roles: string[];
+    permissions: string[];
+    is_2fa_active?: boolean;
+  }> {
+    const employeeData = await this.findEmployeeById(idEmployee);
+    const { roles, permissions } =
+      await this.getUserRolesAndPermissions(usersTableId);
+    const companyContext = await this.resolveCompanyContext(idEmployee);
+
+    return {
+      id: idEmployee,
+      email: employeeData?.email || '',
+      first_name: employeeData?.first_name || '',
+      last_name: employeeData?.last_name || '',
+      phone: employeeData?.phone || '',
+      profile_image: options?.profile_image ?? null,
+      birth_date: employeeData?.birth_date || '',
+      department_id: employeeData?.department_default_id ?? null,
+      work_location_id: employeeData?.work_location_default_id ?? null,
+      company_id: companyContext.company_id,
+      company_type: companyContext.company_type,
+      roles,
+      permissions,
+      ...(options?.is_2fa_active !== undefined
+        ? { is_2fa_active: options.is_2fa_active }
+        : {}),
+    };
+  }
+
   /**
    * Creează un utilizator nou
    */

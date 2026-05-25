@@ -57,6 +57,10 @@ export class Supplier {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  /** Furnizor tenant company id (companies-ms); null for suppliers not owned by a furnizor company. */
+  @Column({ type: 'int', nullable: true })
+  owner_company_id: number | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

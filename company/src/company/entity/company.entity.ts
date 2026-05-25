@@ -60,6 +60,13 @@ export class Company {
   @Column({ type: 'varchar', length: 50, default: 'activ', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   status: string;
 
+  @Column({
+    type: 'enum',
+    enum: ['furnizor', 'client'],
+    default: 'client',
+  })
+  company_type: 'furnizor' | 'client';
+
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   notes: string | null;
 

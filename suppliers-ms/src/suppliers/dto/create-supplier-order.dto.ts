@@ -1,23 +1,49 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsDateString, IsEnum, IsOptional, IsPositive, IsArray, ValidateNested, ArrayMinSize } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsPositive,
+  IsArray,
+  ValidateNested,
+  ArrayMinSize,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatus } from '../entities/supplier-order.entity';
 
 export class CreateSupplierOrderItemDto {
   @ApiProperty({
-    description:
-      'ID produs din catalog (coloana supplier_products.product_id), nu PK-ul supplier_products.id',
+    description: 'ID produs intern stoc (stock.products.id) — ținta recepției',
   })
   @IsNumber()
   @IsPositive()
   product_id: number;
+
+  @ApiProperty({
+    description: 'ID rând nomenclatură furnizor (supplier_products.id)',
+  })
+  @IsNumber()
+  @IsPositive()
+  supplier_product_id: number;
+
+  @ApiProperty({
+    description: 'Variantă măsură (supplier_product_measurement_variants.id)',
+    required: false,
+  })
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  variant_id?: number;
 
   @ApiProperty({ description: 'Cantitate bruta (greutate bruta cu ambalaj)' })
   @IsNumber()
   @IsPositive()
   quantity: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Preț unitar (de obicei din nomenclatura furnizorului)' })
   @IsNumber()
   @IsPositive()
   price_per_unit: number;
@@ -74,5 +100,3 @@ export class CreateSupplierOrderDto {
   @Type(() => CreateSupplierOrderItemDto)
   items: CreateSupplierOrderItemDto[];
 }
-
-

@@ -162,31 +162,14 @@ export class AuthService {
     }
 
     // Dacă nu are 2FA activat, generează token-urile normal
-    // Preia datele complete din microserviciul employees
-    let employeeData: any = null;
-    if (isEmail) {
-      employeeData = await this.usersService.findEmployeeByEmail(identifier);
-    } else {
-      employeeData = await this.usersService.findEmployeeByPhone(identifier);
-    }
-
-    // Obține roles și permissions pentru utilizator (folosind user.id, nu user.id_employee)
-    const { roles, permissions } = await this.usersService.getUserRolesAndPermissions(user.id);
-
-    const userDataForToken = {
-      id: user.id_employee,
-      email: employeeData?.email || '',
-      first_name: employeeData?.first_name || '',
-      last_name: employeeData?.last_name || '',
-      phone: employeeData?.phone || '',
-      profile_image: this.convertToApiProxyUrl(user.profile_image),
-      birth_date: employeeData?.birth_date || '',
-      department_id: employeeData?.department_default_id || null,
-      work_location_id: employeeData?.work_location_default_id || null,
-      roles: roles, // Include user roles (array de string-uri)
-      permissions: permissions, // Include user permissions (array de string-uri)
-      is_2fa_active: user.is_2fa
-    };
+    const userDataForToken = await this.usersService.buildUserDataForToken(
+      user.id_employee,
+      user.id,
+      {
+        profile_image: this.convertToApiProxyUrl(user.profile_image),
+        is_2fa_active: user.is_2fa,
+      },
+    );
 
     const tokens = await this.tokenRotationService.generateTokensWithRotation(userDataForToken);
     
@@ -196,6 +179,9 @@ export class AuthService {
     this.logger.log(`2FA Status: ${user.is_2fa ? 'ACTIVAT' : 'DEZACTIVAT'}`);
     this.logger.log(`Roluri: ${userDataForToken.roles.join(', ')}`);
     this.logger.log(`Permisiuni: ${userDataForToken.permissions.join(', ')}`);
+    this.logger.log(
+      `Companie: id=${userDataForToken.company_id}, type=${userDataForToken.company_type}`,
+    );
     this.logger.log(`====================`);
     
     return tokens;
@@ -257,21 +243,28 @@ export class AuthService {
         }
       }
 
-      // Obține roles și permissions pentru utilizator (folosind user.id, nu user.id_employee)
-      const { roles, permissions } = await this.usersService.getUserRolesAndPermissions(user.id);
+      const userDataForToken = await this.usersService.buildUserDataForToken(
+        user.id_employee,
+        user.id,
+        {
+          profile_image: this.convertToApiProxyUrl(user.profile_image),
+        },
+      );
 
       const jwtPayload = {
-        sub: user.id_employee,
-        email: employeeData?.email || '',
-        first_name: employeeData?.first_name || '',
-        last_name: employeeData?.last_name || '',
-        phone: employeeData?.phone || '',
-        profile_image: this.convertToApiProxyUrl(user.profile_image),
-        birth_date: employeeData?.birth_date || '',
-        department_id: employeeData?.department_default_id || null,
-        work_location_id: employeeData?.work_location_default_id || null,
-        roles: roles, // Include user roles (array de string-uri)
-        permissions: permissions, // Include user permissions (array de string-uri)
+        sub: userDataForToken.id,
+        email: userDataForToken.email,
+        first_name: userDataForToken.first_name,
+        last_name: userDataForToken.last_name,
+        phone: userDataForToken.phone,
+        profile_image: userDataForToken.profile_image,
+        birth_date: userDataForToken.birth_date,
+        department_id: userDataForToken.department_id,
+        work_location_id: userDataForToken.work_location_id,
+        company_id: userDataForToken.company_id,
+        company_type: userDataForToken.company_type,
+        roles: userDataForToken.roles,
+        permissions: userDataForToken.permissions,
       };
       
       const accessToken = await this.jwtService.signAsync(jwtPayload);

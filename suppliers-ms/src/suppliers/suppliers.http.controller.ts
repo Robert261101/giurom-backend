@@ -43,6 +43,7 @@ import { SendBackToMagazionerDto } from "./dto/send-back-to-magazioner.dto";
 import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
+import { buildSupplierProductUserContext } from "./supplier-product-access";
 
 @ApiTags("suppliers")
 @Controller("suppliers")
@@ -114,6 +115,39 @@ export class SuppliersHttpController {
   getSuppliersForOrders(@Query("location_id") location_id?: string) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     return this.service.findForOrders(locationId);
+  }
+
+  @Get("my-supplier")
+  @Permissions("order.read")
+  @ApiOperation({
+    summary:
+      "Furnizor operațional al companiei tenant (owner_company_id = JWT company_id)",
+  })
+  @ApiResponse({ status: 200, description: "Furnizor găsit" })
+  @ApiResponse({ status: 403, description: "Nu este cont furnizor sau lipsește company_id" })
+  @ApiResponse({ status: 404, description: "Niciun furnizor asociat companiei" })
+  getMySupplier(@Request() req?: { user?: { company_id?: number | null; company_type?: string | null } }) {
+    const user = req?.user;
+    return this.service.findMySupplierForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Get("my-supplier/profile")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Profil complet furnizor operațional (produse, documente) pentru cont furnizor",
+  })
+  getMySupplierProfile(
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.findMySupplierProfileForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+    );
   }
 
   @Post()
@@ -282,21 +316,29 @@ export class SuppliersHttpController {
 
   // Products
   @Get(":supplierId/products")
-  @Permissions("suppliers.read")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
   getProducts(
     @Param("supplierId") supplierId: string,
     @Query("include_inactive") includeInactive?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
   ) {
     const includeInactiveBool = includeInactive === undefined
       ? true
       : !["0", "false"].includes(includeInactive.toLowerCase());
-    return this.service.getSupplierProducts(Number(supplierId), includeInactiveBool);
+    return this.service.getSupplierProducts(
+      Number(supplierId),
+      includeInactiveBool,
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Post("products")
   @Permissions("suppliers.create")
-  addProduct(@Body() dto: CreateSupplierProductDto) {
-    return this.service.addProduct(dto);
+  addProduct(
+    @Body() dto: CreateSupplierProductDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.addProduct(dto, buildSupplierProductUserContext(req?.user));
   }
 
   @Patch("products/:productId")
@@ -305,48 +347,84 @@ export class SuppliersHttpController {
     @Param("productId") productId: string,
     @Body() dto: UpdateSupplierProductDto,
     @Query("supplier_id") supplierIdRaw?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
   ) {
     const supplierId = supplierIdRaw ? parseInt(supplierIdRaw, 10) : undefined;
     if (!supplierId || !Number.isFinite(supplierId) || supplierId <= 0) {
       throw new BadRequestException("Parametrul supplier_id este obligatoriu și trebuie să fie un număr valid");
     }
-    return this.service.updateSupplierProduct(Number(productId), supplierId, dto);
+    return this.service.updateSupplierProduct(
+      Number(productId),
+      supplierId,
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Delete("products/:productId")
   @Permissions("suppliers.delete")
-  removeProduct(@Param("productId") productId: string) {
-    return this.service.removeSupplierProduct(Number(productId));
+  removeProduct(
+    @Param("productId") productId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.removeSupplierProduct(
+      Number(productId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   // Measurement Variants
   @Get("products/:productId/variants")
-  @Permissions("suppliers.read")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
   @ApiOperation({ summary: "List measurement variants for a supplier product" })
-  getVariants(@Param("productId") productId: string) {
-    return this.service.getVariants(Number(productId));
+  getVariants(
+    @Param("productId") productId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.getVariants(
+      Number(productId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Post("products/:productId/variants")
   @Permissions("suppliers.create")
   @ApiOperation({ summary: "Create a measurement variant for a supplier product" })
-  createVariant(@Param("productId") productId: string, @Body() dto: CreateSupplierProductMeasurementVariantDto) {
+  createVariant(
+    @Param("productId") productId: string,
+    @Body() dto: CreateSupplierProductMeasurementVariantDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
     const variantDto = { ...dto, supplier_product_id: Number(productId) };
-    return this.service.createVariant(variantDto);
+    return this.service.createVariant(variantDto, buildSupplierProductUserContext(req?.user));
   }
 
   @Patch("variants/:variantId")
   @Permissions("suppliers.update")
   @ApiOperation({ summary: "Update a measurement variant" })
-  updateVariant(@Param("variantId") variantId: string, @Body() dto: UpdateSupplierProductMeasurementVariantDto) {
-    return this.service.updateVariant(Number(variantId), dto);
+  updateVariant(
+    @Param("variantId") variantId: string,
+    @Body() dto: UpdateSupplierProductMeasurementVariantDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.updateVariant(
+      Number(variantId),
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Delete("variants/:variantId")
   @Permissions("suppliers.delete")
   @ApiOperation({ summary: "Delete a measurement variant" })
-  deleteVariant(@Param("variantId") variantId: string) {
-    return this.service.deleteVariant(Number(variantId));
+  deleteVariant(
+    @Param("variantId") variantId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.deleteVariant(
+      Number(variantId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   // Orders
@@ -473,7 +551,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/send-back-to-magazioner")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   sendBackToMagazioner(
     @Param("orderId") orderId: string,
     @Body() dto: SendBackToMagazionerDto,
@@ -539,7 +618,8 @@ export class SuppliersHttpController {
   }
 
   @Post("orders/:orderId/driver-assignments")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Atribuie o comandă unui șofer" })
   createDriverAssignment(
     @Param("orderId") orderId: string,
@@ -572,7 +652,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("driver-assignments/:assignmentId/complete")
-  @Permissions("order.approve")
+  /** Șoferii și conturile furnizor au `order.read`, nu `order.approve`. */
+  @PermissionsAny("order.approve", "order.read")
   @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
   completeDriverAssignment(@Param("assignmentId") assignmentId: string) {
     return this.service.completeDriverAssignment(Number(assignmentId));
@@ -590,7 +671,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/status")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Actualizează statusul unei comenzi" })
   updateOrderStatus(
     @Param("orderId") orderId: string,
@@ -600,7 +682,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/delivery-date")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Actualizează data de livrare a comenzii" })
   updateOrderDeliveryDate(
     @Param("orderId") orderId: string,

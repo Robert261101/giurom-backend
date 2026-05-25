@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
 import { Repository, Connection, In, IsNull, Not, EntityManager, InsertResult, Between } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -40,7 +40,10 @@ import { CreateSupplierProductDto } from './dto/create-supplier-product.dto';
 import { UpdateSupplierProductDto } from './dto/update-supplier-product.dto';
 import { CreateSupplierProductMeasurementVariantDto } from './dto/create-supplier-product-measurement-variant.dto';
 import { UpdateSupplierProductMeasurementVariantDto } from './dto/update-supplier-product-measurement-variant.dto';
-import { CreateSupplierOrderDto } from './dto/create-supplier-order.dto';
+import {
+  CreateSupplierOrderDto,
+  CreateSupplierOrderItemDto,
+} from './dto/create-supplier-order.dto';
 import { WarehouseReviewDto } from './dto/warehouse-review.dto';
 import { SendBackToMagazionerDto } from './dto/send-back-to-magazioner.dto';
 import { CreateSupplierOrderAssignmentDto } from './dto/create-supplier-order-assignment.dto';
@@ -49,6 +52,12 @@ import { UpdateOrderDeliveryDateDto } from './dto/update-order-delivery-date.dto
 import { PartialReceptionDto } from './dto/partial-reception.dto';
 import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
 import { StockHttpService, CreateStockItemDto } from './stock-http.service';
+import {
+  assertClientViewOnlyOnMutations,
+  assertFurnizorProductManager,
+  isFurnizorProductManager,
+  type SupplierProductUserContext,
+} from './supplier-product-access';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -229,30 +238,131 @@ export class SuppliersService {
     return savedSupplier;
   }
 
+  /** Names for magazioneri/șoferi — callers with order.read (incl. furnizor tenant). */
+  private async enrichSupplierStaffWithEmployeeNames<
+    T extends { employee_id: number; role: string },
+  >(rows: T[]): Promise<
+    Array<
+      T & {
+        first_name: string | null;
+        last_name: string | null;
+        full_name: string | null;
+      }
+    >
+  > {
+    if (!rows.length) {
+      return [];
+    }
+
+    const employeeIds = Array.from(
+      new Set(
+        rows
+          .map((r) => Number(r.employee_id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    );
+    if (!employeeIds.length) {
+      return rows.map((row) => ({
+        ...row,
+        first_name: null,
+        last_name: null,
+        full_name: null,
+      }));
+    }
+
+    const employeesDbName =
+      process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const placeholder = employeeIds.map(() => '?').join(',');
+    let employeeRows: Array<{
+      id: number;
+      first_name: string | null;
+      last_name: string | null;
+    }> = [];
+
+    try {
+      employeeRows = await this.connection.query(
+        `SELECT id, first_name, last_name FROM ${employeesDbName}.employees WHERE id IN (${placeholder})`,
+        employeeIds,
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `⚠️ [SUPPLIERS SERVICE] Could not load employee names for supplier staff: ${error?.message}`,
+      );
+    }
+
+    const nameById = new Map<
+      number,
+      { first_name: string | null; last_name: string | null; full_name: string | null }
+    >();
+    for (const row of employeeRows || []) {
+      const id = Number(row.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        continue;
+      }
+      const firstName = row.first_name ?? null;
+      const lastName = row.last_name ?? null;
+      const fullName =
+        [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+      nameById.set(id, {
+        first_name: firstName,
+        last_name: lastName,
+        full_name: fullName,
+      });
+    }
+
+    return rows.map((row) => {
+      const names = nameById.get(Number(row.employee_id));
+      return {
+        ...row,
+        first_name: names?.first_name ?? null,
+        last_name: names?.last_name ?? null,
+        full_name: names?.full_name ?? null,
+      };
+    });
+  }
+
   async getSupplierDrivers(
     supplierId: number,
-  ): Promise<Array<{ employee_id: number; role: string }>> {
+  ): Promise<
+    Array<{
+      employee_id: number;
+      role: string;
+      first_name: string | null;
+      last_name: string | null;
+      full_name: string | null;
+    }>
+  > {
     const rows = await this.employeeSupplierRepo.find({
       where: { supplier_id: supplierId, role: 'driver' },
       order: { employee_id: 'ASC' },
     });
-    return rows.map((row) => ({
+    const base = rows.map((row) => ({
       employee_id: row.employee_id,
       role: row.role,
     }));
+    return this.enrichSupplierStaffWithEmployeeNames(base);
   }
 
   async getSupplierWarehouseEmployees(
     supplierId: number,
-  ): Promise<Array<{ employee_id: number; role: string }>> {
+  ): Promise<
+    Array<{
+      employee_id: number;
+      role: string;
+      first_name: string | null;
+      last_name: string | null;
+      full_name: string | null;
+    }>
+  > {
     const rows = await this.employeeSupplierRepo.find({
       where: { supplier_id: supplierId, role: 'warehouse' },
       order: { employee_id: 'ASC' },
     });
-    return rows.map((row) => ({
+    const base = rows.map((row) => ({
       employee_id: row.employee_id,
       role: row.role,
     }));
+    return this.enrichSupplierStaffWithEmployeeNames(base);
   }
 
   async returnOrderToSupplier(orderId: number): Promise<SupplierOrder> {
@@ -1320,6 +1430,52 @@ export class SuppliersService {
     return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
   }
 
+  /**
+   * Operational supplier for the logged-in furnizor tenant (owner_company_id = JWT company_id).
+   */
+  async findMySupplierForFurnizorTenant(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+  ): Promise<{ id: number; supplier_name: string }> {
+    if (companyType !== 'furnizor') {
+      throw new ForbiddenException(
+        'Doar conturile de tip furnizor pot accesa furnizorul operațional asociat',
+      );
+    }
+
+    const resolvedCompanyId = Number(companyId);
+    if (!Number.isFinite(resolvedCompanyId) || resolvedCompanyId <= 0) {
+      throw new ForbiddenException(
+        'Contextul companiei furnizor lipsește din sesiune',
+      );
+    }
+
+    const supplier = await this.supplierRepo.findOne({
+      where: { owner_company_id: resolvedCompanyId },
+      select: ['id', 'supplier_name'],
+    });
+
+    if (!supplier) {
+      throw new NotFoundException(
+        'Nu există un furnizor operațional asociat acestei companii',
+      );
+    }
+
+    return { id: supplier.id, supplier_name: supplier.supplier_name };
+  }
+
+  /** Full supplier record for furnizor tenant (no supplier_locations scope). */
+  async findMySupplierProfileForFurnizorTenant(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+  ): Promise<Supplier> {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    return this.findOne(summary.id, undefined);
+  }
+
   async findOne(id: number, location_id?: number): Promise<Supplier> {
     // Încărcare explicită folders + documents cu QueryBuilder pentru a evita relațiile nested neîncărcate
     const qb = this.supplierRepo
@@ -1449,24 +1605,59 @@ export class SuppliersService {
     );
   }
 
-  async addProduct(dto: CreateSupplierProductDto): Promise<SupplierProduct> {
+  async addProduct(
+    dto: CreateSupplierProductDto,
+    userContext?: SupplierProductUserContext,
+  ): Promise<SupplierProduct> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Adding product to supplier with data: ${JSON.stringify(dto, null, 2)}`);
-    
-    const supplier = await this.supplierRepo.findOne({ where: { id: dto.supplier_id } });
+
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+
+    assertFurnizorProductManager(userContext);
+
+    const my = await this.findMySupplierForFurnizorTenant(
+      userContext.companyId,
+      userContext.companyType,
+    );
+    const supplierId = my.id;
+    const companyId = userContext.companyId;
+
+    const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
     if (!supplier) {
-      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier not found for product addition: ${dto.supplier_id}`);
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier not found for product addition: ${supplierId}`);
       throw new NotFoundException('Furnizorul nu a fost găsit');
     }
-    
-    const existingProduct = await this.supplierProductRepo.findOne({ where: { supplier_id: dto.supplier_id, product_id: dto.product_id } });
+
+    if (
+      supplier.owner_company_id != null &&
+      supplier.owner_company_id !== userContext.companyId
+    ) {
+      throw new ForbiddenException(
+        'Furnizorul operațional nu aparține companiei din sesiune',
+      );
+    }
+
+    const existingProduct = await this.supplierProductRepo.findOne({
+      where: { supplier_id: supplierId, product_id: dto.product_id },
+    });
     if (existingProduct) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Product already associated with supplier: ${dto.product_id}`);
       throw new BadRequestException('Produsul este deja asociat');
     }
-    
-    const supplierProduct = this.supplierProductRepo.create(dto);
+
+    const supplierProduct = this.supplierProductRepo.create({
+      ...dto,
+      supplier_id: supplierId,
+      company_id: companyId,
+    });
     this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct, null, 2)}`);
-    
+
     const savedProduct = await this.supplierProductRepo.save(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
     this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct, null, 2)}`);
@@ -1493,8 +1684,24 @@ export class SuppliersService {
   async getSupplierProducts(
     supplierId: number,
     includeInactive = true,
+    userContext?: SupplierProductUserContext,
   ): Promise<SupplierProduct[]> {
-    const where: any = { supplier_id: supplierId };
+    const where: Record<string, unknown> = { supplier_id: supplierId };
+
+    if (userContext && isFurnizorProductManager(userContext)) {
+      const my = await this.findMySupplierForFurnizorTenant(
+        userContext.companyId,
+        userContext.companyType,
+      );
+      if (supplierId !== my.id) {
+        throw new ForbiddenException(
+          'Nu puteți accesa produsele altui furnizor operațional',
+        );
+      }
+      where.supplier_id = my.id;
+      where.company_id = userContext.companyId;
+    }
+
     if (!includeInactive) {
       where.is_active = true;
     }
@@ -1503,6 +1710,91 @@ export class SuppliersService {
       relations: ['measurement_variants'],
       order: { created_at: 'DESC' },
     });
+  }
+
+  private async findSupplierProductForUser(
+    productId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<SupplierProduct> {
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: productId },
+    });
+    if (!supplierProduct) {
+      throw new NotFoundException('Produsul furnizor nu a fost găsit');
+    }
+
+    if (!userContext) {
+      return supplierProduct;
+    }
+
+    if (isFurnizorProductManager(userContext)) {
+      const my = await this.findMySupplierForFurnizorTenant(
+        userContext.companyId,
+        userContext.companyType,
+      );
+      if (
+        supplierProduct.supplier_id !== my.id ||
+        supplierProduct.company_id !== userContext.companyId
+      ) {
+        throw new ForbiddenException(
+          'Produsul nu aparține nomenclatorului companiei furnizor din sesiune',
+        );
+      }
+    }
+
+    return supplierProduct;
+  }
+
+  /** Nomenclatură furnizor pentru linie comandă; fallback legacy pe product_id. */
+  private async findSupplierProductForOrderLine(
+    supplierId: number,
+    orderItem: Pick<SupplierOrderItem, 'product_id' | 'supplier_product_id'>,
+  ): Promise<SupplierProduct | null> {
+    const spId = orderItem.supplier_product_id;
+    if (spId != null && Number(spId) > 0) {
+      return this.supplierProductRepo.findOne({
+        where: { id: Number(spId), supplier_id: supplierId },
+      });
+    }
+    return this.supplierProductRepo.findOne({
+      where: { supplier_id: supplierId, product_id: orderItem.product_id },
+    });
+  }
+
+  private async resolveSupplierProductForNewOrderItem(
+    supplierId: number,
+    itemDto: CreateSupplierOrderItemDto,
+  ): Promise<{ supplierProduct: SupplierProduct; variantId?: number }> {
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: itemDto.supplier_product_id, supplier_id: supplierId },
+    });
+    if (!supplierProduct) {
+      throw new BadRequestException(
+        `Produsul furnizor (id=${itemDto.supplier_product_id}) nu aparține furnizorului selectat`,
+      );
+    }
+
+    let variantId: number | undefined;
+    if (itemDto.variant_id != null && Number(itemDto.variant_id) > 0) {
+      const variant = await this.supplierProductMeasurementVariantRepo.findOne({
+        where: {
+          id: Number(itemDto.variant_id),
+          supplier_product_id: supplierProduct.id,
+        },
+      });
+      if (!variant) {
+        throw new BadRequestException(
+          `Varianta (id=${itemDto.variant_id}) nu aparține produsului furnizor`,
+        );
+      }
+      variantId = variant.id;
+    }
+
+    if (!Number.isFinite(Number(itemDto.product_id)) || Number(itemDto.product_id) <= 0) {
+      throw new BadRequestException('product_id (produs stoc intern) este obligatoriu');
+    }
+
+    return { supplierProduct, variantId };
   }
 
   async createOrder(dto: CreateSupplierOrderDto): Promise<SupplierOrder> {
@@ -1555,35 +1847,30 @@ export class SuppliersService {
     let totalAmountWithoutVat = 0;
     let totalAmountWithVat = 0;
     for (const itemDto of dto.items) {
-      const subtotal = itemDto.quantity * itemDto.price_per_unit;
+      const { supplierProduct, variantId } = await this.resolveSupplierProductForNewOrderItem(
+        dto.supplier_id,
+        itemDto,
+      );
+
+      const pricePerUnit =
+        Number(itemDto.price_per_unit) > 0
+          ? Number(itemDto.price_per_unit)
+          : Number(supplierProduct.price_per_unit) || 0;
+      const subtotal = itemDto.quantity * pricePerUnit;
       totalAmountWithoutVat += subtotal;
-      
-      // Obține TVA-ul din produsul furnizorului
-      let vat = 0;
-      try {
-        const supplierProduct = await this.supplierProductRepo.findOne({ 
-          where: { 
-            supplier_id: dto.supplier_id, 
-            product_id: itemDto.product_id 
-          } 
-        });
-        if (supplierProduct && supplierProduct.vat) {
-          vat = Number(supplierProduct.vat) || 0;
-        }
-      } catch (err) {
-        this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Could not fetch VAT for product ${itemDto.product_id}:`, err);
-      }
-      
-      // Calculează total cu TVA
+
+      const vat = Number(supplierProduct.vat) || 0;
       const vatAmount = (subtotal * vat) / 100;
       const total = subtotal + vatAmount;
       totalAmountWithVat += total;
-      
+
       const orderItem = this.orderItemRepo.create({
         order_id: savedOrder.id,
-        product_id: itemDto.product_id,
+        product_id: Number(itemDto.product_id),
+        supplier_product_id: supplierProduct.id,
+        ...(variantId != null ? { variant_id: variantId } : {}),
         quantity: itemDto.quantity,
-        price_per_unit: itemDto.price_per_unit,
+        price_per_unit: pricePerUnit,
         subtotal,
         total,
       });
@@ -1636,14 +1923,11 @@ export class SuppliersService {
         let netQuantity = item.quantity; // Default: use as-is if no supplier product found
         
         try {
-          // Get supplier product to find net/gross quantity relationship and weight per unit
-          const supplierProduct = await this.supplierProductRepo.findOne({
-            where: {
-              supplier_id: order.supplier_id,
-              product_id: item.product_id
-            }
-          });
-          
+          const supplierProduct = await this.findSupplierProductForOrderLine(
+            order.supplier_id,
+            item,
+          );
+
           if (supplierProduct) {
             const productGrossQuantity = Number(supplierProduct.gross_quantity) || 0;
             const productNetQuantity = Number(supplierProduct.net_quantity) || 0;
@@ -2440,13 +2724,10 @@ export class SuppliersService {
         let netQuantity = receivedDelta; // Default: use as-is
         
         try {
-          const supplierProduct = await this.supplierProductRepo.findOne({
-            where: {
-              supplier_id: order.supplier_id,
-              product_id: reception.product_id
-            }
-          });
-          
+          const supplierProduct = orderItem
+            ? await this.findSupplierProductForOrderLine(order.supplier_id, orderItem)
+            : null;
+
           if (supplierProduct) {
             const productGrossQuantity = Number(supplierProduct.gross_quantity) || 0;
             const productNetQuantity = Number(supplierProduct.net_quantity) || 0;
@@ -3843,35 +4124,78 @@ export class SuppliersService {
     productId: number,
     _supplierId: number,
     updateData: UpdateSupplierProductDto,
+    userContext?: SupplierProductUserContext,
   ): Promise<SupplierProduct> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier product ${productId} with data: ${JSON.stringify(updateData, null, 2)}`);
-    const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
-    if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');
-    Object.assign(supplierProduct, updateData);
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+    assertFurnizorProductManager(userContext);
+
+    const supplierProduct = await this.findSupplierProductForUser(
+      productId,
+      userContext,
+    );
+
+    const {
+      supplier_id: _ignoredSupplierId,
+      company_id: _ignoredCompanyId,
+      ...safeUpdate
+    } = updateData as UpdateSupplierProductDto & {
+      supplier_id?: number;
+      company_id?: number;
+    };
+
+    Object.assign(supplierProduct, safeUpdate);
     const updated = await this.supplierProductRepo.save(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated, null, 2)}`);
     return updated;
   }
 
-  async removeSupplierProduct(productId: number): Promise<void> {
+  async removeSupplierProduct(
+    productId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<void> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier product ${productId}`);
-    const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: productId } });
-    if (!supplierProduct) throw new NotFoundException('Produsul furnizor nu a fost găsit');
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+    assertFurnizorProductManager(userContext);
+
+    const supplierProduct = await this.findSupplierProductForUser(
+      productId,
+      userContext,
+    );
     await this.supplierProductRepo.remove(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product removed successfully`);
   }
 
   // === MEASUREMENT VARIANTS METHODS ===
 
-  async createVariant(dto: CreateSupplierProductMeasurementVariantDto): Promise<SupplierProductMeasurementVariant> {
+  async createVariant(
+    dto: CreateSupplierProductMeasurementVariantDto,
+    userContext?: SupplierProductUserContext,
+  ): Promise<SupplierProductMeasurementVariant> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating measurement variant with data: ${JSON.stringify(dto, null, 2)}`);
-    
-    // Verify supplier product exists
-    const supplierProduct = await this.supplierProductRepo.findOne({ where: { id: dto.supplier_product_id } });
-    if (!supplierProduct) {
-      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Supplier product not found: ${dto.supplier_product_id}`);
-      throw new NotFoundException('Produsul furnizor nu a fost găsit');
+
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+    assertFurnizorProductManager(userContext);
+
+    const supplierProduct = await this.findSupplierProductForUser(
+      dto.supplier_product_id,
+      userContext,
+    );
 
     // Validate measurement_unit compatibility with supplier_products.unit_of_measure
     if (dto.measurement_unit && dto.measurement_unit !== supplierProduct.unit_of_measure) {
@@ -3885,8 +4209,14 @@ export class SuppliersService {
     return savedVariant;
   }
 
-  async getVariants(supplierProductId: number): Promise<SupplierProductMeasurementVariant[]> {
+  async getVariants(
+    supplierProductId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<SupplierProductMeasurementVariant[]> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching variants for supplier product ${supplierProductId}`);
+    if (userContext && isFurnizorProductManager(userContext)) {
+      await this.findSupplierProductForUser(supplierProductId, userContext);
+    }
     const variants = await this.supplierProductMeasurementVariantRepo.find({
       where: { supplier_product_id: supplierProductId },
       order: { created_at: 'DESC' },
@@ -3895,13 +4225,26 @@ export class SuppliersService {
     return variants;
   }
 
-  async updateVariant(variantId: number, updateData: Partial<SupplierProductMeasurementVariant>): Promise<SupplierProductMeasurementVariant> {
+  async updateVariant(
+    variantId: number,
+    updateData: Partial<SupplierProductMeasurementVariant>,
+    userContext?: SupplierProductUserContext,
+  ): Promise<SupplierProductMeasurementVariant> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating measurement variant ${variantId} with data: ${JSON.stringify(updateData, null, 2)}`);
     const variant = await this.supplierProductMeasurementVariantRepo.findOne({ where: { id: variantId } });
     if (!variant) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement variant not found: ${variantId}`);
       throw new NotFoundException('Varianta de măsură nu a fost găsită');
     }
+
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+    assertFurnizorProductManager(userContext);
+    await this.findSupplierProductForUser(variant.supplier_product_id, userContext);
 
     // If updating measurement_unit, validate against supplier product
     if (updateData.measurement_unit) {
@@ -3918,13 +4261,26 @@ export class SuppliersService {
     return updated;
   }
 
-  async deleteVariant(variantId: number): Promise<void> {
+  async deleteVariant(
+    variantId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<void> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Deleting measurement variant ${variantId}`);
     const variant = await this.supplierProductMeasurementVariantRepo.findOne({ where: { id: variantId } });
     if (!variant) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement variant not found: ${variantId}`);
       throw new NotFoundException('Varianta de măsură nu a fost găsită');
     }
+
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    if (!isFurnizorProductManager(userContext)) {
+      assertClientViewOnlyOnMutations(userContext);
+    }
+    assertFurnizorProductManager(userContext);
+    await this.findSupplierProductForUser(variant.supplier_product_id, userContext);
+
     await this.supplierProductMeasurementVariantRepo.remove(variant);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant deleted successfully`);
   }
