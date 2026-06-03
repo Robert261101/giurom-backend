@@ -40,6 +40,7 @@ import { CreateSupplierOrderDriverAssignmentDto } from "./dto/create-supplier-or
 import { UpdateOrderDeliveryDateDto } from "./dto/update-order-delivery-date.dto";
 import { WarehouseReviewDto } from "./dto/warehouse-review.dto";
 import { SendBackToMagazionerDto } from "./dto/send-back-to-magazioner.dto";
+import { LinkMySupplierStaffDto } from "./dto/link-my-supplier-staff.dto";
 import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
@@ -145,6 +146,40 @@ export class SuppliersHttpController {
   ) {
     const user = req?.user;
     return this.service.findMySupplierProfileForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Post("my-supplier/staff")
+  @Permissions("suppliers.create")
+  @ApiOperation({ summary: "Leagă un angajat (magazioner/șofer) la furnizorul operațional al contului logat" })
+  @ApiResponse({ status: 201, description: "Legătură creată/actualizată" })
+  @ApiResponse({ status: 403, description: "Nu este cont furnizor" })
+  linkMySupplierStaff(
+    @Body() dto: LinkMySupplierStaffDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.linkMySupplierStaff(
+      user?.company_id,
+      user?.company_type,
+      dto.employee_id,
+      dto.staff_type,
+    );
+  }
+
+  @Get("my-supplier/stock")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc depozit furnizor (nomenclator × stock-ms) pentru cont tenant furnizor",
+  })
+  getMySupplierStock(
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierStockForFurnizorTenant(
       user?.company_id,
       user?.company_type,
     );
@@ -607,8 +642,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("order-assignments/:assignmentId/approve")
-  @Permissions("order.approve")
-  @ApiOperation({ summary: "Marchează o atribuire ca finalizată" })
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Marchează o atribuire magazioner ca finalizată" })
   approveAssignment(
     @Param("assignmentId") assignmentId: string,
     @Headers("x-user-id") userId?: string,

@@ -1,8 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive, IsEnum, IsDate, IsOptional, Min, IsString, Length } from 'class-validator';
+import {
+  IsNumber,
+  IsPositive,
+  IsEnum,
+  IsDate,
+  IsOptional,
+  Min,
+  IsString,
+  Length,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
-import { StockStatus } from '../entities/stock.entity';
+import { StockLotStatus } from '../entities/stock.entity';
 
+/** Creates an ENTRY movement and increases aggregate stock for product+location. */
 export class CreateStockDto {
   @ApiProperty()
   @IsNumber()
@@ -40,21 +50,28 @@ export class CreateStockDto {
   @IsOptional()
   expiration_date?: Date;
 
-  @ApiProperty({ required: false, enum: StockStatus })
-  @IsEnum(StockStatus)
+  @ApiProperty({ required: false, enum: StockLotStatus })
+  @IsEnum(StockLotStatus)
   @IsOptional()
-  status?: StockStatus;
+  status?: StockLotStatus;
 
-  @ApiProperty({ required: false, description: 'Optional URL to an attached document (PDF) for this stock entry' })
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   @Length(1, 1024)
   document_url?: string;
 
-  @ApiProperty({ required: false, description: 'Source of the stock entry', enum: ['manual','comanda'] })
-  @IsEnum(['manual','comanda'] as any)
+  @ApiProperty({ required: false, enum: ['manual', 'comanda'] })
+  @IsEnum(['manual', 'comanda'] as const)
   @IsOptional()
   source?: 'manual' | 'comanda';
+
+  @ApiProperty({
+    required: false,
+    description: 'Idempotency key for supplier receptions / manual entries',
+  })
+  @IsString()
+  @IsOptional()
+  @Length(1, 150)
+  target?: string;
 }
-
-

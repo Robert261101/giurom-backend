@@ -19,6 +19,7 @@ import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
 import { CreateStockTransactionDto } from "./dto/create-stock-transaction.dto";
+import { TransactionType } from "./entities/stock-transaction.entity";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
 import { UpdateWasteRecordDto } from "./dto/update-waste-record.dto";
 import { CreateWasteRequestDto } from "./dto/create-waste-request.dto";
@@ -104,8 +105,27 @@ export class StockHttpController {
   ) {
     return await this.service.createTransaction(dto);
   }
-  @Get("transactions") @Permissions("stock.read") async getTxs() {
-    return await this.service.findAllTransactions();
+  @Get("transactions") @Permissions("stock.read") async getTxs(
+    @Query("product_id") productId?: string,
+    @Query("location_id") locationId?: string,
+    @Query("stock_id") stockId?: string,
+    @Query("type") type?: string,
+  ) {
+    const filters: {
+      product_id?: number;
+      location_id?: number;
+      stock_id?: number;
+      type?: TransactionType;
+    } = {};
+    if (productId) filters.product_id = Number(productId);
+    if (locationId) filters.location_id = Number(locationId);
+    if (stockId) filters.stock_id = Number(stockId);
+    if (type === "entry" || type === "exit") {
+      filters.type = type as TransactionType;
+    }
+    return await this.service.findAllTransactions(
+      Object.keys(filters).length > 0 ? filters : undefined,
+    );
   }
 
   // Check stock availability for multiple products (used before consuming)
@@ -134,13 +154,19 @@ export class StockHttpController {
       recipe_preparation_id?: number;
     },
   ) {
-    console.log(`📡 [StockHttpController] Received consume request:`, dto);
+    const locationId =
+      dto.location_id != null && Number.isFinite(Number(dto.location_id))
+        ? Number(dto.location_id)
+        : undefined;
+    console.log(
+      `📡 [StockHttpController] Received consume request: product_id=${dto.product_id}, quantity=${dto.quantity}, location_id=${locationId ?? 'null'}, target=${dto.target ?? 'null'}`,
+    );
     const result = await this.service.consumeProduct(
       Number(dto.product_id),
       Number(dto.quantity),
       dto.target,
       dto.employee_id,
-      dto.location_id,
+      locationId,
       dto.recipe_preparation_id,
     );
     console.log(

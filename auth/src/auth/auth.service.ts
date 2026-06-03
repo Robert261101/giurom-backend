@@ -263,6 +263,7 @@ export class AuthService {
         work_location_id: userDataForToken.work_location_id,
         company_id: userDataForToken.company_id,
         company_type: userDataForToken.company_type,
+        position_default_id: userDataForToken.position_default_id,
         roles: userDataForToken.roles,
         permissions: userDataForToken.permissions,
       };

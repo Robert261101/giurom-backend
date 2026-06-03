@@ -105,6 +105,7 @@ export class TokenRotationService {
       work_location_id: user.work_location_id || null,
       company_id: user.company_id ?? null,
       company_type: user.company_type ?? null,
+      position_default_id: user.position_default_id ?? null,
       roles: user.roles || [],
       permissions: user.permissions || []
     };
