@@ -9,7 +9,7 @@ import {
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, EntityManager } from "typeorm";
+import { Repository, EntityManager, In } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { firstValueFrom, defaultIfEmpty } from "rxjs";
@@ -30,6 +30,7 @@ import { WasteRecord } from "./entities/waste-record.entity";
 import { WasteRequest } from "./entities/waste-request.entity";
 import { ConsumptionRecord } from "./entities/consumption-record.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
+import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
@@ -44,6 +45,11 @@ import { Category } from "./entities/category.entity";
 import { OrderList } from "./entities/order-list.entity";
 import { CreateOrderListDto } from "./dto/create-order-list.dto";
 import { UpdateOrderListDto } from "./dto/update-order-list.dto";
+import {
+  PaginatedStockResponse,
+  StockListQueryFilters,
+  StockLocationSummary,
+} from "./dto/paginated-stock.dto";
 
 @Injectable()
 export class StockService {
@@ -327,6 +333,74 @@ export class StockService {
     return this.normalizeProductPhoto(saved);
   }
 
+  async createProductAtLocation(
+    dto: CreateProductAtLocationDto,
+  ): Promise<{ product: Product; stock: Stock }> {
+    const locationId = Number(dto.location_id);
+    if (!Number.isFinite(locationId) || locationId <= 0) {
+      throw new BadRequestException("location_id invalid");
+    }
+
+    const queryRunner = this.productRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const productRepo = queryRunner.manager.getRepository(Product);
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+
+      const existingByName = await productRepo.findOne({
+        where: { name: dto.name },
+      });
+      if (existingByName) {
+        throw new ConflictException("Produsul există deja");
+      }
+
+      const skuTrimmed = dto.sku?.trim();
+      if (skuTrimmed) {
+        const existingBySku = await productRepo.findOne({
+          where: { sku: skuTrimmed },
+        });
+        if (existingBySku) {
+          throw new ConflictException("SKU-ul există deja");
+        }
+      }
+
+      const product = productRepo.create({
+        name: dto.name,
+        unit: dto.unit,
+        sku: skuTrimmed || undefined,
+        description: dto.description ?? undefined,
+        min_stock_level: dto.min_stock_level ?? undefined,
+        is_active: dto.is_active ?? true,
+        is_consumable: dto.is_consumable ?? false,
+        photo: dto.photo ?? undefined,
+      });
+      const savedProduct = await productRepo.save(product);
+
+      const stockRow = stockRepo.create({
+        product_id: savedProduct.id,
+        location_id: locationId,
+        location_key: this.locationKey(locationId),
+        quantity: 0,
+        status: StockStatus.VALID,
+      });
+      const savedStock = await stockRepo.save(stockRow);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        product: this.normalizeProductPhoto(savedProduct),
+        stock: savedStock,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findAllProducts(): Promise<Product[]> {
     const products = await this.productRepo.find();
     this.logger.log(`📦 [findAllProducts] Found ${products.length} products`);
@@ -342,6 +416,7 @@ export class StockService {
     return products.map((p) => this.normalizeProductPhoto(p));
   }
 
+  /** Produse din nomenclatorul global care au rând în stock pentru locația dată (existență, nu qty>0). */
   async findProductsByLocation(locationId: number): Promise<Product[]> {
     const productsWithStock = await this.productRepo
       .createQueryBuilder("product")
@@ -349,8 +424,6 @@ export class StockService {
       .where("stock.location_key = :locationKey", {
         locationKey: this.locationKey(locationId),
       })
-      .andWhere("stock.quantity > 0")
-      .andWhere("product.is_active = :isActive", { isActive: true })
       .distinct(true)
       .getMany();
 
@@ -705,7 +778,131 @@ export class StockService {
       queryBuilder.where(conditions.join(" AND "), params);
     }
 
+    queryBuilder.orderBy("product.name", "ASC").addOrderBy("stock.id", "ASC");
+
     return queryBuilder.getMany();
+  }
+
+  private applyStockListFilters(
+    queryBuilder: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+    filters: StockListQueryFilters,
+  ): void {
+    const conditions: string[] = [];
+    const params: Record<string, string | number> = {};
+
+    if (filters.locationId !== undefined && Number.isFinite(filters.locationId)) {
+      conditions.push("stock.location_key = :locationKey");
+      params.locationKey = this.locationKey(filters.locationId);
+    }
+
+    if (filters.productId !== undefined && Number.isFinite(filters.productId)) {
+      conditions.push("stock.product_id = :productId");
+      params.productId = filters.productId;
+    }
+
+    const search = filters.search?.trim().toLowerCase();
+    if (search) {
+      conditions.push("LOWER(product.name) LIKE :search");
+      params.search = `%${search}%`;
+    }
+
+    if (filters.status && filters.status !== "all" && filters.status !== "none") {
+      conditions.push("stock.status = :stockStatus");
+      params.stockStatus = filters.status;
+    }
+
+    if (filters.stockFilter === "with_stock") {
+      conditions.push("stock.quantity > 0");
+    } else if (filters.stockFilter === "without_stock") {
+      conditions.push("stock.quantity <= 0");
+    }
+
+    if (conditions.length > 0) {
+      queryBuilder.where(conditions.join(" AND "), params);
+    }
+  }
+
+  private applyStockListSort(
+    queryBuilder: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+    filters: StockListQueryFilters,
+  ): void {
+    const sortDir = filters.sortDirection === "desc" ? "DESC" : "ASC";
+    switch (filters.sortBy) {
+      case "quantity":
+        queryBuilder.orderBy("stock.quantity", sortDir);
+        break;
+      case "status":
+        queryBuilder.orderBy("stock.status", sortDir);
+        break;
+      case "updated_at":
+        queryBuilder.orderBy("stock.updated_at", sortDir);
+        break;
+      default:
+        queryBuilder.orderBy("product.name", sortDir);
+        break;
+    }
+    queryBuilder.addOrderBy("stock.id", "ASC");
+  }
+
+  async getStockLocationSummary(
+    locationId: number,
+  ): Promise<StockLocationSummary> {
+    const row = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select(
+        "SUM(CASE WHEN stock.status IN ('below_minimum', 'expired') THEN 1 ELSE 0 END)",
+        "below_minimum_count",
+      )
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
+      .getRawOne<{ below_minimum_count: string | null }>();
+
+    return {
+      below_minimum_count: Number(row?.below_minimum_count) || 0,
+    };
+  }
+
+  async findAllStocksPaginated(
+    page = 1,
+    limit = 9,
+    filters: StockListQueryFilters = {},
+  ): Promise<PaginatedStockResponse<Stock>> {
+    const cappedLimit = Math.min(Math.max(1, Number(limit) || 9), 9);
+    const pageNum = Math.max(1, Number(page) || 1);
+    const skip = (pageNum - 1) * cappedLimit;
+
+    const countQb = this.stockRepo
+      .createQueryBuilder("stock")
+      .leftJoin("stock.product", "product");
+    this.applyStockListFilters(countQb, filters);
+
+    const dataQb = this.stockRepo
+      .createQueryBuilder("stock")
+      .leftJoinAndSelect("stock.product", "product");
+    this.applyStockListFilters(dataQb, filters);
+    this.applyStockListSort(dataQb, filters);
+
+    const total = await countQb.getCount();
+    const data = await dataQb.skip(skip).take(cappedLimit).getMany();
+    const totalPages = total > 0 ? Math.ceil(total / cappedLimit) : 0;
+
+    const pagination = {
+      page: pageNum,
+      limit: cappedLimit,
+      total,
+      totalPages,
+      hasNextPage: pageNum < totalPages,
+      hasPreviousPage: pageNum > 1,
+    };
+
+    const response: PaginatedStockResponse<Stock> = { data, pagination };
+
+    if (filters.locationId !== undefined && Number.isFinite(filters.locationId)) {
+      response.summary = await this.getStockLocationSummary(filters.locationId);
+    }
+
+    return response;
   }
 
   async findStock(
@@ -843,6 +1040,41 @@ export class StockService {
         throw new NotFoundException(
           `Produsul cu ID ${productId} nu a fost găsit`,
         );
+      }
+
+      // Idempotency pentru scăderea stocului la comenzile furnizor: dacă există deja
+      // un EXIT cu acest target, consumul a fost deja efectuat (ex. dublu-click pe
+      // confirmare sau comandă scăzută anterior). Sărim — fără dublă-scădere.
+      //
+      // Compatibilitate flux nou ↔ vechi: aceeași scădere per (order, item) poate fi
+      // marcată cu `supplier-order-confirm:*` (flux nou) sau `supplier-order-create:*`
+      // (flux vechi). Verificăm AMBELE variante ca să nu re-scădem o comandă deja
+      // scăzută sub fluxul vechi atunci când e confirmată acum.
+      if (target?.startsWith("supplier-order-")) {
+        const candidateTargets = new Set<string>([target]);
+        if (target.startsWith("supplier-order-confirm:")) {
+          candidateTargets.add(
+            target.replace("supplier-order-confirm:", "supplier-order-create:"),
+          );
+        } else if (target.startsWith("supplier-order-create:")) {
+          candidateTargets.add(
+            target.replace("supplier-order-create:", "supplier-order-confirm:"),
+          );
+        }
+        const existingExit = await txRepo.findOne({
+          where: {
+            type: TransactionType.EXIT,
+            target: In([...candidateTargets]),
+          } as any,
+        });
+        if (existingExit) {
+          this.logger.log(
+            `[consumeProduct] Idempotent skip: EXIT already exists for target=${existingExit.target} ` +
+              `(requested=${target}, checked=[${[...candidateTargets].join(", ")}], tx=${existingExit.id})`,
+          );
+          await queryRunner.commitTransaction();
+          return;
+        }
       }
 
       const locationKey =

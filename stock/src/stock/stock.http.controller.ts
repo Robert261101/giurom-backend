@@ -15,6 +15,7 @@ import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
 import { StockService } from "./stock.service";
 import { CreateProductDto } from "./dto/create-product.dto";
+import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
@@ -38,6 +39,11 @@ export class StockHttpController {
     @Body() dto: CreateProductDto,
   ) {
     return await this.service.createProduct(dto);
+  }
+  @Post("products/at-location")
+  @Permissions("stock.create")
+  async createProductAtLocation(@Body() dto: CreateProductAtLocationDto) {
+    return await this.service.createProductAtLocation(dto);
   }
   @Get("products")
   @Permissions("products.read")
@@ -76,10 +82,36 @@ export class StockHttpController {
   @Get("items") @Permissions("stock.read") async getStocks(
     @Query("location_id") locationId?: string,
     @Query("product_id") productId?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("stock_filter") stockFilter?: string,
+    @Query("sort_by") sortBy?: string,
+    @Query("sort_direction") sortDirection?: string,
   ) {
-    return await this.service.findAllStocks(
-      locationId ? Number(locationId) : undefined,
-      productId ? Number(productId) : undefined,
+    const parsedStockFilter =
+      stockFilter === "with_stock" || stockFilter === "without_stock"
+        ? stockFilter
+        : "all";
+    const parsedSortDirection =
+      sortDirection === "desc" ? "desc" : "asc";
+
+    return await this.service.findAllStocksPaginated(
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 9,
+      {
+        locationId: locationId ? Number(locationId) : undefined,
+        productId:
+          productId != null && productId !== ""
+            ? Number(productId)
+            : undefined,
+        search,
+        status,
+        stockFilter: parsedStockFilter,
+        sortBy,
+        sortDirection: parsedSortDirection,
+      },
     );
   }
   @Get("items/:id") @Permissions("stock.read") async getStock(

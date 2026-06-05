@@ -98,7 +98,9 @@ export class SuppliersMicroController {
   markOrderAsDelivered(@Payload() orderId: number) { return this.service.markOrderAsDelivered(orderId); }
 
   @MessagePattern('suppliers.orders.updateStatus')
-  updateOrderStatus(@Payload() payload: { orderId: number; status: string }) { return this.service.updateOrderStatus(payload.orderId, payload.status); }
+  updateOrderStatus(@Payload() payload: { orderId: number; status: string }) {
+    return this.service.updateOrderStatus(payload.orderId, payload.status);
+  }
 
   // Documents
   @MessagePattern('suppliers.documents.add')

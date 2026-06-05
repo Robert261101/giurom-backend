@@ -44,6 +44,7 @@ import { LinkMySupplierStaffDto } from "./dto/link-my-supplier-staff.dto";
 import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
+import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
 import { buildSupplierProductUserContext } from "./supplier-product-access";
 
 @ApiTags("suppliers")
@@ -176,12 +177,78 @@ export class SuppliersHttpController {
       "Stoc depozit furnizor (nomenclator × stock-ms) pentru cont tenant furnizor",
   })
   getMySupplierStock(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("stock_filter") stockFilter?: string,
+    @Query("sort_by") sortBy?: string,
+    @Query("sort_direction") sortDirection?: string,
     @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
   ) {
     const user = req?.user;
     return this.service.getMySupplierStockForFurnizorTenant(
       user?.company_id,
       user?.company_type,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 9,
+      {
+        search,
+        status,
+        stock_filter: stockFilter,
+        sort_by: sortBy,
+        sort_direction: sortDirection,
+      },
+    );
+  }
+
+  @Get("my-supplier/nomenclator-products")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Nomenclator depozit furnizor (stock.products × stock.stock la locația depozit)",
+  })
+  getMySupplierNomenclatorProducts(
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierNomenclatorProducts(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Post("my-supplier/nomenclator-products")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Adaugă produs în nomenclatorul depozitului furnizorului (products + stock shell)",
+  })
+  createMySupplierNomenclatorProduct(
+    @Body() dto: CreateSupplierNomenclatorProductDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.createMySupplierNomenclatorProduct(
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
+  @Post("my-supplier/nomenclator-products/:productId/photo")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary: "Upload imagine pentru produs din nomenclatorul depozitului furnizorului",
+  })
+  uploadMySupplierNomenclatorProductPhoto(
+    @Param("productId") productId: string,
+    @Body() body: { fileName: string; content: string },
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.updateMySupplierNomenclatorProductPhoto(
+      Number(productId),
+      body.fileName,
+      body.content,
+      buildSupplierProductUserContext(req?.user),
     );
   }
 
@@ -242,6 +309,39 @@ export class SuppliersHttpController {
   @ApiResponse({ status: 200, description: "Lista locațiilor furnizorului" })
   findSupplierLocations(@Param("supplierId") supplierId: string) {
     return this.service.findSupplierLocations(Number(supplierId));
+  }
+
+  @Get(":supplierId/stock-location")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Locația depozitului furnizorului (HQ/companie) — pentru filtrarea nomenclatorului la comandă",
+  })
+  getSupplierStockLocation(@Param("supplierId") supplierId: string) {
+    return this.service.getSupplierStockLocationId(Number(supplierId));
+  }
+
+  @Get(":supplierId/products")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  getProducts(
+    @Param("supplierId") supplierId: string,
+    @Query("include_inactive") includeInactive?: string,
+    @Query("location_id") locationId?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    const includeInactiveBool = includeInactive === undefined
+      ? true
+      : !["0", "false"].includes(includeInactive.toLowerCase());
+    const parsedLocationId =
+      locationId != null && Number.isFinite(Number(locationId)) && Number(locationId) > 0
+        ? Number(locationId)
+        : undefined;
+    return this.service.getSupplierProducts(
+      Number(supplierId),
+      includeInactiveBool,
+      buildSupplierProductUserContext(req?.user),
+      parsedLocationId,
+    );
   }
 
   @Get("locations/:locationId/suppliers")
@@ -349,24 +449,7 @@ export class SuppliersHttpController {
     return this.service.remove(Number(id), selectedWorkLocationId);
   }
 
-  // Products
-  @Get(":supplierId/products")
-  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
-  getProducts(
-    @Param("supplierId") supplierId: string,
-    @Query("include_inactive") includeInactive?: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
-  ) {
-    const includeInactiveBool = includeInactive === undefined
-      ? true
-      : !["0", "false"].includes(includeInactive.toLowerCase());
-    return this.service.getSupplierProducts(
-      Number(supplierId),
-      includeInactiveBool,
-      buildSupplierProductUserContext(req?.user),
-    );
-  }
-
+  // Measurement Variants (products/:productId must stay before generic :supplierId routes if added)
   @Post("products")
   @Permissions("suppliers.create")
   addProduct(
@@ -505,6 +588,40 @@ export class SuppliersHttpController {
       dateTo,
       locationId,
     });
+  }
+
+  /**
+   * Batch paginat — dashboard furnizor (implicit limit 15, max 15).
+   * GET /suppliers/orders/batch/paginated?supplier_ids=1&page=1&limit=15
+   */
+  @Get("orders/batch/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Listează comenzi furnizor cu paginare (dashboard tenant)" })
+  getOrdersBatchPaginated(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("date_from") dateFrom?: string,
+    @Query("date_to") dateTo?: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    if (!supplierIdsRaw) {
+      return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
+    }
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    if (supplierIds.length === 0) {
+      return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
+    }
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getSupplierOrdersBatchPaginated(
+      supplierIds,
+      { dateFrom, dateTo, locationId },
+      pageRaw,
+      limitRaw,
+    );
   }
 
   /**
@@ -675,6 +792,24 @@ export class SuppliersHttpController {
     return this.service.getDriverUsedPriorities(Number(driverId), delivery_date);
   }
 
+  @Get("drivers/:driverId/orders/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Comenzi șofer paginate (dashboard șofer)" })
+  getDriverAssignmentsPaginated(
+    @Param("driverId") driverId: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getDriverAssignmentsPaginated(
+      Number(driverId),
+      locationId,
+      pageRaw,
+      limitRaw,
+    );
+  }
+
   @Get("drivers/:driverId/orders")
   @Permissions("order.read")
   @ApiOperation({ summary: "Obține comenzile atribuite unui șofer" })
@@ -692,6 +827,24 @@ export class SuppliersHttpController {
   @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
   completeDriverAssignment(@Param("assignmentId") assignmentId: string) {
     return this.service.completeDriverAssignment(Number(assignmentId));
+  }
+
+  @Get("storekeepers/:employeeId/orders/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Comenzi magazioner paginate (dashboard magazioner)" })
+  getStorekeeperOrdersPaginated(
+    @Param("employeeId") employeeId: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getStorekeeperAssignmentsPaginated(
+      Number(employeeId),
+      locationId,
+      pageRaw,
+      limitRaw,
+    );
   }
 
   @Get("storekeepers/:employeeId/orders")
