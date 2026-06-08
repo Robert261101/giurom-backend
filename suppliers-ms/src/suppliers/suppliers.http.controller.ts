@@ -46,6 +46,7 @@ import { Permissions, PermissionsAny } from "../permissions/permissions.decorato
 import { PermissionsGuard } from "../permissions/permissions.guard";
 import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
 import { buildSupplierProductUserContext } from "./supplier-product-access";
+import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 
 @ApiTags("suppliers")
 @Controller("suppliers")
@@ -642,7 +643,7 @@ export class SuppliersHttpController {
     @Query("limit") limitRaw?: string,
   ) {
     if (!supplierIdsRaw || !locationIdRaw) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], 1, 10, 0);
     }
     const supplierIds = supplierIdsRaw
       .split(",")
@@ -652,6 +653,36 @@ export class SuppliersHttpController {
     const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
     return this.service.getCancelledOrdersPaginated(supplierIds, locationId, page, limit);
+  }
+
+  /**
+   * Comenzi active – paginate (10 per pagină).
+   * GET /suppliers/orders/active/paginated?supplier_ids=1,2&location_id=1&page=1&limit=10
+   */
+  @Get("orders/active/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Listează comenzi active cu paginare" })
+  @ApiQuery({ name: "supplier_ids", required: true, description: "ID-uri furnizori separate prin virgulă" })
+  @ApiQuery({ name: "location_id", required: true, description: "ID locație" })
+  @ApiQuery({ name: "page", required: false, description: "Pagina (implicit 1)" })
+  @ApiQuery({ name: "limit", required: false, description: "Elemente per pagină (implicit 10)" })
+  getActiveOrdersPaginated(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("location_id") locationIdRaw: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    if (!supplierIdsRaw || !locationIdRaw) {
+      return buildOrdersPaginatedResponse([], 1, 10, 0);
+    }
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    const locationId = parseInt(locationIdRaw, 10);
+    const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
+    return this.service.getActiveOrdersPaginated(supplierIds, locationId, page, limit);
   }
 
   /**
@@ -672,7 +703,7 @@ export class SuppliersHttpController {
     @Query("limit") limitRaw?: string,
   ) {
     if (!supplierIdsRaw || !locationIdRaw) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], 1, 10, 0);
     }
     const supplierIds = supplierIdsRaw
       .split(",")

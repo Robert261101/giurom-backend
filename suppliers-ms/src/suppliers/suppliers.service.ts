@@ -1149,23 +1149,43 @@ export class SuppliersService {
     );
     const total = await countQb.getCount();
 
-    const dataQb = applyFilters(
-      repo
-        .createQueryBuilder('da')
-        .innerJoinAndSelect('da.order', 'order')
-        .leftJoinAndSelect('order.supplier', 'supplier')
-        .leftJoinAndSelect('order.items', 'items'),
+    const idQb = applyFilters(
+      repo.createQueryBuilder('da').innerJoin('da.order', 'order'),
     )
+      .select('da.id', 'id')
       .orderBy('da.delivery_date', 'DESC')
       .addOrderBy('da.delivery_priority', 'ASC')
       .addOrderBy('da.scheduled_at', 'ASC')
       .addOrderBy('da.id', 'DESC');
 
     if (page != null && limit != null) {
-      dataQb.skip((page - 1) * limit).take(limit);
+      idQb.offset((page - 1) * limit).limit(limit);
     }
 
-    const rows = await dataQb.getMany();
+    const idRows = await idQb.getRawMany();
+    const assignmentIds = idRows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (assignmentIds.length === 0) {
+      return { rows: [], total };
+    }
+
+    const rowsUnsorted = await applyFilters(
+      repo
+        .createQueryBuilder('da')
+        .innerJoinAndSelect('da.order', 'order')
+        .leftJoinAndSelect('order.supplier', 'supplier')
+        .leftJoinAndSelect('order.items', 'items'),
+    )
+      .andWhere('da.id IN (:...assignmentIds)', { assignmentIds })
+      .getMany();
+
+    const rowById = new Map(rowsUnsorted.map((r) => [r.id, r]));
+    const rows = assignmentIds
+      .map((id) => rowById.get(id))
+      .filter((r): r is SupplierOrderDriverAssignment => !!r);
+
     const drvOrders = rows.map((da) => da.order).filter((o): o is SupplierOrder => !!o);
     await this.attachOrderChangesArray(drvOrders);
     await this.attachOrderDeliveryDetails(drvOrders);
@@ -1341,21 +1361,43 @@ export class SuppliersService {
     );
     const total = await countQb.getCount();
 
-    const dataQb = applyFilters(
+    const idQb = applyFilters(
+      this.orderAssignmentRepo
+        .createQueryBuilder('assignment')
+        .innerJoin('assignment.order', 'order'),
+    )
+      .select('assignment.id', 'id')
+      .orderBy('assignment.assigned_at', 'DESC')
+      .addOrderBy('assignment.id', 'DESC');
+
+    if (page != null && limit != null) {
+      idQb.offset((page - 1) * limit).limit(limit);
+    }
+
+    const idRows = await idQb.getRawMany();
+    const assignmentIds = idRows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (assignmentIds.length === 0) {
+      return { rows: [], total };
+    }
+
+    const assignmentRowsUnsorted = await applyFilters(
       this.orderAssignmentRepo
         .createQueryBuilder('assignment')
         .innerJoinAndSelect('assignment.order', 'order')
         .leftJoinAndSelect('order.supplier', 'supplier')
         .leftJoinAndSelect('order.items', 'items'),
     )
-      .orderBy('assignment.assigned_at', 'DESC')
-      .addOrderBy('assignment.id', 'DESC');
+      .andWhere('assignment.id IN (:...assignmentIds)', { assignmentIds })
+      .getMany();
 
-    if (page != null && limit != null) {
-      dataQb.skip((page - 1) * limit).take(limit);
-    }
+    const rowById = new Map(assignmentRowsUnsorted.map((r) => [r.id, r]));
+    const assignmentRows = assignmentIds
+      .map((id) => rowById.get(id))
+      .filter((r): r is SupplierOrderAssignment => !!r);
 
-    const assignmentRows = await dataQb.getMany();
     const skOrders = assignmentRows
       .map((a) => a.order)
       .filter((o): o is SupplierOrder => !!o);
@@ -5252,21 +5294,40 @@ export class SuppliersService {
       this.orderRepo.createQueryBuilder('order'),
     ).getCount();
 
-    const dataQb = applyFilters(
-      this.orderRepo
-        .createQueryBuilder('order')
-        .leftJoinAndSelect('order.items', 'items')
-        .leftJoinAndSelect('order.documents', 'documents')
-        .leftJoinAndSelect('order.supplier', 'supplier')
-        .leftJoinAndSelect('order.driverAssignments', 'driverAssignments')
-        .leftJoinAndSelect('order.assignments', 'assignments'),
+    const idRows = await applyFilters(
+      this.orderRepo.createQueryBuilder('order'),
     )
+      .select('order.id', 'id')
       .orderBy('order.created_at', 'DESC')
       .addOrderBy('order.id', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany();
 
-    const batchList = await dataQb.getMany();
+    const orderIds = idRows
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (orderIds.length === 0) {
+      return buildOrdersPaginatedResponse([], page, limit, total);
+    }
+
+    const batchListUnsorted = await applyFilters(
+      this.orderRepo.createQueryBuilder('order'),
+    )
+      .andWhere('order.id IN (:...orderIds)', { orderIds })
+      .leftJoinAndSelect('order.items', 'items')
+      .leftJoinAndSelect('order.documents', 'documents')
+      .leftJoinAndSelect('order.supplier', 'supplier')
+      .leftJoinAndSelect('order.driverAssignments', 'driverAssignments')
+      .leftJoinAndSelect('order.assignments', 'assignments')
+      .getMany();
+
+    const orderById = new Map(batchListUnsorted.map((o) => [o.id, o]));
+    const batchList = orderIds
+      .map((id) => orderById.get(id))
+      .filter((o): o is SupplierOrder => !!o);
+
     await this.attachOrderChangesArray(batchList);
     await this.attachOrderDeliveryDetails(batchList);
     return buildOrdersPaginatedResponse(batchList, page, limit, total);
@@ -5281,14 +5342,14 @@ export class SuppliersService {
     locationId: number,
     page: number,
     limit: number,
-  ): Promise<{ data: SupplierOrder[]; total: number }> {
+  ): Promise<PaginatedOrdersResponse<SupplierOrder>> {
     if (!supplierIds?.length) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], page, limit, 0);
     }
     const orders = await this.getSupplierOrdersBatch(supplierIds, { locationId });
     const orderIds = orders.map((o) => o.id).filter((id) => Number.isFinite(id) && id > 0);
     if (orderIds.length === 0) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], page, limit, 0);
     }
 
     const cancelledItemsRaw = await this.getOrderCancelledItemsBatch(orderIds);
@@ -5361,7 +5422,7 @@ export class SuppliersService {
     const total = cancelledList.length;
     const start = (page - 1) * limit;
     const data = cancelledList.slice(start, start + limit);
-    return { data, total };
+    return buildOrdersPaginatedResponse(data, page, limit, total);
   }
 
   /**
@@ -5373,14 +5434,14 @@ export class SuppliersService {
     locationId: number,
     page: number,
     limit: number,
-  ): Promise<{ data: SupplierOrder[]; total: number }> {
+  ): Promise<PaginatedOrdersResponse<SupplierOrder>> {
     if (!supplierIds?.length) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], page, limit, 0);
     }
     const orders = await this.getSupplierOrdersBatch(supplierIds, { locationId });
     const orderIds = orders.map((o) => o.id).filter((id) => Number.isFinite(id) && id > 0);
     if (orderIds.length === 0) {
-      return { data: [], total: 0 };
+      return buildOrdersPaginatedResponse([], page, limit, 0);
     }
 
     const receptionsRaw = await this.getOrderReceptionsBatch(orderIds);
@@ -5418,7 +5479,85 @@ export class SuppliersService {
     const total = receivedList.length;
     const start = (page - 1) * limit;
     const data = receivedList.slice(start, start + limit);
-    return { data, total };
+    return buildOrdersPaginatedResponse(data, page, limit, total);
+  }
+
+  /**
+   * Comenzi active – paginare (10 per pagină).
+   * Aceeași logică ca pe frontend: status vizibil + cantitate rămasă de recepționat.
+   */
+  async getActiveOrdersPaginated(
+    supplierIds: number[],
+    locationId: number,
+    page: number,
+    limit: number,
+  ): Promise<PaginatedOrdersResponse<SupplierOrder>> {
+    if (!supplierIds?.length) {
+      return buildOrdersPaginatedResponse([], page, limit, 0);
+    }
+
+    const orders = await this.getSupplierOrdersBatch(supplierIds, { locationId });
+    const orderIds = orders.map((o) => o.id).filter((id) => Number.isFinite(id) && id > 0);
+    if (orderIds.length === 0) {
+      return buildOrdersPaginatedResponse([], page, limit, 0);
+    }
+
+    const receptionsRaw = await this.getOrderReceptionsBatch(orderIds);
+    const pendingReceptionsMap = new Map<number, (typeof receptionsRaw)[number][]>();
+    for (const r of receptionsRaw) {
+      if (r.status !== ReceptionStatus.PENDING) continue;
+      const oid = Number(r.supplier_order_id);
+      if (!Number.isFinite(oid)) continue;
+      const arr = pendingReceptionsMap.get(oid) ?? [];
+      arr.push(r);
+      pendingReceptionsMap.set(oid, arr);
+    }
+
+    const visibleStatuses = new Set<OrderStatus>([
+      OrderStatus.SENT,
+      OrderStatus.MAGAZIONER,
+      OrderStatus.RETURNED_TO_SUPPLIER,
+      OrderStatus.RETURNED_FROM_SUPPLIER,
+      OrderStatus.CONFIRMED,
+      OrderStatus.SOFER,
+      OrderStatus.DELIVERED,
+    ]);
+
+    const activeList = orders.filter((order) => {
+      const status = (order.status as OrderStatus) ?? OrderStatus.SENT;
+      if (!visibleStatuses.has(status)) return false;
+
+      const pendingReceptionsForOrder = pendingReceptionsMap.get(order.id) ?? [];
+
+      if (order.items?.length) {
+        const hasRemaining = order.items.some((item: any) => {
+          if ((item.availability_status ?? 'available') === 'unavailable') return false;
+          const ordered = Number(item.quantity) || 0;
+          const receivedApproved = Number(item.received_quantity) || 0;
+          const pendingForItem = pendingReceptionsForOrder
+            .filter((r) => r.supplier_order_item_id === item.id)
+            .reduce((sum, r) => {
+              const received = Number(r.received_delta) || 0;
+              const returned = Number(r.returned_delta) || 0;
+              return sum + received - returned;
+            }, 0);
+          const totalReceived = receivedApproved + pendingForItem;
+          return totalReceived < ordered;
+        });
+        return hasRemaining;
+      }
+
+      return true;
+    });
+
+    activeList.sort(
+      (a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime(),
+    );
+
+    const total = activeList.length;
+    const start = (page - 1) * limit;
+    const data = activeList.slice(start, start + limit);
+    return buildOrdersPaginatedResponse(data, page, limit, total);
   }
 
   async updateSupplierProduct(

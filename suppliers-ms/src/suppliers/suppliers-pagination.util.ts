@@ -4,7 +4,9 @@ export const MAX_ORDERS_PAGE_LIMIT = 15;
 export type OrdersPaginationMeta = {
   page: number;
   limit: number;
+  /** @deprecated Prefer totalItems — kept for backward compatibility */
   total: number;
+  totalItems: number;
   totalPages: number;
   hasNextPage: boolean;
   hasPreviousPage: boolean;
@@ -13,6 +15,9 @@ export type OrdersPaginationMeta = {
 export type PaginatedOrdersResponse<T> = {
   data: T[];
   pagination: OrdersPaginationMeta;
+  /** Top-level alias for legacy clients expecting `total` without `pagination` */
+  total?: number;
+  totalItems?: number;
 };
 
 export function normalizeOrdersPagination(
@@ -40,10 +45,13 @@ export function buildOrdersPaginatedResponse<T>(
   const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
   return {
     data,
+    total,
+    totalItems: total,
     pagination: {
       page,
       limit,
       total,
+      totalItems: total,
       totalPages,
       hasNextPage: page < totalPages,
       hasPreviousPage: page > 1,
