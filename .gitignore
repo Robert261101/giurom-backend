@@ -28,3 +28,7 @@
 
 # env files (can opt-in for committing if needed)
 .env*
+
+# Claude Code
+.claude/
+LAST_COMMIT_CHANGES.md

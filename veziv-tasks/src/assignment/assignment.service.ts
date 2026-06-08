@@ -3378,10 +3378,16 @@ export class AssignmentService {
       throw new Error(`Task-ul ${id} nu are requires_manager_check activat`);
     }
 
-    // Actualizează statusul la completed
+    // Actualizează statusul la completed și adaugă nota de aprobare
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('ro-RO') + ' ' + now.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+    const approvalNote = `✅ Aprobat de Manager la ${dateStr}`;
+    const updatedNotes = assignment.notes ? `${assignment.notes}\n${approvalNote}` : approvalNote;
+
     await this.assignmentRepository.update(id, {
       status: 'completed' as any,
-      completed_at: new Date(),
+      completed_at: now,
+      notes: updatedNotes,
     });
 
     // NU mai creăm execuție nouă - angajatul a creat deja execuția când a completat task-ul!

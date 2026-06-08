@@ -14,7 +14,7 @@ import { CreatePresenceDto } from './dto/create-presence.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto';
 import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
-import { toZonedTime, formatInTimeZone, toDate } from 'date-fns-tz';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 
 const ROMANIA_TZ = 'Europe/Bucharest';
 
@@ -219,11 +219,11 @@ export class AttendanceService implements OnModuleInit {
     const shift = await this.findShiftById(id);
 
     if (updateShiftDto.start_datetime || updateShiftDto.end_datetime) {
-        const startDate = updateShiftDto.start_datetime 
-          ? toZonedTime(new Date(updateShiftDto.start_datetime), 'Europe/Bucharest') 
+        const startDate = updateShiftDto.start_datetime
+          ? toZonedTime(new Date(updateShiftDto.start_datetime), 'Europe/Bucharest')
           : shift.start_datetime;
-        const endDate = updateShiftDto.end_datetime 
-          ? toZonedTime(new Date(updateShiftDto.end_datetime), 'Europe/Bucharest') 
+        const endDate = updateShiftDto.end_datetime
+          ? toZonedTime(new Date(updateShiftDto.end_datetime), 'Europe/Bucharest')
           : shift.end_datetime;
 
       if (startDate >= endDate) {
@@ -245,6 +245,7 @@ export class AttendanceService implements OnModuleInit {
       if (overlappingShift) {
         throw new ConflictException('Există deja un schimb programat pentru acest angajat în intervalul specificat');
       }
+
     }
 
     Object.assign(shift, updateShiftDto);
@@ -335,36 +336,25 @@ export class AttendanceService implements OnModuleInit {
     if (check_in) {
       const checkInInstantMs = new Date(check_in).getTime();
       const ymdRo = formatInTimeZone(new Date(check_in), ROMANIA_TZ, 'yyyy-MM-dd');
-      const shiftHmRo = formatInTimeZone(
-        new Date(shift.start_datetime),
-        ROMANIA_TZ,
-        'HH:mm',
-      );
-      const [shHraw, shMraw] = shiftHmRo.split(':').map((x) => parseInt(x, 10));
-      const shH = Number.isFinite(shHraw) ? shHraw : 0;
-      const shM = Number.isFinite(shMraw) ? shMraw : 0;
-
-      const shiftStartRo = toDate(
-        `${ymdRo} ${String(shH).padStart(2, '0')}:${String(shM).padStart(2, '0')}:00`,
-        { timeZone: ROMANIA_TZ },
-      );
-
+      // Folosim start-ul real al turei din DB (unic instant), nu „ziua check-in-ului + ora din shift”:
+      // altfel turele nocturne / trecerea peste miezul nopții puteau calcula o oră de start greșită
+      // și un singur angajat (alt format de date sau tură atipică) putea fi evaluat incorect.
+      const shiftStartMs = new Date(shift.start_datetime as unknown as string).getTime();
       const minimumLeadTimeMs = 60 * 60 * 1000;
-      const diffMs = shiftStartRo.getTime() - checkInInstantMs;
+      const earlyLeadMs = shiftStartMs - checkInInstantMs;
 
       console.log(
-        `🕐 [Punctualitate RO] check_in instant=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo}`,
+        `🕐 [Punctualitate] check_in=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo} shift_start=${new Date(shiftStartMs).toISOString()}`,
       );
       console.log(
-        `🕐 [Punctualitate RO] start tură RO pe aceea zi=${shiftStartRo.toISOString()} (template oră din shift: ${shiftHmRo})`,
+        `🕐 [Punctualitate] lead până la start (ms)=${earlyLeadMs}, prag: ${minimumLeadTimeMs}`,
       );
-      console.log(`🕐 Diferență ms până la start: ${diffMs}, prag: ${minimumLeadTimeMs}`);
 
-      if (Number.isNaN(shiftStartRo.getTime())) {
+      if (Number.isNaN(shiftStartMs)) {
         console.warn(
-          `⚠️ [Punctualitate] Nu s-a putut calcula start tură RO pentru shift ${shift.id} – puncte oprite`,
+          `⚠️ [Punctualitate] start_datetime invalid pentru shift ${shift.id} – puncte oprite`,
         );
-      } else if (diffMs >= minimumLeadTimeMs) {
+      } else if (earlyLeadMs >= minimumLeadTimeMs) {
         await this.addEmployeePoints(
           shift.employee_id,
           5,
@@ -374,7 +364,7 @@ export class AttendanceService implements OnModuleInit {
         );
       } else {
         console.log(
-          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte (RO) – nu se acordă puncte`,
+          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte de start-ul turei – nu se acordă puncte`,
         );
       }
     }
