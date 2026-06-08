@@ -40,9 +40,12 @@ import { CreateSupplierOrderDriverAssignmentDto } from "./dto/create-supplier-or
 import { UpdateOrderDeliveryDateDto } from "./dto/update-order-delivery-date.dto";
 import { WarehouseReviewDto } from "./dto/warehouse-review.dto";
 import { SendBackToMagazionerDto } from "./dto/send-back-to-magazioner.dto";
+import { LinkMySupplierStaffDto } from "./dto/link-my-supplier-staff.dto";
 import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
+import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
+import { buildSupplierProductUserContext } from "./supplier-product-access";
 
 @ApiTags("suppliers")
 @Controller("suppliers")
@@ -116,6 +119,139 @@ export class SuppliersHttpController {
     return this.service.findForOrders(locationId);
   }
 
+  @Get("my-supplier")
+  @Permissions("order.read")
+  @ApiOperation({
+    summary:
+      "Furnizor operațional al companiei tenant (owner_company_id = JWT company_id)",
+  })
+  @ApiResponse({ status: 200, description: "Furnizor găsit" })
+  @ApiResponse({ status: 403, description: "Nu este cont furnizor sau lipsește company_id" })
+  @ApiResponse({ status: 404, description: "Niciun furnizor asociat companiei" })
+  getMySupplier(@Request() req?: { user?: { company_id?: number | null; company_type?: string | null } }) {
+    const user = req?.user;
+    return this.service.findMySupplierForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Get("my-supplier/profile")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Profil complet furnizor operațional (produse, documente) pentru cont furnizor",
+  })
+  getMySupplierProfile(
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.findMySupplierProfileForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Post("my-supplier/staff")
+  @Permissions("suppliers.create")
+  @ApiOperation({ summary: "Leagă un angajat (magazioner/șofer) la furnizorul operațional al contului logat" })
+  @ApiResponse({ status: 201, description: "Legătură creată/actualizată" })
+  @ApiResponse({ status: 403, description: "Nu este cont furnizor" })
+  linkMySupplierStaff(
+    @Body() dto: LinkMySupplierStaffDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.linkMySupplierStaff(
+      user?.company_id,
+      user?.company_type,
+      dto.employee_id,
+      dto.staff_type,
+    );
+  }
+
+  @Get("my-supplier/stock")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc depozit furnizor (nomenclator × stock-ms) pentru cont tenant furnizor",
+  })
+  getMySupplierStock(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("stock_filter") stockFilter?: string,
+    @Query("sort_by") sortBy?: string,
+    @Query("sort_direction") sortDirection?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierStockForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 9,
+      {
+        search,
+        status,
+        stock_filter: stockFilter,
+        sort_by: sortBy,
+        sort_direction: sortDirection,
+      },
+    );
+  }
+
+  @Get("my-supplier/nomenclator-products")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Nomenclator depozit furnizor (stock.products × stock.stock la locația depozit)",
+  })
+  getMySupplierNomenclatorProducts(
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierNomenclatorProducts(
+      user?.company_id,
+      user?.company_type,
+    );
+  }
+
+  @Post("my-supplier/nomenclator-products")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Adaugă produs în nomenclatorul depozitului furnizorului (products + stock shell)",
+  })
+  createMySupplierNomenclatorProduct(
+    @Body() dto: CreateSupplierNomenclatorProductDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.createMySupplierNomenclatorProduct(
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
+  @Post("my-supplier/nomenclator-products/:productId/photo")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary: "Upload imagine pentru produs din nomenclatorul depozitului furnizorului",
+  })
+  uploadMySupplierNomenclatorProductPhoto(
+    @Param("productId") productId: string,
+    @Body() body: { fileName: string; content: string },
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.updateMySupplierNomenclatorProductPhoto(
+      Number(productId),
+      body.fileName,
+      body.content,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
   @Post()
   @Permissions("suppliers.create")
   @ApiQuery({ name: "location_id", required: false, description: "Locația selectată în UI (colț dreapta sus)" })
@@ -173,6 +309,39 @@ export class SuppliersHttpController {
   @ApiResponse({ status: 200, description: "Lista locațiilor furnizorului" })
   findSupplierLocations(@Param("supplierId") supplierId: string) {
     return this.service.findSupplierLocations(Number(supplierId));
+  }
+
+  @Get(":supplierId/stock-location")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Locația depozitului furnizorului (HQ/companie) — pentru filtrarea nomenclatorului la comandă",
+  })
+  getSupplierStockLocation(@Param("supplierId") supplierId: string) {
+    return this.service.getSupplierStockLocationId(Number(supplierId));
+  }
+
+  @Get(":supplierId/products")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  getProducts(
+    @Param("supplierId") supplierId: string,
+    @Query("include_inactive") includeInactive?: string,
+    @Query("location_id") locationId?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    const includeInactiveBool = includeInactive === undefined
+      ? true
+      : !["0", "false"].includes(includeInactive.toLowerCase());
+    const parsedLocationId =
+      locationId != null && Number.isFinite(Number(locationId)) && Number(locationId) > 0
+        ? Number(locationId)
+        : undefined;
+    return this.service.getSupplierProducts(
+      Number(supplierId),
+      includeInactiveBool,
+      buildSupplierProductUserContext(req?.user),
+      parsedLocationId,
+    );
   }
 
   @Get("locations/:locationId/suppliers")
@@ -280,23 +449,14 @@ export class SuppliersHttpController {
     return this.service.remove(Number(id), selectedWorkLocationId);
   }
 
-  // Products
-  @Get(":supplierId/products")
-  @Permissions("suppliers.read")
-  getProducts(
-    @Param("supplierId") supplierId: string,
-    @Query("include_inactive") includeInactive?: string,
-  ) {
-    const includeInactiveBool = includeInactive === undefined
-      ? true
-      : !["0", "false"].includes(includeInactive.toLowerCase());
-    return this.service.getSupplierProducts(Number(supplierId), includeInactiveBool);
-  }
-
+  // Measurement Variants (products/:productId must stay before generic :supplierId routes if added)
   @Post("products")
   @Permissions("suppliers.create")
-  addProduct(@Body() dto: CreateSupplierProductDto) {
-    return this.service.addProduct(dto);
+  addProduct(
+    @Body() dto: CreateSupplierProductDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.addProduct(dto, buildSupplierProductUserContext(req?.user));
   }
 
   @Patch("products/:productId")
@@ -305,48 +465,84 @@ export class SuppliersHttpController {
     @Param("productId") productId: string,
     @Body() dto: UpdateSupplierProductDto,
     @Query("supplier_id") supplierIdRaw?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
   ) {
     const supplierId = supplierIdRaw ? parseInt(supplierIdRaw, 10) : undefined;
     if (!supplierId || !Number.isFinite(supplierId) || supplierId <= 0) {
       throw new BadRequestException("Parametrul supplier_id este obligatoriu și trebuie să fie un număr valid");
     }
-    return this.service.updateSupplierProduct(Number(productId), supplierId, dto);
+    return this.service.updateSupplierProduct(
+      Number(productId),
+      supplierId,
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Delete("products/:productId")
   @Permissions("suppliers.delete")
-  removeProduct(@Param("productId") productId: string) {
-    return this.service.removeSupplierProduct(Number(productId));
+  removeProduct(
+    @Param("productId") productId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.removeSupplierProduct(
+      Number(productId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   // Measurement Variants
   @Get("products/:productId/variants")
-  @Permissions("suppliers.read")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
   @ApiOperation({ summary: "List measurement variants for a supplier product" })
-  getVariants(@Param("productId") productId: string) {
-    return this.service.getVariants(Number(productId));
+  getVariants(
+    @Param("productId") productId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.getVariants(
+      Number(productId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Post("products/:productId/variants")
   @Permissions("suppliers.create")
   @ApiOperation({ summary: "Create a measurement variant for a supplier product" })
-  createVariant(@Param("productId") productId: string, @Body() dto: CreateSupplierProductMeasurementVariantDto) {
+  createVariant(
+    @Param("productId") productId: string,
+    @Body() dto: CreateSupplierProductMeasurementVariantDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
     const variantDto = { ...dto, supplier_product_id: Number(productId) };
-    return this.service.createVariant(variantDto);
+    return this.service.createVariant(variantDto, buildSupplierProductUserContext(req?.user));
   }
 
   @Patch("variants/:variantId")
   @Permissions("suppliers.update")
   @ApiOperation({ summary: "Update a measurement variant" })
-  updateVariant(@Param("variantId") variantId: string, @Body() dto: UpdateSupplierProductMeasurementVariantDto) {
-    return this.service.updateVariant(Number(variantId), dto);
+  updateVariant(
+    @Param("variantId") variantId: string,
+    @Body() dto: UpdateSupplierProductMeasurementVariantDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.updateVariant(
+      Number(variantId),
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   @Delete("variants/:variantId")
   @Permissions("suppliers.delete")
   @ApiOperation({ summary: "Delete a measurement variant" })
-  deleteVariant(@Param("variantId") variantId: string) {
-    return this.service.deleteVariant(Number(variantId));
+  deleteVariant(
+    @Param("variantId") variantId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.deleteVariant(
+      Number(variantId),
+      buildSupplierProductUserContext(req?.user),
+    );
   }
 
   // Orders
@@ -392,6 +588,40 @@ export class SuppliersHttpController {
       dateTo,
       locationId,
     });
+  }
+
+  /**
+   * Batch paginat — dashboard furnizor (implicit limit 15, max 15).
+   * GET /suppliers/orders/batch/paginated?supplier_ids=1&page=1&limit=15
+   */
+  @Get("orders/batch/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Listează comenzi furnizor cu paginare (dashboard tenant)" })
+  getOrdersBatchPaginated(
+    @Query("supplier_ids") supplierIdsRaw: string,
+    @Query("date_from") dateFrom?: string,
+    @Query("date_to") dateTo?: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    if (!supplierIdsRaw) {
+      return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
+    }
+    const supplierIds = supplierIdsRaw
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    if (supplierIds.length === 0) {
+      return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
+    }
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getSupplierOrdersBatchPaginated(
+      supplierIds,
+      { dateFrom, dateTo, locationId },
+      pageRaw,
+      limitRaw,
+    );
   }
 
   /**
@@ -473,7 +703,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/send-back-to-magazioner")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   sendBackToMagazioner(
     @Param("orderId") orderId: string,
     @Body() dto: SendBackToMagazionerDto,
@@ -528,8 +759,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("order-assignments/:assignmentId/approve")
-  @Permissions("order.approve")
-  @ApiOperation({ summary: "Marchează o atribuire ca finalizată" })
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Marchează o atribuire magazioner ca finalizată" })
   approveAssignment(
     @Param("assignmentId") assignmentId: string,
     @Headers("x-user-id") userId?: string,
@@ -539,7 +770,8 @@ export class SuppliersHttpController {
   }
 
   @Post("orders/:orderId/driver-assignments")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Atribuie o comandă unui șofer" })
   createDriverAssignment(
     @Param("orderId") orderId: string,
@@ -560,6 +792,24 @@ export class SuppliersHttpController {
     return this.service.getDriverUsedPriorities(Number(driverId), delivery_date);
   }
 
+  @Get("drivers/:driverId/orders/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Comenzi șofer paginate (dashboard șofer)" })
+  getDriverAssignmentsPaginated(
+    @Param("driverId") driverId: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getDriverAssignmentsPaginated(
+      Number(driverId),
+      locationId,
+      pageRaw,
+      limitRaw,
+    );
+  }
+
   @Get("drivers/:driverId/orders")
   @Permissions("order.read")
   @ApiOperation({ summary: "Obține comenzile atribuite unui șofer" })
@@ -572,10 +822,29 @@ export class SuppliersHttpController {
   }
 
   @Patch("driver-assignments/:assignmentId/complete")
-  @Permissions("order.approve")
+  /** Șoferii și conturile furnizor au `order.read`, nu `order.approve`. */
+  @PermissionsAny("order.approve", "order.read")
   @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
   completeDriverAssignment(@Param("assignmentId") assignmentId: string) {
     return this.service.completeDriverAssignment(Number(assignmentId));
+  }
+
+  @Get("storekeepers/:employeeId/orders/paginated")
+  @Permissions("order.read")
+  @ApiOperation({ summary: "Comenzi magazioner paginate (dashboard magazioner)" })
+  getStorekeeperOrdersPaginated(
+    @Param("employeeId") employeeId: string,
+    @Query("location_id") location_id?: string,
+    @Query("page") pageRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ) {
+    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    return this.service.getStorekeeperAssignmentsPaginated(
+      Number(employeeId),
+      locationId,
+      pageRaw,
+      limitRaw,
+    );
   }
 
   @Get("storekeepers/:employeeId/orders")
@@ -590,7 +859,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/status")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Actualizează statusul unei comenzi" })
   updateOrderStatus(
     @Param("orderId") orderId: string,
@@ -600,7 +870,8 @@ export class SuppliersHttpController {
   }
 
   @Patch("orders/:orderId/delivery-date")
-  @Permissions("order.update")
+  /** Conturile furnizor (tenant) au `suppliers.create`, nu `order.update`. */
+  @PermissionsAny("order.update", "suppliers.create")
   @ApiOperation({ summary: "Actualizează data de livrare a comenzii" })
   updateOrderDeliveryDate(
     @Param("orderId") orderId: string,

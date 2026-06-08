@@ -20,6 +20,10 @@ export class SupplierOrderItem {
   @Column()
   product_id: number;
 
+  /** Nomenclatură furnizor (supplier_products.id); null pe comenzi vechi */
+  @Column({ type: 'int', nullable: true })
+  supplier_product_id?: number | null;
+
   @Column({ nullable: true })
   variant_id?: number;
 

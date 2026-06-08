@@ -32,6 +32,119 @@ export class UsersService {
     private readonly httpService: HttpService,
   ) {}
 
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      'X-Internal-Service': 'auth-service',
+      'X-Service-Secret':
+        process.env.SERVICE_SECRET || 'default-service-secret',
+    };
+  }
+
+  /**
+   * Rezolvă company_id și company_type din locația implicită a angajatului.
+   */
+  async resolveCompanyContext(idEmployee: number): Promise<{
+    company_id: number | null;
+    company_type: 'furnizor' | 'client' | null;
+  }> {
+    try {
+      const employee = await this.findEmployeeById(idEmployee);
+      const locationId = employee?.work_location_default_id;
+      if (!locationId) {
+        return { company_id: null, company_type: null };
+      }
+
+      const locationsUrl =
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      const locationResponse = await firstValueFrom(
+        this.httpService.get(`${locationsUrl}/locations/${locationId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const location = locationResponse.data?.data || locationResponse.data;
+      const companyId = location?.company_id ?? location?.companyId ?? null;
+      if (!companyId) {
+        return { company_id: null, company_type: null };
+      }
+
+      const companiesUrl =
+        process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+      const companyResponse = await firstValueFrom(
+        this.httpService.get(`${companiesUrl}/companies/${companyId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const company = companyResponse.data?.data || companyResponse.data;
+      const companyType = company?.company_type ?? company?.companyType ?? null;
+      if (companyType !== 'furnizor' && companyType !== 'client') {
+        return { company_id: companyId, company_type: null };
+      }
+
+      return { company_id: companyId, company_type: companyType };
+    } catch (error) {
+      console.error(
+        `Eroare la rezolvarea contextului companiei pentru angajat ${idEmployee}:`,
+        error,
+      );
+      return { company_id: null, company_type: null };
+    }
+  }
+
+  /**
+   * Construiește payload-ul utilizator folosit la generarea JWT (login, refresh, 2FA).
+   */
+  async buildUserDataForToken(
+    idEmployee: number,
+    usersTableId: number,
+    options?: {
+      profile_image?: string | null;
+      is_2fa_active?: boolean;
+    },
+  ): Promise<{
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    phone: string;
+    profile_image: string | null;
+    birth_date: string;
+    department_id: number | null;
+    work_location_id: number | null;
+    company_id: number | null;
+    company_type: 'furnizor' | 'client' | null;
+    position_default_id: number | null;
+    roles: string[];
+    permissions: string[];
+    is_2fa_active?: boolean;
+  }> {
+    const employeeData = await this.findEmployeeById(idEmployee);
+    const { roles, permissions } = await this.resolveTokenRolesAndPermissions(
+      usersTableId,
+      employeeData?.position_default_id,
+    );
+    const companyContext = await this.resolveCompanyContext(idEmployee);
+
+    return {
+      id: idEmployee,
+      email: employeeData?.email || '',
+      first_name: employeeData?.first_name || '',
+      last_name: employeeData?.last_name || '',
+      phone: employeeData?.phone || '',
+      profile_image: options?.profile_image ?? null,
+      birth_date: employeeData?.birth_date || '',
+      department_id: employeeData?.department_default_id ?? null,
+      work_location_id: employeeData?.work_location_default_id ?? null,
+      company_id: companyContext.company_id,
+      company_type: companyContext.company_type,
+      position_default_id: employeeData?.position_default_id ?? null,
+      roles,
+      permissions,
+      ...(options?.is_2fa_active !== undefined
+        ? { is_2fa_active: options.is_2fa_active }
+        : {}),
+    };
+  }
+
   /**
    * Creează un utilizator nou
    */
@@ -405,6 +518,57 @@ export class UsersService {
   }
 
   /**
+   * Permisiuni din rolul auth (ex. magazioner id 5) — folosit când user_roles lipsește
+   * dar employees.position_default_id indică rol operațional.
+   */
+  async getRolesAndPermissionsByRoleName(
+    roleName: string,
+  ): Promise<{ roles: string[]; permissions: string[] }> {
+    const role = await this.roleRepository.findOne({ where: { name: roleName } });
+    if (!role) {
+      return { roles: [], permissions: [] };
+    }
+
+    const rolePermissions = await this.rolePermissionRepository
+      .createQueryBuilder('rp')
+      .leftJoinAndSelect('rp.permission', 'permission')
+      .where('rp.roleId = :roleId', { roleId: role.id })
+      .getMany();
+
+    const permissions = [
+      ...new Set(
+        rolePermissions
+          .map((rp) => rp.permission?.name)
+          .filter((name): name is string => typeof name === 'string' && name.length > 0),
+      ),
+    ];
+
+    return { roles: [role.name], permissions };
+  }
+
+  /**
+   * user_roles are prioritate; dacă lipsesc, derivăm din position_default_id (5=magazioner, 4=șofer).
+   */
+  private async resolveTokenRolesAndPermissions(
+    usersTableId: number,
+    positionDefaultId: number | null | undefined,
+  ): Promise<{ roles: string[]; permissions: string[] }> {
+    const fromUser = await this.getUserRolesAndPermissions(usersTableId);
+    if (fromUser.roles.length > 0 || fromUser.permissions.length > 0) {
+      return fromUser;
+    }
+
+    if (positionDefaultId === 5) {
+      return this.getRolesAndPermissionsByRoleName('magazioner');
+    }
+    if (positionDefaultId === 4) {
+      return this.getRolesAndPermissionsByRoleName('sofer');
+    }
+
+    return fromUser;
+  }
+
+  /**
    * Șterge un utilizator după id_employee. Șterge mai întâi rolurile din user_roles (FK către users), apoi userul.
    */
   async remove(id_employee: number): Promise<void> {
@@ -504,6 +668,7 @@ export class UsersService {
     birth_date: string | null;
     department_default_id: number | null;
     work_location_default_id: number | null;
+    position_default_id: number | null;
   } | null> {
     try {
       const response = await firstValueFrom(
@@ -534,6 +699,10 @@ export class UsersService {
         work_location_default_id:
           employee.work_location_default_id ||
           employee.workLocationDefaultId ||
+          null,
+        position_default_id:
+          employee.position_default_id ??
+          employee.positionDefaultId ??
           null,
       };
     } catch (error) {

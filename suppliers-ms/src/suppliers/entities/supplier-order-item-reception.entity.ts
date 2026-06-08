@@ -54,6 +54,7 @@ export class SupplierOrderItemReception {
   @Column({ type: 'datetime' })
   occurred_at: Date;
 
+  /** Legacy column name; new records store stock_transactions.id (ENTRY) from POST /stock/items. */
   @Column({ type: 'int', nullable: true })
   stock_item_id?: number;
 

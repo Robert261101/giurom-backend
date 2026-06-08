@@ -21,6 +21,10 @@ export class SupplierProduct {
   @Column()
   supplier_id: number;
 
+  /** Furnizor tenant company (companies.id); null for legacy client-only suppliers. */
+  @Column({ type: 'int', nullable: true })
+  company_id: number | null;
+
   @Column()
   product_id: number;
 

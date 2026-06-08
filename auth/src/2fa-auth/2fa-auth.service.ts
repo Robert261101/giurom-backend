@@ -163,28 +163,27 @@ export class TwoFactorAuthService {
       this.logger.log(`🔍 DEBUG: Încep generarea token-urilor pentru user: ${JSON.stringify(user)}`);
       
       try {
-        // Preia datele complete ale utilizatorului din microserviciul employees
         const employeeData = await this.usersService.findEmployeeByEmail(user.email);
-        this.logger.log(`🔍 DEBUG: Employee data: ${JSON.stringify(employeeData)}`);
-        
-        // Pregătește datele complete pentru token
-        const userDataForToken = {
-          id: user.userId,
-          email: employeeData?.email || user.email,
-          first_name: employeeData?.first_name || '',
-          last_name: employeeData?.last_name || '',
-          phone: employeeData?.phone || user.phone,
-          profile_image: user.profile_image,
-          birth_date: employeeData?.birth_date || '',
-          department_id: null,
-          work_location_id: null,
-          roles: user.roles || [],
-          permissions: user.permissions || [],
-          is_2fa_active: true
-        };
-        
+        if (!employeeData) {
+          throw new UnauthorizedException('Date utilizator lipsă. Completați din nou pasul 1.');
+        }
+
+        const localUser = await this.usersService.findByEmployeeId(employeeData.id);
+        if (!localUser) {
+          throw new UnauthorizedException('Utilizatorul nu a fost găsit.');
+        }
+
+        const userDataForToken = await this.usersService.buildUserDataForToken(
+          employeeData.id,
+          localUser.id,
+          {
+            profile_image: user.profile_image,
+            is_2fa_active: true,
+          },
+        );
+
         this.logger.log(`🔍 DEBUG: User data for token: ${JSON.stringify(userDataForToken)}`);
-        
+
         const tokens = await this.tokenRotationService.generateTokensWithRotation(userDataForToken);
         this.logger.log(`🔍 DEBUG: Token-uri generate cu succes: ${JSON.stringify(tokens)}`);
 

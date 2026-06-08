@@ -108,6 +108,18 @@ export class CreateCompanyDto {
   @IsIn(['activ', 'inactiv', 'suspendat'])
   status?: string = 'activ';
 
+  @ApiProperty({
+    description: 'Tip companie (furnizor sau client)',
+    example: 'client',
+    enum: ['furnizor', 'client'],
+    default: 'client',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @IsIn(['furnizor', 'client'])
+  company_type?: 'furnizor' | 'client' = 'client';
+
   @ApiProperty({ description: 'Note', example: 'Companie nou înregistrată', required: false })
   @IsString()
   @IsOptional()

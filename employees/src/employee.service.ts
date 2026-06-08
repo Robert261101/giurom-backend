@@ -182,6 +182,14 @@ export class EmployeeService {
       }
     }
 
+    if (
+      createEmployeeDto.work_location_default_id == null &&
+      selectedWorkLocationId != null &&
+      Number.isFinite(Number(selectedWorkLocationId))
+    ) {
+      createEmployeeDto.work_location_default_id = Number(selectedWorkLocationId);
+    }
+
     const employee = this.employeeRepository.create(createEmployeeDto);
     const savedEmployee = await this.employeeRepository.save(employee);
 

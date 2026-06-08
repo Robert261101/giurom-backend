@@ -19,6 +19,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       permissions: payload.permissions || [],
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,
+      company_type:
+        typeof payload.company_type === 'string' ? payload.company_type : null,
+      company_id:
+        payload.company_id != null && Number.isFinite(Number(payload.company_id))
+          ? Number(payload.company_id)
+          : null,
     };
   }
 }

@@ -9,14 +9,19 @@ import {
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, MoreThan, DeepPartial } from "typeorm";
+import { Repository, EntityManager, In } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { firstValueFrom, defaultIfEmpty } from "rxjs";
 import * as fs from "fs";
 import * as path from "path";
 import { Product } from "./entities/product.entity";
-import { Stock, StockStatus, StockSource } from "./entities/stock.entity";
+import {
+  Stock,
+  StockStatus,
+  StockSource,
+  StockLotStatus,
+} from "./entities/stock.entity";
 import {
   StockTransaction,
   TransactionType,
@@ -25,6 +30,7 @@ import { WasteRecord } from "./entities/waste-record.entity";
 import { WasteRequest } from "./entities/waste-request.entity";
 import { ConsumptionRecord } from "./entities/consumption-record.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
+import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
@@ -39,6 +45,11 @@ import { Category } from "./entities/category.entity";
 import { OrderList } from "./entities/order-list.entity";
 import { CreateOrderListDto } from "./dto/create-order-list.dto";
 import { UpdateOrderListDto } from "./dto/update-order-list.dto";
+import {
+  PaginatedStockResponse,
+  StockListQueryFilters,
+  StockLocationSummary,
+} from "./dto/paginated-stock.dto";
 
 @Injectable()
 export class StockService {
@@ -322,6 +333,74 @@ export class StockService {
     return this.normalizeProductPhoto(saved);
   }
 
+  async createProductAtLocation(
+    dto: CreateProductAtLocationDto,
+  ): Promise<{ product: Product; stock: Stock }> {
+    const locationId = Number(dto.location_id);
+    if (!Number.isFinite(locationId) || locationId <= 0) {
+      throw new BadRequestException("location_id invalid");
+    }
+
+    const queryRunner = this.productRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const productRepo = queryRunner.manager.getRepository(Product);
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+
+      const existingByName = await productRepo.findOne({
+        where: { name: dto.name },
+      });
+      if (existingByName) {
+        throw new ConflictException("Produsul există deja");
+      }
+
+      const skuTrimmed = dto.sku?.trim();
+      if (skuTrimmed) {
+        const existingBySku = await productRepo.findOne({
+          where: { sku: skuTrimmed },
+        });
+        if (existingBySku) {
+          throw new ConflictException("SKU-ul există deja");
+        }
+      }
+
+      const product = productRepo.create({
+        name: dto.name,
+        unit: dto.unit,
+        sku: skuTrimmed || undefined,
+        description: dto.description ?? undefined,
+        min_stock_level: dto.min_stock_level ?? undefined,
+        is_active: dto.is_active ?? true,
+        is_consumable: dto.is_consumable ?? false,
+        photo: dto.photo ?? undefined,
+      });
+      const savedProduct = await productRepo.save(product);
+
+      const stockRow = stockRepo.create({
+        product_id: savedProduct.id,
+        location_id: locationId,
+        location_key: this.locationKey(locationId),
+        quantity: 0,
+        status: StockStatus.VALID,
+      });
+      const savedStock = await stockRepo.save(stockRow);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        product: this.normalizeProductPhoto(savedProduct),
+        stock: savedStock,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findAllProducts(): Promise<Product[]> {
     const products = await this.productRepo.find();
     this.logger.log(`📦 [findAllProducts] Found ${products.length} products`);
@@ -337,13 +416,14 @@ export class StockService {
     return products.map((p) => this.normalizeProductPhoto(p));
   }
 
+  /** Produse din nomenclatorul global care au rând în stock pentru locația dată (existență, nu qty>0). */
   async findProductsByLocation(locationId: number): Promise<Product[]> {
-    // Returnează doar produsele care au stock items în locația specificată
     const productsWithStock = await this.productRepo
       .createQueryBuilder("product")
       .innerJoin("product.stocks", "stock")
-      .where("stock.location_id = :locationId", { locationId })
-      .andWhere("product.is_active = :isActive", { isActive: true })
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
       .distinct(true)
       .getMany();
 
@@ -422,101 +502,412 @@ export class StockService {
     await this.productRepo.remove(product);
   }
 
-  async createStock(dto: CreateStockDto): Promise<Stock> {
-    console.log(
-      `🔍 [StockService] Creating stock for product_id: ${dto.product_id}, quantity: ${dto.quantity}`
+  /** IFNULL(location_id, -1) — matches migrated DB location_key. */
+  private locationKey(locationId?: number | null): number {
+    return locationId != null && Number.isFinite(Number(locationId))
+      ? Number(locationId)
+      : -1;
+  }
+
+  private async findOrCreateAggregate(
+    productId: number,
+    locationId: number | null | undefined,
+    manager?: EntityManager,
+  ): Promise<Stock> {
+    const repo = manager ? manager.getRepository(Stock) : this.stockRepo;
+    const location_key = this.locationKey(locationId);
+    let row = await repo.findOne({
+      where: { product_id: productId, location_key },
+    });
+    if (!row) {
+      row = repo.create({
+        product_id: productId,
+        location_id: locationId ?? null,
+        location_key,
+        quantity: 0,
+        status: StockStatus.VALID,
+      });
+      row = await repo.save(row);
+    }
+    return row;
+  }
+
+  private applyAggregateStatus(stock: Stock, product?: Product | null): void {
+    const qty = Number(stock.quantity) || 0;
+    if (qty <= 0) {
+      stock.quantity = 0;
+      stock.status = StockStatus.VALID;
+      return;
+    }
+    if (
+      product?.min_stock_level != null &&
+      qty <= Number(product.min_stock_level)
+    ) {
+      stock.status = StockStatus.BELOW_MINIMUM;
+    } else {
+      stock.status = StockStatus.VALID;
+    }
+  }
+
+  /** FEFO open balance per ENTRY row after replaying prior EXIT movements. */
+  private async computeEntryOpenBalances(
+    productId: number,
+    locationKey: number | undefined,
+    txRepo: Repository<StockTransaction>,
+  ): Promise<Array<{ entry: StockTransaction; open: number }>> {
+    const entryQb = txRepo
+      .createQueryBuilder("tx")
+      .where("tx.product_id = :productId", { productId })
+      .andWhere("tx.type = :entry", { entry: TransactionType.ENTRY })
+      .andWhere("(tx.status IS NULL OR tx.status IN (:...statuses))", {
+        statuses: [StockLotStatus.VALID, StockLotStatus.BELOW_MINIMUM],
+      })
+      .orderBy("tx.expiration_date IS NULL", "ASC")
+      .addOrderBy("tx.expiration_date", "ASC")
+      .addOrderBy("tx.entry_date", "ASC")
+      .addOrderBy("tx.id", "ASC");
+
+    if (locationKey !== undefined) {
+      entryQb.andWhere("tx.location_key = :locationKey", { locationKey });
+    }
+
+    const entries = await entryQb.getMany();
+    const openMap = new Map<number, number>();
+    for (const entry of entries) {
+      openMap.set(entry.id, Number(entry.quantity) || 0);
+    }
+
+    const exitQb = txRepo
+      .createQueryBuilder("tx")
+      .where("tx.product_id = :productId", { productId })
+      .andWhere("tx.type = :exit", { exit: TransactionType.EXIT })
+      .orderBy("tx.timestamp", "ASC")
+      .addOrderBy("tx.id", "ASC");
+
+    if (locationKey !== undefined) {
+      exitQb.andWhere("tx.location_key = :locationKey", { locationKey });
+    }
+
+    const exits = await exitQb.getMany();
+    for (const exit of exits) {
+      let remaining = Number(exit.quantity) || 0;
+      for (const entry of entries) {
+        if (remaining <= 0) break;
+        const open = openMap.get(entry.id) || 0;
+        if (open <= 0) continue;
+        const take = Math.min(open, remaining);
+        openMap.set(entry.id, open - take);
+        remaining -= take;
+      }
+    }
+
+    return entries.map((entry) => ({
+      entry,
+      open: openMap.get(entry.id) || 0,
+    }));
+  }
+
+  private async getAvailableQuantity(
+    productId: number,
+    locationId?: number,
+  ): Promise<number> {
+    if (locationId != null && Number.isFinite(locationId)) {
+      const row = await this.stockRepo.findOne({
+        where: {
+          product_id: productId,
+          location_key: this.locationKey(locationId),
+        },
+      });
+      return row ? Number(row.quantity) || 0 : 0;
+    }
+
+    const result = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select("COALESCE(SUM(stock.quantity), 0)", "total")
+      .where("stock.product_id = :productId", { productId })
+      .getRawOne();
+    return parseFloat(result?.total || "0");
+  }
+
+  async createStock(
+    dto: CreateStockDto,
+  ): Promise<Stock & { entry_transaction_id: number }> {
+    this.logger.log(
+      `🔍 [createStock] product_id=${dto.product_id}, qty=${dto.quantity}, location_id=${dto.location_id ?? "null"}`,
     );
+
     const product = await this.findProduct(dto.product_id);
-    console.log(
-      `📦 [StockService] Found product ${product.id} (${product.name})`
-    );
+    const qty = Number(dto.quantity) || 0;
+    if (qty <= 0) {
+      throw new BadRequestException("Cantitatea trebuie să fie mai mare decât 0");
+    }
 
-    // NOTĂ: Am eliminat idempotency pentru supplier_order_item_id
-    // De ce? Pentru a permite recepții parțiale - fiecare recepție parțială trebuie să
-    // creeze un stock item SEPARAT cu entry_date diferit, astfel încât să vedem în rapoarte
-    // recepțiile separate pe zile diferite. Fiecare recepție parțială creează un stock item nou
-    // pentru a păstra istoricul precis al recepțiilor.
-
-    // Determine source: if supplier_order_item_id present and source not provided, treat as 'comanda'
-    const payload: DeepPartial<Stock> = {
-      ...(dto as any),
-      product,
-      status: StockStatus.VALID,
-    };
-    // If supplier_order_item_id present and no explicit source provided, treat as 'comanda'
     const hasSupplier =
       dto.supplier_order_item_id !== undefined &&
       dto.supplier_order_item_id !== null;
-    // Decide source: if created from a supplier order item, mark as COMANDA, otherwise MANUAL
-    if (hasSupplier && (dto as any).source === undefined) {
-      payload.source = StockSource.COMANDA;
-    } else if ((dto as any).source) {
-      payload.source =
-        (dto as any).source === "comanda"
-          ? StockSource.COMANDA
-          : StockSource.MANUAL;
-    } else {
-      payload.source = StockSource.MANUAL;
+
+    let source: StockSource = StockSource.MANUAL;
+    if (hasSupplier && dto.source === undefined) {
+      source = StockSource.COMANDA;
+    } else if (dto.source === "comanda") {
+      source = StockSource.COMANDA;
+    } else if (dto.source === "manual") {
+      source = StockSource.MANUAL;
     }
 
-    // Log the chosen source so it's obvious in runtime logs that order-based stocks get 'comanda'
-    this.logger.log(
-      `ℹ️ [createStock] Determined source for product ${dto.product_id}: ${payload.source}`
-    );
+    const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const stock = this.stockRepo.create(payload) as Stock;
-    const savedStock = await this.stockRepo.save<Stock>(stock);
-    this.logger.log(
-      `✅ [StockService] Created stock ID ${savedStock.id} for product ${product.id}${dto.supplier_order_item_id ? ` (from order item ${dto.supplier_order_item_id})` : ""}`
-    );
+    try {
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+      const txRepo = queryRunner.manager.getRepository(StockTransaction);
 
-    const sourceLabel = payload.source === StockSource.COMANDA ? "preluare comanda furnizor" : "introducere manuală";
-    const qty = Number(dto.quantity) ?? 0;
-    const unit = (product as any).unit ? ` ${(product as any).unit}` : "";
-    await this.sendStockNotification(
-      payload.source === StockSource.COMANDA ? "stock_in_comanda" : "stock_in_manual",
-      "Stoc intrare",
-      `A intrat ${qty}${unit} ${product.name} prin ${sourceLabel}.`,
-      product.id,
-      { stockId: savedStock.id, quantity: qty, source: payload.source, productName: product.name },
-      "/stoc",
-      (dto as any).location_id,
-    );
-    return savedStock;
+      if (dto.target) {
+        const existing = await txRepo.findOne({
+          where: {
+            type: TransactionType.ENTRY,
+            target: dto.target,
+          } as any,
+        });
+        if (existing) {
+          const existingStock = await stockRepo.findOne({
+            where: { id: existing.stock_id },
+            relations: ["product"],
+          });
+          if (!existingStock) {
+            throw new NotFoundException("Stocul agregat nu a fost găsit");
+          }
+          await queryRunner.commitTransaction();
+          return Object.assign(existingStock, {
+            entry_transaction_id: existing.id,
+          });
+        }
+      }
+
+      const aggregate = await this.findOrCreateAggregate(
+        dto.product_id,
+        dto.location_id,
+        queryRunner.manager,
+      );
+
+      aggregate.quantity = Number(aggregate.quantity) + qty;
+      this.applyAggregateStatus(aggregate, product);
+      const savedStock = await stockRepo.save(aggregate);
+
+      const entryTx = txRepo.create({
+        stock_id: savedStock.id,
+        product_id: dto.product_id,
+        location_id: dto.location_id ?? null,
+        location_key: this.locationKey(dto.location_id),
+        supplier_order_item_id: dto.supplier_order_item_id ?? null,
+        type: TransactionType.ENTRY,
+        quantity: qty,
+        price: dto.price,
+        entry_date: dto.entry_date,
+        expiration_date: dto.expiration_date,
+        source,
+        status: dto.status ?? StockLotStatus.VALID,
+        document_url: dto.document_url,
+        location:
+          dto.location_id != null ? String(dto.location_id) : "unset",
+        target:
+          dto.target ??
+          (hasSupplier
+            ? `entry:supplier-item:${dto.supplier_order_item_id}:${savedStock.id}:${Date.now()}`
+            : undefined),
+        reference_type: hasSupplier ? "supplier_reception" : "manual_entry",
+        reference_id: dto.supplier_order_item_id ?? null,
+      });
+      const savedTx = await txRepo.save(entryTx);
+
+      await queryRunner.commitTransaction();
+
+      const sourceLabel =
+        source === StockSource.COMANDA
+          ? "preluare comanda furnizor"
+          : "introducere manuală";
+      const unit = product.unit ? ` ${product.unit}` : "";
+      await this.sendStockNotification(
+        source === StockSource.COMANDA ? "stock_in_comanda" : "stock_in_manual",
+        "Stoc intrare",
+        `A intrat ${qty}${unit} ${product.name} prin ${sourceLabel}.`,
+        product.id,
+        {
+          stockId: savedStock.id,
+          transactionId: savedTx.id,
+          quantity: qty,
+          source,
+          productName: product.name,
+        },
+        "/stoc",
+        dto.location_id,
+      );
+
+      return Object.assign(savedStock, { entry_transaction_id: savedTx.id });
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async findAllStocks(
     locationId?: number,
-    productId?: number
+    productId?: number,
   ): Promise<Stock[]> {
     const queryBuilder = this.stockRepo
       .createQueryBuilder("stock")
       .leftJoinAndSelect("stock.product", "product");
 
-    if (locationId !== undefined || productId !== undefined) {
-      const conditions: string[] = [];
-      const params: any = {};
+    const conditions: string[] = [];
+    const params: Record<string, number> = {};
 
-      if (locationId !== undefined) {
-        conditions.push("stock.location_id = :locationId");
-        params.locationId = locationId;
-      }
-
-      if (productId !== undefined) {
-        conditions.push("stock.product_id = :productId");
-        params.productId = productId;
-      }
-
-      if (conditions.length > 0) {
-        queryBuilder.where(conditions.join(" AND "), params);
-      }
+    if (locationId !== undefined && Number.isFinite(locationId)) {
+      conditions.push("stock.location_key = :locationKey");
+      params.locationKey = this.locationKey(locationId);
     }
 
-    const stocks = await queryBuilder.getMany();
-    return stocks;
+    if (productId !== undefined && Number.isFinite(productId)) {
+      conditions.push("stock.product_id = :productId");
+      params.productId = productId;
+    }
+
+    if (conditions.length > 0) {
+      queryBuilder.where(conditions.join(" AND "), params);
+    }
+
+    queryBuilder.orderBy("product.name", "ASC").addOrderBy("stock.id", "ASC");
+
+    return queryBuilder.getMany();
   }
 
-  async findStock(id: number): Promise<Stock> {
+  private applyStockListFilters(
+    queryBuilder: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+    filters: StockListQueryFilters,
+  ): void {
+    const conditions: string[] = [];
+    const params: Record<string, string | number> = {};
+
+    if (filters.locationId !== undefined && Number.isFinite(filters.locationId)) {
+      conditions.push("stock.location_key = :locationKey");
+      params.locationKey = this.locationKey(filters.locationId);
+    }
+
+    if (filters.productId !== undefined && Number.isFinite(filters.productId)) {
+      conditions.push("stock.product_id = :productId");
+      params.productId = filters.productId;
+    }
+
+    const search = filters.search?.trim().toLowerCase();
+    if (search) {
+      conditions.push("LOWER(product.name) LIKE :search");
+      params.search = `%${search}%`;
+    }
+
+    if (filters.status && filters.status !== "all" && filters.status !== "none") {
+      conditions.push("stock.status = :stockStatus");
+      params.stockStatus = filters.status;
+    }
+
+    if (filters.stockFilter === "with_stock") {
+      conditions.push("stock.quantity > 0");
+    } else if (filters.stockFilter === "without_stock") {
+      conditions.push("stock.quantity <= 0");
+    }
+
+    if (conditions.length > 0) {
+      queryBuilder.where(conditions.join(" AND "), params);
+    }
+  }
+
+  private applyStockListSort(
+    queryBuilder: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+    filters: StockListQueryFilters,
+  ): void {
+    const sortDir = filters.sortDirection === "desc" ? "DESC" : "ASC";
+    switch (filters.sortBy) {
+      case "quantity":
+        queryBuilder.orderBy("stock.quantity", sortDir);
+        break;
+      case "status":
+        queryBuilder.orderBy("stock.status", sortDir);
+        break;
+      case "updated_at":
+        queryBuilder.orderBy("stock.updated_at", sortDir);
+        break;
+      default:
+        queryBuilder.orderBy("product.name", sortDir);
+        break;
+    }
+    queryBuilder.addOrderBy("stock.id", "ASC");
+  }
+
+  async getStockLocationSummary(
+    locationId: number,
+  ): Promise<StockLocationSummary> {
+    const row = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select(
+        "SUM(CASE WHEN stock.status IN ('below_minimum', 'expired') THEN 1 ELSE 0 END)",
+        "below_minimum_count",
+      )
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
+      .getRawOne<{ below_minimum_count: string | null }>();
+
+    return {
+      below_minimum_count: Number(row?.below_minimum_count) || 0,
+    };
+  }
+
+  async findAllStocksPaginated(
+    page = 1,
+    limit = 9,
+    filters: StockListQueryFilters = {},
+  ): Promise<PaginatedStockResponse<Stock>> {
+    const cappedLimit = Math.min(Math.max(1, Number(limit) || 9), 9);
+    const pageNum = Math.max(1, Number(page) || 1);
+    const skip = (pageNum - 1) * cappedLimit;
+
+    const countQb = this.stockRepo
+      .createQueryBuilder("stock")
+      .leftJoin("stock.product", "product");
+    this.applyStockListFilters(countQb, filters);
+
+    const dataQb = this.stockRepo
+      .createQueryBuilder("stock")
+      .leftJoinAndSelect("stock.product", "product");
+    this.applyStockListFilters(dataQb, filters);
+    this.applyStockListSort(dataQb, filters);
+
+    const total = await countQb.getCount();
+    const data = await dataQb.skip(skip).take(cappedLimit).getMany();
+    const totalPages = total > 0 ? Math.ceil(total / cappedLimit) : 0;
+
+    const pagination = {
+      page: pageNum,
+      limit: cappedLimit,
+      total,
+      totalPages,
+      hasNextPage: pageNum < totalPages,
+      hasPreviousPage: pageNum > 1,
+    };
+
+    const response: PaginatedStockResponse<Stock> = { data, pagination };
+
+    if (filters.locationId !== undefined && Number.isFinite(filters.locationId)) {
+      response.summary = await this.getStockLocationSummary(filters.locationId);
+    }
+
+    return response;
+  }
+
+  async findStock(
+    id: number,
+  ): Promise<Stock & { transactions?: StockTransaction[] }> {
     const s = await this.stockRepo.findOne({
       where: { id },
       relations: ["product", "transactions"],
@@ -527,12 +918,28 @@ export class StockService {
 
   async updateStock(id: number, dto: UpdateStockDto): Promise<Stock> {
     const stock = await this.findStock(id);
-    Object.assign(stock, dto);
+    if (dto.quantity !== undefined) {
+      stock.quantity = Number(dto.quantity);
+    }
+    if (dto.status !== undefined) {
+      stock.status = dto.status;
+    }
+    const product = await this.productRepo.findOne({
+      where: { id: stock.product_id },
+    });
+    if (dto.quantity !== undefined && dto.status === undefined) {
+      this.applyAggregateStatus(stock, product);
+    }
     return await this.stockRepo.save(stock);
   }
 
   async deleteStock(id: number): Promise<void> {
     const stock = await this.findStock(id);
+    if (Number(stock.quantity) > 0) {
+      throw new BadRequestException(
+        "Nu se poate șterge stocul agregat cât timp cantitatea este mai mare decât 0",
+      );
+    }
     await this.stockRepo.remove(stock);
   }
 
@@ -541,7 +948,7 @@ export class StockService {
    * Returnează lista de produse cu stoc insuficient (dacă există)
    */
   async checkStockAvailability(
-    products: Array<{ product_id: number; quantity: number }>
+    products: Array<{ product_id: number; quantity: number; location_id?: number }>,
   ): Promise<{
     available: boolean;
     missing: Array<{
@@ -559,21 +966,12 @@ export class StockService {
     }> = [];
 
     for (const item of products) {
-      const stocks = await this.stockRepo.find({
-        where: {
-          product_id: item.product_id,
-          status: StockStatus.VALID,
-          quantity: MoreThan(0),
-        },
-      });
-
-      const totalAvailable = stocks.reduce(
-        (sum, stock) => sum + Number(stock.quantity),
-        0
+      const totalAvailable = await this.getAvailableQuantity(
+        item.product_id,
+        item.location_id,
       );
 
       if (totalAvailable < item.quantity) {
-        // Get product name for better error message
         let productName: string | undefined;
         try {
           const product = await this.productRepo.findOne({
@@ -605,9 +1003,26 @@ export class StockService {
     target: string = "recipe-preparation",
     employeeId?: number,
     locationId?: number,
-    recipePreparationId?: number
+    recipePreparationId?: number,
   ): Promise<void> {
-    // Use explicit transaction handling
+    const resolvedLocationId =
+      locationId != null && Number.isFinite(Number(locationId))
+        ? Number(locationId)
+        : undefined;
+
+    this.logger.log(
+      `[consumeProduct] productId=${productId}, quantity=${quantity}, location_id=${resolvedLocationId ?? 'ALL'}, target=${target}`,
+    );
+
+    if (
+      target?.startsWith('supplier-order-') &&
+      resolvedLocationId === undefined
+    ) {
+      throw new BadRequestException(
+        'location_id este obligatoriu pentru scăderea stocului la comanda furnizor',
+      );
+    }
+
     const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -618,82 +1033,184 @@ export class StockService {
       const txRepo = queryRunner.manager.getRepository(StockTransaction);
       const consumptionRecordRepo =
         queryRunner.manager.getRepository(ConsumptionRecord);
-
-      const stocks = await stockRepo.find({
-        where: {
-          product_id: productId,
-          status: StockStatus.VALID,
-          quantity: MoreThan(0),
-        },
-        order: { expiration_date: "ASC", entry_date: "ASC" },
-      });
-
-      if (stocks.length === 0) {
-        throw new BadRequestException(
-          `Nu există stoc valid pentru produsul ${productId}`
-        );
-      }
-
-      const totalAvailable = stocks.reduce(
-        (sum, stock) => sum + Number(stock.quantity),
-        0
-      );
-
-      if (totalAvailable < quantity) {
-        throw new BadRequestException(
-          `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`
-        );
-      }
-
-      // Get product info for consumption record
       const productRepo = queryRunner.manager.getRepository(Product);
+
       const product = await productRepo.findOne({ where: { id: productId } });
       if (!product) {
         throw new NotFoundException(
-          `Produsul cu ID ${productId} nu a fost găsit`
+          `Produsul cu ID ${productId} nu a fost găsit`,
         );
       }
 
-      for (const stock of stocks) {
-        if (remaining <= 0) break;
-        const availableInStock = Number(stock.quantity);
-        const toConsume = Math.min(availableInStock, remaining);
+      // Idempotency pentru scăderea stocului la comenzile furnizor: dacă există deja
+      // un EXIT cu acest target, consumul a fost deja efectuat (ex. dublu-click pe
+      // confirmare sau comandă scăzută anterior). Sărim — fără dublă-scădere.
+      //
+      // Compatibilitate flux nou ↔ vechi: aceeași scădere per (order, item) poate fi
+      // marcată cu `supplier-order-confirm:*` (flux nou) sau `supplier-order-create:*`
+      // (flux vechi). Verificăm AMBELE variante ca să nu re-scădem o comandă deja
+      // scăzută sub fluxul vechi atunci când e confirmată acum.
+      if (target?.startsWith("supplier-order-")) {
+        const candidateTargets = new Set<string>([target]);
+        if (target.startsWith("supplier-order-confirm:")) {
+          candidateTargets.add(
+            target.replace("supplier-order-confirm:", "supplier-order-create:"),
+          );
+        } else if (target.startsWith("supplier-order-create:")) {
+          candidateTargets.add(
+            target.replace("supplier-order-create:", "supplier-order-confirm:"),
+          );
+        }
+        const existingExit = await txRepo.findOne({
+          where: {
+            type: TransactionType.EXIT,
+            target: In([...candidateTargets]),
+          } as any,
+        });
+        if (existingExit) {
+          this.logger.log(
+            `[consumeProduct] Idempotent skip: EXIT already exists for target=${existingExit.target} ` +
+              `(requested=${target}, checked=[${[...candidateTargets].join(", ")}], tx=${existingExit.id})`,
+          );
+          await queryRunner.commitTransaction();
+          return;
+        }
+      }
 
-        const tx = txRepo.create({
-          stock: stock,
-          stock_id: stock.id,
+      const locationKey =
+        resolvedLocationId !== undefined
+          ? this.locationKey(resolvedLocationId)
+          : undefined;
+
+      const totalAvailable = await (async () => {
+        if (locationKey !== undefined) {
+          const row = await stockRepo.findOne({
+            where: { product_id: productId, location_key: locationKey },
+          });
+          return row ? Number(row.quantity) || 0 : 0;
+        }
+        const raw = await stockRepo
+          .createQueryBuilder("stock")
+          .select("COALESCE(SUM(stock.quantity), 0)", "total")
+          .where("stock.product_id = :productId", { productId })
+          .getRawOne();
+        return parseFloat(raw?.total || "0");
+      })();
+
+      if (totalAvailable <= 0) {
+        throw new BadRequestException(
+          `Nu există stoc valid pentru produsul ${productId}`,
+        );
+      }
+
+      if (totalAvailable < quantity) {
+        throw new BadRequestException(
+          `Cantitate insuficientă în stoc pentru produsul ${productId}. Disponibil: ${totalAvailable}, Necesar: ${quantity}, Lipsesc: ${quantity - totalAvailable}`,
+        );
+      }
+
+      const openEntries = await this.computeEntryOpenBalances(
+        productId,
+        locationKey,
+        txRepo,
+      );
+      const totalFefoOpen = openEntries.reduce((sum, row) => sum + row.open, 0);
+
+      const touchedLocationKeys = new Set<number>();
+
+      for (const { entry, open } of openEntries) {
+        if (remaining <= 0) break;
+        if (open <= 0) continue;
+
+        const toConsume = Math.min(open, remaining);
+        const exitLocationId =
+          resolvedLocationId !== undefined
+            ? resolvedLocationId
+            : (entry.location_id ?? null);
+        const exitLocationKey =
+          resolvedLocationId !== undefined
+            ? this.locationKey(resolvedLocationId)
+            : entry.location_key;
+        const exitTx = txRepo.create({
+          stock_id: entry.stock_id,
+          product_id: productId,
+          location_id: exitLocationId,
+          location_key: exitLocationKey,
           type: TransactionType.EXIT,
           quantity: toConsume,
-          location: "production",
+          location: entry.location || "production",
           target,
+          reference_type: "consumption",
+          reference_id: entry.id,
         });
-        await txRepo.save(tx);
-
-        stock.quantity = availableInStock - toConsume;
-        stock.last_update = new Date();
-
-        // Update stock status if quantity is zero or below minimum
-        if (stock.quantity <= 0) {
-          stock.status = StockStatus.EXPIRED;
-        } else if (
-          product.min_stock_level &&
-          stock.quantity < product.min_stock_level
-        ) {
-          stock.status = StockStatus.BELOW_MINIMUM;
-        }
-
-        await stockRepo.save(stock);
+        await txRepo.save(exitTx);
+        touchedLocationKeys.add(exitLocationKey);
         remaining -= toConsume;
+      }
+
+      // Agregatul are stoc, dar ledger-ul ENTRY la locație e gol/desincronizat (ex. după migrare).
+      if (
+        remaining > 0 &&
+        locationKey !== undefined &&
+        totalAvailable >= quantity
+      ) {
+        const aggregate = await this.findOrCreateAggregate(
+          productId,
+          resolvedLocationId,
+          queryRunner.manager,
+        );
+        const exitTx = txRepo.create({
+          stock_id: aggregate.id,
+          product_id: productId,
+          location_id: resolvedLocationId ?? null,
+          location_key: locationKey,
+          type: TransactionType.EXIT,
+          quantity: remaining,
+          location:
+            resolvedLocationId != null ? String(resolvedLocationId) : "unset",
+          target,
+          reference_type: "consumption",
+          reference_id: null,
+        });
+        await txRepo.save(exitTx);
+        touchedLocationKeys.add(locationKey);
+        this.logger.warn(
+          `[consumeProduct] Aggregate fallback EXIT productId=${productId}, location_id=${resolvedLocationId}, qty=${remaining}, fefoOpen=${totalFefoOpen}`,
+        );
+        remaining = 0;
       }
 
       if (remaining > 0) {
         throw new BadRequestException(
-          `Eroare în logica de consum pentru produsul ${productId}. Cantitate rămasă neconsumat: ${remaining}`
+          `Eroare în logica FEFO pentru produsul ${productId}. Cantitate rămasă neconsumată: ${remaining}`,
         );
       }
 
-      // Create consumption record ONLY if it's not waste
-      // Waste records should be created separately in waste_records table
+      if (locationKey !== undefined) {
+        const aggregate = await this.findOrCreateAggregate(
+          productId,
+          resolvedLocationId,
+          queryRunner.manager,
+        );
+        aggregate.quantity = Math.max(0, Number(aggregate.quantity) - quantity);
+        this.applyAggregateStatus(aggregate, product);
+        await stockRepo.save(aggregate);
+      } else {
+        let toDeduct = quantity;
+        for (const key of touchedLocationKeys) {
+          if (toDeduct <= 0) break;
+          const aggregate = await stockRepo.findOne({
+            where: { product_id: productId, location_key: key },
+          });
+          if (!aggregate) continue;
+          const deduct = Math.min(Number(aggregate.quantity) || 0, toDeduct);
+          aggregate.quantity = Math.max(0, Number(aggregate.quantity) - deduct);
+          this.applyAggregateStatus(aggregate, product);
+          await stockRepo.save(aggregate);
+          toDeduct -= deduct;
+        }
+      }
+
       const isWaste =
         target === "waste" ||
         target?.toLowerCase().includes("waste") ||
@@ -705,7 +1222,7 @@ export class StockService {
           employee_id: employeeId,
           recipe_preparation_id: recipePreparationId,
           quantity,
-          location_id: locationId,
+          location_id: resolvedLocationId,
           consumed_at: new Date(),
           reason: `Consum pentru ${target}`,
           product,
@@ -713,21 +1230,22 @@ export class StockService {
         await consumptionRecordRepo.save(consumptionRecord);
       }
 
-      // Commit transaction
       await queryRunner.commitTransaction();
 
-      // Notificare ieșire stoc către admin + manager (aruncat este notificat din createWasteRecord)
       const isWasteTarget =
         target === "waste" ||
-        (target && (target.toLowerCase().includes("waste") || target.toLowerCase().includes("aruncat")));
+        (target &&
+          (target.toLowerCase().includes("waste") ||
+            target.toLowerCase().includes("aruncat")));
       if (!isWasteTarget && product) {
         const exitType =
-          target === "recipe-preparation" || (target && target.toLowerCase().includes("recipe"))
+          target === "recipe-preparation" ||
+          (target && target.toLowerCase().includes("recipe"))
             ? "stock_out_preparation"
             : "stock_out_consumed";
         const exitLabel =
           exitType === "stock_out_preparation" ? "preparare" : "consumat";
-        const unit = (product as any).unit ? ` ${(product as any).unit}` : "";
+        const unit = product.unit ? ` ${product.unit}` : "";
         await this.sendStockNotification(
           exitType,
           "Stoc ieșire",
@@ -735,65 +1253,49 @@ export class StockService {
           productId,
           { quantity, target, productName: product.name },
           "/stoc",
-          locationId,
+          resolvedLocationId,
         );
       }
     } catch (error) {
-      // Rollback transaction in case of error
       await queryRunner.rollbackTransaction();
       throw error;
     } finally {
-      // Release query runner
       await queryRunner.release();
     }
   }
 
   async createTransaction(
-    dto: CreateStockTransactionDto
+    dto: CreateStockTransactionDto,
   ): Promise<StockTransaction> {
-    console.log(
-      `🔍 [StockService] Starting createTransaction for stock_id: ${dto.stock_id}, type: ${dto.type}, quantity: ${dto.quantity}`
+    this.logger.log(
+      `🔍 [createTransaction] stock_id=${dto.stock_id}, type=${dto.type}, qty=${dto.quantity}`,
     );
 
-    // Use explicit transaction handling
     const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      console.log(
-        `🔄 [StockService] Starting database transaction for createTransaction`
-      );
-
       const stockRepo = queryRunner.manager.getRepository(Stock);
       const txRepo = queryRunner.manager.getRepository(StockTransaction);
 
       const stock = await stockRepo.findOne({
         where: { id: dto.stock_id },
-        relations: ["product", "transactions"],
+        relations: ["product"],
       });
       if (!stock) {
-        console.error(`❌ [StockService] Stock ${dto.stock_id} not found`);
         throw new NotFoundException("Stocul nu a fost găsit");
       }
 
-      console.log(
-        `📦 [StockService] Found stock ID ${dto.stock_id} for product ${stock.product_id} (${stock.product?.name}), current quantity: ${stock.quantity}`
-      );
-
-      // Idempotency: avoid duplicate transactions for the same stock_id + type + target
       if (dto.target) {
         const existingTx = await txRepo.findOne({
           where: {
             stock_id: stock.id,
-            type: dto.type as any,
+            type: dto.type as TransactionType,
             target: dto.target,
           } as any,
         });
         if (existingTx) {
-          console.log(
-            `↩️ [StockService] Returning existing transaction for stock_id: ${dto.stock_id}, type: ${dto.type}, target: ${dto.target}`
-          );
           await queryRunner.commitTransaction();
           return existingTx;
         }
@@ -804,85 +1306,76 @@ export class StockService {
 
       if (dto.type === TransactionType.ENTRY) {
         stock.quantity = oldQuantity + dtoQuantity;
-        console.log(
-          `📈 [StockService] ENTRY transaction: ${oldQuantity} + ${dtoQuantity} = ${stock.quantity}`
-        );
       } else {
         if (oldQuantity < dtoQuantity) {
-          console.error(
-            `❌ [StockService] Insufficient stock for stock_id: ${dto.stock_id}. Available: ${oldQuantity}, Requested: ${dtoQuantity}`
-          );
           throw new BadRequestException("Cantitate insuficientă în stoc");
         }
         stock.quantity = oldQuantity - dtoQuantity;
-        console.log(
-          `📉 [StockService] EXIT transaction: ${oldQuantity} - ${dtoQuantity} = ${stock.quantity}`
-        );
-      }
-      stock.last_update = new Date();
-
-      // Update stock status if quantity is zero or below minimum
-      console.log(
-        `🔄 [StockService] Checking stock status for stock ID ${stock.id}, quantity: ${stock.quantity}`
-      );
-      if (stock.quantity <= 0) {
-        stock.status = StockStatus.EXPIRED;
-        console.log(
-          `⚠️ [StockService] Stock ID ${stock.id} is now EXPIRED (quantity: ${stock.quantity})`
-        );
-      } else {
-        // Get the product to check min_stock_level
-        const productRepo = queryRunner.manager.getRepository(Product);
-        const product = await productRepo.findOne({
-          where: { id: stock.product_id },
-        });
-        if (
-          product &&
-          product.min_stock_level &&
-          stock.quantity < product.min_stock_level
-        ) {
-          stock.status = StockStatus.BELOW_MINIMUM;
-          console.log(
-            `⚠️ [StockService] Stock ID ${stock.id} is BELOW_MINIMUM (quantity: ${stock.quantity}, min: ${product.min_stock_level})`
-          );
-        } else if (stock.status !== StockStatus.EXPIRED) {
-          // Only set to VALID if it's not already expired
-          stock.status = StockStatus.VALID;
-          console.log(
-            `✅ [StockService] Stock ID ${stock.id} is now VALID (quantity: ${stock.quantity})`
-          );
-        }
       }
 
+      this.applyAggregateStatus(stock, stock.product);
       await stockRepo.save(stock);
-      console.log(`💾 [StockService] Saved updated stock ID ${stock.id}`);
 
-      const tx = txRepo.create({ ...dto, stock });
+      const tx = txRepo.create({
+        stock_id: stock.id,
+        product_id: stock.product_id,
+        location_id: stock.location_id ?? null,
+        location_key: stock.location_key,
+        supplier_order_item_id: dto.supplier_order_item_id ?? null,
+        type: dto.type,
+        quantity: dtoQuantity,
+        price: dto.price,
+        entry_date: dto.entry_date ?? new Date(),
+        expiration_date: dto.expiration_date,
+        source: dto.source,
+        status: dto.status ?? StockLotStatus.VALID,
+        document_url: dto.document_url,
+        location: dto.location,
+        target: dto.target,
+        reference_type: dto.reference_type,
+        reference_id: dto.reference_id,
+      });
       const savedTx = await txRepo.save(tx);
-      console.log(`💾 [StockService] Saved transaction ID ${savedTx.id}`);
 
-      // Commit transaction
       await queryRunner.commitTransaction();
-      console.log(
-        `✅ [StockService] Completed createTransaction for stock_id: ${dto.stock_id}`
-      );
       return savedTx;
     } catch (error) {
-      // Rollback transaction in case of error
       await queryRunner.rollbackTransaction();
-      console.error(
-        `❌ [StockService] Error in createTransaction for stock_id: ${dto.stock_id}`,
-        error
-      );
       throw error;
     } finally {
-      // Release query runner
       await queryRunner.release();
     }
   }
 
-  async findAllTransactions(): Promise<StockTransaction[]> {
-    return await this.txRepo.find({ relations: ["stock"] });
+  async findAllTransactions(filters?: {
+    product_id?: number;
+    location_id?: number;
+    stock_id?: number;
+    type?: TransactionType;
+  }): Promise<StockTransaction[]> {
+    const qb = this.txRepo
+      .createQueryBuilder("tx")
+      .leftJoinAndSelect("tx.stock", "stock")
+      .orderBy("tx.timestamp", "DESC");
+
+    if (filters?.product_id != null) {
+      qb.andWhere("tx.product_id = :productId", {
+        productId: filters.product_id,
+      });
+    }
+    if (filters?.location_id != null) {
+      qb.andWhere("tx.location_key = :locationKey", {
+        locationKey: this.locationKey(filters.location_id),
+      });
+    }
+    if (filters?.stock_id != null) {
+      qb.andWhere("tx.stock_id = :stockId", { stockId: filters.stock_id });
+    }
+    if (filters?.type != null) {
+      qb.andWhere("tx.type = :type", { type: filters.type });
+    }
+
+    return qb.getMany();
   }
 
   // === WASTE RECORDS ===
@@ -1013,40 +1506,54 @@ export class StockService {
       const now = new Date();
       const inSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-      // Find products with stock expiring within 7 days
-      const expiringStocks = await this.stockRepo.find({
-        where: {
-          expiration_date: MoreThan(now),
-          status: StockStatus.VALID,
-        },
-        relations: ["product"],
-      });
+      const entries = await this.txRepo
+        .createQueryBuilder("tx")
+        .leftJoinAndSelect("tx.stock", "stock")
+        .where("tx.type = :entry", { entry: TransactionType.ENTRY })
+        .andWhere("tx.expiration_date IS NOT NULL")
+        .andWhere("tx.expiration_date > :now", { now })
+        .andWhere("tx.expiration_date <= :inSevenDays", { inSevenDays })
+        .andWhere("(tx.status IS NULL OR tx.status = :valid)", {
+          valid: StockLotStatus.VALID,
+        })
+        .getMany();
 
-      for (const stock of expiringStocks) {
-        // Check if expiration_date exists
-        if (!stock.expiration_date) {
-          continue;
-        }
+      const notified = new Set<string>();
 
-        const expirationDate = new Date(stock.expiration_date);
-        if (expirationDate <= inSevenDays) {
-          // Send notification for expiring product
-          await this.sendStockNotification(
-            "stock_expiring_soon",
-            "Produs care expira in 7 zile",
-            `Produsul ${stock.product?.name} va expira la ${expirationDate.toLocaleDateString("ro-RO")}`,
-            stock.product_id,
-            {
-              productName: stock.product?.name,
-              expirationDate: expirationDate.toISOString(),
-              daysUntilExpiration: Math.ceil(
-                (expirationDate.getTime() - now.getTime()) /
-                  (24 * 60 * 60 * 1000)
-              ),
-            },
-            "/stoc" // Add target_url
-          );
-        }
+      for (const entry of entries) {
+        const openRows = await this.computeEntryOpenBalances(
+          entry.product_id,
+          entry.location_key,
+          this.txRepo,
+        );
+        const open =
+          openRows.find((row) => row.entry.id === entry.id)?.open ?? 0;
+        if (open <= 0) continue;
+
+        const product = await this.productRepo.findOne({
+          where: { id: entry.product_id },
+        });
+        const notifyKey = `${entry.product_id}:${entry.location_key}:${entry.expiration_date}`;
+        if (notified.has(notifyKey)) continue;
+        notified.add(notifyKey);
+
+        const expirationDate = new Date(entry.expiration_date!);
+        await this.sendStockNotification(
+          "stock_expiring_soon",
+          "Produs care expira in 7 zile",
+          `Produsul ${product?.name ?? entry.product_id} va expira la ${expirationDate.toLocaleDateString("ro-RO")}`,
+          entry.product_id,
+          {
+            productName: product?.name,
+            expirationDate: expirationDate.toISOString(),
+            daysUntilExpiration: Math.ceil(
+              (expirationDate.getTime() - now.getTime()) /
+                (24 * 60 * 60 * 1000),
+            ),
+          },
+          "/stoc",
+          entry.location_id ?? undefined,
+        );
       }
     } catch (error) {
       console.error("Error checking expiring products:", error);
@@ -1056,27 +1563,22 @@ export class StockService {
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async checkLowStockProducts(): Promise<void> {
     try {
-      // Get all products with their total stock quantities
       const products = await this.productRepo.find();
 
       for (const product of products) {
-        // Calculate total quantity for this product across all valid stock entries
         const totalQuantity = await this.stockRepo
           .createQueryBuilder("stock")
-          .select("SUM(stock.quantity)", "total")
+          .select("COALESCE(SUM(stock.quantity), 0)", "total")
           .where("stock.product_id = :productId", { productId: product.id })
-          .andWhere("stock.status = :status", { status: StockStatus.VALID })
           .getRawOne();
 
         const quantity = parseFloat(totalQuantity?.total || "0");
 
-        // Check if the product has a minimum stock level defined and if quantity is at or below that level
         if (
           product.min_stock_level &&
           quantity <= product.min_stock_level &&
           quantity > 0
         ) {
-          // Send notification for low stock product
           await this.sendStockNotification(
             "stock_low_quantity",
             "Stoc minim atins",
@@ -1087,7 +1589,7 @@ export class StockService {
               currentQuantity: quantity,
               threshold: product.min_stock_level,
             },
-            "/stoc" // Add target_url
+            "/stoc",
           );
         }
       }
