@@ -21,7 +21,7 @@ export class ExecutionController {
 
   @Post()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('execution.create')
+  @Permissions('execution.create', 'order.read', 'assignment.read_own')
   @ApiOperation({ summary: 'Creează o execuție nouă' })
   @ApiBody({
     description: 'Datele pentru crearea execuției',
@@ -77,13 +77,20 @@ export class ExecutionController {
   @ApiResponse({ status: 400, description: 'Date invalide' })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  create(@Body() createExecutionDto: CreateExecutionDto): Promise<{ execution: TaskExecution; points: number; isOverdue: boolean; message: string }> {
-    return this.executionService.create(createExecutionDto);
+  create(@Request() req, @Body() createExecutionDto: CreateExecutionDto): Promise<{ execution: TaskExecution; points: number; isOverdue: boolean; message: string }> {
+    return this.executionService.create(createExecutionDto, req.user);
   }
 
   @Get()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all')
+  @Permissions(
+    'execution.read_own',
+    'execution.read_location',
+    'execution.read_company',
+    'execution.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține execuțiile în funcție de permisiuni' })
   @ApiResponse({ 
     status: 200, 
@@ -104,7 +111,7 @@ export class ExecutionController {
     const sd = startDate ? new Date(startDate) : undefined;
     const ed = endDate ? new Date(endDate) : undefined;
     const assignmentId = assignment_id ? parseInt(assignment_id, 10) : undefined;
-    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed, assignmentId);
+    return this.executionService.findAll(req.user, includeAssignment === 'true', locationId, sd, ed, assignmentId, req.headers?.authorization as string | undefined);
   }
 
   @Get('daily-task-points-list')
@@ -327,6 +334,17 @@ export class ExecutionController {
   }
 
   @Get('daily-points/:employeeId/:workDate')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    'execution.read_own',
+    'execution.read_location',
+    'execution.read_company',
+    'execution.read_all',
+    'suppliers.create',
+    'assignment.read_own',
+    'assignment.read_all',
+    'order.read',
+  )
   @ApiOperation({ summary: 'Obține punctajul zilnic pentru un angajat' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiParam({ name: 'workDate', description: 'Data de lucru (YYYY-MM-DD)' })
@@ -336,11 +354,20 @@ export class ExecutionController {
     type: EmployeeDailyPoints 
   })
   @ApiResponse({ status: 404, description: 'Punctajul nu a fost găsit' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără acces' })
   getDailyPoints(
+    @Request() req,
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Param('workDate') workDate: string
   ): Promise<EmployeeDailyPoints> {
-    return this.executionService.getEmployeeDailyPoints(employeeId, workDate);
+    const auth = req.headers?.authorization as string | undefined;
+    return this.executionService.getEmployeeDailyPoints(
+      employeeId,
+      workDate,
+      req.user,
+      auth,
+    );
   }
 
   @Post('daily-task-points')
@@ -356,6 +383,17 @@ export class ExecutionController {
   }
 
   @Get('employee-points/:employeeId')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    'execution.read_own',
+    'execution.read_location',
+    'execution.read_company',
+    'execution.read_all',
+    'suppliers.create',
+    'assignment.read_own',
+    'assignment.read_all',
+    'order.read',
+  )
   @ApiOperation({ summary: 'Obține punctajul unui angajat pentru o perioadă' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({ 
@@ -363,15 +401,36 @@ export class ExecutionController {
     description: 'Punctajul pentru perioada specificată',
     type: [EmployeeDailyPoints] 
   })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără acces' })
   getEmployeePointsForRange(
+    @Request() req,
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string
   ): Promise<EmployeeDailyPoints[]> {
-    return this.executionService.getEmployeePointsForDateRange(employeeId, startDate, endDate);
+    const auth = req.headers?.authorization as string | undefined;
+    return this.executionService.getEmployeePointsForDateRange(
+      employeeId,
+      startDate,
+      endDate,
+      req.user,
+      auth,
+    );
   }
 
   @Get('employee-total-points/:employeeId')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    'execution.read_own',
+    'execution.read_location',
+    'execution.read_company',
+    'execution.read_all',
+    'suppliers.create',
+    'assignment.read_own',
+    'assignment.read_all',
+    'order.read',
+  )
   @ApiOperation({ summary: 'Calculează punctajul total al unui angajat pentru o perioadă' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({ 
@@ -379,12 +438,22 @@ export class ExecutionController {
     description: 'Punctajul total pentru perioada specificată',
     schema: { type: 'number' }
   })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără acces' })
   getEmployeeTotalPoints(
+    @Request() req,
     @Param('employeeId', ParseIntPipe) employeeId: number,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string
   ): Promise<number> {
-    return this.executionService.calculateTotalPointsForEmployee(employeeId, startDate, endDate);
+    const auth = req.headers?.authorization as string | undefined;
+    return this.executionService.calculateTotalPointsForEmployee(
+      employeeId,
+      startDate,
+      endDate,
+      req.user,
+      auth,
+    );
   }
 
   @Post('process-overdue-tasks')
@@ -470,7 +539,7 @@ export class ExecutionController {
   // === TASK IMAGE UPLOAD ===
   @Post('upload-image')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('execution.create')
+  @Permissions('execution.create', 'order.read', 'assignment.read_own')
   async uploadTaskImage(@Body() payload: { fileName: string; content: string }) {
     const imageUrl = await this.executionService.uploadTaskImage(payload.fileName, payload.content);
     return { imageUrl };

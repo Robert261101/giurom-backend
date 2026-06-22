@@ -13,6 +13,7 @@ import { WasteRequest } from './stock/entities/waste-request.entity';
 import { ConsumptionRecord } from './stock/entities/consumption-record.entity';
 import { Category } from './stock/entities/category.entity';
 import { OrderList } from './stock/entities/order-list.entity';
+import { ProductLocationOverride } from './stock/entities/product-location-override.entity';
 import { StockService } from './stock/stock.service';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
@@ -49,7 +50,7 @@ import { CategoryService } from './stock/category.service';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest],
+      entities: [Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -59,7 +60,7 @@ import { CategoryService } from './stock/category.service';
         charset: 'utf8mb4',
       },
     }),
-    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest]),
+    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride]),
   ],
   controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController],
   providers: [

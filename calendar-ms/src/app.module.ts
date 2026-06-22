@@ -4,9 +4,7 @@ import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CalendarEvent } from './entities/calendar-event.entity';
-import { RecurrenceRule } from './entities/recurrence-rule.entity';
-import { ShiftChangeRequests } from './entities/shift-change-requests.entity';
-import { LeaveRequest } from './entities/leave-request.entity';
+import { CalendarEventParticipant } from './entities/calendar-event-participant.entity';
 import { EventCategory } from './entities/event-category.entity';
 import { CalendarService } from './calendar.service';
 import { EventCategoryService } from './event-category.service';
@@ -40,18 +38,12 @@ import { CalendarMicroController } from './calendar.micro.controller';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [
-        CalendarEvent,
-        RecurrenceRule,
-        ShiftChangeRequests,
-        LeaveRequest,
-        EventCategory,
-      ],
+      entities: [CalendarEvent, CalendarEventParticipant, EventCategory],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
-    TypeOrmModule.forFeature([CalendarEvent, RecurrenceRule, ShiftChangeRequests, LeaveRequest, EventCategory]),
+    TypeOrmModule.forFeature([CalendarEvent, CalendarEventParticipant, EventCategory]),
   ],
   controllers: [CalendarController, EventCategoryController, CalendarMicroController],
   providers: [

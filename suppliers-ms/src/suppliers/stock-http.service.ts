@@ -427,6 +427,25 @@ export class StockHttpService {
     }
   }
 
+  async updateProductAtLocation(
+    productId: number,
+    locationId: number,
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.stockServiceUrl}/stock/products/${productId}/at-location?location_id=${locationId}`;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.patch(url, payload, { headers: this.internalHeaders() }),
+      );
+      return response.data as Record<string, unknown>;
+    } catch (error: any) {
+      this.logger.error(
+        `❌ [StockHttpService] updateProductAtLocation failed productId=${productId}, locationId=${locationId}: ${error?.message ?? error}`,
+      );
+      throw error;
+    }
+  }
+
   async uploadProductImage(
     fileName: string,
     base64Content: string,
@@ -451,6 +470,35 @@ export class StockHttpService {
       );
       throw error;
     }
+  }
+
+  async getProductPhotosByIds(
+    productIds: number[],
+  ): Promise<Map<number, string | null>> {
+    const uniqueIds = [
+      ...new Set(
+        productIds.filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    const photoMap = new Map<number, string | null>();
+    await Promise.all(
+      uniqueIds.map(async (productId) => {
+        const url = `${this.stockServiceUrl}/stock/products/${productId}`;
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(url, { headers: this.internalHeaders() }),
+          );
+          const photo = (response.data as { photo?: string | null })?.photo ?? null;
+          photoMap.set(
+            productId,
+            photo != null && String(photo).trim() !== '' ? String(photo) : null,
+          );
+        } catch {
+          photoMap.set(productId, null);
+        }
+      }),
+    );
+    return photoMap;
   }
 
   /**

@@ -8,6 +8,22 @@ import { ShiftChangeRequest, ShiftChangeStatus } from './entities/shift-change-r
 import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.dto';
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
 import { FilterShiftChangeRequestsDto } from './dto/filter-shift-change-requests.dto';
+import {
+  fetchColleagueIdsByLocation,
+  fetchOperationalColleagueIds,
+} from '../operational-colleague-scope';
+import {
+  assertJwtEmployeeIdConsistency,
+  getCanonicalEmployeeId,
+  isFurnizorSupplierAdmin,
+  isLeaveAdminUser,
+  isOperationalStaffUser,
+  type LeaveAccessUser,
+} from '../leave-requests/leave-request-access';
+import {
+  attachShiftChangeDisplayNames,
+  fetchEmployeeDisplayNames,
+} from '../employee-display-names';
 
 @Injectable()
 export class ShiftChangeRequestsService {
@@ -59,18 +75,23 @@ export class ShiftChangeRequestsService {
 
   // Creare cerere de schimb de tură
   async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
+    const employeesBase =
+      process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
+    const internalHeaders = {
+      'x-internal-service': 'requests',
+      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+    };
+
     // Verifică dacă angajatul care cere schimbul există și obține location_id prin HTTP call
     let locationId: number | undefined = dto.location_id;
+    let employeeData: any;
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
-          headers: {
-            'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
-          }
-        })
+        this.httpService.get(`${employeesBase}/employees/${dto.employee_id}`, {
+          headers: internalHeaders,
+        }),
       );
-      const employeeData = response.data as any;
+      employeeData = response.data as any;
       if (!employeeData) {
         this.logger.error(`Employee with ID ${dto.employee_id} not found`);
         throw new NotFoundException('Angajatul care cere schimbul nu a fost găsit');
@@ -81,29 +102,72 @@ export class ShiftChangeRequestsService {
         locationId = employeeData.work_location_default_id;
       }
     } catch (error) {
+      if (error instanceof NotFoundException) throw error;
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul care cere schimbul nu a fost găsit');
     }
 
-    // Verifică dacă angajatul înlocuitor există prin HTTP call
-    try {
-      await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.replacement_id}`, {
-          headers: {
-            'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
-          }
-        })
+    if (!locationId || !Number.isFinite(Number(locationId)) || Number(locationId) <= 0) {
+      throw new BadRequestException(
+        'Locația de lucru a angajatului nu a putut fi determinată',
       );
-    } catch (error) {
-      this.logger.error(`Replacement employee with ID ${dto.replacement_id} not found: ${error.message}`);
-      throw new NotFoundException('Angajatul înlocuitor nu a fost găsit');
+    }
+
+    if (
+      dto.location_id != null &&
+      Number.isFinite(Number(dto.location_id)) &&
+      Number(dto.location_id) > 0 &&
+      Number(dto.location_id) !== Number(locationId)
+    ) {
+      throw new ForbiddenException(
+        'location_id nu corespunde locației angajatului autentificat',
+      );
     }
 
     // Autorizare: angajatul poate crea cereri doar pentru sine
     if (currentUserId && currentUserId !== dto.employee_id) {
       this.logger.warn(`User ${currentUserId} attempted to create shift change request for employee ${dto.employee_id}`);
       throw new ForbiddenException('Nu poți crea cereri de schimb de tură pentru alți angajați');
+    }
+
+    // Verifică dacă angajatul înlocuitor există și aparține aceleiași locații
+    let replacementData: any;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${employeesBase}/employees/${dto.replacement_id}`, {
+          headers: internalHeaders,
+        }),
+      );
+      replacementData = response.data;
+      if (!replacementData) {
+        throw new NotFoundException('Angajatul înlocuitor nu a fost găsit');
+      }
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      this.logger.error(`Replacement employee with ID ${dto.replacement_id} not found: ${error.message}`);
+      throw new NotFoundException('Angajatul înlocuitor nu a fost găsit');
+    }
+
+    const colleagueIds = await fetchColleagueIdsByLocation(
+      this.httpService,
+      Number(locationId),
+    );
+    if (!colleagueIds.includes(dto.replacement_id)) {
+      this.logger.warn(
+        `Replacement ${dto.replacement_id} not in colleague scope for location ${locationId}`,
+      );
+      throw new ForbiddenException(
+        'Angajatul înlocuitor nu face parte din aceeași locație de lucru',
+      );
+    }
+
+    if (!employeeData.is_active) {
+      throw new BadRequestException('Angajatul care cere schimbul nu este activ');
+    }
+    if (!replacementData.is_active) {
+      throw new BadRequestException('Angajatul înlocuitor nu este activ');
     }
 
     // Validări pentru date
@@ -193,24 +257,150 @@ export class ShiftChangeRequestsService {
     return this.findOne(savedRequest.id);
   }
 
+  private suppliersBaseUrl(): string {
+    return (
+      process.env.SUPPLIERS_HTTP_URL ||
+      process.env.SUPPLIERS_SERVICE_URL ||
+      'http://localhost:3007'
+    );
+  }
+
+  private async fetchSupplierStaffEmployeeIds(
+    authorization?: string,
+  ): Promise<number[]> {
+    const base = this.suppliersBaseUrl();
+    const headers: Record<string, string> = {};
+    if (authorization) {
+      headers.Authorization = authorization;
+    }
+    try {
+      const myResp = await firstValueFrom(
+        this.httpService.get(`${base}/suppliers/my-supplier`, {
+          headers,
+          timeout: 8000,
+        }),
+      );
+      const supplierId = Number(myResp.data?.id);
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        return [];
+      }
+      const [driversResp, warehouseResp] = await Promise.all([
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/drivers`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/warehouse`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+      ]);
+      const ids = new Set<number>();
+      for (const row of [...(driversResp.data || []), ...(warehouseResp.data || [])]) {
+        const eid = Number(row?.employee_id);
+        if (Number.isFinite(eid) && eid > 0) {
+          ids.add(eid);
+        }
+      }
+      return [...ids];
+    } catch (error: any) {
+      this.logger.warn(
+        `fetchSupplierStaffEmployeeIds failed: ${error?.message || error}`,
+      );
+      return [];
+    }
+  }
+
+  private async assertShiftChangeReadAccess(
+    request: ShiftChangeRequest,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<void> {
+    if (!user) {
+      return;
+    }
+    assertJwtEmployeeIdConsistency(user);
+
+    if (isLeaveAdminUser(user)) {
+      return;
+    }
+
+    if (isFurnizorSupplierAdmin(user)) {
+      const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (
+        !staffIds.includes(request.employee_id) ||
+        !staffIds.includes(request.replacement_id)
+      ) {
+        throw new ForbiddenException(
+          'Cererea nu aparține staff-ului furnizorului autentificat',
+        );
+      }
+      return;
+    }
+
+    if (isOperationalStaffUser(user)) {
+      const colleagueIds = await fetchOperationalColleagueIds(
+        this.httpService,
+        user as LeaveAccessUser & {
+          work_location_id?: number;
+          work_location_default_id?: number;
+        },
+      );
+      const involved =
+        colleagueIds.includes(request.employee_id) ||
+        colleagueIds.includes(request.replacement_id);
+      if (!involved) {
+        throw new ForbiddenException('Nu aveți acces la această cerere');
+      }
+      return;
+    }
+
+    const selfId = getCanonicalEmployeeId(user);
+    if (selfId == null) {
+      throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
+    }
+    const isInvolved =
+      request.employee_id === selfId || request.replacement_id === selfId;
+    if (!isInvolved) {
+      throw new ForbiddenException(
+        'Nu ai permisiunea să vezi această cerere de schimb de tură',
+      );
+    }
+  }
+
   // Listare cereri cu filtrare
-  async findAll(filters: FilterShiftChangeRequestsDto, currentUserId?: number): Promise<ShiftChangeRequest[]> {
+  async findAll(
+    filters: FilterShiftChangeRequestsDto,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest[]> {
     const queryBuilder = this.shiftChangeRepo.createQueryBuilder('scr');
-      // Employee relations removed - using HTTP calls to employees microservice
+
+    if (!user) {
+      throw new ForbiddenException('Utilizator neautentificat');
+    }
+    assertJwtEmployeeIdConsistency(user);
 
     // Filtrare pe status
     if (filters.status) {
       queryBuilder.andWhere('scr.status = :status', { status: filters.status });
     }
 
-    // Filtrare pe angajatul care cere schimbul
-    if (filters.employee_id) {
-      queryBuilder.andWhere('scr.employee_id = :employeeId', { employeeId: filters.employee_id });
+    const requestedEmployeeId = filters.employee_id;
+    if (requestedEmployeeId) {
+      queryBuilder.andWhere('scr.employee_id = :employeeId', {
+        employeeId: requestedEmployeeId,
+      });
     }
 
     // Filtrare pe angajatul înlocuitor
     if (filters.replacement_id) {
-      queryBuilder.andWhere('scr.replacement_id = :replacementId', { replacementId: filters.replacement_id });
+      queryBuilder.andWhere('scr.replacement_id = :replacementId', {
+        replacementId: filters.replacement_id,
+      });
     }
 
     // Filtrare pe perioada
@@ -235,31 +425,87 @@ export class ShiftChangeRequestsService {
       queryBuilder.andWhere('scr.location_id = :locationId', { locationId: filters.location_id });
     }
 
-    // Autorizare: angajații pot vedea doar cererile în care sunt implicați
-    if (currentUserId && !this.isManager(currentUserId)) {
+    // Autorizare pe scope
+    if (isOperationalStaffUser(user)) {
+      const selfId = getCanonicalEmployeeId(user);
+      if (selfId == null) {
+        throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
+      }
+      const colleagueIds = await fetchOperationalColleagueIds(
+        this.httpService,
+        user as LeaveAccessUser & {
+          work_location_id?: number;
+          work_location_default_id?: number;
+        },
+      );
+      if (requestedEmployeeId != null) {
+        if (!colleagueIds.includes(requestedEmployeeId)) {
+          throw new ForbiddenException('Nu aveți acces la cererile acestui angajat');
+        }
+      } else if (colleagueIds.length > 0) {
+        queryBuilder.andWhere(
+          '(scr.employee_id IN (:...colleagueIds) OR scr.replacement_id IN (:...colleagueIds))',
+          { colleagueIds },
+        );
+      } else {
+        queryBuilder.andWhere(
+          '(scr.employee_id = :selfId OR scr.replacement_id = :selfId)',
+          { selfId },
+        );
+      }
+    } else if (isLeaveAdminUser(user)) {
+      // Admin — filtrele din query rămân active
+    } else if (isFurnizorSupplierAdmin(user)) {
+      const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (requestedEmployeeId) {
+        if (!staffIds.includes(requestedEmployeeId)) {
+          throw new ForbiddenException(
+            'Angajatul nu aparține furnizorului autentificat',
+          );
+        }
+      } else if (staffIds.length > 0) {
+        queryBuilder.andWhere('scr.employee_id IN (:...staffIds)', { staffIds });
+        queryBuilder.andWhere('scr.replacement_id IN (:...staffIds)', { staffIds });
+      } else {
+        queryBuilder.andWhere('1 = 0');
+      }
+    } else {
+      const selfId = getCanonicalEmployeeId(user);
+      if (selfId == null) {
+        throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
+      }
       queryBuilder.andWhere(
-        '(scr.employee_id = :currentUserId OR scr.replacement_id = :currentUserId)',
-        { currentUserId }
+        '(scr.employee_id = :selfId OR scr.replacement_id = :selfId)',
+        { selfId },
       );
     }
 
     queryBuilder.orderBy('scr.created_at', 'DESC');
 
     const requests = await queryBuilder.getMany();
-    
-    return requests;
+    const nameById = await fetchEmployeeDisplayNames(
+      this.httpService,
+      requests.flatMap((r) => [r.employee_id, r.replacement_id]),
+    );
+    return attachShiftChangeDisplayNames(requests, nameById);
   }
 
   // Obținere cereri în așteptare
-  async findPending(currentUserId?: number): Promise<ShiftChangeRequest[]> {
-    return this.findAll({ status: ShiftChangeStatus.PENDING }, currentUserId);
+  async findPending(
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest[]> {
+    return this.findAll({ status: ShiftChangeStatus.PENDING }, user, authorization);
   }
 
   // Obținere cerere specifică
-  async findOne(id: number, currentUserId?: number): Promise<ShiftChangeRequest> {
+  async findOne(
+    id: number,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest> {
     const shiftChangeRequest = await this.shiftChangeRepo.findOne({
       where: { id },
-      // Employee relations removed - using HTTP calls to employees microservice
     });
 
     if (!shiftChangeRequest) {
@@ -267,23 +513,25 @@ export class ShiftChangeRequestsService {
       throw new NotFoundException('Cererea de schimb de tură nu a fost găsită');
     }
 
-    // Autorizare: angajatul poate vedea doar cererile în care este implicat
-    if (currentUserId && !this.isManager(currentUserId)) {
-      const isInvolved = shiftChangeRequest.employee_id === currentUserId || 
-                        shiftChangeRequest.replacement_id === currentUserId;
-      
-      if (!isInvolved) {
-        this.logger.warn(`User ${currentUserId} attempted to access shift change request ${id} without permission`);
-        throw new ForbiddenException('Nu ai permisiunea să vezi această cerere de schimb de tură');
-      }
+    if (user) {
+      await this.assertShiftChangeReadAccess(
+        shiftChangeRequest,
+        user,
+        authorization,
+      );
     }
 
     return shiftChangeRequest;
   }
 
   // Actualizare status cerere (aprobare/respingere)
-  async updateStatus(id: number, dto: UpdateShiftChangeStatusDto, currentUserId?: number): Promise<ShiftChangeRequest> {
-    const shiftChangeRequest = await this.findOne(id);
+  async updateStatus(
+    id: number,
+    dto: UpdateShiftChangeStatusDto,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest> {
+    const shiftChangeRequest = await this.findOne(id, user, authorization);
 
     // Verifică dacă reviewerul există prin HTTP call
     try {
@@ -300,10 +548,22 @@ export class ShiftChangeRequestsService {
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
-    // Autorizare: doar managerii pot aproba/respinge cereri
-    if (currentUserId && !this.isManager(currentUserId)) {
-      this.logger.warn(`Non-manager user ${currentUserId} attempted to update shift change request status`);
+    // Autorizare: admin sau furnizor (staff propriu) pot aproba/respinge
+    if (user && !isLeaveAdminUser(user) && !isFurnizorSupplierAdmin(user)) {
+      this.logger.warn(`Non-manager user ${user.sub} attempted to update shift change request status`);
       throw new ForbiddenException('Nu ai permisiunea să aprobi/respingi cereri de schimb de tură');
+    }
+
+    if (user && isFurnizorSupplierAdmin(user)) {
+      const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (
+        !staffIds.includes(shiftChangeRequest.employee_id) ||
+        !staffIds.includes(shiftChangeRequest.replacement_id)
+      ) {
+        throw new ForbiddenException(
+          'Ambii angajați trebuie să aparțină staff-ului furnizorului autentificat',
+        );
+      }
     }
 
     // Verifică dacă cererea poate fi modificată
@@ -409,12 +669,16 @@ export class ShiftChangeRequestsService {
       this.logger.warn(`Failed to send notification: ${error.message}`);
     }
 
-    return this.findOne(updatedRequest.id);
+    return this.findOne(updatedRequest.id, user, authorization);
   }
 
   // Ștergere cerere (doar dacă este pending și de către creator)
-  async remove(id: number, currentUserId?: number): Promise<void> {
-    const shiftChangeRequest = await this.findOne(id, currentUserId);
+  async remove(
+    id: number,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<void> {
+    const shiftChangeRequest = await this.findOne(id, user, authorization);
 
     // Verifică dacă cererea poate fi ștearsă
     if (shiftChangeRequest.status !== ShiftChangeStatus.PENDING) {
@@ -423,8 +687,9 @@ export class ShiftChangeRequestsService {
     }
 
     // Autorizare: doar creatorul poate șterge cererea
-    if (currentUserId && shiftChangeRequest.employee_id !== currentUserId) {
-      this.logger.warn(`User ${currentUserId} attempted to delete shift change request ${id} of employee ${shiftChangeRequest.employee_id}`);
+    const selfId = user ? getCanonicalEmployeeId(user) : null;
+    if (selfId != null && shiftChangeRequest.employee_id !== selfId) {
+      this.logger.warn(`User ${selfId} attempted to delete shift change request ${id} of employee ${shiftChangeRequest.employee_id}`);
       throw new ForbiddenException('Nu poți șterge cereri de schimb de tură ale altor angajați');
     }
 
@@ -477,33 +742,55 @@ export class ShiftChangeRequestsService {
     };
   }
 
-  // Helper pentru verificarea dacă utilizatorul este manager
-  private async isManager(userId: number): Promise<boolean> {
-    // Implementare simplificată - în realitate ar verifica rolul din baza de date
-    // Pentru moment, considerăm că toți utilizatorii cu ID > 100 sunt manageri
-    return userId > 100;
-  }
-
   // Obținere cereri pentru aprobare (pentru manageri)
-  async findRequestsForApproval(managerId: number): Promise<ShiftChangeRequest[]> {
-    // În implementarea reală, ar trebui să existe o relație între manager și angajați
-    // Pentru moment, returnăm toate cererile pending
-    return this.findAll({ status: ShiftChangeStatus.PENDING }, managerId);
+  async findRequestsForApproval(
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest[]> {
+    return this.findAll({ status: ShiftChangeStatus.PENDING }, user, authorization);
   }
 
   // Obținere cereri pentru un anumit angajat (ca requester sau replacement)
-  async findByEmployee(employeeId: number, currentUserId?: number): Promise<ShiftChangeRequest[]> {
-    // Autorizare: angajatul poate vedea doar propriile cereri
-    if (currentUserId && !this.isManager(currentUserId) && currentUserId !== employeeId) {
-      throw new ForbiddenException('Nu poți vedea cererile altor angajați');
+  async findByEmployee(
+    employeeId: number,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<ShiftChangeRequest[]> {
+    if (user) {
+      assertJwtEmployeeIdConsistency(user);
+      if (isLeaveAdminUser(user)) {
+        // acces complet
+      } else if (isFurnizorSupplierAdmin(user)) {
+        const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+        if (!staffIds.includes(employeeId)) {
+          throw new ForbiddenException(
+            'Angajatul nu aparține furnizorului autentificat',
+          );
+        }
+      } else if (isOperationalStaffUser(user)) {
+        const colleagueIds = await fetchOperationalColleagueIds(
+          this.httpService,
+          user as LeaveAccessUser & {
+            work_location_id?: number;
+            work_location_default_id?: number;
+          },
+        );
+        if (!colleagueIds.includes(employeeId)) {
+          throw new ForbiddenException('Nu aveți acces la cererile acestui angajat');
+        }
+      } else {
+        const selfId = getCanonicalEmployeeId(user);
+        if (selfId !== employeeId) {
+          throw new ForbiddenException('Nu poți vedea cererile altor angajați');
+        }
+      }
     }
 
     return this.shiftChangeRepo.find({
       where: [
         { employee_id: employeeId },
-        { replacement_id: employeeId }
+        { replacement_id: employeeId },
       ],
-      // Employee relations removed - using HTTP calls to employees microservice
       order: { created_at: 'DESC' },
     });
   }

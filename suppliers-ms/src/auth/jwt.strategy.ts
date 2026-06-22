@@ -30,6 +30,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           : null,
       company_type:
         typeof payload.company_type === 'string' ? payload.company_type : null,
+      isAdmin: payload.isAdmin === true,
+      isSuperAdmin: payload.isSuperAdmin === true,
     };
 
     this.logger.log(`[JwtStrategy] Validated user: ${JSON.stringify(user)}`);

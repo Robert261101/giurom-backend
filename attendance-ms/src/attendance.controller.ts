@@ -21,13 +21,21 @@ import {
   ApiExtraModels,
 } from '@nestjs/swagger';
 import { AttendanceService } from './attendance.service';
-import { Permissions } from './permissions/permissions.decorator';
+import { Permissions, PermissionsAny, AuthOnly } from './permissions/permissions.decorator';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { CreatePresenceDto } from './dto/create-presence.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { CreatePresenceInflexionDto } from './dto/create-presence-inflexion.dto';
 import { UpdatePresenceInflexionDto } from './dto/update-presence-inflexion.dto';
+import { CorrectPresenceDto } from './dto/correct-presence.dto';
+import {
+  buildAttendanceUserContext,
+  hasAttendanceManagePermission,
+  isOperationalEmployee,
+  isOperationalStaffUser,
+  resolveShiftsEmployeeFilter,
+} from './attendance-access';
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
 import { PresenceInflexion, InflexionType } from './entities/presence-inflexion.entity';
@@ -64,7 +72,7 @@ export class AttendanceController {
   }
 
   @Get('shifts')
-  @Permissions('attendance.read')
+  @AuthOnly()
   @ApiOperation({
     summary: 'Listează toate schimburile de lucru',
     description: 'Returnează o listă paginată cu toate schimburile de lucru cu opțiuni de filtrare.',
@@ -84,12 +92,24 @@ export class AttendanceController {
     @Query('employee_id') employee_id?: string,
     @Query('work_location_id') work_location_id?: string,
     @Query('department_id') department_id?: string,
+    @Request() req?: any,
   ) {
+    const requested =
+      employee_id !== undefined && employee_id !== ''
+        ? Number(employee_id)
+        : undefined;
     const p = Number(page || 1);
     const l = Number(limit || 10);
-    const emp = employee_id !== undefined ? Number(employee_id) : undefined;
     const loc = work_location_id !== undefined ? Number(work_location_id) : undefined;
     const dep = department_id !== undefined ? Number(department_id) : undefined;
+
+    // Operațional (magazioner/șofer): scope = self + colegi din aceeași locație (read-only)
+    if (isOperationalStaffUser(req?.user)) {
+      const colleagueIds = await this.attendanceService.fetchOperationalColleagueIds(req?.user);
+      return await this.attendanceService.findAllShifts(p, l, requested, loc, dep, colleagueIds);
+    }
+
+    const emp = resolveShiftsEmployeeFilter(req?.user, requested);
     return await this.attendanceService.findAllShifts(p, l, emp, loc, dep);
   }
 
@@ -386,6 +406,7 @@ export class AttendanceController {
 
   // MY ACTIVE SHIFT - verifică dacă angajatul curent are tură activă
   @Get('my-active-shift')
+  @AuthOnly()
   @ApiOperation({
     summary: 'Verifică dacă angajatul curent are tură activă',
     description: 'Returnează informații despre tura activă (check_in setat, check_out nesetat) pentru angajatul autentificat.',
@@ -395,18 +416,89 @@ export class AttendanceController {
     description: 'Status tură activă',
   })
   async getMyActiveShift(@Request() req: any) {
-    // IMPORTANT:
-    // userId din token/JWT este de regulă ID-ul de user, nu ID-ul de employee.
-    // Pentru verificarea turei active trebuie să prioritizăm employee_id.
-    const employeeId =
-      req.user?.employee_id ||
-      req.user?.id_employee ||
-      req.user?.employeeId ||
-      req.user?.sub;
+    const employeeId = req.user?.sub;
     if (!employeeId) {
       return { hasActiveShift: false, shift: null, presence: null };
     }
     return await this.attendanceService.getActiveShiftForEmployee(Number(employeeId));
+  }
+
+  @Post('my-punch')
+  @AuthOnly()
+  @ApiOperation({
+    summary: 'Intrare/Ieșire pontaj pentru angajatul autentificat',
+    description:
+      'Ora este stabilită de server. Nu acceptă employee_id din body.',
+  })
+  async myPunch(@Request() req: any) {
+    return this.attendanceService.myPunch(req.user);
+  }
+
+  @Get('my-timesheet')
+  @AuthOnly()
+  @ApiOperation({ summary: 'Pontaj propriu — intervale și totaluri' })
+  @ApiQuery({ name: 'start_date', required: false })
+  @ApiQuery({ name: 'end_date', required: false })
+  async getMyTimesheet(
+    @Request() req: any,
+    @Query('start_date') start_date?: string,
+    @Query('end_date') end_date?: string,
+  ) {
+    return this.attendanceService.getMyTimesheet(req.user, start_date, end_date);
+  }
+
+  @Get('team-timesheet')
+  @AuthOnly()
+  @ApiOperation({
+    summary: 'Pontaj echipă furnizor / manager',
+    description:
+      'Furnizor: JWT company_type=furnizor + angajat în employees_suppliers. Admin: attendance.update.',
+  })
+  @ApiQuery({ name: 'employee_id', required: false })
+  @ApiQuery({ name: 'work_location_id', required: false })
+  @ApiQuery({ name: 'start_date', required: false })
+  @ApiQuery({ name: 'end_date', required: false })
+  async getTeamTimesheet(
+    @Request() req: any,
+    @Query('employee_id') employee_id?: string,
+    @Query('work_location_id') work_location_id?: string,
+    @Query('start_date') start_date?: string,
+    @Query('end_date') end_date?: string,
+  ) {
+    const auth = req.headers?.authorization as string | undefined;
+    return this.attendanceService.getTeamTimesheet(req.user, auth, {
+      employee_id:
+        employee_id != null && employee_id !== ''
+          ? Number(employee_id)
+          : undefined,
+      work_location_id:
+        work_location_id != null && work_location_id !== ''
+          ? Number(work_location_id)
+          : undefined,
+      start_date,
+      end_date,
+    });
+  }
+
+  @Patch('presences/:id/correct')
+  @PermissionsAny(
+    'attendance.update',
+    'assignment.read_all',
+    'assignment.read_company',
+    'order.read',
+  )
+  @ApiOperation({
+    summary: 'Corectare pontaj de către furnizor/manager',
+    description:
+      'Furnizor: tenant furnizor + angajat în employees_suppliers. Admin: attendance.update + assignment.read_*.',
+  })
+  async correctPresence(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CorrectPresenceDto,
+    @Request() req: any,
+  ) {
+    const auth = req.headers?.authorization as string | undefined;
+    return this.attendanceService.correctPresence(id, dto, req.user, auth);
   }
 
   // STATISTICS ENDPOINT
@@ -427,7 +519,20 @@ export class AttendanceController {
     @Query('employee_id', new ParseIntPipe({ optional: true })) employee_id?: number,
     @Query('start_date') start_date?: string,
     @Query('end_date') end_date?: string,
+    @Request() req?: any,
   ) {
-    return await this.attendanceService.getAttendanceStatistics(employee_id, start_date, end_date);
+    const ctx = buildAttendanceUserContext(req?.user);
+    let scopedEmployeeId = employee_id;
+    if (
+      isOperationalEmployee(ctx) &&
+      !hasAttendanceManagePermission(ctx.permissions)
+    ) {
+      scopedEmployeeId = ctx.employeeId ?? undefined;
+    }
+    return await this.attendanceService.getAttendanceStatistics(
+      scopedEmployeeId,
+      start_date,
+      end_date,
+    );
   }
 }

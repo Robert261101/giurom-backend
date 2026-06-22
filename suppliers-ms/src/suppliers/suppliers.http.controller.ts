@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Param,
   Body,
@@ -13,6 +14,7 @@ import {
   UseGuards,
   Request,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from "@nestjs/common";
 import {
@@ -45,6 +47,8 @@ import { Response } from "express";
 import { Permissions, PermissionsAny } from "../permissions/permissions.decorator";
 import { PermissionsGuard } from "../permissions/permissions.guard";
 import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
+import { UpdateSupplierNomenclatorProductDto } from "./dto/update-supplier-nomenclator-product.dto";
+import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
 import { buildSupplierProductUserContext } from "./supplier-product-access";
 import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 
@@ -120,6 +124,22 @@ export class SuppliersHttpController {
     return this.service.findForOrders(locationId);
   }
 
+  @Get("internal/employees/:employeeId/supplier-ids")
+  @ApiOperation({
+    summary:
+      'Listează supplier_id-urile din employees_suppliers (apel intern între microservicii)',
+  })
+  async getEmployeeSupplierIdsInternal(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    const supplier_ids = await this.service.getEmployeeSupplierIds(employeeId);
+    return { employee_id: employeeId, supplier_ids };
+  }
+
   @Get("my-supplier")
   @Permissions("order.read")
   @ApiOperation({
@@ -150,6 +170,42 @@ export class SuppliersHttpController {
     return this.service.findMySupplierProfileForFurnizorTenant(
       user?.company_id,
       user?.company_type,
+    );
+  }
+
+  @Get("my-supplier/clients")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Firme-client asociate furnizorului autentificat (supplier_locations)",
+  })
+  getMySupplierClients(
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.findMySupplierClientsForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+      { search, status },
+    );
+  }
+
+  @Get("my-supplier/clients/:companyId")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary: "Detalii firmă-client asociată furnizorului autentificat",
+  })
+  getMySupplierClientById(
+    @Param("companyId") companyId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.findMySupplierClientByIdForFurnizorTenant(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
     );
   }
 
@@ -253,6 +309,24 @@ export class SuppliersHttpController {
     );
   }
 
+  @Patch("my-supplier/nomenclator-products/:productId")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Actualizează produs din nomenclatorul depozitului furnizorului (apel intern stock-ms)",
+  })
+  updateMySupplierNomenclatorProduct(
+    @Param("productId") productId: string,
+    @Body() dto: UpdateSupplierNomenclatorProductDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.updateMySupplierNomenclatorProduct(
+      Number(productId),
+      dto,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
   @Post()
   @Permissions("suppliers.create")
   @ApiQuery({ name: "location_id", required: false, description: "Locația selectată în UI (colț dreapta sus)" })
@@ -342,6 +416,58 @@ export class SuppliersHttpController {
       includeInactiveBool,
       buildSupplierProductUserContext(req?.user),
       parsedLocationId,
+    );
+  }
+
+  @Get(":supplierId/client-product-mappings")
+  @PermissionsAny("suppliers.read", "suppliers.create", "order.read")
+  @ApiOperation({
+    summary:
+      "Asocieri produs furnizor → nomenclator client pentru compania autentificată",
+  })
+  getClientProductMappings(
+    @Param("supplierId") supplierId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.getClientProductMappingsForSupplier(
+      Number(supplierId),
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
+  @Put(":supplierId/products/:supplierProductId/client-config")
+  @PermissionsAny("assignment.read_all", "assignment.read_company")
+  @ApiOperation({
+    summary:
+      "Salvează asocierea nomenclator client + cantități brut/net pentru produs furnizor",
+  })
+  upsertSupplierProductClientConfig(
+    @Param("supplierId") supplierId: string,
+    @Param("supplierProductId") supplierProductId: string,
+    @Body() dto: UpsertSupplierProductClientConfigDto,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        work_location_id?: number;
+        work_location_default_id?: number;
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
+  ) {
+    const selectedWorkLocationId =
+      parseSelectedWorkLocationId(xWorkLocationId) ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
+    return this.service.upsertSupplierProductClientConfig(
+      Number(supplierId),
+      Number(supplierProductId),
+      dto,
+      buildSupplierProductUserContext(req?.user),
+      selectedWorkLocationId,
     );
   }
 
@@ -461,7 +587,7 @@ export class SuppliersHttpController {
   }
 
   @Patch("products/:productId")
-  @Permissions("suppliers.update")
+  @PermissionsAny("suppliers.update", "suppliers.create")
   updateProduct(
     @Param("productId") productId: string,
     @Body() dto: UpdateSupplierProductDto,
