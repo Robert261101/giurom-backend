@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Headers,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -65,7 +66,7 @@ export class ShiftChangeRequestsController {
 
   // GET /shift-change-requests – listare cereri cu filtrare opțională
   @Get()
-  @Permissions('shift-change-requests.read')
+  @Permissions('shift-change-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține cereri de schimb de tură cu filtrare opțională' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -74,29 +75,80 @@ export class ShiftChangeRequestsController {
   })
   findAll(
     @Query() filters: FilterShiftChangeRequestsDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
   ): Promise<ShiftChangeRequest[]> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.findAll(filters, userId);
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.findAll(
+      filters,
+      req.user as Parameters<ShiftChangeRequestsService['findAll']>[1],
+      auth,
+    );
   }
 
   // GET /shift-change-requests/pending – listare cereri în așteptare
   @Get('pending')
-  @Permissions('shift-change-requests.read')
+  @Permissions('shift-change-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține toate cererile de schimb de tură în așteptare' })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista cererilor de schimb de tură în așteptare',
     type: [ShiftChangeRequest],
   })
-  findPending(@Headers('x-user-id') currentUserId?: string): Promise<ShiftChangeRequest[]> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.findPending(userId);
+  findPending(
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
+  ): Promise<ShiftChangeRequest[]> {
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.findPending(
+      req.user as Parameters<ShiftChangeRequestsService['findPending']>[0],
+      auth,
+    );
+  }
+
+  // GET /shift-change-requests/employee/:employeeId/stats – statistici angajat
+  @Get('employee/:employeeId/stats')
+  @Permissions('shift-change-requests.read', 'order.read')
+  @ApiOperation({ summary: 'Obține statisticile de schimb de tură pentru un angajat' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Statisticile de schimb de tură ale angajatului',
+  })
+  getEmployeeStats(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Query('year') year?: number,
+  ): Promise<any> {
+    return this.shiftChangeRequestsService.getEmployeeStats(employeeId, year);
+  }
+
+  // GET /shift-change-requests/employee/:employeeId – cereri pentru un angajat
+  @Get('employee/:employeeId')
+  @Permissions('shift-change-requests.read', 'order.read')
+  @ApiOperation({ summary: 'Obține cererile de schimb de tură pentru un angajat (ca requester sau replacement)' })
+  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Lista cererilor de schimb de tură ale angajatului',
+    type: [ShiftChangeRequest],
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Nu poți vedea cererile altor angajați',
+  })
+  findByEmployee(
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
+  ): Promise<ShiftChangeRequest[]> {
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.findByEmployee(
+      employeeId,
+      req.user as Parameters<ShiftChangeRequestsService['findByEmployee']>[1],
+      auth,
+    );
   }
 
   // GET /shift-change-requests/:id – obținere cerere specifică
   @Get(':id')
-  @Permissions('shift-change-requests.read')
+  @Permissions('shift-change-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține detaliile unei cereri de schimb de tură specifice' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({
@@ -114,15 +166,19 @@ export class ShiftChangeRequestsController {
   })
   findOne(
     @Param('id', ParseIntPipe) id: number,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
   ): Promise<ShiftChangeRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.findOne(id, userId);
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.findOne(
+      id,
+      req.user as Parameters<ShiftChangeRequestsService['findOne']>[1],
+      auth,
+    );
   }
 
   // PATCH /shift-change-requests/:id – modificare status, aprobare/respingere
   @Patch(':id')
-  @Permissions('shift-change-requests.update')
+  @Permissions('shift-change-requests.update', 'order.read')
   @ApiOperation({ summary: 'Modifică statusul unei cereri de schimb de tură (aprobare/respingere)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de schimb de tură' })
   @ApiResponse({
@@ -145,10 +201,15 @@ export class ShiftChangeRequestsController {
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateStatusDto: UpdateShiftChangeStatusDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
   ): Promise<ShiftChangeRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.updateStatus(id, updateStatusDto, userId);
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.updateStatus(
+      id,
+      updateStatusDto,
+      req.user as Parameters<ShiftChangeRequestsService['updateStatus']>[2],
+      auth,
+    );
   }
 
   // DELETE /shift-change-requests/:id – ștergere cerere
@@ -174,47 +235,13 @@ export class ShiftChangeRequestsController {
   })
   remove(
     @Param('id', ParseIntPipe) id: number,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
   ): Promise<void> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.remove(id, userId);
-  }
-
-  // GET /shift-change-requests/employee/:employeeId/stats – statistici angajat
-  @Get('employee/:employeeId/stats')
-  @Permissions('shift-change-requests.read')
-  @ApiOperation({ summary: 'Obține statisticile de schimb de tură pentru un angajat' })
-  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Statisticile de schimb de tură ale angajatului',
-  })
-  getEmployeeStats(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Query('year') year?: number,
-  ): Promise<any> {
-    return this.shiftChangeRequestsService.getEmployeeStats(employeeId, year);
-  }
-
-  // GET /shift-change-requests/employee/:employeeId – cereri pentru un angajat
-  @Get('employee/:employeeId')
-  @Permissions('shift-change-requests.read')
-  @ApiOperation({ summary: 'Obține cererile de schimb de tură pentru un angajat (ca requester sau replacement)' })
-  @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Lista cererilor de schimb de tură ale angajatului',
-    type: [ShiftChangeRequest],
-  })
-  @ApiResponse({
-    status: HttpStatus.FORBIDDEN,
-    description: 'Nu poți vedea cererile altor angajați',
-  })
-  findByEmployee(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Headers('x-user-id') currentUserId?: string,
-  ): Promise<ShiftChangeRequest[]> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.findByEmployee(employeeId, userId);
+    const auth = req.headers?.authorization;
+    return this.shiftChangeRequestsService.remove(
+      id,
+      req.user as Parameters<ShiftChangeRequestsService['remove']>[1],
+      auth,
+    );
   }
 }

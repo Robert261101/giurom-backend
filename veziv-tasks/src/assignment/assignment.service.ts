@@ -24,6 +24,18 @@ import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { ExecutionService } from '../execution/execution.service';
 import { TaskGateway } from '../websocket/task.gateway';
+import { EmployeeAccessService } from '../employee-access/employee-access.service';
+import type { EmployeeAccessUser } from '../employee-access/employee-access';
+import {
+  getCanonicalEmployeeId,
+  isFurnizorSupplierAdmin,
+  isOperationalStaffUser,
+} from '../employee-access/employee-access';
+import {
+  buildLocationDepartmentGroupId,
+  computeLogicalGroupStatus,
+  isEveryoneGetsItGroup,
+} from './assignment-group.util';
 
 @Injectable()
 export class AssignmentService {
@@ -44,6 +56,7 @@ export class AssignmentService {
     private httpService: HttpService,
     private executionService: ExecutionService,
     private taskGateway: TaskGateway,
+    private employeeAccessService: EmployeeAccessService,
     @Inject('NOTIFICATIONS_RMQ')
     private readonly notificationsClient: ClientProxy,
   ) {}
@@ -915,7 +928,29 @@ export class AssignmentService {
 
   async create(
     createAssignmentDto: CreateAssignmentDto,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<TaskAssignment> {
+    if (user) {
+      if (isOperationalStaffUser(user)) {
+        throw new ForbiddenException(
+          'Angajații operaționali nu pot crea sarcini',
+        );
+      }
+      if (isFurnizorSupplierAdmin(user)) {
+        await this.employeeAccessService.assertSupplierAssigneeAllowed(
+          user,
+          createAssignmentDto.assigned_to_id,
+          authorization,
+          Number(createAssignmentDto.location_id),
+        );
+        const creatorId =
+          getCanonicalEmployeeId(user) ?? Number(user.sub);
+        if (Number.isFinite(creatorId) && creatorId > 0) {
+          createAssignmentDto.created_by_employee_id = creatorId;
+        }
+      }
+    }
     // Validare obligatorie: location_id
     if (
       !createAssignmentDto.location_id ||
@@ -1462,30 +1497,79 @@ export class AssignmentService {
    */
   async createBatch(
     createAssignmentDtos: CreateAssignmentDto[],
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<TaskAssignment[]> {
     if (!createAssignmentDtos || createAssignmentDtos.length === 0) {
       return [];
+    }
+
+    if (user && isOperationalStaffUser(user)) {
+      throw new ForbiddenException(
+        'Angajații operaționali nu pot crea sarcini',
+      );
+    }
+
+    let sharedGroupId = createAssignmentDtos[0]?.department_group_id;
+    const locationId = Number(createAssignmentDtos[0]?.location_id);
+
+    if (user && isFurnizorSupplierAdmin(user)) {
+      if (!Number.isFinite(locationId) || locationId <= 0) {
+        throw new ForbiddenException('Locația este obligatorie pentru sarcină');
+      }
+      for (const dto of createAssignmentDtos) {
+        if (Number(dto.location_id) !== locationId) {
+          throw new ForbiddenException(
+            'Toți participanții trebuie să fie în aceeași locație',
+          );
+        }
+        await this.employeeAccessService.assertSupplierAssigneeAtLocation(
+          user,
+          dto.assigned_to_id,
+          locationId,
+          authorization,
+        );
+      }
+      if (createAssignmentDtos.length > 1) {
+        sharedGroupId = buildLocationDepartmentGroupId(locationId);
+      } else {
+        sharedGroupId = undefined;
+      }
+    } else if (
+      createAssignmentDtos.length > 1 &&
+      !sharedGroupId &&
+      Number.isFinite(locationId) &&
+      locationId > 0
+    ) {
+      sharedGroupId = buildLocationDepartmentGroupId(locationId);
     }
 
     console.log(
       `📦 [ASSIGNMENT SERVICE] Creating ${createAssignmentDtos.length} assignments in batch`,
     );
 
-    // Creează toate assignment-urile secvențial pentru a evita probleme de concurență
-    // (nu folosim tranzacție pentru că create() are deja logica sa complexă)
     const createdAssignments: TaskAssignment[] = [];
 
     for (const createAssignmentDto of createAssignmentDtos) {
+      if (sharedGroupId) {
+        createAssignmentDto.department_group_id = sharedGroupId;
+        createAssignmentDto.assignment_mode = AssignmentMode.EVERYONE_GETS_IT;
+      } else if (user && isFurnizorSupplierAdmin(user)) {
+        createAssignmentDto.assignment_mode = AssignmentMode.INDIVIDUAL;
+        createAssignmentDto.department_group_id = undefined;
+      }
       try {
-        const assignment = await this.create(createAssignmentDto);
+        const assignment = await this.create(
+          createAssignmentDto,
+          user,
+          authorization,
+        );
         createdAssignments.push(assignment);
       } catch (error) {
         console.error(
           `❌ [ASSIGNMENT SERVICE] Error creating assignment in batch:`,
           error,
         );
-        // Continuă cu următoarele chiar dacă unul eșuează
-        // (sau poți arunca eroarea dacă vrei să anulezi toate)
         throw error;
       }
     }
@@ -1505,7 +1589,11 @@ export class AssignmentService {
     });
   }
 
-  async findOne(id: number, user?: any): Promise<TaskAssignment> {
+  async findOne(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<TaskAssignment> {
     const assignment = await this.assignmentRepository.findOne({
       where: { id },
       relations: [
@@ -1553,38 +1641,191 @@ export class AssignmentService {
       throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
     }
 
-    // Verificare permisiuni: dacă request-ul vine cu user (GET de la client), doar dacă are dreptul să vadă sarcina
     if (user) {
-      const perms = user.permissions || [];
-      const userId = user.sub ?? user.employee_id ?? user.employeeId;
-      if (perms.includes('assignment.read_all') || perms.includes('assignment.read_company')) {
-        // Manager / admin – poate vedea orice sarcină
-      } else if (perms.includes('assignment.read_location')) {
-        // Manager locație – poate vedea orice (ca în findAll)
-      } else if (perms.includes('assignment.read_own')) {
-        // Angajat – doar sarcinile atribuite lui și vizibile
-        const assignedToMe = Number(assignment.assigned_to_id) === Number(userId);
-        const visible = assignment.is_visible_for_employee !== false;
-        if (!assignedToMe || !visible) {
-          throw new ForbiddenException('Nu ai dreptul să accesezi această sarcină');
-        }
-      } else {
-        throw new ForbiddenException('Nu ai dreptul să accesezi această sarcină');
-      }
+      await this.employeeAccessService.assertCanReadAssignment(
+        user,
+        assignment,
+        authorization,
+      );
     }
 
     // Adaugă informații despre persoana responsabilă și departamentul din grup
     const enrichedAssignments = await this.enrichAssignmentsWithDetailsBatch([
       assignment,
     ]);
-    return enrichedAssignments[0];
+    const enriched = enrichedAssignments[0] as any;
+    await this.attachGroupContext(enriched, user, authorization);
+    return enriched;
+  }
+
+  private async attachGroupContext(
+    assignment: any,
+    user?: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<void> {
+    if (!isEveryoneGetsItGroup(assignment)) {
+      return;
+    }
+    const groupId = assignment.department_group_id;
+    if (!groupId) {
+      return;
+    }
+
+    const siblings = await this.assignmentRepository.find({
+      where: { department_group_id: groupId },
+      order: { id: 'ASC' },
+    });
+
+    if (isOperationalStaffUser(user)) {
+      const selfId = getCanonicalEmployeeId(user);
+      const isParticipant = siblings.some(
+        (s) => Number(s.assigned_to_id) === Number(selfId),
+      );
+      if (!isParticipant) {
+        return;
+      }
+    }
+
+    if (isFurnizorSupplierAdmin(user)) {
+      const staffIds =
+        await this.employeeAccessService.fetchSupplierStaffEmployeeIds(
+          authorization,
+        );
+      try {
+        await this.employeeAccessService.assertSupplierOwnsGroupAssignments(
+          staffIds,
+          siblings,
+        );
+      } catch {
+        return;
+      }
+    }
+
+    const enrichedSiblings =
+      await this.enrichAssignmentsWithDetailsBatch(siblings);
+    assignment.group_participants = enrichedSiblings.map((s: any) => ({
+      assignment_id: s.id,
+      assigned_to_id: s.assigned_to_id,
+      status: s.status,
+      assigned_to_info: s.assigned_to_info ?? null,
+      completed_at: s.completed_at ?? null,
+    }));
+    assignment.logical_group_status = computeLogicalGroupStatus(
+      siblings.map((s) => s.status),
+    );
+  }
+
+  /** Propagă titlu/descriere/termen/prioritate/locație la frații everyone_gets_it activi. */
+  private async propagateGroupFieldsToSiblings(
+    groupId: string,
+    sourceId: number,
+    updateAssignmentDto: UpdateAssignmentDto,
+    updateData: Record<string, unknown>,
+  ): Promise<void> {
+    const siblings = await this.assignmentRepository.find({
+      where: { department_group_id: groupId },
+    });
+    const activeSiblings = siblings.filter(
+      (s) =>
+        s.id !== sourceId &&
+        s.status !== AssignmentStatus.DEACTIVATED &&
+        s.status !== AssignmentStatus.COMPLETED,
+    );
+    if (activeSiblings.length === 0) {
+      return;
+    }
+
+    const scalarPatch: Record<string, unknown> = {};
+    if (updateAssignmentDto.due_date !== undefined) {
+      scalarPatch.due_date = updateData.due_date;
+    }
+    if (updateAssignmentDto.priority !== undefined) {
+      scalarPatch.priority = updateData.priority;
+    }
+    if (updateAssignmentDto.location_id !== undefined) {
+      scalarPatch.location_id = updateData.location_id;
+    }
+    if (updateAssignmentDto.scheduled_datetime !== undefined) {
+      scalarPatch.scheduled_datetime = updateData.scheduled_datetime;
+    }
+
+    for (const sibling of activeSiblings) {
+      if (Object.keys(scalarPatch).length > 0) {
+        await this.assignmentRepository.update(sibling.id, scalarPatch);
+      }
+      if (updateAssignmentDto.elements !== undefined) {
+        await this.elementRepository.delete({ task_assignment_id: sibling.id });
+        if (updateAssignmentDto.elements.length > 0) {
+          const elements = updateAssignmentDto.elements.map((elementDto) =>
+            this.elementRepository.create({
+              ...elementDto,
+              task_assignment_id: sibling.id,
+            }),
+          );
+          await this.elementRepository.save(elements);
+        }
+      }
+      const refreshed = await this.assignmentRepository.findOne({
+        where: { id: sibling.id },
+      });
+      if (refreshed) {
+        this.taskGateway.notifyTaskUpdate(refreshed);
+      }
+    }
   }
 
   async update(
     id: number,
     updateAssignmentDto: UpdateAssignmentDto,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<TaskAssignment> {
-    const assignment = await this.findOne(id);
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id },
+      relations: ['template', 'elements', 'elements.task_element'],
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
+    }
+
+    if (user) {
+      await this.employeeAccessService.assertCanManageAssignment(
+        user,
+        assignment,
+        authorization,
+      );
+      if (isOperationalStaffUser(user)) {
+        throw new ForbiddenException(
+          'Angajații operaționali nu pot modifica sarcinile',
+        );
+      }
+      if (
+        updateAssignmentDto.assigned_to_id !== undefined &&
+        isFurnizorSupplierAdmin(user)
+      ) {
+        if (isEveryoneGetsItGroup(assignment)) {
+          throw new BadRequestException(
+            'Participanții nu pot fi modificați după creare',
+          );
+        }
+        await this.employeeAccessService.assertSupplierAssigneeAllowed(
+          user,
+          updateAssignmentDto.assigned_to_id,
+          authorization,
+          assignment.location_id,
+        );
+      }
+      if (
+        updateAssignmentDto.status === AssignmentStatus.COMPLETED &&
+        isOperationalStaffUser(user)
+      ) {
+        throw new ForbiddenException(
+          'Nu poți seta direct statusul Finalizată — confirmă participarea ta',
+        );
+      }
+    }
+
+    const previousAssignment = { ...assignment };
 
     // Actualizează câmpurile de bază ale assignment-ului
     const updateData: any = {};
@@ -1602,6 +1843,8 @@ export class AssignmentService {
       updateData.assigned_at = new Date(updateAssignmentDto.assigned_at);
     if (updateAssignmentDto.due_date !== undefined)
       updateData.due_date = new Date(updateAssignmentDto.due_date);
+    if (updateAssignmentDto.location_id !== undefined)
+      updateData.location_id = Number(updateAssignmentDto.location_id);
     if (updateAssignmentDto.scheduled_datetime !== undefined) {
       const scheduledDateTime = updateAssignmentDto.scheduled_datetime
         ? new Date(updateAssignmentDto.scheduled_datetime)
@@ -1667,8 +1910,20 @@ export class AssignmentService {
       }
     }
 
+    if (
+      isEveryoneGetsItGroup(assignment) &&
+      assignment.department_group_id
+    ) {
+      await this.propagateGroupFieldsToSiblings(
+        assignment.department_group_id,
+        id,
+        updateAssignmentDto,
+        updateData,
+      );
+    }
+
     // Returnează assignment-ul actualizat
-    const updatedAssignment = await this.findOne(id);
+    const updatedAssignment = await this.findOne(id, user, authorization);
 
     // Emite notificare WebSocket pentru actualizare task
     this.taskGateway.notifyTaskUpdate(updatedAssignment);
@@ -1907,11 +2162,51 @@ export class AssignmentService {
 
   // ===== METODA CU PERMISIUNI PENTRU GET ASSIGNMENTS =====
 
+  private async findAllForFurnizorSupplier(
+    user: any,
+    query: ReturnType<Repository<TaskAssignment>['createQueryBuilder']>,
+    startDate?: Date,
+    endDate?: Date,
+    authorization?: string,
+  ): Promise<TaskAssignment[]> {
+    const staffIds =
+      await this.employeeAccessService.fetchSupplierStaffEmployeeIds(
+        authorization,
+      );
+    if (staffIds.length === 0) {
+      return [];
+    }
+    query.andWhere('assignment.assigned_to_id IN (:...staffIds)', { staffIds });
+    if (startDate && endDate) {
+      const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+      const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      query.andWhere(
+        `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+        { sdStr, edStr },
+      );
+    }
+    const supplierResult = await query
+      .andWhere('(assignment.status IN (:...supplierStatuses))', {
+        supplierStatuses: [
+          'assigned',
+          'in_progress',
+          'completed',
+          'deactivated',
+          'waiting_response',
+          'scheduled',
+          'reallocated',
+        ],
+      })
+      .getMany();
+    return this.enrichAssignmentsWithDetailsBatch(supplierResult);
+  }
+
   async findAllWithPermissions(
     user: any,
     locationId?: number,
     startDate?: Date,
     endDate?: Date,
+    authorization?: string,
   ): Promise<TaskAssignment[]> {
     console.log('🔍 [assignment.service] findAllWithPermissions params:', {
       userId: user?.sub,
@@ -1964,6 +2259,16 @@ export class AssignmentService {
 
     // Filtrare OBLIGATORIE - afișează DOAR task-urile cu location_id setat
     query.andWhere('assignment.location_id IS NOT NULL');
+
+    if (isFurnizorSupplierAdmin(user)) {
+      return this.findAllForFurnizorSupplier(
+        user,
+        query,
+        startDate,
+        endDate,
+        authorization,
+      );
+    }
 
     // assignment.read_all - vede toate - CEA MAI PERMISIVĂ - VERIFICĂ PRIMUL!
     if (user?.permissions?.includes('assignment.read_all')) {
@@ -2117,8 +2422,11 @@ export class AssignmentService {
       }
     }
 
-    // assignment.read_own - vede doar taskurile lui (assigned_to_id = user.sub) - CEA MAI RESTRICTIVĂ
-    if (user?.permissions?.includes('assignment.read_own')) {
+    // assignment.read_own — sau cont operațional (magazioner/șofer) cu order.read
+    if (
+      user?.permissions?.includes('assignment.read_own') ||
+      isOperationalStaffUser(user)
+    ) {
       // Obține grupul angajatului din shift-ul zilei curente (pentru task-urile FCFS)
       let userDepartmentId = null;
       let userWorkLocationId: number | null = null;
@@ -3526,8 +3834,11 @@ export class AssignmentService {
       .leftJoinAndSelect('elements.task_element', 'task_element')
       .orderBy('assignment.assigned_at', 'DESC');
 
-    // assignment.read_own - vede doar taskurile lui (assigned_to_id = user.sub)
-    if (user?.permissions?.includes('assignment.read_own')) {
+    // assignment.read_own — sau cont operațional
+    if (
+      user?.permissions?.includes('assignment.read_own') ||
+      isOperationalStaffUser(user)
+    ) {
       console.log(
         '✅ [assignment.service] User are assignment.read_own - filtrez după assigned_to_id',
       );
@@ -3849,11 +4160,18 @@ export class AssignmentService {
     employeeId: number,
     startDate?: string,
     endDate?: string,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<{
     total_count: number;
     completed_count: number;
     percentage: number;
   }> {
+    await this.employeeAccessService.assertCanReadEmployeeData(
+      user,
+      employeeId,
+      authorization,
+    );
     try {
       const normStart = startDate ? startDate.split('T')[0].split(' ')[0] : undefined;
       const normEnd = endDate ? endDate.split('T')[0].split(' ')[0] : undefined;
@@ -4498,5 +4816,188 @@ export class AssignmentService {
       was_postponed: false,
     } as TaskAssignment;
     return { original, copy: null };
+  }
+
+  /** Participant: marchează propria alocare „În lucru”. */
+  async startParticipantWork(
+    id: number,
+    user: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<TaskAssignment> {
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
+    }
+    await this.employeeAccessService.assertCanReadAssignment(
+      user,
+      assignment,
+      authorization,
+    );
+    this.employeeAccessService.assertIsAssignmentParticipant(user, assignment);
+    if (
+      assignment.status === AssignmentStatus.COMPLETED ||
+      assignment.status === AssignmentStatus.DEACTIVATED
+    ) {
+      throw new BadRequestException('Sarcina nu poate fi pornită în starea curentă');
+    }
+    await this.assignmentRepository.update(id, {
+      status: AssignmentStatus.IN_PROGRESS,
+    });
+    const updated = await this.findOne(id, user, authorization);
+    this.taskGateway.notifyTaskUpdate(updated);
+    return updated;
+  }
+
+  /**
+   * Participant: confirmare individuală „Am terminat”.
+   * Finalizează doar rândul propriu; grupul devine finalizat logic când toți au confirmat.
+   */
+  async completeParticipantParticipation(
+    id: number,
+    user: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<{ assignment: TaskAssignment; execution: TaskExecution }> {
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id },
+      relations: ['template'],
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
+    }
+    await this.employeeAccessService.assertCanReadAssignment(
+      user,
+      assignment,
+      authorization,
+    );
+    this.employeeAccessService.assertIsAssignmentParticipant(user, assignment);
+
+    const selfId = getCanonicalEmployeeId(user);
+    if (selfId == null) {
+      throw new ForbiddenException('ID angajat invalid în token');
+    }
+
+    const existingExecution = await this.executionRepository.findOne({
+      where: { task_assignment_id: id, employee_id: selfId },
+    });
+    if (existingExecution?.completed_at) {
+      throw new BadRequestException('Ai confirmat deja finalizarea acestei sarcini');
+    }
+
+    const now = new Date();
+    let execution: TaskExecution;
+
+    if (existingExecution) {
+      existingExecution.completed_at = now;
+      if (!existingExecution.started_at) {
+        existingExecution.started_at = now;
+      }
+      execution = await this.executionRepository.save(existingExecution);
+    } else {
+      const result = await this.executionService.create(
+        {
+          task_assignment_id: id,
+          started_at: now.toISOString(),
+          completed_at: now.toISOString(),
+          comment: 'Confirmare participare',
+        },
+        user,
+      );
+      execution = result.execution;
+    }
+
+    if (!assignment.requires_manager_check) {
+      await this.assignmentRepository.update(id, {
+        status: AssignmentStatus.COMPLETED,
+        completed_at: now,
+      });
+    } else {
+      await this.assignmentRepository.update(id, {
+        status: AssignmentStatus.WAITING_RESPONSE,
+      });
+    }
+
+    const updated = await this.findOne(id, user, authorization);
+
+    if (
+      assignment.department_group_id &&
+      isEveryoneGetsItGroup(assignment)
+    ) {
+      const siblings = await this.assignmentRepository.find({
+        where: { department_group_id: assignment.department_group_id },
+      });
+      (updated as any).logical_group_status = computeLogicalGroupStatus(
+        siblings.map((s) =>
+          s.id === id ? AssignmentStatus.COMPLETED : s.status,
+        ),
+      );
+    }
+
+    this.taskGateway.notifyTaskUpdate(updated);
+    return { assignment: updated, execution };
+  }
+
+  /** Furnizor/admin: anulează sarcina (grup sau individual). */
+  async cancelAssignment(
+    id: number,
+    user: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<TaskAssignment[]> {
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
+    }
+    await this.employeeAccessService.assertCanManageAssignment(
+      user,
+      assignment,
+      authorization,
+    );
+
+    const groupId = assignment.department_group_id;
+
+    if (groupId && isEveryoneGetsItGroup(assignment)) {
+      const siblings = await this.assignmentRepository.find({
+        where: { department_group_id: groupId },
+      });
+      if (isFurnizorSupplierAdmin(user)) {
+        const staffIds =
+          await this.employeeAccessService.fetchSupplierStaffEmployeeIds(
+            authorization,
+          );
+        await this.employeeAccessService.assertSupplierOwnsGroupAssignments(
+          staffIds,
+          siblings,
+        );
+      }
+
+      const activeIds = siblings
+        .filter((s) => s.status !== AssignmentStatus.DEACTIVATED)
+        .map((s) => s.id);
+
+      if (activeIds.length > 0) {
+        await this.assignmentRepository.update(
+          { id: In(activeIds) },
+          { status: AssignmentStatus.DEACTIVATED },
+        );
+      }
+
+      const refreshed = await this.assignmentRepository.find({
+        where: { department_group_id: groupId },
+      });
+      for (const row of refreshed) {
+        this.taskGateway.notifyTaskUpdate(row);
+      }
+      return this.enrichAssignmentsWithDetailsBatch(refreshed);
+    }
+
+    await this.assignmentRepository.update(id, {
+      status: AssignmentStatus.DEACTIVATED,
+    });
+    const updated = await this.findOne(id, user, authorization);
+    this.taskGateway.notifyTaskUpdate(updated);
+    return [updated];
   }
 }

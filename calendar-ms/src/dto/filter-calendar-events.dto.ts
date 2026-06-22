@@ -1,62 +1,58 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsOptional,
   IsDateString,
   IsString,
   IsNumber,
   IsPositive,
+  IsIn,
 } from 'class-validator';
 
 export class FilterCalendarEventsDto {
-  @ApiProperty({ 
-    description: 'Data de început pentru filtrare', 
-    example: '2024-07-01T00:00:00Z',
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Data de început (ISO)' })
   @IsOptional()
-  @IsDateString({}, { message: 'Data de început trebuie să fie în format ISO' })
+  @IsDateString()
   start_date?: string;
 
-  @ApiProperty({ 
-    description: 'Data de sfârșit pentru filtrare', 
-    example: '2024-07-31T23:59:59Z',
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Data de sfârșit (ISO)' })
   @IsOptional()
-  @IsDateString({}, { message: 'Data de sfârșit trebuie să fie în format ISO' })
+  @IsDateString()
   end_date?: string;
 
-  @ApiProperty({ 
-    description: 'Categoria evenimentelor', 
-    example: 'Întâlniri',
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Filtrare după event_category.id' })
   @IsOptional()
-  @IsString({ message: 'Categoria trebuie să fie un string' })
-  category?: string;
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  category_id?: number;
 
-  @ApiProperty({ 
-    description: 'ID-ul creatorului evenimentelor', 
-    example: 1,
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Filtrare după cod categorie' })
   @IsOptional()
-  @IsNumber({}, { message: 'ID-ul creatorului trebuie să fie un număr' })
-  @IsPositive({ message: 'ID-ul creatorului trebuie să fie pozitiv' })
-  created_by?: number;
+  @IsString()
+  category_code?: string;
 
-  @ApiProperty({ 
-    description: 'Căutare în titlu sau descriere', 
-    example: 'ședință',
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Filtrare după creator (employee_id)' })
   @IsOptional()
-  @IsString({ message: 'Termenul de căutare trebuie să fie un string' })
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  created_by_employee_id?: number;
+
+  @ApiPropertyOptional({ description: 'Căutare în titlu sau descriere' })
+  @IsOptional()
+  @IsString()
   search?: string;
 
-  @ApiProperty({ description: 'Filtrare după ID locație – doar evenimente ale acestei locații', example: 1, required: false })
+  @ApiPropertyOptional({ description: 'Filtrare după locație' })
   @IsOptional()
-  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
-  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
   location_id?: number;
+
+  @ApiPropertyOptional({ enum: ['active', 'cancelled', 'all'], default: 'active' })
+  @IsOptional()
+  @IsIn(['active', 'cancelled', 'all'])
+  status?: 'active' | 'cancelled' | 'all';
 }

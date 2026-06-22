@@ -1,4 +1,27 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject } from '@nestjs/common';
+import {
+  buildAttendanceUserContext,
+  hasAttendanceManagePermission,
+  isAdminOrSuperAdmin,
+  isFurnizorTenant,
+  isOperationalEmployee,
+  assertEmployeeSelfOrManager,
+  assertOperationalSelfService,
+  canCorrectAttendance,
+  isOperationalStaffUser,
+  type AttendanceUserContext,
+} from './attendance-access';
+import {
+  appendCorrectionAudit,
+  extractCorrectionReasons,
+} from './attendance-notes.util';
+import {
+  buildClosedIntervalMinutes,
+  findOpenEntryInflexion,
+  sortInflexions,
+  validateInflexionTimeline,
+} from './attendance-interval.util';
+import { CorrectPresenceDto, PresenceCorrectionAction } from './dto/correct-presence.dto';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -20,6 +43,8 @@ const ROMANIA_TZ = 'Europe/Bucharest';
 
 @Injectable()
 export class AttendanceService implements OnModuleInit {
+  private readonly punchGateByEmployee = new Map<number, Promise<unknown>>();
+
   constructor(
     @InjectRepository(Shift)
     private readonly shiftRepository: Repository<Shift>,
@@ -185,20 +210,34 @@ export class AttendanceService implements OnModuleInit {
     employee_id?: number,
     work_location_id?: number,
     department_id?: number,
+    allowedEmployeeIds?: number[],
   ): Promise<{ data: Shift[]; total: number; page: number; limit: number }> {
-    const where: any = {};
-    if (employee_id) where.employee_id = employee_id;
-    if (work_location_id) where.work_location_id = work_location_id;
-    if (department_id) where.department_id = department_id;
+    const qb = this.shiftRepository
+      .createQueryBuilder('shift')
+      .leftJoinAndSelect('shift.presences', 'presences')
+      .leftJoinAndSelect('presences.inflexions', 'inflexions')
+      .orderBy('shift.start_datetime', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
 
-    const [data, total] = await this.shiftRepository.findAndCount({
-      where,
-      relations: ['presences'],
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { start_datetime: 'DESC' },
-    });
+    if (allowedEmployeeIds && allowedEmployeeIds.length > 0) {
+      // Operațional: restricție la lista de colegi din aceeași locație
+      if (employee_id != null) {
+        if (!allowedEmployeeIds.includes(employee_id)) {
+          return { data: [], total: 0, page, limit };
+        }
+        qb.andWhere('shift.employee_id = :employee_id', { employee_id });
+      } else {
+        qb.andWhere('shift.employee_id IN (:...allowedEmployeeIds)', { allowedEmployeeIds });
+      }
+    } else {
+      if (employee_id) qb.andWhere('shift.employee_id = :employee_id', { employee_id });
+    }
 
+    if (work_location_id) qb.andWhere('shift.work_location_id = :work_location_id', { work_location_id });
+    if (department_id) qb.andWhere('shift.department_id = :department_id', { department_id });
+
+    const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
 
@@ -782,19 +821,28 @@ export class AttendanceService implements OnModuleInit {
   async createPresenceInflexion(createInflexionDto: CreatePresenceInflexionDto): Promise<PresenceInflexion> {
     const { presence_id, timestamp, ...rest } = createInflexionDto;
 
-    // Verifică dacă prezența există
-    const presence = await this.presenceRepository.findOne({ where: { id: presence_id } });
+    const presence = await this.presenceRepository.findOne({
+      where: { id: presence_id },
+      relations: ['inflexions'],
+    });
     if (!presence) {
       throw new NotFoundException(`Prezența cu ID-ul ${presence_id} nu a fost găsită`);
     }
 
-    const inflexion = this.presenceInflexionRepository.create({
+    await this.ensureInflexionsFromLegacy(presence);
+
+    const proposed = this.presenceInflexionRepository.create({
       ...rest,
       presence_id,
-      timestamp: new Date(timestamp),
+      timestamp: toZonedTime(new Date(timestamp), ROMANIA_TZ),
     });
 
-    return await this.presenceInflexionRepository.save(inflexion);
+    const next = [...(presence.inflexions ?? []), proposed];
+    validateInflexionTimeline(next);
+
+    const saved = await this.presenceInflexionRepository.save(proposed);
+    await this.syncPresenceFromInflexions(presence.id);
+    return saved;
   }
 
   async findAllPresenceInflexions(
@@ -852,27 +900,1111 @@ export class AttendanceService implements OnModuleInit {
     shift: Shift | null;
     presence: Presence | null;
   }> {
-    // Caută prezența activă direct (check_in setat, check_out nesetat),
-    // indiferent de ziua în care a început shift-ul.
-    // Astfel acoperim corect și turele ce trec peste miezul nopții.
-    const activePresence = await this.presenceRepository
+    const openPresence = await this.findOpenPresenceForEmployee(employeeId);
+    if (!openPresence) {
+      return { hasActiveShift: false, shift: null, presence: null };
+    }
+    return {
+      hasActiveShift: true,
+      shift: openPresence.shift || null,
+      presence: openPresence,
+    };
+  }
+
+  private async findOpenPresenceForEmployee(
+    employeeId: number,
+  ): Promise<Presence | null> {
+    const presences = await this.presenceRepository
       .createQueryBuilder('presence')
       .innerJoinAndSelect('presence.shift', 'shift')
+      .leftJoinAndSelect('presence.inflexions', 'inflexions')
       .where('shift.employee_id = :employeeId', { employeeId })
-      .andWhere('presence.check_in IS NOT NULL')
-      .andWhere('presence.check_out IS NULL')
-      .orderBy('presence.check_in', 'DESC')
-      .getOne();
+      .orderBy('presence.date', 'DESC')
+      .addOrderBy('presence.check_in', 'DESC')
+      .getMany();
 
-    if (!activePresence) {
-      return { hasActiveShift: false, shift: null, presence: null };
+    for (const presence of presences) {
+      if (this.isPresenceSessionOpen(presence)) {
+        return presence;
+      }
+    }
+    return null;
+  }
+
+  private isPresenceSessionOpen(presence: Presence): boolean {
+    const inflexions = sortInflexions(presence.inflexions ?? []);
+    if (inflexions.length > 0) {
+      const last = inflexions[inflexions.length - 1];
+      return last.type === InflexionType.ENTRY;
+    }
+    return !!presence.check_in && !presence.check_out;
+  }
+
+  private suppliersBaseUrl(): string {
+    return (
+      process.env.SUPPLIERS_HTTP_URL ||
+      process.env.SUPPLIERS_SERVICE_URL ||
+      'http://localhost:3007'
+    );
+  }
+
+  private userAuthHeaders(authorization?: string): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (authorization) {
+      headers.Authorization = authorization;
+    }
+    return headers;
+  }
+
+  private internalHeaders(authorization?: string): Record<string, string> {
+    const headers: Record<string, string> = this.userAuthHeaders(authorization);
+    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    headers['x-internal-service'] = 'attendance-ms';
+    headers['x-service-secret'] = secret;
+    return headers;
+  }
+
+  private serviceOnlyHeaders(): Record<string, string> {
+    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    return {
+      'x-internal-service': 'attendance-ms',
+      'x-service-secret': secret,
+    };
+  }
+
+  async fetchSupplierStaffEmployeeIds(
+    authorization?: string,
+  ): Promise<number[]> {
+    const base = this.suppliersBaseUrl();
+    const headers = this.userAuthHeaders(authorization);
+    try {
+      const myResp = await firstValueFrom(
+        this.httpService.get(`${base}/suppliers/my-supplier`, {
+          headers,
+          timeout: 8000,
+        }),
+      );
+      const supplierId = Number(myResp.data?.id);
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        return [];
+      }
+      const [driversResp, warehouseResp] = await Promise.all([
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/drivers`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/warehouse`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+      ]);
+      const ids = new Set<number>();
+      for (const row of [...(driversResp.data ?? []), ...(warehouseResp.data ?? [])]) {
+        const id = Number(row?.employee_id);
+        if (Number.isFinite(id) && id > 0) {
+          ids.add(id);
+        }
+      }
+      return [...ids];
+    } catch (error: any) {
+      console.warn(
+        `[AttendanceService] fetchSupplierStaffEmployeeIds failed: ${error?.message || error}`,
+      );
+      return [];
+    }
+  }
+
+  private buildIntervalsFromPresence(presence: Presence): Array<{
+    entry_inflexion_id: number | null;
+    exit_inflexion_id: number | null;
+    entry_at: string;
+    exit_at: string | null;
+    duration_minutes: number | null;
+    incomplete: boolean;
+  }> {
+    const inflexions = sortInflexions(presence.inflexions ?? []);
+    const intervals: Array<{
+      entry_inflexion_id: number | null;
+      exit_inflexion_id: number | null;
+      entry_at: string;
+      exit_at: string | null;
+      duration_minutes: number | null;
+      incomplete: boolean;
+    }> = [];
+
+    if (inflexions.length === 0) {
+      if (presence.check_in) {
+        const entryMs = new Date(presence.check_in).getTime();
+        const exitMs = presence.check_out
+          ? new Date(presence.check_out).getTime()
+          : null;
+        intervals.push({
+          entry_inflexion_id: null,
+          exit_inflexion_id: null,
+          entry_at: new Date(presence.check_in).toISOString(),
+          exit_at: presence.check_out
+            ? new Date(presence.check_out).toISOString()
+            : null,
+          duration_minutes:
+            exitMs != null
+              ? Math.round((exitMs - entryMs) / 60000)
+              : null,
+          incomplete: exitMs == null,
+        });
+      }
+      return intervals;
+    }
+
+    let openEntry: { ts: Date; id: number } | null = null;
+    for (const inf of inflexions) {
+      const ts = new Date(inf.timestamp);
+      if (inf.type === InflexionType.ENTRY) {
+        openEntry = { ts, id: inf.id };
+      } else if (inf.type === InflexionType.EXIT && openEntry) {
+        intervals.push({
+          entry_inflexion_id: openEntry.id,
+          exit_inflexion_id: inf.id,
+          entry_at: openEntry.ts.toISOString(),
+          exit_at: ts.toISOString(),
+          duration_minutes: Math.round(
+            (ts.getTime() - openEntry.ts.getTime()) / 60000,
+          ),
+          incomplete: false,
+        });
+        openEntry = null;
+      }
+    }
+    if (openEntry) {
+      intervals.push({
+        entry_inflexion_id: openEntry.id,
+        exit_inflexion_id: null,
+        entry_at: openEntry.ts.toISOString(),
+        exit_at: null,
+        duration_minutes: null,
+        incomplete: true,
+      });
+    }
+    return intervals;
+  }
+
+  private sumIntervalMinutes(
+    intervals: Array<{ duration_minutes: number | null }>,
+  ): number {
+    return intervals.reduce(
+      (sum, row) => sum + (row.duration_minutes ?? 0),
+      0,
+    );
+  }
+
+  private aggregatePresenceDaysByDate(
+    presences: Presence[],
+    openPresence: Presence | null,
+  ): Array<{
+    date: string;
+    presence_id: number;
+    intervals: ReturnType<AttendanceService['buildIntervalsFromPresence']>;
+    day_total_minutes: number;
+    day_total_label: string;
+    has_open_session: boolean;
+    correction_notes: string | null;
+  }> {
+    const byDate = new Map<
+      string,
+      {
+        date: string;
+        presence_id: number;
+        intervals: ReturnType<AttendanceService['buildIntervalsFromPresence']>;
+        has_open_session: boolean;
+        correction_notes: string | null;
+      }
+    >();
+
+    for (const presence of presences) {
+      const date = format(new Date(presence.date), 'yyyy-MM-dd');
+      const intervals = this.buildIntervalsFromPresence(presence);
+      const hasOpen =
+        openPresence?.id === presence.id &&
+        this.isPresenceSessionOpen(presence);
+      const notes = extractCorrectionReasons(presence.notes);
+      const existing = byDate.get(date);
+
+      if (!existing) {
+        byDate.set(date, {
+          date,
+          presence_id: presence.id,
+          intervals: [...intervals],
+          has_open_session: hasOpen,
+          correction_notes: notes,
+        });
+        continue;
+      }
+
+      existing.intervals.push(...intervals);
+      existing.has_open_session = existing.has_open_session || hasOpen;
+      if (notes) {
+        existing.correction_notes = existing.correction_notes
+          ? `${existing.correction_notes}; ${notes}`
+          : notes;
+      }
+    }
+
+    return Array.from(byDate.values())
+      .map((day) => {
+        day.intervals.sort(
+          (a, b) =>
+            new Date(a.entry_at).getTime() - new Date(b.entry_at).getTime(),
+        );
+        const day_total_minutes = this.sumIntervalMinutes(day.intervals);
+        return {
+          ...day,
+          day_total_minutes,
+          day_total_label: this.formatMinutes(day_total_minutes),
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  private formatMinutes(totalMinutes: number): string {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours <= 0) {
+      return `${minutes}m`;
+    }
+    if (minutes === 0) {
+      return `${hours}h`;
+    }
+    return `${hours}h ${minutes}m`;
+  }
+
+  private async ensureDailyShift(
+    employeeId: number,
+    workLocationId: number,
+    dateRo: string,
+  ): Promise<Shift> {
+    const dayStart = toZonedTime(
+      new Date(`${dateRo}T00:00:00`),
+      ROMANIA_TZ,
+    );
+    const dayEnd = toZonedTime(
+      new Date(`${dateRo}T23:59:59`),
+      ROMANIA_TZ,
+    );
+
+    let shift = await this.shiftRepository.findOne({
+      where: {
+        employee_id: employeeId,
+        work_location_id: workLocationId,
+      },
+      order: { start_datetime: 'DESC' },
+    });
+
+    const shiftStart = shift ? new Date(shift.start_datetime) : null;
+    const sameDay =
+      shiftStart &&
+      formatInTimeZone(shiftStart, ROMANIA_TZ, 'yyyy-MM-dd') === dateRo;
+
+    if (!shift || !sameDay) {
+      shift = this.shiftRepository.create({
+        employee_id: employeeId,
+        work_location_id: workLocationId,
+        department_id: 1,
+        position_id: null,
+        start_datetime: dayStart,
+        end_datetime: dayEnd,
+        time_for_checkout: 0,
+        notes: 'auto_daily_shift',
+      });
+      shift = await this.shiftRepository.save(shift);
+    }
+    return shift;
+  }
+
+  private async ensureDailyPresence(
+    shiftId: number,
+    dateRo: string,
+  ): Promise<Presence> {
+    const dateNorm = this.normalizeDateOnly(dateRo);
+    let presence = await this.presenceRepository.findOne({
+      where: { shift_id: shiftId, date: dateNorm },
+      relations: ['inflexions'],
+    });
+    if (!presence) {
+      presence = this.presenceRepository.create({
+        shift_id: shiftId,
+        date: dateNorm,
+        status: PresenceStatus.PRESENT_FULL,
+      });
+      presence = await this.presenceRepository.save(presence);
+      presence.inflexions = [];
+    }
+    return presence;
+  }
+
+  async myPunch(user: any): Promise<{
+    action: 'entry' | 'exit';
+    presence: Presence;
+    intervals: Array<{
+      entry_inflexion_id: number | null;
+      exit_inflexion_id: number | null;
+      entry_at: string;
+      exit_at: string | null;
+      duration_minutes: number | null;
+      incomplete: boolean;
+    }>;
+    day_total_minutes: number;
+    day_total_label: string;
+  }> {
+    const employeeId = assertOperationalSelfService(user);
+    const ctx: AttendanceUserContext = {
+      ...buildAttendanceUserContext(user),
+      employeeId,
+    };
+
+    const prev = this.punchGateByEmployee.get(employeeId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.punchGateByEmployee.set(employeeId, prev.then(() => gate));
+    await prev;
+    try {
+      return await this.myPunchInternal(user, ctx);
+    } finally {
+      release();
+    }
+  }
+
+  private async myPunchInternal(
+    user: any,
+    ctx: AttendanceUserContext,
+  ): Promise<{
+    action: 'entry' | 'exit';
+    presence: Presence;
+    intervals: Array<{
+      entry_inflexion_id: number | null;
+      exit_inflexion_id: number | null;
+      entry_at: string;
+      exit_at: string | null;
+      duration_minutes: number | null;
+      incomplete: boolean;
+    }>;
+    day_total_minutes: number;
+    day_total_label: string;
+  }> {
+    const workLocationId = Number(
+      user?.work_location_id ?? user?.work_location_default_id,
+    );
+    if (!Number.isFinite(workLocationId) || workLocationId <= 0) {
+      throw new BadRequestException(
+        'Locația de lucru lipsește din profilul angajatului',
+      );
+    }
+
+    const now = new Date();
+    const nowRo = toZonedTime(now, ROMANIA_TZ);
+    const dateRo = formatInTimeZone(nowRo, ROMANIA_TZ, 'yyyy-MM-dd');
+
+    const openPresence = await this.findOpenPresenceForEmployee(ctx.employeeId);
+    if (openPresence) {
+      const openEntry = findOpenEntryInflexion(openPresence.inflexions ?? []);
+      let exitTimestamp = nowRo;
+      if (openEntry) {
+        const entryMs = new Date(openEntry.timestamp).getTime();
+        const entrySec = Math.floor(entryMs / 1000);
+        let exitSec = Math.floor(exitTimestamp.getTime() / 1000);
+        if (exitSec <= entrySec) {
+          exitTimestamp = new Date((entrySec + 1) * 1000);
+        }
+      }
+      const inflexion = this.presenceInflexionRepository.create({
+        presence_id: openPresence.id,
+        type: InflexionType.EXIT,
+        timestamp: exitTimestamp,
+      });
+      await this.presenceInflexionRepository.save(inflexion);
+      await this.syncPresenceFromInflexions(openPresence.id);
+      const reloaded = await this.presenceRepository.findOne({
+        where: { id: openPresence.id },
+        relations: ['inflexions', 'shift'],
+      });
+      if (!reloaded) {
+        throw new NotFoundException('Prezența nu a fost găsită după ieșire');
+      }
+      const intervals = this.buildIntervalsFromPresence(reloaded);
+      return {
+        action: 'exit',
+        presence: reloaded,
+        intervals,
+        day_total_minutes: this.sumIntervalMinutes(intervals),
+        day_total_label: this.formatMinutes(this.sumIntervalMinutes(intervals)),
+      };
+    }
+
+    const shift = await this.ensureDailyShift(
+      ctx.employeeId,
+      workLocationId,
+      dateRo,
+    );
+    let presence = await this.ensureDailyPresence(shift.id, dateRo);
+    presence = await this.presenceRepository.findOne({
+      where: { id: presence.id },
+      relations: ['inflexions'],
+    });
+    if (!presence) {
+      throw new NotFoundException('Prezența zilnică nu a fost găsită');
+    }
+    const openEntry = findOpenEntryInflexion(presence.inflexions ?? []);
+    if (openEntry) {
+      throw new BadRequestException(
+        'Există deja o intrare deschisă — ieșirea este obligatorie înainte de o nouă intrare',
+      );
+    }
+    let entryTimestamp = nowRo;
+    const sorted = sortInflexions(presence.inflexions ?? []);
+    const last = sorted[sorted.length - 1];
+    if (last?.type === InflexionType.EXIT) {
+      const lastExitSec = Math.floor(new Date(last.timestamp).getTime() / 1000);
+      const entrySec = Math.floor(entryTimestamp.getTime() / 1000);
+      if (entrySec <= lastExitSec) {
+        entryTimestamp = new Date((lastExitSec + 1) * 1000);
+      }
+    }
+    const entryInflexion = this.presenceInflexionRepository.create({
+      presence_id: presence.id,
+      type: InflexionType.ENTRY,
+      timestamp: entryTimestamp,
+    });
+    await this.presenceInflexionRepository.save(entryInflexion);
+    await this.syncPresenceFromInflexions(presence.id);
+    const reloaded = await this.presenceRepository.findOne({
+      where: { id: presence.id },
+      relations: ['inflexions', 'shift'],
+    });
+    if (!reloaded) {
+      throw new NotFoundException('Prezența nu a fost găsită după intrare');
+    }
+    const intervals = this.buildIntervalsFromPresence(reloaded);
+    return {
+      action: 'entry',
+      presence: reloaded,
+      intervals,
+      day_total_minutes: this.sumIntervalMinutes(intervals),
+      day_total_label: this.formatMinutes(this.sumIntervalMinutes(intervals)),
+    };
+  }
+
+  async getMyTimesheet(
+    user: any,
+    start_date?: string,
+    end_date?: string,
+  ): Promise<{
+    employee_id: number;
+    days: Array<{
+      date: string;
+      intervals: Array<{
+        entry_at: string;
+        exit_at: string | null;
+        duration_minutes: number | null;
+        incomplete: boolean;
+      }>;
+      day_total_minutes: number;
+      day_total_label: string;
+      has_open_session: boolean;
+      correction_notes: string | null;
+    }>;
+    period_total_minutes: number;
+    period_total_label: string;
+    active_session: {
+      presence_id: number;
+      entry_at: string;
+      date: string;
+    } | null;
+  }> {
+    const employeeId = assertOperationalSelfService(user);
+    const ctx: AttendanceUserContext = {
+      ...buildAttendanceUserContext(user),
+      employeeId,
+    };
+    return this.buildTimesheetForEmployee(
+      employeeId,
+      start_date,
+      end_date,
+      ctx,
+    );
+  }
+
+  /**
+   * Aduce ID-urile angajaților activi din aceeași locație ca și utilizatorul curent.
+   * Folosit pentru scope-ul de citire al operaționalilor (magazioner/șofer).
+   * Sursa: GET /employees/for-own?location_id=<JWT.work_location_id> (intern, fără JWT).
+   */
+  async fetchOperationalColleagueIds(user: any): Promise<number[]> {
+    const selfId = Number(user?.sub ?? user?.employee_id ?? user?.id_employee);
+    const locationId = Number(
+      user?.work_location_id ?? user?.work_location_default_id,
+    );
+    if (!Number.isFinite(locationId) || locationId <= 0) {
+      throw new ForbiddenException(
+        'Locația de lucru nu este configurată în tokenul de autentificare',
+      );
+    }
+    // Apel intern direct la employees-ms (evită gateway-ul care cere JWT)
+    const base =
+      process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
+    const resp = await firstValueFrom(
+      this.httpService.get(`${base}/employees/for-own`, {
+        params: { location_id: locationId },
+        headers: {
+          'x-internal-service': 'attendance',
+          'x-service-secret':
+            process.env.SERVICE_SECRET || 'default-service-secret',
+        },
+        timeout: 8000,
+      }),
+    );
+    const list: { id: number }[] = Array.isArray(resp.data) ? resp.data : [];
+    const ids = list
+      .map((e) => Number(e.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (Number.isFinite(selfId) && selfId > 0 && !ids.includes(selfId)) {
+      ids.push(selfId);
+    }
+    return ids;
+  }
+
+  async getTeamTimesheet(
+    user: any,
+    authorization: string | undefined,
+    filters: {
+      employee_id?: number;
+      work_location_id?: number;
+      start_date?: string;
+      end_date?: string;
+    },
+  ) {
+    if (isOperationalStaffUser(user)) {
+      // Operaționalii pot citi pontajul colegilor din aceeași locație — doar citire.
+      const selfId = Number(user?.sub ?? user?.employee_id);
+      const colleagueIds = await this.fetchOperationalColleagueIds(user);
+      const ctx = buildAttendanceUserContext(user);
+
+      // Dacă se cere un anumit angajat, verifică că este în scope
+      if (filters.employee_id != null) {
+        const targetId = Number(filters.employee_id);
+        if (!colleagueIds.includes(targetId)) {
+          throw new ForbiddenException(
+            'Angajatul nu face parte din aceeași locație de lucru',
+          );
+        }
+        const sheet = await this.buildTimesheetForEmployee(
+          targetId,
+          filters.start_date,
+          filters.end_date,
+          ctx,
+          colleagueIds,
+        );
+        return { employees: [sheet], ...this.sumPeriodFromSheets([sheet]) };
+      }
+
+      // Fără filtru explicit → toți colegii din locație (sau locația din JWT)
+      const locationId = Number(
+        filters.work_location_id ??
+          user?.work_location_id ??
+          user?.work_location_default_id,
+      );
+      const idsToFetch = locationId > 0
+        ? colleagueIds // deja filtrate după locație
+        : [selfId];
+
+      const employees = [];
+      for (const employeeId of idsToFetch) {
+        if (!Number.isFinite(employeeId) || employeeId <= 0) continue;
+        employees.push(
+          await this.buildTimesheetForEmployee(
+            employeeId,
+            filters.start_date,
+            filters.end_date,
+            ctx,
+            colleagueIds,
+          ),
+        );
+      }
+      return { employees, ...this.sumPeriodFromSheets(employees) };
+    }
+
+    const ctx = buildAttendanceUserContext(user);
+    if (!isFurnizorTenant(ctx) && !hasAttendanceManagePermission(ctx.permissions)) {
+      throw new ForbiddenException(
+        'Doar furnizorul sau managerii pot vizualiza pontajul echipei',
+      );
+    }
+
+    let allowedEmployeeIds: number[] | undefined;
+    if (isFurnizorTenant(ctx) && !hasAttendanceManagePermission(ctx.permissions)) {
+      allowedEmployeeIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (allowedEmployeeIds.length === 0) {
+        return { employees: [], period_total_minutes: 0, period_total_label: '0m' };
+      }
+    }
+
+    if (filters.employee_id != null) {
+      const targetId = Number(filters.employee_id);
+      if (isFurnizorTenant(ctx) && !hasAttendanceManagePermission(ctx.permissions)) {
+        await this.assertFurnizorStaffMember(targetId, ctx, authorization);
+      } else if (
+        allowedEmployeeIds &&
+        !allowedEmployeeIds.includes(targetId)
+      ) {
+        throw new ForbiddenException(
+          'Angajatul nu aparține furnizorului autentificat',
+        );
+      }
+      const sheet = await this.buildTimesheetForEmployee(
+        targetId,
+        filters.start_date,
+        filters.end_date,
+        ctx,
+        allowedEmployeeIds,
+      );
+      return { employees: [sheet], ...this.sumPeriodFromSheets([sheet]) };
+    }
+
+    const employeeIds =
+      allowedEmployeeIds ??
+      (await this.distinctEmployeeIdsForLocation(filters.work_location_id));
+
+    const employees = [];
+    for (const employeeId of employeeIds) {
+      employees.push(
+        await this.buildTimesheetForEmployee(
+          employeeId,
+          filters.start_date,
+          filters.end_date,
+          ctx,
+          allowedEmployeeIds,
+        ),
+      );
+    }
+    return { employees, ...this.sumPeriodFromSheets(employees) };
+  }
+
+  private async distinctEmployeeIdsForLocation(
+    workLocationId?: number,
+  ): Promise<number[]> {
+    const qb = this.shiftRepository
+      .createQueryBuilder('shift')
+      .select('DISTINCT shift.employee_id', 'employee_id');
+    if (workLocationId != null && Number.isFinite(workLocationId)) {
+      qb.where('shift.work_location_id = :workLocationId', { workLocationId });
+    }
+    const rows = await qb.getRawMany();
+    return rows
+      .map((r) => Number(r.employee_id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  }
+
+  private sumPeriodFromSheets(
+    sheets: Array<{ period_total_minutes: number }>,
+  ): { period_total_minutes: number; period_total_label: string } {
+    const period_total_minutes = sheets.reduce(
+      (sum, s) => sum + (s.period_total_minutes ?? 0),
+      0,
+    );
+    return {
+      period_total_minutes,
+      period_total_label: this.formatMinutes(period_total_minutes),
+    };
+  }
+
+  private async buildTimesheetForEmployee(
+    employeeId: number,
+    start_date: string | undefined,
+    end_date: string | undefined,
+    ctx: AttendanceUserContext,
+    allowedEmployeeIds?: number[],
+  ) {
+    assertEmployeeSelfOrManager(ctx, employeeId, allowedEmployeeIds);
+
+    const end =
+      end_date ??
+      formatInTimeZone(new Date(), ROMANIA_TZ, 'yyyy-MM-dd');
+    const start =
+      start_date ??
+      formatInTimeZone(
+        new Date(Date.now() - 13 * 24 * 60 * 60 * 1000),
+        ROMANIA_TZ,
+        'yyyy-MM-dd',
+      );
+
+    const presences = await this.presenceRepository
+      .createQueryBuilder('presence')
+      .innerJoinAndSelect('presence.shift', 'shift')
+      .leftJoinAndSelect('presence.inflexions', 'inflexions')
+      .where('shift.employee_id = :employeeId', { employeeId })
+      .andWhere('presence.date BETWEEN :start AND :end', {
+        start,
+        end,
+      })
+      .orderBy('presence.date', 'ASC')
+      .getMany();
+
+    const openPresence = await this.findOpenPresenceForEmployee(employeeId);
+    const days = this.aggregatePresenceDaysByDate(presences, openPresence);
+
+    const period_total_minutes = days.reduce(
+      (sum, d) => sum + d.day_total_minutes,
+      0,
+    );
+
+    let active_session: {
+      presence_id: number;
+      entry_at: string;
+      date: string;
+    } | null = null;
+    if (openPresence) {
+      const intervals = this.buildIntervalsFromPresence(openPresence);
+      const lastOpen = intervals.find((i) => i.incomplete);
+      if (lastOpen) {
+        active_session = {
+          presence_id: openPresence.id,
+          entry_at: lastOpen.entry_at,
+          date: format(new Date(openPresence.date), 'yyyy-MM-dd'),
+        };
+      }
     }
 
     return {
-      hasActiveShift: true,
-      shift: activePresence.shift || null,
-      presence: activePresence,
+      employee_id: employeeId,
+      days,
+      period_total_minutes,
+      period_total_label: this.formatMinutes(period_total_minutes),
+      active_session,
     };
+  }
+
+  private async getCurrentSupplierId(
+    authorization?: string,
+  ): Promise<number | null> {
+    const base = this.suppliersBaseUrl();
+    const headers = this.userAuthHeaders(authorization);
+    try {
+      const myResp = await firstValueFrom(
+        this.httpService.get(`${base}/suppliers/my-supplier`, {
+          headers,
+          timeout: 8000,
+        }),
+      );
+      const supplierId = Number(myResp.data?.id);
+      return Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async assertFurnizorStaffMember(
+    employeeId: number,
+    ctx: AttendanceUserContext,
+    authorization?: string,
+  ): Promise<void> {
+    if (!isFurnizorTenant(ctx)) {
+      return;
+    }
+    if (ctx.companyId == null || ctx.companyId <= 0) {
+      throw new ForbiddenException(
+        'Furnizorul nu a putut fi determinat din JWT',
+      );
+    }
+
+    const supplierId = await this.getCurrentSupplierId(authorization);
+    if (!supplierId) {
+      throw new ForbiddenException('Contul furnizorului nu este autorizat');
+    }
+
+    const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+    if (!staffIds.includes(employeeId)) {
+      throw new ForbiddenException(
+        'Angajatul nu aparține furnizorului autentificat',
+      );
+    }
+
+    const base = this.suppliersBaseUrl();
+    const internalOnly = this.serviceOnlyHeaders();
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(
+          `${base}/suppliers/internal/employees/${employeeId}/supplier-ids`,
+          { headers: internalOnly, timeout: 8000 },
+        ),
+      );
+      const supplierIds: number[] = Array.isArray(resp.data?.supplier_ids)
+        ? resp.data.supplier_ids.map((id: unknown) => Number(id)).filter((id: number) => id > 0)
+        : [];
+      if (supplierIds.length !== 1 || supplierIds[0] !== supplierId) {
+        throw new ForbiddenException(
+          'Angajatul aparține altui furnizor sau are asocieri multiple',
+        );
+      }
+    } catch (error: any) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException(
+        'Nu s-a putut verifica apartenența angajatului la furnizor',
+      );
+    }
+  }
+
+  private async assertFurnizorCanCorrectEmployee(
+    employeeId: number,
+    ctx: AttendanceUserContext,
+    authorization?: string,
+  ): Promise<void> {
+    return this.assertFurnizorStaffMember(employeeId, ctx, authorization);
+  }
+
+  private async ensureInflexionsFromLegacy(presence: Presence): Promise<void> {
+    if (presence.inflexions?.length) {
+      return;
+    }
+    if (!presence.check_in) {
+      return;
+    }
+    await this.presenceInflexionRepository.save(
+      this.presenceInflexionRepository.create({
+        presence_id: presence.id,
+        type: InflexionType.ENTRY,
+        timestamp: presence.check_in,
+      }),
+    );
+    if (presence.check_out) {
+      await this.presenceInflexionRepository.save(
+        this.presenceInflexionRepository.create({
+          presence_id: presence.id,
+          type: InflexionType.EXIT,
+          timestamp: presence.check_out,
+        }),
+      );
+    }
+    presence.inflexions = await this.presenceInflexionRepository.find({
+      where: { presence_id: presence.id },
+    });
+  }
+
+  private async syncPresenceFromInflexions(presenceId: number): Promise<Presence> {
+    const presence = await this.presenceRepository.findOne({
+      where: { id: presenceId },
+      relations: ['inflexions', 'shift'],
+    });
+    if (!presence) {
+      throw new NotFoundException(`Prezența cu ID-ul ${presenceId} nu a fost găsită`);
+    }
+
+    const inflexions = sortInflexions(presence.inflexions ?? []);
+    if (inflexions.length === 0) {
+      presence.total_hours = 0;
+      return this.presenceRepository.save(presence);
+    }
+
+    validateInflexionTimeline(inflexions);
+
+    const firstEntry = inflexions.find((i) => i.type === InflexionType.ENTRY);
+    presence.check_in = firstEntry ? firstEntry.timestamp : null;
+
+    const openEntry = findOpenEntryInflexion(inflexions);
+    if (openEntry) {
+      presence.check_out = null;
+    } else {
+      const lastExit = [...inflexions]
+        .reverse()
+        .find((i) => i.type === InflexionType.EXIT);
+      presence.check_out = lastExit?.timestamp ?? null;
+    }
+
+    const totalMinutes = buildClosedIntervalMinutes(inflexions);
+    presence.total_hours = totalMinutes / 60;
+    return this.presenceRepository.save(presence);
+  }
+
+  async correctPresence(
+    presenceId: number,
+    dto: CorrectPresenceDto,
+    user: any,
+    authorization?: string,
+  ): Promise<Presence> {
+    const ctx = buildAttendanceUserContext(user);
+
+    if (isOperationalEmployee(ctx) && !canCorrectAttendance(ctx)) {
+      throw new ForbiddenException('Angajații nu pot corecta pontajul');
+    }
+    if (!canCorrectAttendance(ctx)) {
+      throw new ForbiddenException(
+        'Nu aveți permisiunea de a corecta pontajul',
+      );
+    }
+    if (!dto.correction_reason?.trim()) {
+      throw new BadRequestException('Motivul corecției este obligatoriu');
+    }
+
+    const presence = await this.findPresenceById(presenceId);
+    const employeeId = presence.shift?.employee_id;
+    if (!employeeId) {
+      throw new BadRequestException('Prezența nu are angajat asociat');
+    }
+
+    if (isAdminOrSuperAdmin(ctx) && hasAttendanceManagePermission(ctx.permissions)) {
+      // admin/superadmin cu attendance.update
+    } else if (isFurnizorTenant(ctx)) {
+      await this.assertFurnizorCanCorrectEmployee(
+        employeeId,
+        ctx,
+        authorization,
+      );
+    } else {
+      throw new ForbiddenException(
+        'Nu aveți permisiunea de a corecta pontajul',
+      );
+    }
+
+    await this.ensureInflexionsFromLegacy(presence);
+    const reloaded = await this.findPresenceById(presenceId);
+    const inflexions = sortInflexions(reloaded.inflexions ?? []);
+
+    const oldValues: Record<string, unknown> = {
+      intervals: this.buildIntervalsFromPresence(reloaded),
+      total_hours: reloaded.total_hours,
+    };
+
+    const toTs = (iso: string) =>
+      toZonedTime(new Date(iso), ROMANIA_TZ) as Date;
+
+    switch (dto.action) {
+      case PresenceCorrectionAction.UPDATE_ENTRY: {
+        if (!dto.inflexion_id || !dto.timestamp) {
+          throw new BadRequestException(
+            'inflexion_id și timestamp sunt obligatorii pentru update_entry',
+          );
+        }
+        const inf = inflexions.find((i) => i.id === dto.inflexion_id);
+        if (!inf || inf.type !== InflexionType.ENTRY) {
+          throw new BadRequestException('Inflexion intrare invalid');
+        }
+        inf.timestamp = toTs(dto.timestamp);
+        await this.presenceInflexionRepository.save(inf);
+        break;
+      }
+      case PresenceCorrectionAction.UPDATE_EXIT: {
+        if (!dto.inflexion_id || !dto.timestamp) {
+          throw new BadRequestException(
+            'inflexion_id și timestamp sunt obligatorii pentru update_exit',
+          );
+        }
+        const inf = inflexions.find((i) => i.id === dto.inflexion_id);
+        if (!inf || inf.type !== InflexionType.EXIT) {
+          throw new BadRequestException('Inflexion ieșire invalid');
+        }
+        inf.timestamp = toTs(dto.timestamp);
+        await this.presenceInflexionRepository.save(inf);
+        break;
+      }
+      case PresenceCorrectionAction.ADD_MISSING_EXIT: {
+        if (!dto.timestamp) {
+          throw new BadRequestException(
+            'timestamp este obligatoriu pentru add_missing_exit',
+          );
+        }
+        const openEntry = findOpenEntryInflexion(inflexions);
+        if (!openEntry) {
+          throw new BadRequestException('Nu există intrare deschisă');
+        }
+        if (
+          dto.inflexion_id != null &&
+          dto.inflexion_id !== openEntry.id
+        ) {
+          throw new BadRequestException(
+            'inflexion_id nu corespunde intrării deschise',
+          );
+        }
+        await this.presenceInflexionRepository.save(
+          this.presenceInflexionRepository.create({
+            presence_id: presenceId,
+            type: InflexionType.EXIT,
+            timestamp: toTs(dto.timestamp),
+          }),
+        );
+        break;
+      }
+      case PresenceCorrectionAction.ADD_INTERVAL: {
+        if (!dto.entry_at || !dto.exit_at) {
+          throw new BadRequestException(
+            'entry_at și exit_at sunt obligatorii pentru add_interval',
+          );
+        }
+        const entryTs = toTs(dto.entry_at);
+        const exitTs = toTs(dto.exit_at);
+        if (exitTs <= entryTs) {
+          throw new BadRequestException(
+            'Ieșirea trebuie să fie după intrare',
+          );
+        }
+        await this.presenceInflexionRepository.save(
+          this.presenceInflexionRepository.create({
+            presence_id: presenceId,
+            type: InflexionType.ENTRY,
+            timestamp: entryTs,
+          }),
+        );
+        await this.presenceInflexionRepository.save(
+          this.presenceInflexionRepository.create({
+            presence_id: presenceId,
+            type: InflexionType.EXIT,
+            timestamp: exitTs,
+          }),
+        );
+        break;
+      }
+      case PresenceCorrectionAction.DELETE_INTERVAL: {
+        if (!dto.entry_inflexion_id || !dto.exit_inflexion_id) {
+          throw new BadRequestException(
+            'entry_inflexion_id și exit_inflexion_id sunt obligatorii pentru delete_interval',
+          );
+        }
+        const entryInf = inflexions.find(
+          (i) => i.id === dto.entry_inflexion_id && i.type === InflexionType.ENTRY,
+        );
+        const exitInf = inflexions.find(
+          (i) => i.id === dto.exit_inflexion_id && i.type === InflexionType.EXIT,
+        );
+        if (!entryInf || !exitInf) {
+          throw new BadRequestException('Perechea de inflexiuni nu a fost găsită');
+        }
+        await this.presenceInflexionRepository.remove(exitInf);
+        await this.presenceInflexionRepository.remove(entryInf);
+        break;
+      }
+      default:
+        throw new BadRequestException('Acțiune de corecție necunoscută');
+    }
+
+    const saved = await this.syncPresenceFromInflexions(presenceId);
+    const newValues: Record<string, unknown> = {
+      intervals: this.buildIntervalsFromPresence(saved),
+      total_hours: saved.total_hours,
+    };
+
+    saved.notes = appendCorrectionAudit(saved.notes, {
+      action: dto.action,
+      corrected_by: ctx.employeeId ?? user?.userId ?? user?.sub ?? null,
+      corrected_at: new Date().toISOString(),
+      correction_reason: dto.correction_reason.trim(),
+      old_values: oldValues,
+      new_values: newValues,
+    });
+
+    return this.presenceRepository.save(saved);
   }
 
   // STATISTICS AND REPORTS

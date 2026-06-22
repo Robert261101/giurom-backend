@@ -17,7 +17,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { EventCategoryService } from './event-category.service';
-import { Permissions } from './permissions/permissions.decorator';
+import { AuthOnly, Permissions } from './permissions/permissions.decorator';
 import { CreateEventCategoryDto } from './dto/create-event-category.dto';
 import { UpdateEventCategoryDto } from './dto/update-event-category.dto';
 import { EventCategory } from './entities/event-category.entity';
@@ -47,7 +47,7 @@ export class EventCategoryController {
 
   // GET /calendar/categories – listare categorii
   @Get()
-  @Permissions('calendar.read')
+  @AuthOnly()
   @ApiOperation({ summary: 'Obține toate categoriile de evenimente' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -60,7 +60,7 @@ export class EventCategoryController {
 
   // GET /calendar/categories/:id – obținere categorie specifică
   @Get(':id')
-  @Permissions('calendar.read')
+  @AuthOnly()
   @ApiOperation({ summary: 'Obține o categorie de evenimente specifică' })
   @ApiParam({ name: 'id', description: 'ID-ul categoriei' })
   @ApiResponse({

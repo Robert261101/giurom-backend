@@ -13,6 +13,7 @@ import { TaskElement } from '../template/entity/task-element.entity';
 import { TaskExecution } from '../execution/entity/task-execution.entity';
 import { ExecutionModule } from '../execution/execution.module';
 import { TaskGateway } from '../websocket/task.gateway';
+import { EmployeeAccessModule } from '../employee-access/employee-access.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TaskGateway } from '../websocket/task.gateway';
     HttpModule,
     NotificationsModule,
     ExecutionModule,
+    EmployeeAccessModule,
     JwtModule.register({
       secret: 'your-secret-key',
       signOptions: { expiresIn: '24h'},

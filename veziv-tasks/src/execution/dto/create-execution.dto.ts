@@ -47,12 +47,13 @@ export class CreateExecutionDto {
   task_assignment_id: number;
 
   @ApiProperty({
-    description: 'ID-ul angajatului care execută sarcina',
-    example: 5
+    description: 'ID-ul angajatului care execută sarcina (ignorat pentru operațional — se folosește JWT.sub)',
+    example: 5,
+    required: false,
   })
   @IsInt()
-  @IsNotEmpty()
-  employee_id: number;
+  @IsOptional()
+  employee_id?: number;
 
   @ApiProperty({
     description: 'Data și ora de început',

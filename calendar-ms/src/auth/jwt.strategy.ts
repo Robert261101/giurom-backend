@@ -14,17 +14,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    this.logger.log(`🔍 JwtStrategy.validate called with payload: ${JSON.stringify(payload)}`);
-    
     const user = {
       userId: payload.sub,
+      sub: payload.sub,
       username: payload.username,
       permissions: payload.permissions || [],
+      roles: payload.roles || [],
+      company_id: payload.company_id ?? undefined,
+      company_type: payload.company_type ?? undefined,
+      position_default_id: payload.position_default_id ?? undefined,
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,
     };
-    
-    this.logger.log(`✅ JwtStrategy.validate returning user: ${JSON.stringify(user)}`);
+
+    this.logger.log(
+      `JWT validated sub=${user.sub} company_id=${user.company_id} work_location_id=${user.work_location_id}`,
+    );
     return user;
   }
 }

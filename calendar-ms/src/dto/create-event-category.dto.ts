@@ -1,42 +1,31 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
   Length,
   IsOptional,
-  IsHexColor,
+  IsBoolean,
+  Matches,
 } from 'class-validator';
 
 export class CreateEventCategoryDto {
-  @ApiProperty({ 
-    description: 'Numele categoriei', 
-    example: 'Personal',
-    maxLength: 100 
+  @ApiProperty({ description: 'Cod stabil', example: 'work', maxLength: 50 })
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 50)
+  @Matches(/^[a-z][a-z0-9_]*$/, {
+    message: 'code trebuie să fie lowercase (litere, cifre, underscore)',
   })
-  @IsString({ message: 'Numele categoriei trebuie să fie un string' })
-  @IsNotEmpty({ message: 'Numele categoriei este obligatoriu' })
-  @Length(1, 100, { message: 'Numele categoriei trebuie să aibă între 1 și 100 de caractere' })
+  code: string;
+
+  @ApiProperty({ description: 'Nume afișat', example: 'Work', maxLength: 100 })
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 100)
   name: string;
 
-  @ApiProperty({ 
-    description: 'Culoarea asociată categoriei (pentru UI)', 
-    example: 'purple',
-    maxLength: 50,
-    required: false 
-  })
+  @ApiPropertyOptional({ description: 'Activ în listări', default: true })
   @IsOptional()
-  @IsString({ message: 'Culoarea trebuie să fie un string' })
-  @Length(1, 50, { message: 'Culoarea trebuie să aibă între 1 și 50 de caractere' })
-  color?: string;
-
-  @ApiProperty({ 
-    description: 'Descrierea categoriei', 
-    example: 'Evenimente personale',
-    maxLength: 255,
-    required: false 
-  })
-  @IsOptional()
-  @IsString({ message: 'Descrierea trebuie să fie un string' })
-  @Length(1, 255, { message: 'Descrierea trebuie să aibă între 1 și 255 de caractere' })
-  description?: string;
+  @IsBoolean()
+  is_active?: boolean;
 }

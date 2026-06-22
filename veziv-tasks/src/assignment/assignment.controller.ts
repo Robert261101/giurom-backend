@@ -19,7 +19,7 @@ export class AssignmentController {
 
   @Post()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.create')
+  @Permissions('assignment.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează un assignment nou cu toate elementele sale' })
   @ApiResponse({ 
     status: 201, 
@@ -29,13 +29,17 @@ export class AssignmentController {
   @ApiResponse({ status: 400, description: 'Date invalide' })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  create(@Body() createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
-    return this.assignmentService.create(createAssignmentDto);
+  create(@Request() req, @Body() createAssignmentDto: CreateAssignmentDto): Promise<TaskAssignment> {
+    return this.assignmentService.create(
+      createAssignmentDto,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
   }
 
   @Post('batch')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.create')
+  @Permissions('assignment.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează mai multe assignments într-o singură tranzacție (batch)' })
   @ApiResponse({ 
     status: 201, 
@@ -45,13 +49,24 @@ export class AssignmentController {
   @ApiResponse({ status: 400, description: 'Date invalide' })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  createBatch(@Body() createAssignmentDtos: CreateAssignmentDto[]): Promise<TaskAssignment[]> {
-    return this.assignmentService.createBatch(createAssignmentDtos);
+  createBatch(@Request() req, @Body() createAssignmentDtos: CreateAssignmentDto[]): Promise<TaskAssignment[]> {
+    return this.assignmentService.createBatch(
+      createAssignmentDtos,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
   }
 
   @Get()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține assignment-urile în funcție de permisiuni' })
   @ApiResponse({ 
     status: 200, 
@@ -71,26 +86,59 @@ export class AssignmentController {
     console.log('🔍 [assignments.controller] findAll -> user perms:', req.user?.permissions, 'query.location_id:', location_id, 'parsed:', locationId);
     const sd = startDate ? new Date(startDate) : undefined;
     const ed = endDate ? new Date(endDate) : undefined;
-    return this.assignmentService.findAllWithPermissions(req.user, locationId, sd, ed);
+    return this.assignmentService.findAllWithPermissions(
+      req.user,
+      locationId,
+      sd,
+      ed,
+      req.headers?.authorization as string | undefined,
+    );
   }
 
   @Get('stats/efficiency')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'suppliers.create',
+    'execution.read_own',
+    'order.read',
+  )
   @ApiOperation({ summary: 'Eficiență angajat: câte task-uri finalizate din total (doar count-uri)' })
   @ApiQuery({ name: 'employee_id', required: true, description: 'ID angajat' })
   @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD (opțional, filtru de la data)' })
   @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD (opțional, filtru până la data)' })
   @ApiResponse({ status: 200, description: 'total_count, completed_count, percentage' })
+  @ApiResponse({ status: 401, description: 'Neautorizat' })
+  @ApiResponse({ status: 403, description: 'Fără acces la datele angajatului' })
   getEfficiency(
+    @Request() req,
     @Query('employee_id', ParseIntPipe) employeeId: number,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.assignmentService.getEfficiencyForEmployee(employeeId, startDate, endDate);
+    const auth = req.headers?.authorization as string | undefined;
+    return this.assignmentService.getEfficiencyForEmployee(
+      employeeId,
+      startDate,
+      endDate,
+      req.user,
+      auth,
+    );
   }
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține un assignment specific (doar dacă utilizatorul are dreptul să-l vadă)' })
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
   @ApiResponse({ 
@@ -101,11 +149,15 @@ export class AssignmentController {
   @ApiResponse({ status: 403, description: 'Nu ai dreptul să accesezi această sarcină' })
   @ApiResponse({ status: 404, description: 'Assignment nu a fost găsit' })
   findOne(@Request() req, @Param('id', ParseIntPipe) id: number): Promise<TaskAssignment> {
-    return this.assignmentService.findOne(id, req.user);
+    return this.assignmentService.findOne(
+      id,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
   }
   
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.update', 'execution.create', 'assignment.read_own')
+  @Permissions('assignment.update', 'suppliers.create')
   @Patch(':id')
   @ApiOperation({ summary: 'Actualizează un assignment și elementele sale' })
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
@@ -116,10 +168,16 @@ export class AssignmentController {
   })
   @ApiResponse({ status: 404, description: 'Assignment nu a fost găsit' })
   update(
+    @Request() req,
     @Param('id', ParseIntPipe) id: number,
     @Body() updateAssignmentDto: UpdateAssignmentDto,
   ): Promise<TaskAssignment> {
-    return this.assignmentService.update(id, updateAssignmentDto);
+    return this.assignmentService.update(
+      id,
+      updateAssignmentDto,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -174,7 +232,14 @@ export class AssignmentController {
   // Endpoint-uri pentru sarcinile programate
   @Get('scheduled')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține toate sarcinile programate' })
   @ApiResponse({ 
     status: 200, 
@@ -187,7 +252,14 @@ export class AssignmentController {
 
   @Get('scheduled/for-date')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține sarcinile programate pentru o dată specifică' })
   @ApiQuery({ name: 'date', description: 'Data pentru care să se caute sarcinile programate (YYYY-MM-DD)', required: false })
   @ApiResponse({ 
@@ -202,7 +274,14 @@ export class AssignmentController {
 
   @Get('overdue')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
+  @Permissions(
+    'assignment.read_own',
+    'assignment.read_location',
+    'assignment.read_company',
+    'assignment.read_all',
+    'order.read',
+    'suppliers.create',
+  )
   @ApiOperation({ summary: 'Obține sarcinile întârziate pentru angajatul curent' })
   @ApiResponse({ 
     status: 200, 
@@ -387,5 +466,50 @@ export class AssignmentController {
     }
 
     return this.assignmentService.postponeTask(id, userId);
+  }
+
+  @Post(':id/start-work')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.create', 'order.read', 'assignment.read_own')
+  @ApiOperation({ summary: 'Participant: marchează sarcina proprie ca În lucru' })
+  startParticipantWork(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TaskAssignment> {
+    return this.assignmentService.startParticipantWork(
+      id,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
+  }
+
+  @Post(':id/complete-own')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('execution.create', 'order.read', 'assignment.read_own')
+  @ApiOperation({ summary: 'Participant: confirmare individuală Am terminat' })
+  completeParticipantParticipation(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.assignmentService.completeParticipantParticipation(
+      id,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
+  }
+
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('assignment.update', 'suppliers.create')
+  @ApiOperation({ summary: 'Furnizor/admin: anulează sarcina (grup sau individual)' })
+  cancelAssignment(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TaskAssignment[]> {
+    return this.assignmentService.cancelAssignment(
+      id,
+      req.user,
+      req.headers?.authorization as string | undefined,
+    );
   }
 } 

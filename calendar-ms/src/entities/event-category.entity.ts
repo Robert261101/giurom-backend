@@ -15,51 +15,30 @@ export class EventCategory {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @ApiProperty({ 
-    description: 'Numele categoriei', 
-    example: 'Personal',
-    maxLength: 100 
-  })
-  @Column({ 
-    type: 'varchar', 
-    length: 100,
+  @ApiProperty({ description: 'Cod stabil categorie', example: 'work', maxLength: 50 })
+  @Column({
+    type: 'varchar',
+    length: 50,
     unique: true,
-    charset: 'utf8mb4', 
-    collation: 'utf8mb4_unicode_ci' 
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci',
+  })
+  code: string;
+
+  @ApiProperty({ description: 'Nume afișat', example: 'Work', maxLength: 100 })
+  @Column({
+    type: 'varchar',
+    length: 100,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci',
   })
   name: string;
 
-  @ApiProperty({ 
-    description: 'Culoarea asociată categoriei (pentru UI)', 
-    example: 'purple',
-    maxLength: 50,
-    required: false
-  })
-  @Column({ 
-    type: 'varchar', 
-    length: 50,
-    nullable: true,
-    charset: 'utf8mb4', 
-    collation: 'utf8mb4_unicode_ci' 
-  })
-  color?: string;
+  @ApiProperty({ description: 'Categorie activă în UI', example: true })
+  @Column({ name: 'is_active', type: 'boolean', default: true })
+  is_active: boolean;
 
-  @ApiProperty({ 
-    description: 'Descrierea categoriei', 
-    example: 'Evenimente personale',
-    maxLength: 255,
-    required: false 
-  })
-  @Column({ 
-    type: 'varchar', 
-    length: 255,
-    nullable: true,
-    charset: 'utf8mb4', 
-    collation: 'utf8mb4_unicode_ci' 
-  })
-  description?: string;
-
-  @OneToMany(() => CalendarEvent, event => event.category)
+  @OneToMany(() => CalendarEvent, (event) => event.categoryEntity)
   events: CalendarEvent[];
 
   @CreateDateColumn({ type: 'datetime' })

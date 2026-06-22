@@ -7,83 +7,80 @@ import {
   IsOptional,
   IsPositive,
   Length,
-  Min,
+  IsBoolean,
+  IsIn,
+  IsArray,
+  ArrayUnique,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateCalendarEventDto {
-  @ApiProperty({ 
-    description: 'Titlul evenimentului', 
-    example: 'Ședință echipă',
-    maxLength: 100 
-  })
-  @IsString({ message: 'Titlul trebuie să fie un string' })
-  @IsNotEmpty({ message: 'Titlul este obligatoriu' })
-  @Length(1, 100, { message: 'Titlul trebuie să aibă între 1 și 100 de caractere' })
+  @ApiProperty({ description: 'Titlul evenimentului', example: 'Ședință echipă', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 200)
   title: string;
 
-  @ApiProperty({ 
-    description: 'Categoria evenimentului', 
-    example: 'Întâlniri',
-    maxLength: 100 
-  })
-  @IsString({ message: 'Categoria trebuie să fie un string' })
-  @IsNotEmpty({ message: 'Categoria este obligatorie' })
-  @Length(1, 100, { message: 'Categoria trebuie să aibă între 1 și 100 de caractere' })
-  category: string;
+  @ApiProperty({ description: 'ID categorie (event_category.id)', example: 6 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  category_id: number;
 
-  @ApiProperty({ 
-    description: 'Data și ora de început', 
-    example: '2024-07-25T09:00:00Z' 
-  })
-  @IsDateString({}, { message: 'Data de început trebuie să fie în format ISO' })
+  @ApiProperty({ description: 'Data și ora de început', example: '2024-07-25T09:00:00Z' })
+  @IsDateString()
   start_datetime: string;
 
-  @ApiProperty({ 
-    description: 'Data și ora de sfârșit', 
-    example: '2024-07-25T10:00:00Z' 
-  })
-  @IsDateString({}, { message: 'Data de sfârșit trebuie să fie în format ISO' })
+  @ApiProperty({ description: 'Data și ora de sfârșit', example: '2024-07-25T10:00:00Z' })
+  @IsDateString()
   end_datetime: string;
 
-  @ApiProperty({ 
-    description: 'Durata în minute', 
-    example: 60,
-    minimum: 1 
-  })
-  @IsNumber({}, { message: 'Durata trebuie să fie un număr' })
-  @Min(1, { message: 'Durata trebuie să fie cel puțin 1 minut' })
-  duration: number;
-
-  @ApiProperty({ 
-    description: 'Descrierea evenimentului', 
-    example: 'Discutăm despre progresul proiectelor și planurile pentru săptămâna viitoare',
-    required: false 
-  })
+  @ApiProperty({ description: 'Descriere', required: false })
   @IsOptional()
-  @IsString({ message: 'Descrierea trebuie să fie un string' })
+  @IsString()
   description?: string;
 
-  @ApiProperty({ 
-    description: 'ID regula de recurență', 
-    example: 1,
-    required: false 
+  @ApiProperty({ description: 'Eveniment pe toată ziua', required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  all_day?: boolean;
+
+  @ApiProperty({
+    description: 'Eveniment companie întreagă (location_id trebuie lipsă)',
+    required: false,
+    default: false,
   })
   @IsOptional()
-  @IsNumber({}, { message: 'ID-ul regulii de recurență trebuie să fie un număr' })
-  @IsPositive({ message: 'ID-ul regulii de recurență trebuie să fie pozitiv' })
-  recurrence_id?: number;
+  @IsBoolean()
+  is_company_wide?: boolean;
 
-  @ApiProperty({ 
-    description: 'ID angajat care creează evenimentul', 
-    example: 1 
-  })
-  @IsNumber({}, { message: 'ID-ul creatorului trebuie să fie un număr' })
-  @IsPositive({ message: 'ID-ul creatorului trebuie să fie pozitiv' })
-  created_by: number;
-
-  @ApiProperty({ description: 'ID locație – evenimentul este vizibil doar pentru această locație', example: 1, required: false })
+  @ApiProperty({ description: 'ID locație (obligatoriu dacă nu e company-wide)', required: false })
   @IsOptional()
-  @IsNumber({}, { message: 'location_id trebuie să fie un număr' })
-  @IsPositive({ message: 'location_id trebuie să fie pozitiv' })
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
   location_id?: number;
+
+  @ApiProperty({
+    description: 'Tip eveniment',
+    enum: ['general', 'meeting'],
+    required: false,
+    default: 'general',
+  })
+  @IsOptional()
+  @IsIn(['general', 'meeting'])
+  event_type?: 'general' | 'meeting';
+
+  @ApiProperty({
+    description: 'Participanți (doar pentru event_type=meeting)',
+    required: false,
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsNumber({}, { each: true })
+  @IsPositive({ each: true })
+  participant_employee_ids?: number[];
 }

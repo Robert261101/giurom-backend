@@ -64,7 +64,7 @@ export class LocationsService {
     // 1) Încearcă employees microservice (preferred)
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -465,7 +465,7 @@ export class LocationsService {
     let employeeLocationIds: number[] = [];
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -630,7 +630,7 @@ export class LocationsService {
     let employeeLocationIds: number[] = [];
     try {
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
       const response = await axios.get(
         `${employeesUrl}/employees/${employeeId}/locations`,
         {
@@ -1732,7 +1732,7 @@ export class LocationsService {
 
       // Get all employees from this location (folosește EMPLOYEES_HTTP_URL – în Docker setați ex. http://employees:3001)
       const employeesUrl =
-        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3012";
+        process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
       const employeesEndpoint = `${employeesUrl}/employees/locations/${locationId}/employees`;
       let employees: any[] = [];
       const serviceSecret =

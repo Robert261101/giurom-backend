@@ -15,7 +15,7 @@ export class TemplateController {
 
   @Post()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.create')
+  @Permissions('template.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează un template nou cu elementele sale' })
   @ApiResponse({ 
     status: 201, 
@@ -31,7 +31,7 @@ export class TemplateController {
 
   @Get()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.read')
+  @Permissions('template.read', 'suppliers.create', 'assignment.create')
   @ApiOperation({ summary: 'Obține toate template-urile cu elementele lor pentru o locație specifică' })
   @ApiQuery({ name: 'locationId', required: true, description: 'ID-ul locației (OBLIGATORIU)' })
   @ApiResponse({ 
@@ -58,7 +58,7 @@ export class TemplateController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.read')
+  @Permissions('template.read', 'suppliers.create', 'assignment.create')
   @ApiOperation({ summary: 'Obține un template specific cu elementele sale pentru o locație specifică' })
   @ApiParam({ name: 'id', description: 'ID-ul template-ului' })
   @ApiQuery({ name: 'locationId', required: true, description: 'ID-ul locației (OBLIGATORIU)' })
@@ -90,7 +90,7 @@ export class TemplateController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.update')
+  @Permissions('template.update', 'suppliers.create')
   @ApiOperation({ summary: 'Actualizează un template și elementele sale' })
   @ApiParam({ name: 'id', description: 'ID-ul template-ului' })
   @ApiResponse({ 
@@ -110,7 +110,7 @@ export class TemplateController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.delete')
+  @Permissions('template.delete', 'suppliers.create')
   @ApiOperation({ summary: 'Șterge un template și toate elementele sale' })
   @ApiParam({ name: 'id', description: 'ID-ul template-ului' })
   @ApiResponse({ status: 200, description: 'Template șters cu succes' })
@@ -123,7 +123,7 @@ export class TemplateController {
 
   @Post(':id/locations/:locationId')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('template.update')
+  @Permissions('template.update', 'suppliers.create')
   @ApiOperation({ summary: 'Adaugă un template existent la o locație' })
   @ApiParam({ name: 'id', description: 'ID-ul template-ului' })
   @ApiParam({ name: 'locationId', description: 'ID-ul locației' })

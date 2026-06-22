@@ -133,6 +133,15 @@ export class UpdateAssignmentDto {
   scheduled_datetime?: string;
 
   @ApiProperty({
+    description: 'ID-ul locației de lucru',
+    example: 3,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  location_id?: number;
+
+  @ApiProperty({
     description: 'Data completării',
     example: '2024-01-18T15:30:00Z',
     required: false
