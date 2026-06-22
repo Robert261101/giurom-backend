@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -114,7 +114,7 @@ export class AssignmentService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -175,7 +175,7 @@ export class AssignmentService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -246,7 +246,7 @@ export class AssignmentService {
     const headers = {
       'x-internal-service': 'veziv-tasks',
       'x-service-secret':
-        process.env.SERVICE_SECRET || 'default-service-secret',
+        process.env.SERVICE_SECRET || '',
       'Content-Type': 'application/json',
     };
     const resp = await firstValueFrom(
@@ -280,7 +280,7 @@ export class AssignmentService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
             timeout: REALLOC_HTTP_TIMEOUT_MS,
@@ -331,7 +331,7 @@ export class AssignmentService {
       const headers = {
         'x-internal-service': 'veziv-tasks',
         'x-service-secret':
-          process.env.SERVICE_SECRET || 'default-service-secret',
+          process.env.SERVICE_SECRET || '',
         'Content-Type': 'application/json',
       };
       const resp = await firstValueFrom(
@@ -404,7 +404,7 @@ export class AssignmentService {
       const locationsBase =
         process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
       const serviceSecret =
-        process.env.SERVICE_SECRET || 'default-service-secret';
+        process.env.SERVICE_SECRET || '';
       const authHeaders = {
         'x-internal-service': 'veziv-tasks',
         'x-service-secret': serviceSecret,
@@ -636,7 +636,7 @@ export class AssignmentService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -659,7 +659,7 @@ export class AssignmentService {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
                   'x-service-secret':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
+                    process.env.SERVICE_SECRET || '',
                   'Content-Type': 'application/json',
                 },
               },
@@ -700,7 +700,7 @@ export class AssignmentService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -806,7 +806,7 @@ export class AssignmentService {
         const headers = {
           'x-internal-service': 'veziv-tasks',
           'x-service-secret':
-            process.env.SERVICE_SECRET || 'default-service-secret',
+            process.env.SERVICE_SECRET || '',
           'Content-Type': 'application/json',
         };
 
@@ -2149,7 +2149,7 @@ export class AssignmentService {
               headers: {
                 'x-internal-service': 'veziv-tasks',
                 'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
+                  process.env.SERVICE_SECRET || '',
                 'Content-Type': 'application/json',
               },
             },
@@ -2211,7 +2211,7 @@ export class AssignmentService {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
                   'x-service-secret':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
+                    process.env.SERVICE_SECRET || '',
                   'Content-Type': 'application/json',
                 },
               },
@@ -2700,7 +2700,7 @@ export class AssignmentService {
               headers: {
                 'x-internal-service': 'veziv-tasks',
                 'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
+                  process.env.SERVICE_SECRET || '',
                 'Content-Type': 'application/json',
               },
             },
@@ -2821,7 +2821,7 @@ export class AssignmentService {
               headers: {
                 'x-internal-service': 'veziv-tasks',
                 'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
+                  process.env.SERVICE_SECRET || '',
                 'Content-Type': 'application/json',
               },
             },
@@ -2838,7 +2838,7 @@ export class AssignmentService {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
                   'x-service-secret':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
+                    process.env.SERVICE_SECRET || '',
                   'Content-Type': 'application/json',
                 },
               },
@@ -2855,7 +2855,7 @@ export class AssignmentService {
                   headers: {
                     'x-internal-service': 'veziv-tasks',
                     'x-service-secret':
-                      process.env.SERVICE_SECRET || 'default-service-secret',
+                      process.env.SERVICE_SECRET || '',
                     'Content-Type': 'application/json',
                   },
                 },

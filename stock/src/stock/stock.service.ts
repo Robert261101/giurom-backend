@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -149,7 +149,7 @@ export class StockService {
         const port = portMatch ? portMatch[1] : '3012';
         employeesServiceUrl = `http://localhost:${port}`;
       }
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'Content-Type': 'application/json', 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
       try {
         const idsParam = creatorIds.join(',');
@@ -211,7 +211,7 @@ export class StockService {
           const port = portMatch ? portMatch[1] : '3003';
           recipesUrl = `http://localhost:${port}`;
         }
-        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const serviceSecret = process.env.SERVICE_SECRET || '';
         const headers = { 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
 
         // Get preparation to obtain produced quantity and recipe id
@@ -1826,7 +1826,7 @@ export class StockService {
         );
       }
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       const headers = {
         "Content-Type": "application/json",
         "x-internal-service": "stock",

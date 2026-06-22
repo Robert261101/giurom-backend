@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -36,7 +36,7 @@ export class UsersService {
     return {
       'X-Internal-Service': 'auth-service',
       'X-Service-Secret':
-        process.env.SERVICE_SECRET || 'default-service-secret',
+        process.env.SERVICE_SECRET || '',
     };
   }
 
@@ -634,7 +634,7 @@ export class UsersService {
             headers: {
               'X-Internal-Service': 'auth-service',
               'X-Service-Secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
             },
           },
         ),
@@ -676,7 +676,7 @@ export class UsersService {
           headers: {
             'X-Internal-Service': 'auth-service',
             'X-Service-Secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
           },
         }),
       );
@@ -734,7 +734,7 @@ export class UsersService {
             headers: {
               'X-Internal-Service': 'auth-service',
               'X-Service-Secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
             },
           },
         ),

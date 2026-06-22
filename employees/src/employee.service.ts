@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -396,7 +396,7 @@ export class EmployeeService {
         headers: {
           "x-internal-service": "employees",
           "x-service-secret":
-            process.env.SERVICE_SECRET || "default-service-secret",
+            process.env.SERVICE_SECRET || '',
           "Content-Type": "application/json",
         },
       });
@@ -437,7 +437,7 @@ export class EmployeeService {
           headers: {
             "X-Internal-Service": "employees-service",
             "X-Service-Secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
           },
         }),
       );
@@ -1271,7 +1271,7 @@ export class EmployeeService {
               "Content-Type": "application/json",
               "X-Internal-Service": "employees-service",
               "X-Service-Secret":
-                process.env.SERVICE_SECRET || "default-service-secret",
+                process.env.SERVICE_SECRET || '',
             },
           },
         ),
@@ -2339,7 +2339,7 @@ export class EmployeeService {
           const companiesUrl =
             process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
           const serviceSecret =
-            process.env.SERVICE_SECRET || "default-service-secret";
+            process.env.SERVICE_SECRET || '';
           const locResponse = await axios.get(
             `${locationsUrl}/locations/${locationId}`,
             {

@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 3002;
 const target = (defaultUrl, envKey) =>
   (process.env[envKey] || defaultUrl).replace(/\/$/, "");
 
-app.use(bodyParser.json({ limit: "100mb" }));
-app.use(bodyParser.urlencoded({ limit: "100mb", extended: true }));
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 
 // Enable CORS
 app.use(
@@ -25,8 +25,9 @@ app.use(
       "http://giurom.bitap.ro",
       "http://89.46.6.45:3000",
       "http://89.46.6.45",
-      // Permite toate domeniile Vercel
-      /^https:\/\/.*\.vercel\.app$/,
+      // Adaugă domenii Vercel specifice via env (ex: VERCEL_ALLOWED_ORIGINS=https://giurom-frontend.vercel.app)
+      ...(process.env.VERCEL_ALLOWED_ORIGINS || "https://giurom-frontend.vercel.app")
+        .split(",").map(s => s.trim()).filter(Boolean),
     ],
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
     credentials: true,

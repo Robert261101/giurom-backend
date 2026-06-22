@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   CanActivate,
   ExecutionContext,
@@ -228,7 +228,7 @@ export class PermissionsGuard implements CanActivate {
             headers: {
               "x-internal-service": "locations",
               "x-service-secret":
-                process.env.SERVICE_SECRET || "default-service-secret",
+                process.env.SERVICE_SECRET || '',
               "Content-Type": "application/json",
             },
             timeout: 3000, // 3 second timeout

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -53,8 +53,7 @@ export class StockHttpService {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
-      process.env.SERVICE_SECRET ||
-      'default-service-secret';
+      process.env.SERVICE_SECRET || '';
   }
 
   private internalHeaders() {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
 import {
   Repository,
@@ -145,8 +145,7 @@ export class SuppliersService {
       'http://localhost:3004';
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
-      process.env.SERVICE_SECRET ||
-      'default-service-secret';
+      process.env.SERVICE_SECRET || '';
   }
 
   /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus), pentru notificări pe locație. */
@@ -1461,7 +1460,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              const serviceSecret = process.env.SERVICE_SECRET || '';
               
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: {
@@ -4357,7 +4356,7 @@ export class SuppliersService {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}${locationId != null ? `, location_id=${locationId}` : ''}`);
     
     const stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
-    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const serviceSecret = process.env.SERVICE_SECRET || '';
     const headers = {
       'x-internal-service': 'suppliers',
       'x-service-secret': serviceSecret
@@ -5089,7 +5088,7 @@ export class SuppliersService {
     const orderItemToOriginalQty = new Map<number, number>();
     const orderToSupplierName = new Map<number, string>();
     if (userIds.length > 0) {
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'x-internal-service': 'suppliers', 'x-service-secret': serviceSecret };
       let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
       if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
@@ -5772,7 +5771,7 @@ export class SuppliersService {
               let companyName = 'UnknownCompany';
               try {
                 const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-                const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+                const serviceSecret = process.env.SERVICE_SECRET || '';
                 console.log(`🏢 [addDocument] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
 
                 const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
@@ -6022,7 +6021,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = this.configService.get<string>('COMPANIES_HTTP_URL') || 'http://localhost:3003';
-              const serviceSecret = this.configService.get<string>('SERVICE_SECRET') || 'default-service-secret';
+              const serviceSecret = this.configService.get<string>('SERVICE_SECRET') || '';
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
                 timeout: 3000,
@@ -6108,7 +6107,7 @@ export class SuppliersService {
           let companyName = 'UnknownCompany';
           try {
             const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-            const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+            const serviceSecret = process.env.SERVICE_SECRET || '';
             const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
               headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
               timeout: 3000,
@@ -6133,7 +6132,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              const serviceSecret = process.env.SERVICE_SECRET || '';
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
                 timeout: 3000,
@@ -6388,7 +6387,7 @@ export class SuppliersService {
       let companyName = 'UnknownCompany';
       try {
         const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const serviceSecret = process.env.SERVICE_SECRET || '';
         this.logger.log(`🏢 [updateFolderPathsForLocationBoundSupplier] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
         
         const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {

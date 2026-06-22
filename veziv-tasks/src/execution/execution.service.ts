@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -58,7 +58,7 @@ export class ExecutionService {
           headers: {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           },
         },
@@ -2159,7 +2159,7 @@ export class ExecutionService {
           headers: {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           },
         },
@@ -2188,7 +2188,7 @@ export class ExecutionService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },

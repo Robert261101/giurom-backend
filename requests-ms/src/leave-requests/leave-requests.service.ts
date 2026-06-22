@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -69,7 +69,7 @@ export class LeaveRequestsService implements OnModuleInit {
         this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
           headers: {
             'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -259,7 +259,7 @@ export class LeaveRequestsService implements OnModuleInit {
         this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
           headers: {
             'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );

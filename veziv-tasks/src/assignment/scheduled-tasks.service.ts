@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThanOrEqual, Not, IsNull, Between, In } from 'typeorm';
 import {
@@ -1079,9 +1079,9 @@ export class ScheduledTasksService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'x-api-key':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -1121,8 +1121,8 @@ export class ScheduledTasksService {
           const headers: Record<string, any> = {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
-            'x-api-key': process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
+            'x-api-key': process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           };
           if (token) {
@@ -1212,9 +1212,9 @@ export class ScheduledTasksService {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
                   'x-service-secret':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
+                    process.env.SERVICE_SECRET || '',
                   'x-api-key':
-                    process.env.SERVICE_SECRET || 'default-service-secret',
+                    process.env.SERVICE_SECRET || '',
                   'Content-Type': 'application/json',
                 },
               }),
@@ -1329,8 +1329,8 @@ export class ScheduledTasksService {
           const headers: Record<string, any> = {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
-            'x-api-key': process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
+            'x-api-key': process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           };
           if (token) {
@@ -1421,9 +1421,9 @@ export class ScheduledTasksService {
               headers: {
                 'x-internal-service': 'veziv-tasks',
                 'x-service-secret':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
+                  process.env.SERVICE_SECRET || '',
                 'x-api-key':
-                  process.env.SERVICE_SECRET || 'default-service-secret',
+                  process.env.SERVICE_SECRET || '',
                 'Content-Type': 'application/json',
               },
             }),

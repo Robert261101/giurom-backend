@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+﻿import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -60,7 +60,7 @@ export class NotificationsService {
           this.httpService.get(url, {
             headers: {
               'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+              'x-service-secret': process.env.SERVICE_SECRET || ''
             }
           })
         );
@@ -527,7 +527,7 @@ export class NotificationsService {
           this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
             headers: {
               'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'x-service-secret': process.env.SERVICE_SECRET || '',
             },
           })
         );
@@ -598,7 +598,7 @@ export class NotificationsService {
           this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
             headers: {
               'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'x-service-secret': process.env.SERVICE_SECRET || '',
             },
           })
         );
@@ -724,7 +724,7 @@ export class NotificationsService {
           this.httpService.get(url, {
             headers: {
               'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'x-service-secret': process.env.SERVICE_SECRET || '',
             },
           })
         );
@@ -992,7 +992,7 @@ export class NotificationsService {
       const result: Array<{ id: number; email: string; roles: string[] }> = [];
       const headers = {
         'x-internal-service': 'notifications',
-        'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+        'x-service-secret': process.env.SERVICE_SECRET || '',
       };
 
       for (let i = 0; i < usersWithRoles.length; i++) {
@@ -1116,7 +1116,7 @@ export class NotificationsService {
             this.httpService.get(url, {
               headers: {
                 'x-internal-service': 'notifications',
-                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+                'x-service-secret': process.env.SERVICE_SECRET || '',
               },
               timeout: 8000,
             })
@@ -1322,7 +1322,7 @@ export class NotificationsService {
           this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeId}`, {
             headers: {
               'x-internal-service': 'notifications',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+              'x-service-secret': process.env.SERVICE_SECRET || '',
             },
           })
         );
@@ -1628,7 +1628,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expiring/${targetDate}`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1672,7 +1672,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/locations/files/expiring/${targetDate}`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1726,7 +1726,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/employees/files/expiring/${targetDate}`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1770,7 +1770,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expiring/${targetDate}`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1814,7 +1814,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/companies/documents/expired`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1852,7 +1852,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/locations/files/expired`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1902,7 +1902,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/employees/files/expired`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );
@@ -1940,7 +1940,7 @@ export class NotificationsService {
         this.httpService.get(`${apiGatewayUrl}/suppliers/documents/expired`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );

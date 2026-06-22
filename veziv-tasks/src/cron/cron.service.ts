@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+﻿import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull, Raw } from 'typeorm';
@@ -1194,9 +1194,9 @@ export class CronService {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'x-api-key':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -1612,7 +1612,7 @@ export class CronService {
 
       try {
         const attendanceUrl = `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`;
-        const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const secret = process.env.SERVICE_SECRET || '';
         const headers = {
           'x-internal-service': 'veziv-tasks',
           'x-service-secret': secret,
@@ -1858,7 +1858,7 @@ export class CronService {
 
     const locationsUrl =
       process.env.LOCATIONS_HTTP_URL || 'http://localhost:3002';
-    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const secret = process.env.SERVICE_SECRET || '';
     const headers = {
       'x-internal-service': 'veziv-tasks',
       'x-service-secret': secret,
@@ -2061,7 +2061,7 @@ export class CronService {
       process.env.API_GATEWAY_URL ||
       process.env.LOCATIONS_HTTP_URL ||
       'http://localhost:3002';
-    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const secret = process.env.SERVICE_SECRET || '';
     const headers = {
       'x-internal-service': 'veziv-tasks',
       'x-service-secret': secret,

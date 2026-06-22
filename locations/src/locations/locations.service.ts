@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -71,7 +71,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -185,7 +185,7 @@ export class LocationsService {
       const companiesUrl =
         process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       const response = await axios.get(
         `${companiesUrl}/companies/${location.company_id}`,
         {
@@ -233,7 +233,7 @@ export class LocationsService {
         const companiesUrl =
           process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
         const serviceSecret =
-          process.env.SERVICE_SECRET || "default-service-secret";
+          process.env.SERVICE_SECRET || '';
 
         const response = await axios.get(
           `${companiesUrl}/companies/${location.company_id}`,
@@ -472,7 +472,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -637,7 +637,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -719,7 +719,7 @@ export class LocationsService {
     const companiesUrl =
       process.env.COMPANIES_HTTP_URL || "http://giurom.bitap.ro:3003";
     const serviceSecret =
-      process.env.SERVICE_SECRET || "default-service-secret";
+      process.env.SERVICE_SECRET || '';
 
     try {
       const requestHeaders = {
@@ -780,7 +780,7 @@ export class LocationsService {
             headers: {
               "x-internal-service": "locations",
               "x-service-secret":
-                process.env.SERVICE_SECRET || "default-service-secret",
+                process.env.SERVICE_SECRET || '',
             },
             timeout: 2000,
           },
@@ -831,7 +831,7 @@ export class LocationsService {
               headers: {
                 "x-internal-service": "locations",
                 "x-service-secret":
-                  process.env.SERVICE_SECRET || "default-service-secret",
+                  process.env.SERVICE_SECRET || '',
                 "Content-Type": "application/json",
               },
               timeout: 3000,
@@ -1434,7 +1434,7 @@ export class LocationsService {
       tasksApiBase.replace(/\/$/, "") + "/tasks/cron/manager-daily-payout";
     // SERVICE_SECRET trebuie să fie identic în locations ȘI în tasks (veziv-tasks), altfel tasks răspunde 401
     const serviceSecret =
-      process.env.SERVICE_SECRET || "default-service-secret";
+      process.env.SERVICE_SECRET || '';
     const hasCustomSecret = !!process.env.SERVICE_SECRET;
     console.log(
       `📤 [MANAGER PAYOUT TRIGGER] Apel tasks: ${tasksCronPath} (work_location_id=${workLocationId}, work_date=${revenueDate}), x-service-secret: ${hasCustomSecret ? "din env" : "implicit"}`,
@@ -1736,7 +1736,7 @@ export class LocationsService {
       const employeesEndpoint = `${employeesUrl}/employees/locations/${locationId}/employees`;
       let employees: any[] = [];
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       try {
         console.log(`🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`);
         const response = await axios.get(employeesEndpoint, {
@@ -1987,7 +1987,7 @@ export class LocationsService {
       const companiesUrl =
         process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
 
       const response = await axios.get(
         `${companiesUrl}/companies/${location.company_id}`,
@@ -2414,7 +2414,7 @@ export class LocationsService {
           const companiesUrl =
             process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
           const serviceSecret =
-            process.env.SERVICE_SECRET || "default-service-secret";
+            process.env.SERVICE_SECRET || '';
           const response = await axios.get(
             `${companiesUrl}/companies/${location.company_id}`,
             {
@@ -2516,7 +2516,7 @@ export class LocationsService {
           const companiesUrl =
             process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
           const serviceSecret =
-            process.env.SERVICE_SECRET || "default-service-secret";
+            process.env.SERVICE_SECRET || '';
 
           const response = await axios.get(
             `${companiesUrl}/companies/${location.company_id}`,

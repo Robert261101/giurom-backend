@@ -16,7 +16,10 @@ export class InternalServiceGuard implements CanActivate {
 
     // If internal service headers are present, validate them
     if (internalService && serviceSecret) {
-      const expectedSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const expectedSecret = process.env.SERVICE_SECRET;
+      if (!expectedSecret) {
+        throw new UnauthorizedException('SERVICE_SECRET nu este configurat în variabilele de mediu');
+      }
       if (serviceSecret === expectedSecret) {
         request.internalService = internalService;
         request.bypassAuth = true;
