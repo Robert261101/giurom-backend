@@ -32,8 +32,10 @@ export class PermissionsGuard implements CanActivate {
 
     this.logger.log(`User permissions: ${JSON.stringify(user.permissions)}`);
 
-    const hasAll = requiredPermissions.every((perm) => (user.permissions as string[]).includes(perm));
-    this.logger.log(`Has all required permissions: ${hasAll}`);
+    const hasAll = requiredPermissions.some((perm) =>
+      (user.permissions as string[]).includes(perm),
+    );
+    this.logger.log(`Has any required permission: ${hasAll}`);
     
     if (!hasAll) {
       this.logger.error(`User missing permissions. Required: ${JSON.stringify(requiredPermissions)}, User has: ${JSON.stringify(user.permissions)}`);

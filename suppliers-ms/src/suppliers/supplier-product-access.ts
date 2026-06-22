@@ -4,12 +4,16 @@ export interface SupplierProductUserContext {
   companyId: number | null;
   companyType: string | null;
   permissions: string[];
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
 }
 
 export function buildSupplierProductUserContext(user?: {
   company_id?: number | null;
   company_type?: string | null;
   permissions?: string[];
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
 }): SupplierProductUserContext {
   const companyIdRaw = user?.company_id;
   const companyId =
@@ -21,6 +25,8 @@ export function buildSupplierProductUserContext(user?: {
     companyType:
       typeof user?.company_type === 'string' ? user.company_type : null,
     permissions: Array.isArray(user?.permissions) ? user.permissions : [],
+    isAdmin: user?.isAdmin === true,
+    isSuperAdmin: user?.isSuperAdmin === true,
   };
 }
 
@@ -31,6 +37,28 @@ export function isAdminOrSuperAdminFromPermissions(
     permissions.includes('assignment.read_all') ||
     permissions.includes('assignment.read_company')
   );
+}
+
+export function isAdminOrSuperAdminFromContext(
+  ctx: Pick<
+    SupplierProductUserContext,
+    'permissions' | 'isAdmin' | 'isSuperAdmin'
+  >,
+): boolean {
+  if (ctx.isSuperAdmin || ctx.isAdmin) {
+    return true;
+  }
+  return isAdminOrSuperAdminFromPermissions(ctx.permissions);
+}
+
+/** Doar admin/superadmin — configurare asociere nomenclator client. */
+export function canManageSupplierProductClientMapping(
+  ctx: Pick<
+    SupplierProductUserContext,
+    'permissions' | 'isAdmin' | 'isSuperAdmin'
+  >,
+): boolean {
+  return isAdminOrSuperAdminFromContext(ctx);
 }
 
 /** Furnizor tenant may manage own nomenclature; admin/client may not. */

@@ -50,10 +50,10 @@ export class SupplierProduct {
   is_active: boolean;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
-  net_quantity: number;
+  net_quantity: number | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
-  gross_quantity: number;
+  gross_quantity: number | null;
 
   @Column({ type: 'varchar', length: 500, nullable: true })
   image_url: string;

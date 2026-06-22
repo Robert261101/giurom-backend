@@ -14,6 +14,7 @@ import { TaskAssignment } from '../assignment/entity/task-assignment.entity';
 import { TaskElement } from '../template/entity/task-element.entity';
 import { AssignmentExistsValidator } from './validators/assignment-exists.validator';
 import { ElementsExistInTemplateValidator } from './validators/elements-exist-in-template.validator';
+import { EmployeeAccessModule } from '../employee-access/employee-access.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ElementsExistInTemplateValidator } from './validators/elements-exist-in
       TaskElement
     ]),
     NotificationsModule,
+    EmployeeAccessModule,
     JwtModule.register({
       secret: 'your-secret-key',
       signOptions: { expiresIn: '59m'},

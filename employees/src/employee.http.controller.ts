@@ -14,6 +14,7 @@ import {
   ParseIntPipe,
   Request,
   ForbiddenException,
+  BadRequestException,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -133,21 +134,23 @@ export class EmployeeHttpController {
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const user = req?.user;
     const perms = (user?.permissions as string[]) || [];
-    const hasReadOwn = perms.includes("employees.read_own");
+    const hasReadOwn =
+      perms.includes("employees.read_own") || perms.includes("order.read");
     const hasRead = perms.includes("employees.read");
     if (user && hasReadOwn && !hasRead) {
-      const locationId =
-        location_id ? parseInt(location_id, 10)
-        : work_location_id ? parseInt(work_location_id, 10)
-        : user.work_location_id ?? user.work_location_default_id;
-      if (locationId == null || Number.isNaN(locationId)) {
-        throw new ForbiddenException(
-          "Pentru permisiunea employees.read_own este necesar location_id sau work_location_id în query sau locația utilizatorului.",
-        );
-      }
+      const locationId = this.resolveScopedLocationId(
+        user,
+        location_id,
+        work_location_id,
+        req?.bypassAuth,
+      );
+      await this.employeeService.assertLocationInCompany(
+        locationId,
+        user.company_id,
+      );
       const list = await this.employeeService.findForOwn(locationId);
       const total = list.length;
-      return { employees: list as Employee[], total, totalPages: 1 };
+      return { employees: list as unknown as Employee[], total, totalPages: 1 };
     }
 
     const pageNum = parseInt(page, 10) || 1;
@@ -170,9 +173,14 @@ export class EmployeeHttpController {
 
   @Get("batch")
   @UseGuards(InternalServiceGuard, JwtAuthGuard) // Permite apeluri interne (header secret) OR JWT autentificat
-  // Permite utilizatorilor cu permisiunea completă `employees.read` sau doar `employees.read_own`
-  // (angajați) să apeleze acest endpoint.
-  @Permissions("employees.read", "employees.read_own")
+  // Permite utilizatorilor cu permisiunea completă `employees.read`, `employees.read_own`,
+  // `order.read` (operațional) sau `suppliers.create` (furnizor) să apeleze acest endpoint.
+  @Permissions(
+    "employees.read",
+    "employees.read_own",
+    "order.read",
+    "suppliers.create",
+  )
   @ApiOperation({
     summary: "Obține mai mulți angajați după ID-uri (batch)",
     description:
@@ -215,7 +223,15 @@ export class EmployeeHttpController {
       headers["x-internal-service"] || headers["x-service-secret"] || headers["x-api-key"];
     if (!internalHeader) {
       const userPermissions = req?.user?.permissions || [];
-      if (!Array.isArray(userPermissions) || !(userPermissions.includes("employees.read") || userPermissions.includes("employees.read_own"))) {
+      const canReadBatch = userPermissions.some((perm: string) =>
+        [
+          "employees.read",
+          "employees.read_own",
+          "order.read",
+          "suppliers.create",
+        ].includes(perm),
+      );
+      if (!Array.isArray(userPermissions) || !canReadBatch) {
         throw new ForbiddenException("Forbidden");
       }
     }
@@ -233,10 +249,10 @@ export class EmployeeHttpController {
   }
 
   @Get("for-own")
-  @Permissions("employees.read_own")
+  @Permissions("employees.read_own", "order.read")
   @ApiOperation({
     summary:
-      "Listează angajații pentru utilizatori cu permisiunea employees.read_own",
+      "Listează colegii din aceeași locație (employees.read_own sau order.read operațional)",
     description:
       "Returnează doar id, first_name, last_name pentru angajați activi.",
   })
@@ -251,29 +267,93 @@ export class EmployeeHttpController {
   })
   async findForOwn(
     @Query("location_id") location_id?: string,
+    @Query("company_id") company_id?: string,
     @Request() req?: any,
-  ): Promise<{ id: number; first_name: string; last_name: string }[]> {
-    const user = req?.user;
-    const hasEmployeesRead = user?.permissions?.includes("employees.read");
-
-    // Dacă utilizatorul nu are permisiunea employees.read, filtrare OBLIGATORIE după locație
-    if (!hasEmployeesRead) {
-      // Dacă nu are location_id în query, încearcă să obțină din user
-      let finalLocationId = location_id ? parseInt(location_id, 10) : undefined;
-      if (!finalLocationId) {
-        finalLocationId =
-          user?.work_location_id || user?.work_location_default_id;
-      }
-      if (!finalLocationId) {
-        // Dacă nu are locație, returnează array gol
-        return [];
-      }
-      return this.employeeService.findForOwn(finalLocationId);
+  ): Promise<
+    {
+      id: number;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+      work_location_id: number | null;
+      is_active: boolean;
+    }[]
+  > {
+    if (company_id != null && String(company_id).trim() !== "") {
+      throw new ForbiddenException(
+        "Parametrul company_id nu poate fi folosit pentru a extinde scope-ul",
+      );
     }
 
-    // Pentru utilizatori cu employees.read, permitem fără location_id
-    const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    const user = req?.user;
+    const isInternal = Boolean(req?.bypassAuth);
+
+    if (isInternal) {
+      const loc = location_id ? parseInt(location_id, 10) : NaN;
+      if (!Number.isFinite(loc) || loc <= 0) {
+        throw new BadRequestException(
+          "Apelurile interne necesită location_id valid în query",
+        );
+      }
+      return this.employeeService.findForOwn(loc);
+    }
+
+    if (!user) {
+      throw new ForbiddenException("Autentificare necesară");
+    }
+
+    const locationId = this.resolveScopedLocationId(user, location_id);
+    await this.employeeService.assertLocationInCompany(
+      locationId,
+      user.company_id,
+    );
     return this.employeeService.findForOwn(locationId);
+  }
+
+  /**
+   * Locația permisă — exclusiv din JWT; query location_id trebuie să coincidă.
+   */
+  private resolveScopedLocationId(
+    user: {
+      work_location_id?: number;
+      work_location_default_id?: number;
+      company_id?: number | null;
+    },
+    location_id?: string,
+    work_location_id?: string,
+    isInternal?: boolean,
+  ): number {
+    if (isInternal) {
+      const loc = location_id ? parseInt(location_id, 10) : NaN;
+      if (!Number.isFinite(loc) || loc <= 0) {
+        throw new BadRequestException("location_id invalid");
+      }
+      return loc;
+    }
+
+    const jwtLocation = Number(
+      user?.work_location_id ?? user?.work_location_default_id,
+    );
+    if (!Number.isFinite(jwtLocation) || jwtLocation <= 0) {
+      throw new ForbiddenException(
+        "Locația de lucru nu este configurată în tokenul de autentificare",
+      );
+    }
+
+    const requestedRaw = location_id ?? work_location_id;
+    if (requestedRaw != null && String(requestedRaw).trim() !== "") {
+      const requested = parseInt(String(requestedRaw), 10);
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw new BadRequestException("location_id invalid");
+      }
+      if (requested !== jwtLocation) {
+        throw new ForbiddenException(
+          "location_id nu corespunde locației utilizatorului autentificat",
+        );
+      }
+    }
+
+    return jwtLocation;
   }
 
   @Get("statistics")
@@ -299,7 +379,7 @@ export class EmployeeHttpController {
 
   // List employee files by employee ID
   @Get(":employeeId/files")
-  @Permissions("employees.read")
+  @Permissions("employees.read", "employees.read_own")
   async getEmployeeFiles(
     @Param("employeeId", ParseIntPipe) employeeId: number,
   ) {
@@ -435,7 +515,12 @@ export class EmployeeHttpController {
   }
 
   @Get(":id/name")
-  @Permissions("employees.read_own")
+  @Permissions(
+    "employees.read_own",
+    "order.read",
+    "suppliers.create",
+    "employees.read",
+  )
   @ApiOperation({
     summary: "Găsește numele unui angajat după ID",
     description:
@@ -472,7 +557,11 @@ export class EmployeeHttpController {
     type: Employee,
   })
   async findOne(@Param("id") id: string): Promise<Employee> {
-    return this.employeeService.findOne(+id);
+    const numericId = Number(id);
+    if (!Number.isFinite(numericId) || numericId <= 0) {
+      throw new ForbiddenException("ID angajat invalid");
+    }
+    return this.employeeService.findOne(numericId);
   }
 
   @Patch(":id")

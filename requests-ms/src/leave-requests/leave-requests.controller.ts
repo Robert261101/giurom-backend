@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Headers,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -36,7 +37,7 @@ export class LeaveRequestsController {
 
   // POST /leave-requests – creare cerere (status implicit pending)
   @Post()
-  @Permissions('leave-requests.create')
+  @Permissions('leave-requests.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează o cerere de concediu cu status pending' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -57,15 +58,19 @@ export class LeaveRequestsController {
   })
   create(
     @Body() createLeaveRequestDto: CreateLeaveRequestDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: { authorization?: string } },
   ): Promise<LeaveRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.create(createLeaveRequestDto, userId);
+    const auth = req.headers?.authorization;
+    return this.leaveRequestsService.create(
+      createLeaveRequestDto,
+      req.user as Parameters<LeaveRequestsService['create']>[1],
+      auth,
+    );
   }
 
   // GET /leave-requests – listare cereri cu filtrare opțională
   @Get()
-  @Permissions('leave-requests.read')
+  @Permissions('leave-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține cereri de concediu cu filtrare opțională' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -74,29 +79,38 @@ export class LeaveRequestsController {
   })
   findAll(
     @Query() filters: FilterLeaveRequestsDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
   ): Promise<LeaveRequest[]> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.findAll(filters, userId);
+    const auth = req.headers?.authorization;
+    return this.leaveRequestsService.findAll(
+      filters,
+      req.user as Parameters<LeaveRequestsService['findAll']>[1],
+      auth,
+    );
   }
 
   // GET /leave-requests/pending – listare cereri în așteptare
   @Get('pending')
-  @Permissions('leave-requests.read')
+  @Permissions('leave-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține toate cererile de concediu în așteptare' })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Lista cererilor de concediu în așteptare',
     type: [LeaveRequest],
   })
-  findPending(@Headers('x-user-id') currentUserId?: string): Promise<LeaveRequest[]> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.findPending(userId);
+  findPending(
+    @Request() req: { user?: unknown; headers?: Record<string, string> },
+  ): Promise<LeaveRequest[]> {
+    const auth = req.headers?.authorization;
+    return this.leaveRequestsService.findPending(
+      req.user as Parameters<LeaveRequestsService['findPending']>[0],
+      auth,
+    );
   }
 
   // GET /leave-requests/:id – obținere cerere specifică
   @Get(':id')
-  @Permissions('leave-requests.read')
+  @Permissions('leave-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține detaliile unei cereri de concediu specifice' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de concediu' })
   @ApiResponse({
@@ -122,7 +136,7 @@ export class LeaveRequestsController {
 
   // PATCH /leave-requests/:id – modificare status și aprobare
   @Patch(':id')
-  @Permissions('leave-requests.update')
+  @Permissions('leave-requests.update', 'suppliers.create')
   @ApiOperation({ summary: 'Modifică statusul unei cereri de concediu (aprobare/respingere)' })
   @ApiParam({ name: 'id', description: 'ID-ul cererii de concediu' })
   @ApiResponse({
@@ -145,10 +159,15 @@ export class LeaveRequestsController {
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateStatusDto: UpdateLeaveRequestStatusDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: { authorization?: string } },
   ): Promise<LeaveRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.updateStatus(id, updateStatusDto, userId);
+    const auth = req.headers?.authorization;
+    return this.leaveRequestsService.updateStatus(
+      id,
+      updateStatusDto,
+      req.user as Parameters<LeaveRequestsService['updateStatus']>[2],
+      auth,
+    );
   }
 
   // DELETE /leave-requests/:id – ștergere cerere
@@ -182,7 +201,7 @@ export class LeaveRequestsController {
 
   // GET /leave-requests/employee/:employeeId/stats – statistici angajat
   @Get('employee/:employeeId/stats')
-  @Permissions('leave-requests.read')
+  @Permissions('leave-requests.read', 'order.read')
   @ApiOperation({ summary: 'Obține statisticile de concediu pentru un angajat' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({

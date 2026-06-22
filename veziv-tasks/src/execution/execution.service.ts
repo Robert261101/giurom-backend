@@ -2,6 +2,7 @@
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -25,6 +26,13 @@ import { CreateExecutionDto } from './dto/create-execution.dto';
 import { UpdateExecutionDto } from './dto/update-execution.dto';
 import { CreateEmployeeDailyPointsDto } from './dto/create-employee-daily-points.dto';
 import { CreateEmployeeDailyTaskPointsDto } from './dto/create-employee-daily-task-points.dto';
+import { EmployeeAccessService } from '../employee-access/employee-access.service';
+import type { EmployeeAccessUser } from '../employee-access/employee-access';
+import { isOperationalStaffUser } from '../employee-access/employee-access';
+import {
+  getCanonicalEmployeeId,
+  isFurnizorSupplierAdmin,
+} from '../employee-access/employee-access';
 
 @Injectable()
 export class ExecutionService {
@@ -44,6 +52,7 @@ export class ExecutionService {
     @InjectRepository(ManagerDailyPayout)
     private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private httpService: HttpService,
+    private employeeAccessService: EmployeeAccessService,
     @Inject('NOTIFICATIONS_RMQ')
     private readonly notificationsClient: ClientProxy,
   ) {}
@@ -102,7 +111,10 @@ export class ExecutionService {
     }
   }
 
-  async create(createExecutionDto: CreateExecutionDto): Promise<{
+  async create(
+    createExecutionDto: CreateExecutionDto,
+    user?: EmployeeAccessUser,
+  ): Promise<{
     execution: TaskExecution;
     points: number;
     isOverdue: boolean;
@@ -119,6 +131,29 @@ export class ExecutionService {
       );
     }
 
+    if (assignment.status === AssignmentStatus.DEACTIVATED) {
+      throw new BadRequestException('Sarcina este anulată');
+    }
+
+    if (user) {
+      const selfId = getCanonicalEmployeeId(user);
+      if (isOperationalStaffUser(user)) {
+        this.employeeAccessService.assertIsAssignmentParticipant(
+          user,
+          assignment,
+        );
+        if (
+          createExecutionDto.employee_id != null &&
+          selfId != null &&
+          Number(createExecutionDto.employee_id) !== Number(selfId)
+        ) {
+          throw new ForbiddenException(
+            'Nu poți confirma în numele altui participant',
+          );
+        }
+      }
+    }
+
     // Extrage answers din DTO
     const { answers, ...executionData } = createExecutionDto;
 
@@ -128,8 +163,12 @@ export class ExecutionService {
       relations: ['template'],
     });
 
-    // Setează employee_id cu assigned_to_id din assignment (angajatul căruia i s-a atribuit sarcina)
-    executionData.employee_id = assignment.assigned_to_id;
+    // Setează employee_id din JWT pentru operațional, altfel din assignment
+    const selfId = user ? getCanonicalEmployeeId(user) : null;
+    executionData.employee_id =
+      isOperationalStaffUser(user) && selfId != null
+        ? selfId
+        : assignment.assigned_to_id;
 
     // Păstrează numele task-ului (template_name) în execuție pentru consistență istorică
     if (assignmentWithTemplate?.template?.template_name) {
@@ -337,6 +376,7 @@ export class ExecutionService {
     startDate?: Date,
     endDate?: Date,
     assignmentId?: number,
+    authorization?: string,
   ): Promise<TaskExecution[]> {
     const query = this.executionRepository
       .createQueryBuilder('execution')
@@ -395,6 +435,27 @@ export class ExecutionService {
 
     // Filtrare OBLIGATORIE - afișează DOAR executions cu location_id setat
     query.andWhere('execution.location_id IS NOT NULL');
+
+    // Furnizor: numai execuțiile staff-ului propriu (înainte de read_all)
+    if (isFurnizorSupplierAdmin(user)) {
+      const staffIds =
+        await this.employeeAccessService.fetchSupplierStaffEmployeeIds(
+          authorization,
+        );
+      if (staffIds.length === 0) {
+        return [];
+      }
+      query.andWhere('execution.employee_id IN (:...staffIds)', { staffIds });
+      if (startDate && endDate) {
+        const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+        const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+        query.andWhere(
+          `(execution.completed_at IS NOT NULL AND DATE(execution.completed_at) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NOT NULL AND DATE(task_assignment.scheduled_datetime) BETWEEN :sdStr AND :edStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NULL AND DATE(task_assignment.assigned_at) BETWEEN :sdStr AND :edStr)`,
+          { sdStr, edStr },
+        );
+      }
+      return query.getMany();
+    }
 
     // execution.read_all - vede toate
     if (user?.permissions?.includes('execution.read_all')) {
@@ -490,8 +551,11 @@ export class ExecutionService {
       return result;
     }
 
-    // execution.read_own - vede doar execuțiile lui (employee_id = user.sub)
-    if (user?.permissions?.includes('execution.read_own')) {
+    // execution.read_own — sau cont operațional (magazioner/șofer)
+    if (
+      user?.permissions?.includes('execution.read_own') ||
+      isOperationalStaffUser(user)
+    ) {
       // Dacă are și assignment.create (este manager), poate vedea TOATE executions
       if (user?.permissions?.includes('assignment.create')) {
         console.log('🔍 [execution.findAll] Manager cu read_own - returnează toate execuțiile');
@@ -1363,7 +1427,14 @@ export class ExecutionService {
   async getEmployeeDailyPoints(
     employeeId: number,
     workDate: string,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<EmployeeDailyPoints> {
+    await this.employeeAccessService.assertCanReadEmployeeData(
+      user,
+      employeeId,
+      authorization,
+    );
     const dailyPoints = await this.employeeDailyPointsRepository.findOne({
       where: {
         employee_id: employeeId,
@@ -1583,7 +1654,14 @@ export class ExecutionService {
     employeeId: number,
     startDate: string,
     endDate: string,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<EmployeeDailyPoints[]> {
+    await this.employeeAccessService.assertCanReadEmployeeData(
+      user,
+      employeeId,
+      authorization,
+    );
     // Normalize dates to YYYY-MM-DD format and create Date objects at midnight UTC
     const start = new Date(startDate + 'T00:00:00.000Z');
     const end = new Date(endDate + 'T23:59:59.999Z');
@@ -1612,7 +1690,14 @@ export class ExecutionService {
     employeeId: number,
     startDate: string,
     endDate: string,
+    user?: EmployeeAccessUser,
+    authorization?: string,
   ): Promise<number> {
+    await this.employeeAccessService.assertCanReadEmployeeData(
+      user,
+      employeeId,
+      authorization,
+    );
     // Sumă din task_points (inclusiv negative), nu din total_points stocat
     const result = await this.employeeDailyTaskPointsRepository
       .createQueryBuilder('tp')

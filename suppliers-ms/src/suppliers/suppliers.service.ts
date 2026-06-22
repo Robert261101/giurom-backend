@@ -34,6 +34,8 @@ import { SupplierOrderItemReception, ReceptionStatus } from './entities/supplier
 import { SupplierOrderCancelledItem } from './entities/supplier-order-cancelled-item.entity';
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
 import { SupplierLocations } from './entities/supplier-locations.entity';
+import { SupplierProductClientMapping } from './entities/supplier-product-client-mapping.entity';
+import { buildSupplierProductImageFields } from './supplier-product-image.helper';
 import { EmployeeSupplier } from './entities/employee-supplier.entity';
 import {
   SupplierOrderAssignment,
@@ -55,16 +57,19 @@ import {
   CreateSupplierOrderItemDto,
 } from './dto/create-supplier-order.dto';
 import { WarehouseReviewDto } from './dto/warehouse-review.dto';
-import { SendBackToMagazionerDto } from './dto/send-back-to-magazioner.dto';
+import { UpsertSupplierProductClientConfigDto } from './dto/upsert-supplier-product-client-config.dto';
 import { CreateSupplierOrderAssignmentDto } from './dto/create-supplier-order-assignment.dto';
 import { CreateSupplierOrderDriverAssignmentDto } from './dto/create-supplier-order-driver-assignment.dto';
 import { UpdateOrderDeliveryDateDto } from './dto/update-order-delivery-date.dto';
 import { PartialReceptionDto } from './dto/partial-reception.dto';
 import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
+import { SendBackToMagazionerDto } from './dto/send-back-to-magazioner.dto';
 import { StockHttpService, CreateStockItemDto } from './stock-http.service';
 import {
   assertClientViewOnlyOnMutations,
   assertFurnizorProductManager,
+  isAdminOrSuperAdminFromPermissions,
+  canManageSupplierProductClientMapping,
   isFurnizorProductManager,
   type SupplierProductUserContext,
 } from './supplier-product-access';
@@ -131,6 +136,8 @@ export class SuppliersService {
     @InjectRepository(SupplierOrderCancelledItem) private readonly cancelledItemRepo: Repository<SupplierOrderCancelledItem>,
     @InjectRepository(SupplierDocument) private readonly supplierDocumentRepo: Repository<SupplierDocument>,
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
+    @InjectRepository(SupplierProductClientMapping)
+    private readonly supplierProductClientMappingRepo: Repository<SupplierProductClientMapping>,
     @InjectRepository(EmployeeSupplier) private readonly employeeSupplierRepo: Repository<EmployeeSupplier>,
     @InjectRepository(SupplierOrderAssignment)
     private readonly orderAssignmentRepo: Repository<SupplierOrderAssignment>,
@@ -305,6 +312,8 @@ export class SuppliersService {
         first_name: string | null;
         last_name: string | null;
         full_name: string | null;
+        work_location_default_id: number | null;
+        is_active: boolean;
       }
     >
   > {
@@ -325,6 +334,8 @@ export class SuppliersService {
         first_name: null,
         last_name: null,
         full_name: null,
+        work_location_default_id: null,
+        is_active: true,
       }));
     }
 
@@ -335,11 +346,13 @@ export class SuppliersService {
       id: number;
       first_name: string | null;
       last_name: string | null;
+      work_location_default_id: number | null;
+      is_active: number | boolean | null;
     }> = [];
 
     try {
       employeeRows = await this.connection.query(
-        `SELECT id, first_name, last_name FROM ${employeesDbName}.employees WHERE id IN (${placeholder})`,
+        `SELECT id, first_name, last_name, work_location_default_id, is_active FROM ${employeesDbName}.employees WHERE id IN (${placeholder})`,
         employeeIds,
       );
     } catch (error: any) {
@@ -350,7 +363,13 @@ export class SuppliersService {
 
     const nameById = new Map<
       number,
-      { first_name: string | null; last_name: string | null; full_name: string | null }
+      {
+        first_name: string | null;
+        last_name: string | null;
+        full_name: string | null;
+        work_location_default_id: number | null;
+        is_active: boolean;
+      }
     >();
     for (const row of employeeRows || []) {
       const id = Number(row.id);
@@ -365,6 +384,11 @@ export class SuppliersService {
         first_name: firstName,
         last_name: lastName,
         full_name: fullName,
+        work_location_default_id:
+          row.work_location_default_id != null
+            ? Number(row.work_location_default_id)
+            : null,
+        is_active: row.is_active === false || row.is_active === 0 ? false : true,
       });
     }
 
@@ -375,6 +399,8 @@ export class SuppliersService {
         first_name: names?.first_name ?? null,
         last_name: names?.last_name ?? null,
         full_name: names?.full_name ?? null,
+        work_location_default_id: names?.work_location_default_id ?? null,
+        is_active: names?.is_active ?? true,
       };
     });
   }
@@ -421,6 +447,15 @@ export class SuppliersService {
       role: row.role,
     }));
     return this.enrichSupplierStaffWithEmployeeNames(base);
+  }
+
+  /** Distinct supplier_id values linked to an employee (employees_suppliers). */
+  async getEmployeeSupplierIds(employeeId: number): Promise<number[]> {
+    const rows = await this.employeeSupplierRepo.find({
+      where: { employee_id: employeeId },
+      select: ['supplier_id'],
+    });
+    return [...new Set(rows.map((row) => row.supplier_id))];
   }
 
   async returnOrderToSupplier(orderId: number): Promise<SupplierOrder> {
@@ -1850,6 +1885,202 @@ export class SuppliersService {
   }
 
   /**
+   * Firme-client asociate furnizorului autentificat (prin supplier_locations → locații client).
+   */
+  private mapSupplierClientCompany(
+    company: Record<string, unknown>,
+  ): {
+    id: number;
+    company_name: string;
+    cui: string;
+    trade_register_number: string | null;
+    status: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    country: string | null;
+    postal_code: string | null;
+    phone_number: string | null;
+    email: string | null;
+    legal_form: string | null;
+    bank_name: string | null;
+    bank_account_number: string | null;
+    incorporation_date: string | null;
+    vat_payer: boolean;
+  } {
+    return {
+      id: Number(company.id),
+      company_name: String(company.company_name ?? ''),
+      cui: String(company.cui ?? ''),
+      trade_register_number:
+        company.trade_register_number != null
+          ? String(company.trade_register_number)
+          : null,
+      status: String(company.status ?? 'activ'),
+      address: company.address != null ? String(company.address) : null,
+      city: company.city != null ? String(company.city) : null,
+      county: company.county != null ? String(company.county) : null,
+      country: company.country != null ? String(company.country) : null,
+      postal_code:
+        company.postal_code != null ? String(company.postal_code) : null,
+      phone_number:
+        company.phone_number != null ? String(company.phone_number) : null,
+      email: company.email != null ? String(company.email) : null,
+      legal_form:
+        company.legal_form != null ? String(company.legal_form) : null,
+      bank_name: company.bank_name != null ? String(company.bank_name) : null,
+      bank_account_number:
+        company.bank_account_number != null
+          ? String(company.bank_account_number)
+          : null,
+      incorporation_date:
+        company.incorporation_date != null
+          ? String(company.incorporation_date)
+          : null,
+      vat_payer: Boolean(company.vat_payer),
+    };
+  }
+
+  async findMySupplierClientsForFurnizorTenant(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    options?: { search?: string; status?: string },
+  ): Promise<
+    Array<{
+      id: number;
+      company_name: string;
+      cui: string;
+      trade_register_number: string | null;
+      status: string;
+      address: string | null;
+      city: string | null;
+      county: string | null;
+      country: string | null;
+      postal_code: string | null;
+      phone_number: string | null;
+      email: string | null;
+      legal_form: string | null;
+      bank_name: string | null;
+      bank_account_number: string | null;
+      incorporation_date: string | null;
+      vat_payer: boolean;
+    }>
+  > {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    const resolvedCompanyId = Number(companyId);
+    const rows = await this.supplierLocationsRepo.find({
+      where: { supplier_id: summary.id },
+    });
+    const enriched = await this.enrichWithLocations(rows);
+
+    const companyLocationMap = new Map<number, unknown[]>();
+    for (const row of enriched) {
+      const loc = row.workLocation as Record<string, unknown> | null | undefined;
+      const rawCompanyId = loc?.company_id ?? loc?.companyId;
+      const clientCompanyId = Number(rawCompanyId);
+      if (!Number.isFinite(clientCompanyId) || clientCompanyId <= 0) {
+        continue;
+      }
+      if (clientCompanyId === resolvedCompanyId) {
+        continue;
+      }
+      if (!companyLocationMap.has(clientCompanyId)) {
+        companyLocationMap.set(clientCompanyId, []);
+      }
+      companyLocationMap.get(clientCompanyId)!.push(loc);
+    }
+
+    const companiesUrl =
+      this.configService.get<string>('COMPANIES_HTTP_URL') ||
+      process.env.COMPANIES_HTTP_URL ||
+      'http://localhost:3003';
+
+    const clients: Array<ReturnType<SuppliersService['mapSupplierClientCompany']>> =
+      [];
+
+    for (const [clientCompanyId] of companyLocationMap) {
+      try {
+        const response = await firstValueFrom(
+          this.httpService.get(`${companiesUrl}/companies/${clientCompanyId}`, {
+            headers: this.internalServiceHeaders(),
+            timeout: 5000,
+          }),
+        );
+        const company = response.data as Record<string, unknown>;
+        const mapped = this.mapSupplierClientCompany(company);
+        if (
+          options?.status &&
+          options.status !== 'all' &&
+          mapped.status !== options.status
+        ) {
+          continue;
+        }
+        const search = options?.search?.trim().toLowerCase();
+        if (search) {
+          const haystack = [
+            mapped.company_name,
+            mapped.cui,
+            mapped.trade_register_number,
+            mapped.email,
+            mapped.city,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          if (!haystack.includes(search)) {
+            continue;
+          }
+        }
+        clients.push(mapped);
+      } catch (error: any) {
+        this.logger.warn(
+          `⚠️ [findMySupplierClients] company ${clientCompanyId}: ${error?.message || error}`,
+        );
+      }
+    }
+
+    return clients.sort((a, b) =>
+      a.company_name.localeCompare(b.company_name, 'ro'),
+    );
+  }
+
+  async findMySupplierClientByIdForFurnizorTenant(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+  ): Promise<Record<string, unknown>> {
+    const clients = await this.findMySupplierClientsForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    const allowed = clients.find((c) => c.id === clientCompanyId);
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Clientul nu este asociat furnizorului autentificat',
+      );
+    }
+
+    const companiesUrl =
+      this.configService.get<string>('COMPANIES_HTTP_URL') ||
+      process.env.COMPANIES_HTTP_URL ||
+      'http://localhost:3003';
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${companiesUrl}/companies/${clientCompanyId}`, {
+        headers: this.internalServiceHeaders(),
+        timeout: 5000,
+      }),
+    );
+
+    return this.mapSupplierClientCompany(
+      response.data as Record<string, unknown>,
+    );
+  }
+
+  /**
    * Stoc depozit furnizor pentru UI tenant — nomenclator × agregat stock-ms la locația depozit.
    * Nu necesită permisiunea stock.read pe JWT (apel intern către stock-ms).
    */
@@ -1879,6 +2110,8 @@ export class SuppliersService {
       price_per_unit: number | null;
       stock_status: string | null;
       image_url: string | null;
+      linked_product_photo: string | null;
+      resolved_image_url: string | null;
       is_active: boolean;
     }>;
     pagination: {
@@ -1942,7 +2175,13 @@ export class SuppliersService {
     const data = stockPage.data.map((stock) => {
       const productId = Number(stock.product_id);
       const sp = supplierProductByProductId.get(productId);
-      const stockProduct = stock.product as { name?: string; unit?: string } | undefined;
+      const stockProduct = stock.product as
+        | { name?: string; unit?: string; photo?: string | null }
+        | undefined;
+      const imageFields = buildSupplierProductImageFields(
+        sp?.image_url,
+        stockProduct?.photo,
+      );
 
       return {
         supplier_product_id: sp?.id ?? 0,
@@ -1958,7 +2197,9 @@ export class SuppliersService {
             ? Number(sp.price_per_unit)
             : null,
         stock_status: stock.status != null ? String(stock.status) : null,
-        image_url: sp?.image_url ?? null,
+        image_url: imageFields.image_url,
+        linked_product_photo: imageFields.linked_product_photo,
+        resolved_image_url: imageFields.resolved_image_url,
         is_active: sp?.is_active !== false,
       };
     });
@@ -2149,10 +2390,24 @@ export class SuppliersService {
       throw new BadRequestException('Produsul este deja asociat');
     }
 
+    const quantities = this.validateOptionalGrossNetQuantities(
+      dto.gross_quantity,
+      dto.net_quantity,
+    );
+
+    const {
+      gross_quantity: _dtoGross,
+      net_quantity: _dtoNet,
+      supplier_id: _dtoSupplierId,
+      ...productFields
+    } = dto;
+
     const supplierProduct = this.supplierProductRepo.create({
-      ...dto,
+      ...productFields,
       supplier_id: supplierId,
       company_id: companyId,
+      gross_quantity: quantities.gross_quantity,
+      net_quantity: quantities.net_quantity,
     });
     this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct, null, 2)}`);
 
@@ -2192,6 +2447,279 @@ export class SuppliersService {
     }
     const locationId = await this.resolveSupplierStockLocationId(supplierId);
     return { location_id: locationId };
+  }
+
+  private resolveClientCompanyIdFromContext(
+    userContext?: SupplierProductUserContext,
+  ): number {
+    const companyId = userContext?.companyId;
+    if (
+      companyId == null ||
+      !Number.isFinite(Number(companyId)) ||
+      Number(companyId) <= 0
+    ) {
+      throw new ForbiddenException(
+        'Contextul companiei client lipsește din sesiune',
+      );
+    }
+    if (userContext?.companyType === 'furnizor') {
+      throw new ForbiddenException(
+        'Doar conturile client/admin pot gestiona asocierile de nomenclator',
+      );
+    }
+    return Number(companyId);
+  }
+
+  private validateOptionalGrossNetQuantities(
+    gross?: number | null,
+    net?: number | null,
+  ): { gross_quantity: number | null; net_quantity: number | null } {
+    const grossVal =
+      gross === undefined || gross === null ? null : Number(gross);
+    const netVal = net === undefined || net === null ? null : Number(net);
+
+    if (grossVal !== null) {
+      if (!Number.isFinite(grossVal) || grossVal <= 0) {
+        throw new BadRequestException(
+          'Cantitatea brută trebuie să fie strict mai mare decât 0',
+        );
+      }
+    }
+    if (netVal !== null) {
+      if (!Number.isFinite(netVal) || netVal <= 0) {
+        throw new BadRequestException(
+          'Cantitatea netă trebuie să fie strict mai mare decât 0',
+        );
+      }
+    }
+    if (grossVal !== null && netVal !== null && netVal > grossVal) {
+      throw new BadRequestException(
+        'Cantitatea netă nu poate fi mai mare decât cantitatea brută',
+      );
+    }
+    return { gross_quantity: grossVal, net_quantity: netVal };
+  }
+
+  private async assertSupplierLinkedToClientCompany(
+    supplierId: number,
+    clientCompanyId: number,
+  ): Promise<void> {
+    const rows = await this.supplierLocationsRepo.find({
+      where: { supplier_id: supplierId },
+    });
+    for (const row of rows) {
+      const location = await this.fetchLocation(row.id_location);
+      const locCompanyId = Number(
+        location?.company_id ?? location?.companyId ?? 0,
+      );
+      if (locCompanyId === clientCompanyId) {
+        return;
+      }
+    }
+    throw new ForbiddenException(
+      'Furnizorul nu este asociat companiei client autentificate',
+    );
+  }
+
+  private async assertClientStockProductInCompanyNomenclator(
+    clientStockProductId: number,
+    clientCompanyId: number,
+    locationId?: number | null,
+  ): Promise<void> {
+    let locationIdsToCheck: number[] = [];
+
+    if (locationId != null && Number.isFinite(locationId) && locationId > 0) {
+      const location = await this.fetchLocation(locationId);
+      if (!location) {
+        throw new BadRequestException('Locația selectată nu a fost găsită');
+      }
+      const locCompanyId = Number(location.company_id);
+      if (!Number.isFinite(locCompanyId) || locCompanyId !== clientCompanyId) {
+        throw new BadRequestException(
+          'Locația selectată nu aparține companiei autentificate',
+        );
+      }
+      locationIdsToCheck = [locationId];
+    } else {
+      locationIdsToCheck =
+        await this.fetchCompanyLocationIds(clientCompanyId);
+      if (locationIdsToCheck.length === 0) {
+        throw new BadRequestException(
+          'Compania nu are locații configurate pentru validarea nomenclatorului',
+        );
+      }
+    }
+
+    for (const locId of locationIdsToCheck) {
+      try {
+        const catalog =
+          await this.stockHttpService.listProductsByLocation(locId);
+        if (catalog.some((p) => Number(p.id) === clientStockProductId)) {
+          return;
+        }
+      } catch (error: any) {
+        this.logger.warn(
+          `⚠️ [assertClientStockProductInCompanyNomenclator] location ${locId}: ${error?.message || error}`,
+        );
+      }
+    }
+
+    throw new BadRequestException(
+      'Produsul nu face parte din nomenclatorul disponibil la locațiile companiei',
+    );
+  }
+
+  async getClientProductMappingsForSupplier(
+    supplierId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<
+    Array<
+      SupplierProductClientMapping & {
+        client_stock_product_name?: string | null;
+      }
+    >
+  > {
+    const clientCompanyId = this.resolveClientCompanyIdFromContext(userContext);
+    await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
+
+    const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
+    if (!supplier) {
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+
+    const rows = await this.supplierProductClientMappingRepo
+      .createQueryBuilder('mappings')
+      .innerJoin(
+        SupplierProduct,
+        'sp',
+        'sp.id = mappings.supplier_product_id',
+      )
+      .where('mappings.client_company_id = :clientCompanyId', {
+        clientCompanyId,
+      })
+      .andWhere('sp.supplier_id = :supplierId', { supplierId })
+      .orderBy('mappings.supplier_product_id', 'ASC')
+      .getMany();
+
+    const stockUrl =
+      this.configService.get<string>('STOCK_HTTP_URL') ||
+      process.env.STOCK_HTTP_URL ||
+      'http://localhost:3006';
+    const nameCache = new Map<number, string>();
+
+    return Promise.all(
+      rows.map(async (row) => {
+        let client_stock_product_name: string | null = null;
+        if (!nameCache.has(row.client_stock_product_id)) {
+          try {
+            const resp = await firstValueFrom(
+              this.httpService.get(
+                `${stockUrl}/stock/products/${row.client_stock_product_id}`,
+                {
+                  headers: this.internalServiceHeaders(),
+                  timeout: 3000,
+                },
+              ),
+            );
+            const name = resp.data?.name ?? resp.data?.product_name ?? null;
+            if (name) {
+              nameCache.set(row.client_stock_product_id, String(name));
+            }
+          } catch {
+            /* optional label */
+          }
+        }
+        client_stock_product_name =
+          nameCache.get(row.client_stock_product_id) ?? null;
+        return { ...row, client_stock_product_name };
+      }),
+    );
+  }
+
+  async upsertSupplierProductClientConfig(
+    supplierId: number,
+    supplierProductId: number,
+    dto: UpsertSupplierProductClientConfigDto,
+    userContext?: SupplierProductUserContext,
+    selectedWorkLocationId?: number,
+  ): Promise<{
+    mapping: SupplierProductClientMapping;
+    supplier_product: SupplierProduct;
+  }> {
+    const clientCompanyId = this.resolveClientCompanyIdFromContext(userContext);
+    if (!userContext || !canManageSupplierProductClientMapping(userContext)) {
+      throw new ForbiddenException(
+        'Nu aveți permisiunea de a configura asocierile produselor furnizor',
+      );
+    }
+
+    await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
+
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: supplierProductId, supplier_id: supplierId },
+    });
+    if (!supplierProduct) {
+      throw new NotFoundException(
+        'Produsul furnizorului nu aparține furnizorului selectat',
+      );
+    }
+
+    const clientStockProductId = Number(dto.client_stock_product_id);
+    if (!Number.isFinite(clientStockProductId) || clientStockProductId <= 0) {
+      throw new BadRequestException(
+        'client_stock_product_id trebuie să fie un număr pozitiv',
+      );
+    }
+    await this.assertClientStockProductInCompanyNomenclator(
+      clientStockProductId,
+      clientCompanyId,
+      selectedWorkLocationId,
+    );
+
+    const quantities = this.validateOptionalGrossNetQuantities(
+      dto.gross_quantity,
+      dto.net_quantity,
+    );
+
+    const queryRunner = this.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const mappingRepo = queryRunner.manager.getRepository(
+        SupplierProductClientMapping,
+      );
+      const productRepo = queryRunner.manager.getRepository(SupplierProduct);
+
+      let mapping = await mappingRepo.findOne({
+        where: {
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+        },
+      });
+
+      if (mapping) {
+        mapping.client_stock_product_id = clientStockProductId;
+      } else {
+        mapping = mappingRepo.create({
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+          client_stock_product_id: clientStockProductId,
+        });
+      }
+      mapping = await mappingRepo.save(mapping);
+
+      supplierProduct.gross_quantity = quantities.gross_quantity;
+      supplierProduct.net_quantity = quantities.net_quantity;
+      const updatedProduct = await productRepo.save(supplierProduct);
+
+      await queryRunner.commitTransaction();
+      return { mapping, supplier_product: updatedProduct };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   /**
@@ -2258,6 +2786,75 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
+    const { locationId } = await this.assertProductInMySupplierNomenclator(
+      productId,
+      userContext,
+    );
+
+    const imageUrl = await this.stockHttpService.uploadProductImage(
+      fileName,
+      base64Content,
+    );
+    await this.stockHttpService.updateProductAtLocation(productId, locationId, {
+      photo: imageUrl,
+    });
+
+    return { product_id: productId, photo: imageUrl };
+  }
+
+  async updateMySupplierNomenclatorProduct(
+    productId: number,
+    dto: {
+      name?: string;
+      unit?: string;
+      sku?: string | null;
+      description?: string | null;
+      is_consumable?: boolean;
+      photo?: string | null;
+    },
+    userContext?: SupplierProductUserContext,
+  ): Promise<Record<string, unknown>> {
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    const { locationId } = await this.assertProductInMySupplierNomenclator(
+      productId,
+      userContext,
+    );
+
+    const payload: Record<string, unknown> = {};
+    if (dto.name !== undefined) payload.name = dto.name;
+    if (dto.unit !== undefined) payload.unit = dto.unit;
+    if (dto.sku !== undefined) payload.sku = dto.sku;
+    if (dto.description !== undefined) payload.description = dto.description;
+    if (dto.is_consumable !== undefined) payload.is_consumable = dto.is_consumable;
+    if (dto.photo !== undefined) payload.photo = dto.photo;
+
+    if (Object.keys(payload).length === 0) {
+      throw new BadRequestException('Nicio modificare de aplicat');
+    }
+
+    try {
+      return await this.stockHttpService.updateProductAtLocation(
+        productId,
+        locationId,
+        payload,
+      );
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ?? error?.message ?? 'Eroare la actualizarea produsului';
+      const status = error?.response?.status;
+      if (status === 404) {
+        throw new NotFoundException(message);
+      }
+      throw new BadRequestException(message);
+    }
+  }
+
+  private async assertProductInMySupplierNomenclator(
+    productId: number,
+    userContext: SupplierProductUserContext,
+  ): Promise<{ summary: { id: number }; locationId: number }> {
     assertFurnizorProductManager(userContext);
 
     const summary = await this.findMySupplierForFurnizorTenant(
@@ -2272,13 +2869,7 @@ export class SuppliersService {
         'Produsul nu aparține nomenclatorului depozitului furnizorului',
       );
     }
-
-    const imageUrl = await this.stockHttpService.uploadProductImage(
-      fileName,
-      base64Content,
-    );
-    await this.stockHttpService.updateProduct(productId, { photo: imageUrl });
-    return { product_id: productId, photo: imageUrl };
+    return { summary, locationId };
   }
 
   async getSupplierProducts(
@@ -2286,7 +2877,10 @@ export class SuppliersService {
     includeInactive = true,
     userContext?: SupplierProductUserContext,
     locationId?: number,
-  ): Promise<SupplierProduct[]> {
+  ): Promise<Array<SupplierProduct & {
+    linked_product_photo: string | null;
+    resolved_image_url: string | null;
+  }>> {
     const where: Record<string, unknown> = { supplier_id: supplierId };
 
     if (userContext && isFurnizorProductManager(userContext)) {
@@ -2316,19 +2910,44 @@ export class SuppliersService {
       locationId != null && Number.isFinite(Number(locationId)) && Number(locationId) > 0
         ? Number(locationId)
         : null;
-    if (resolvedLocationId == null) {
-      return products;
+
+    let filteredProducts = products;
+    if (resolvedLocationId != null) {
+      const stockRows = await this.stockHttpService.listStockItems(
+        resolvedLocationId,
+        5000,
+      );
+      const catalogProductIdsAtLocation = new Set(
+        stockRows
+          .map((row) => Number(row.product_id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+      filteredProducts = products.filter((sp) =>
+        catalogProductIdsAtLocation.has(Number(sp.product_id)),
+      );
     }
 
-    const stockRows = await this.stockHttpService.listStockItems(resolvedLocationId, 5000);
-    const catalogProductIdsAtLocation = new Set(
-      stockRows
-        .map((row) => Number(row.product_id))
-        .filter((id) => Number.isFinite(id) && id > 0),
-    );
-    return products.filter((sp) =>
-      catalogProductIdsAtLocation.has(Number(sp.product_id)),
-    );
+    const productIds = [
+      ...new Set(
+        filteredProducts
+          .map((sp) => Number(sp.product_id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    const linkedPhotoMap =
+      await this.stockHttpService.getProductPhotosByIds(productIds);
+
+    return filteredProducts.map((sp) => {
+      const linkedPhoto = linkedPhotoMap.get(Number(sp.product_id)) ?? null;
+      const imageFields = buildSupplierProductImageFields(
+        sp.image_url,
+        linkedPhoto,
+      );
+      return Object.assign(sp, {
+        linked_product_photo: imageFields.linked_product_photo,
+        resolved_image_url: imageFields.resolved_image_url,
+      });
+    });
   }
 
   private async findSupplierProductForUser(
@@ -5589,6 +6208,17 @@ export class SuppliersService {
     };
 
     Object.assign(supplierProduct, safeUpdate);
+    if (
+      safeUpdate.gross_quantity !== undefined ||
+      safeUpdate.net_quantity !== undefined
+    ) {
+      const quantities = this.validateOptionalGrossNetQuantities(
+        supplierProduct.gross_quantity,
+        supplierProduct.net_quantity,
+      );
+      supplierProduct.gross_quantity = quantities.gross_quantity;
+      supplierProduct.net_quantity = quantities.net_quantity;
+    }
     const updated = await this.supplierProductRepo.save(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated, null, 2)}`);
     return updated;

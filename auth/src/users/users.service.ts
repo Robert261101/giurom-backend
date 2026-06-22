@@ -124,6 +124,18 @@ export class UsersService {
     );
     const companyContext = await this.resolveCompanyContext(idEmployee);
 
+    const withOperational = this.ensureCompaniesReadOwnForOperationalStaff(
+      roles,
+      permissions,
+      employeeData?.position_default_id,
+    );
+    const effectivePermissions = this.ensureFurnizorTenantPermissions(
+      companyContext.company_type,
+      roles,
+      withOperational,
+      employeeData?.position_default_id,
+    );
+
     return {
       id: idEmployee,
       email: employeeData?.email || '',
@@ -138,7 +150,7 @@ export class UsersService {
       company_type: companyContext.company_type,
       position_default_id: employeeData?.position_default_id ?? null,
       roles,
-      permissions,
+      permissions: effectivePermissions,
       ...(options?.is_2fa_active !== undefined
         ? { is_2fa_active: options.is_2fa_active }
         : {}),
@@ -543,7 +555,97 @@ export class UsersService {
       ),
     ];
 
-    return { roles: [role.name], permissions };
+    return {
+      roles: [role.name],
+      permissions: this.ensureCompaniesReadOwnForOperationalStaff(
+        [role.name],
+        permissions,
+        role.name === 'magazioner' ? 5 : role.name === 'sofer' ? 4 : undefined,
+      ),
+    };
+  }
+
+  /**
+   * Magazioner/șofer: permisiuni minime în JWT (header firmă + finalizare sarcini).
+   */
+  private ensureCompaniesReadOwnForOperationalStaff(
+    roles: string[],
+    permissions: string[],
+    positionDefaultId?: number | null,
+  ): string[] {
+    const normalized = roles.map((r) => String(r).toLowerCase());
+    const isOperational =
+      normalized.includes('magazioner') ||
+      normalized.includes('sofer') ||
+      positionDefaultId === 5 ||
+      positionDefaultId === 4;
+    if (!isOperational) {
+      return permissions;
+    }
+    const out = [...permissions];
+    for (const perm of [
+      'companies.read_own',
+      'execution.create',
+      'leave-requests.create',
+      'leave-requests.read',
+    ]) {
+      if (!out.includes(perm)) {
+        out.push(perm);
+      }
+    }
+    return out;
+  }
+
+  private isOperationalStaffForToken(
+    roles: string[],
+    positionDefaultId?: number | null,
+  ): boolean {
+    const normalized = roles.map((r) => String(r).toLowerCase());
+    return (
+      normalized.includes('magazioner') ||
+      normalized.includes('sofer') ||
+      positionDefaultId === 5 ||
+      positionDefaultId === 4
+    );
+  }
+
+  /**
+   * Cont tenant furnizor: permisiuni minime în JWT pentru șabloane, imagini catalog etc.
+   * Nu se aplică magazionerilor / șoferilor — company_type=furnizor nu înseamnă rol furnizor.
+   */
+  private ensureFurnizorTenantPermissions(
+    companyType: 'furnizor' | 'client' | null,
+    roles: string[],
+    permissions: string[],
+    positionDefaultId?: number | null,
+  ): string[] {
+    if (this.isOperationalStaffForToken(roles, positionDefaultId)) {
+      return permissions;
+    }
+    const normalized = roles.map((r) => String(r).toLowerCase());
+    const isFurnizorAdmin =
+      normalized.includes('furnizor') ||
+      (companyType === 'furnizor' && permissions.includes('suppliers.create'));
+    if (!isFurnizorAdmin) {
+      return permissions;
+    }
+    const out = [...permissions];
+    for (const perm of [
+      'suppliers.create',
+      'template.create',
+      'template.read',
+      'order.read',
+      'attendance.create',
+      'attendance.update',
+      'leave-requests.create',
+      'leave-requests.read',
+      'leave-requests.update',
+    ]) {
+      if (!out.includes(perm)) {
+        out.push(perm);
+      }
+    }
+    return out;
   }
 
   /**
@@ -555,14 +657,37 @@ export class UsersService {
   ): Promise<{ roles: string[]; permissions: string[] }> {
     const fromUser = await this.getUserRolesAndPermissions(usersTableId);
     if (fromUser.roles.length > 0 || fromUser.permissions.length > 0) {
-      return fromUser;
+      return {
+        roles: fromUser.roles,
+        permissions: this.ensureCompaniesReadOwnForOperationalStaff(
+          fromUser.roles,
+          fromUser.permissions,
+          positionDefaultId,
+        ),
+      };
     }
 
     if (positionDefaultId === 5) {
-      return this.getRolesAndPermissionsByRoleName('magazioner');
+      const resolved = await this.getRolesAndPermissionsByRoleName('magazioner');
+      return {
+        roles: resolved.roles,
+        permissions: this.ensureCompaniesReadOwnForOperationalStaff(
+          resolved.roles,
+          resolved.permissions,
+          5,
+        ),
+      };
     }
     if (positionDefaultId === 4) {
-      return this.getRolesAndPermissionsByRoleName('sofer');
+      const resolved = await this.getRolesAndPermissionsByRoleName('sofer');
+      return {
+        roles: resolved.roles,
+        permissions: this.ensureCompaniesReadOwnForOperationalStaff(
+          resolved.roles,
+          resolved.permissions,
+          4,
+        ),
+      };
     }
 
     return fromUser;

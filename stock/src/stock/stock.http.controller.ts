@@ -67,6 +67,23 @@ export class StockHttpController {
   ) {
     return await this.service.updateProduct(Number(id), dto);
   }
+  @Patch("products/:id/at-location")
+  @Permissions("stock.update")
+  async updateProductAtLocation(
+    @Param("id") id: string,
+    @Query("location_id") locationId: string,
+    @Body() dto: UpdateProductDto,
+  ) {
+    const parsedLocationId = Number(locationId);
+    if (!Number.isFinite(parsedLocationId) || parsedLocationId <= 0) {
+      throw new BadRequestException("location_id invalid");
+    }
+    return await this.service.updateProductAtLocation(
+      Number(id),
+      parsedLocationId,
+      dto,
+    );
+  }
   @Delete("products/:id") @Permissions("stock.delete") async deleteProduct(
     @Param("id") id: string,
   ) {
@@ -509,7 +526,7 @@ export class StockHttpController {
 
   // === PRODUCT IMAGE UPLOAD ===
   @Post("products/upload-image")
-  @Permissions("stock.update")
+  @Permissions("stock.update", "suppliers.create")
   async uploadProductImage(
     @Body() payload: { fileName: string; content: string },
   ) {
@@ -535,7 +552,7 @@ export class StockHttpController {
 
   // === PRODUCT IMAGE SERVE ===
   @Get("products/image/:fileName")
-  @Permissions("products.read")
+  @Permissions("products.read", "suppliers.create", "order.read", "stock.read")
   async serveProductImage(
     @Param("fileName") fileName: string,
     @Res() res: Response,

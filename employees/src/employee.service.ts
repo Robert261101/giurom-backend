@@ -3,6 +3,7 @@
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Inject,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -355,23 +356,80 @@ export class EmployeeService {
     };
   }
 
-  // Returnează doar id, first_name, last_name pentru angajați (pentru utilizatori cu permisiunea employees.read_own)
+  private locationsBaseUrl(): string {
+    return process.env.LOCATIONS_HTTP_URL || "http://localhost:3004";
+  }
+
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      "x-internal-service": "employees",
+      "x-service-secret":
+        process.env.SERVICE_SECRET || "default-service-secret",
+      "Content-Type": "application/json",
+    };
+  }
+
+  /** Compania unei locații — folosit pentru validarea scope-ului în for-own. */
+  async getLocationCompanyId(locationId: number): Promise<number | null> {
+    try {
+      const resp = await axios.get(
+        `${this.locationsBaseUrl()}/locations/${locationId}`,
+        { headers: this.internalServiceHeaders(), timeout: 8000 },
+      );
+      const cid = resp.data?.company_id ?? resp.data?.companyId;
+      const n = Number(cid);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async assertLocationInCompany(
+    locationId: number,
+    companyId: number | null | undefined,
+  ): Promise<void> {
+    if (companyId == null || !Number.isFinite(Number(companyId)) || Number(companyId) <= 0) {
+      return;
+    }
+    const locCompanyId = await this.getLocationCompanyId(locationId);
+    if (locCompanyId == null) {
+      throw new ForbiddenException("Locația nu a putut fi validată");
+    }
+    if (locCompanyId !== Number(companyId)) {
+      throw new ForbiddenException(
+        "Locația nu aparține companiei utilizatorului autentificat",
+      );
+    }
+  }
+
+  // Returnează angajați activi din locația dată (scope colegi operaționali).
   async findForOwn(
-    location_id?: number,
-  ): Promise<{ id: number; first_name: string; last_name: string }[]> {
+    location_id: number,
+  ): Promise<
+    {
+      id: number;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+      work_location_id: number | null;
+      is_active: boolean;
+    }[]
+  > {
     const queryBuilder = this.employeeRepository
       .createQueryBuilder("employee")
-      .select(["employee.id", "employee.first_name", "employee.last_name"])
-      .where("employee.is_active = :is_active", { is_active: true });
-
-    if (location_id) {
-      queryBuilder
-        .leftJoin("employee.employeeLocations", "employeeLocations")
-        .andWhere(
-          "(employeeLocations.idLocation = :location_id OR employee.work_location_default_id = :location_id)",
-          { location_id },
-        );
-    }
+      .select([
+        "employee.id",
+        "employee.first_name",
+        "employee.last_name",
+        "employee.work_location_default_id",
+        "employee.is_active",
+      ])
+      .where("employee.is_active = :is_active", { is_active: true })
+      .leftJoin("employee.employeeLocations", "employeeLocations")
+      .andWhere(
+        "(employeeLocations.idLocation = :location_id OR employee.work_location_default_id = :location_id)",
+        { location_id },
+      );
 
     const employees = await queryBuilder
       .orderBy("employee.first_name", "ASC")
@@ -382,6 +440,9 @@ export class EmployeeService {
       id: emp.id,
       first_name: emp.first_name,
       last_name: emp.last_name,
+      full_name: `${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim(),
+      work_location_id: emp.work_location_default_id ?? null,
+      is_active: Boolean(emp.is_active),
     }));
   }
 

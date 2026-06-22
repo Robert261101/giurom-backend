@@ -41,7 +41,7 @@ app.get("/health", (req, res) => {
     message: "API Gateway is running",
     timestamp: new Date().toISOString(),
     routes: {
-      "/employees": "http://localhost:3012",
+      "/employees": "http://localhost:3011",
       "/attendance": "http://localhost:3016",
       "/calendar": "http://localhost:3010",
       "/leave-requests": "http://localhost:3013",
@@ -137,7 +137,7 @@ app.use((req, res, next) => {
 const microservices = {
   // Employees microservice
   "/employees": {
-    target: target("http://localhost:3012", "EMPLOYEES_SERVICE_URL"),
+    target: target("http://localhost:3011", "EMPLOYEES_SERVICE_URL"),
     changeOrigin: true,
     logLevel: "debug",
   },

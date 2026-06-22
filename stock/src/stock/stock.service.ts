@@ -16,6 +16,7 @@ import { firstValueFrom, defaultIfEmpty } from "rxjs";
 import * as fs from "fs";
 import * as path from "path";
 import { Product } from "./entities/product.entity";
+import { ProductLocationOverride } from "./entities/product-location-override.entity";
 import {
   Stock,
   StockStatus,
@@ -71,6 +72,8 @@ export class StockService {
     private readonly categoryRepo: Repository<Category>,
     @InjectRepository(OrderList)
     private readonly orderListRepo: Repository<OrderList>,
+    @InjectRepository(ProductLocationOverride)
+    private readonly productLocationOverrideRepo: Repository<ProductLocationOverride>,
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
     private readonly httpService?: HttpService,
@@ -322,7 +325,21 @@ export class StockService {
       where: { name: dto.name },
     });
     if (existing) throw new ConflictException("Produsul există deja");
-    const product = this.productRepo.create(dto);
+
+    const skuTrimmed = dto.sku?.trim();
+    if (skuTrimmed) {
+      const existingBySku = await this.productRepo.findOne({
+        where: { sku: skuTrimmed },
+      });
+      if (existingBySku) {
+        throw new ConflictException("SKU-ul există deja");
+      }
+    }
+
+    const product = this.productRepo.create({
+      ...dto,
+      sku: skuTrimmed || undefined,
+    });
     this.logger.log(
       `💾 [createProduct] Creating product with photo: ${dto.photo || "no photo"}`
     );
@@ -418,16 +435,195 @@ export class StockService {
 
   /** Produse din nomenclatorul global care au rând în stock pentru locația dată (existență, nu qty>0). */
   async findProductsByLocation(locationId: number): Promise<Product[]> {
+    const locationKey = this.locationKey(locationId);
     const productsWithStock = await this.productRepo
       .createQueryBuilder("product")
       .innerJoin("product.stocks", "stock")
       .where("stock.location_key = :locationKey", {
-        locationKey: this.locationKey(locationId),
+        locationKey,
       })
       .distinct(true)
       .getMany();
 
-    return productsWithStock.map((p) => this.normalizeProductPhoto(p));
+    const overrides = await this.productLocationOverrideRepo.find({
+      where: { location_key: locationKey },
+    });
+    const overrideByProductId = new Map(
+      overrides.map((row) => [row.product_id, row]),
+    );
+
+    const productIds = productsWithStock.map((p) => p.id);
+    const multiLocationProductIds =
+      await this.getProductIdsWithMultipleLocations(productIds);
+
+    return productsWithStock.map((p) => {
+      const isMultiLocation = multiLocationProductIds.has(p.id);
+      const override = overrideByProductId.get(p.id);
+      const merged = override
+        ? this.mergeProductWithLocationOverride(p, override, isMultiLocation)
+        : isMultiLocation
+          ? this.applyMultiLocationProductDefaults(p)
+          : p;
+      return this.normalizeProductPhoto(merged);
+    });
+  }
+
+  /** Produse folosite în mai multe locații — nu propagă poza globală către alte nomenclatoare. */
+  private applyMultiLocationProductDefaults(product: Product): Product {
+    const merged = Object.assign(new Product(), product);
+    merged.photo = undefined;
+    return merged;
+  }
+
+  private async getProductIdsWithMultipleLocations(
+    productIds: number[],
+  ): Promise<Set<number>> {
+    if (productIds.length === 0) {
+      return new Set();
+    }
+
+    const rows = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select("stock.product_id", "product_id")
+      .addSelect("COUNT(DISTINCT stock.location_key)", "location_count")
+      .where("stock.product_id IN (:...productIds)", { productIds })
+      .groupBy("stock.product_id")
+      .having("location_count > 1")
+      .getRawMany<{ product_id: number; location_count: string }>();
+
+    return new Set(rows.map((row) => Number(row.product_id)));
+  }
+
+  private resolveLocationPhoto(
+    product: Product,
+    override: ProductLocationOverride | undefined,
+    isMultiLocation: boolean,
+  ): string | undefined {
+    if (override?.photo != null && String(override.photo).trim() !== "") {
+      return override.photo;
+    }
+    if (!isMultiLocation) {
+      return product.photo ?? undefined;
+    }
+    if (override) {
+      return product.photo ?? undefined;
+    }
+    return undefined;
+  }
+
+  private mergeProductWithLocationOverride(
+    product: Product,
+    override: ProductLocationOverride,
+    isMultiLocation = false,
+  ): Product {
+    const merged = Object.assign(new Product(), product);
+    if (override.name != null && String(override.name).trim() !== "") {
+      merged.name = override.name;
+    }
+    if (override.unit != null && String(override.unit).trim() !== "") {
+      merged.unit = override.unit;
+    }
+    if (override.sku !== undefined) {
+      merged.sku = override.sku ?? undefined;
+    }
+    if (override.description !== undefined) {
+      merged.description = override.description ?? undefined;
+    }
+    merged.photo = this.resolveLocationPhoto(product, override, isMultiLocation);
+    if (override.is_consumable != null) {
+      merged.is_consumable = override.is_consumable;
+    }
+    return merged;
+  }
+
+  private async countDistinctLocationKeysForProduct(
+    productId: number,
+  ): Promise<number> {
+    const rows = await this.stockRepo.find({
+      where: { product_id: productId },
+      select: ["location_key"],
+    });
+    return new Set(rows.map((row) => row.location_key)).size;
+  }
+
+  /**
+   * Actualizează metadatele produsului în contextul unei locații.
+   * Dacă produsul e folosit și în alte locații, scrie override local (fără a modifica nomenclatorul global).
+   */
+  async updateProductAtLocation(
+    productId: number,
+    locationId: number,
+    dto: UpdateProductDto,
+  ): Promise<Product> {
+    const locationKey = this.locationKey(locationId);
+    const stockAtLocation = await this.stockRepo.findOne({
+      where: { product_id: productId, location_key: locationKey },
+    });
+    if (!stockAtLocation) {
+      throw new NotFoundException(
+        "Produsul nu există în nomenclatorul locației specificate",
+      );
+    }
+
+    const locationCount =
+      await this.countDistinctLocationKeysForProduct(productId);
+    if (locationCount <= 1) {
+      return this.updateProduct(productId, dto);
+    }
+
+    const product = await this.findProduct(productId);
+    let override = await this.productLocationOverrideRepo.findOne({
+      where: { product_id: productId, location_key: locationKey },
+    });
+    if (!override) {
+      override = this.productLocationOverrideRepo.create({
+        product_id: productId,
+        location_id: locationId,
+        location_key: locationKey,
+      });
+    }
+
+    if (dto.name !== undefined) override.name = dto.name;
+    if (dto.unit !== undefined) override.unit = dto.unit;
+    if (dto.sku !== undefined) {
+      override.sku = dto.sku?.trim() || null;
+    }
+    if (dto.description !== undefined) {
+      override.description = dto.description ?? null;
+    }
+    if (dto.is_consumable !== undefined) {
+      override.is_consumable = dto.is_consumable;
+    }
+    if (dto.photo !== undefined) {
+      override.photo = dto.photo ?? null;
+    }
+    if (dto.min_stock_level !== undefined) {
+      // min_stock_level rămâne global pe products — doar locațiile exclusive îl pot schimba direct
+    }
+    if (dto.is_active !== undefined) {
+      // is_active rămâne global
+    }
+
+    const hasScopedChange =
+      dto.name !== undefined ||
+      dto.unit !== undefined ||
+      dto.sku !== undefined ||
+      dto.description !== undefined ||
+      dto.is_consumable !== undefined ||
+      dto.photo !== undefined;
+
+    if (!hasScopedChange) {
+      throw new BadRequestException("Nicio modificare de aplicat");
+    }
+
+    const savedOverride =
+      await this.productLocationOverrideRepo.save(override);
+    const merged = this.mergeProductWithLocationOverride(
+      product,
+      savedOverride,
+      true,
+    );
+    return this.normalizeProductPhoto(merged);
   }
 
   async findProduct(id: number): Promise<Product> {
@@ -484,7 +680,21 @@ export class StockService {
       }
     }
 
-    Object.assign(product, dto);
+    if (dto.sku !== undefined) {
+      const skuTrimmed = dto.sku?.trim() || null;
+      if (skuTrimmed) {
+        const existingBySku = await this.productRepo.findOne({
+          where: { sku: skuTrimmed },
+        });
+        if (existingBySku && existingBySku.id !== id) {
+          throw new ConflictException("SKU-ul există deja");
+        }
+      }
+      product.sku = skuTrimmed;
+    }
+
+    const { sku: _sku, ...restDto } = dto;
+    Object.assign(product, restDto);
     const updated = await this.productRepo.save(product);
     this.logger.log(
       `✅ [updateProduct] Updated product ID ${id} with final photo: ${updated.photo || "no photo"}`

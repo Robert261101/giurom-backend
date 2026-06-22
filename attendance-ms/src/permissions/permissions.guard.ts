@@ -1,6 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PERMISSIONS_KEY } from './permissions.decorator';
+import { PERMISSIONS_KEY, PERMISSIONS_ANY_KEY, AUTH_ONLY_KEY } from './permissions.decorator';
 import { AttendanceService } from '../attendance.service';
 
 @Injectable()
@@ -14,6 +14,33 @@ export class PermissionsGuard implements CanActivate {
   private static readonly INTERNAL_ALLOWED_PERMISSIONS = ['attendance.read'];
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const authOnly = this.reflector.getAllAndOverride<boolean>(AUTH_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (authOnly === true) {
+      return true;
+    }
+
+    const permissionsAny = this.reflector.getAllAndOverride<string[]>(
+      PERMISSIONS_ANY_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (permissionsAny?.length) {
+      const request = context.switchToHttp().getRequest();
+      const user = request?.user;
+      if (!user?.permissions) {
+        throw new ForbiddenException('Fără permisiuni');
+      }
+      const hasAny = permissionsAny.some((perm) =>
+        (user.permissions as string[]).includes(perm),
+      );
+      if (!hasAny) {
+        throw new ForbiddenException('Permisiuni insuficiente');
+      }
+      return true;
+    }
+
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -40,10 +67,21 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Fără permisiuni');
     }
 
-    const hasAll = requiredPermissions.every((perm) => (user.permissions as string[]).includes(perm));
+    const userPerms = (user.permissions as string[]) ?? [];
+    const roles = Array.isArray(user.roles)
+      ? user.roles.map((r: string) => String(r).toLowerCase())
+      : [];
+    const isFurnizorPontajManager =
+      userPerms.includes('suppliers.create') &&
+      (user.company_type === 'furnizor' || roles.includes('furnizor'));
+
+    const hasAll = requiredPermissions.every((perm) => userPerms.includes(perm));
     
     // Dacă utilizatorul nu are permisiunea, verifică dacă încearcă să creeze o prezență pentru propriul shift
     if (!hasAll && requiredPermissions.includes('attendance.create')) {
+      if (isFurnizorPontajManager) {
+        return true;
+      }
       const body = request.body;
       const shiftId = body?.shift_id;
       // În JWT, sub = id_employee (vezi auth.service.ts: sub: user.id_employee)
@@ -71,6 +109,9 @@ export class PermissionsGuard implements CanActivate {
     
     // Dacă utilizatorul nu are permisiunea, verifică dacă încearcă să actualizeze o prezență pentru propriul shift
     if (!hasAll && requiredPermissions.includes('attendance.update')) {
+      if (isFurnizorPontajManager) {
+        return true;
+      }
       const presenceId = request.params?.id;
       // În JWT, sub = id_employee (vezi auth.service.ts: sub: user.id_employee)
       // Verifică toate posibilitățile pentru ID-ul angajatului

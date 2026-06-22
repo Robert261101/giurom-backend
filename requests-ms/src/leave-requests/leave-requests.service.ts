@@ -8,10 +8,50 @@ import { LeaveRequest, LeaveStatus, DurationUnit } from './entities/leave-reques
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.dto';
 import { FilterLeaveRequestsDto } from './dto/filter-leave-requests.dto';
+import {
+  assertJwtEmployeeIdConsistency,
+  getCanonicalEmployeeId,
+  isFurnizorSupplierAdmin,
+  isLeaveAdminUser,
+  isOperationalStaffUser,
+  type LeaveAccessUser,
+} from './leave-request-access';
+import {
+  fetchOperationalColleagueIds as resolveOperationalColleagueIds,
+} from '../operational-colleague-scope';
+import {
+  attachEmployeeDisplayNames,
+  fetchEmployeeDisplayNames,
+} from '../employee-display-names';
 
 @Injectable()
 export class LeaveRequestsService implements OnModuleInit {
   private readonly logger = new Logger(LeaveRequestsService.name);
+
+  private employeesBaseUrl(): string {
+    return process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
+  }
+
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      'x-internal-service': 'requests',
+      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+    };
+  }
+
+  private async fetchEmployeeById(employeeId: number): Promise<any> {
+    const response = await firstValueFrom(
+      this.httpService.get(
+        `${this.employeesBaseUrl()}/employees/${employeeId}`,
+        { headers: this.internalServiceHeaders() },
+      ),
+    );
+    const employeeData = response.data as any;
+    if (!employeeData) {
+      throw new NotFoundException('Angajatul nu a fost găsit');
+    }
+    return employeeData;
+  }
   private notificationsClient: ClientProxy;
 
   constructor(
@@ -61,37 +101,58 @@ export class LeaveRequestsService implements OnModuleInit {
   }
 
   // Creare cerere de concediu
-  async create(dto: CreateLeaveRequestDto, currentUserId?: number): Promise<LeaveRequest> {
+  async create(
+    dto: CreateLeaveRequestDto,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<LeaveRequest> {
     // Verifică dacă angajatul există și obține location_id prin HTTP call către microserviciul employees
     let locationId: number | undefined = dto.location_id;
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.employee_id}`, {
-          headers: {
-            'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || ''
-          }
-        })
-      );
-      const employeeData = response.data as any;
-      if (!employeeData) {
-        this.logger.error(`Employee with ID ${dto.employee_id} not found`);
-        throw new NotFoundException('Angajatul nu a fost găsit');
-      }
+      const employeeData = await this.fetchEmployeeById(dto.employee_id);
       
       // Dacă location_id nu este furnizat în DTO, îl obținem din employee (work_location_default_id)
       if (!locationId && employeeData.work_location_default_id) {
         locationId = employeeData.work_location_default_id;
       }
     } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
       this.logger.error(`Employee with ID ${dto.employee_id} not found: ${error.message}`);
       throw new NotFoundException('Angajatul nu a fost găsit');
     }
 
-    // Autorizare: angajatul poate crea cereri doar pentru sine
-    if (currentUserId && currentUserId !== dto.employee_id) {
-      this.logger.warn(`User ${currentUserId} attempted to create leave request for employee ${dto.employee_id}`);
-      throw new ForbiddenException('Nu poți crea cereri de concediu pentru alți angajați');
+    // Autorizare: self, admin sau furnizor (staff propriu)
+    if (user) {
+      assertJwtEmployeeIdConsistency(user);
+      if (isLeaveAdminUser(user)) {
+        // admin/manager — orice angajat
+      } else if (isFurnizorSupplierAdmin(user)) {
+        const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+        if (!staffIds.includes(dto.employee_id)) {
+          throw new ForbiddenException(
+            'Angajatul nu aparține furnizorului autentificat',
+          );
+        }
+      } else if (isOperationalStaffUser(user)) {
+        const selfId = getCanonicalEmployeeId(user);
+        if (selfId == null || dto.employee_id !== selfId) {
+          throw new ForbiddenException(
+            'Nu poți crea cereri de concediu pentru alți angajați',
+          );
+        }
+      } else {
+        const selfId = getCanonicalEmployeeId(user);
+        if (selfId != null && dto.employee_id !== selfId) {
+          this.logger.warn(
+            `User ${selfId} attempted to create leave request for employee ${dto.employee_id}`,
+          );
+          throw new ForbiddenException(
+            'Nu poți crea cereri de concediu pentru alți angajați',
+          );
+        }
+      }
     }
 
     // Validări pentru date
@@ -164,18 +225,30 @@ export class LeaveRequestsService implements OnModuleInit {
   }
 
   // Listare cereri cu filtrare
-  async findAll(filters: FilterLeaveRequestsDto, currentUserId?: number): Promise<LeaveRequest[]> {
+  async findAll(
+    filters: FilterLeaveRequestsDto,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<LeaveRequest[]> {
     const queryBuilder = this.leaveRequestRepo.createQueryBuilder('lr');
       // Employee relations removed - using HTTP calls to employees microservice
+
+    if (!user) {
+      throw new ForbiddenException('Utilizator neautentificat');
+    }
+    assertJwtEmployeeIdConsistency(user);
 
     // Filtrare pe status
     if (filters.status) {
       queryBuilder.andWhere('lr.status = :status', { status: filters.status });
     }
 
-    // Filtrare pe angajat
-    if (filters.employee_id) {
-      queryBuilder.andWhere('lr.employee_id = :employeeId', { employeeId: filters.employee_id });
+    // Filtrare pe angajat (înainte de scope — poate fi suprascrisă pentru operațional)
+    const requestedEmployeeId = filters.employee_id;
+    if (requestedEmployeeId) {
+      queryBuilder.andWhere('lr.employee_id = :employeeId', {
+        employeeId: requestedEmployeeId,
+      });
     }
 
     // Filtrare pe tipul concediului
@@ -210,22 +283,133 @@ export class LeaveRequestsService implements OnModuleInit {
       queryBuilder.andWhere('lr.location_id = :locationId', { locationId: filters.location_id });
     }
 
-    // Autorizare: angajații pot vedea doar propriile cereri (managerii pot vedea toate)
-    if (currentUserId) {
-      const isUserManager = await this.isManager(currentUserId);
-      
-      if (!isUserManager) {
-        queryBuilder.andWhere('lr.employee_id = :currentUserId', { currentUserId });
+    // Autorizare pe scope
+    if (isOperationalStaffUser(user)) {
+      const selfId = getCanonicalEmployeeId(user);
+      if (selfId == null) {
+        throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
       }
+      // Scope citire: self + colegi din aceeași locație
+      const colleagueIds = await resolveOperationalColleagueIds(
+        this.httpService,
+        user as any,
+      );
+      if (requestedEmployeeId != null) {
+        if (!colleagueIds.includes(requestedEmployeeId)) {
+          throw new ForbiddenException('Nu aveți acces la cererile acestui angajat');
+        }
+        queryBuilder.andWhere('lr.employee_id = :scopeEmployeeId', { scopeEmployeeId: requestedEmployeeId });
+      } else if (colleagueIds.length > 0) {
+        queryBuilder.andWhere('lr.employee_id IN (:...colleagueIds)', { colleagueIds });
+      } else {
+        queryBuilder.andWhere('lr.employee_id = :scopeEmployeeId', { scopeEmployeeId: selfId });
+      }
+    } else if (isLeaveAdminUser(user)) {
+      // Admin/manager — filtrele din query rămân active
+    } else if (isFurnizorSupplierAdmin(user)) {
+      const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (requestedEmployeeId) {
+        if (!staffIds.includes(requestedEmployeeId)) {
+          throw new ForbiddenException(
+            'Angajatul nu aparține furnizorului autentificat',
+          );
+        }
+      } else if (staffIds.length > 0) {
+        queryBuilder.andWhere('lr.employee_id IN (:...staffIds)', { staffIds });
+      } else {
+        queryBuilder.andWhere('1 = 0');
+      }
+    } else {
+      const selfId = getCanonicalEmployeeId(user);
+      if (selfId == null) {
+        throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
+      }
+      if (requestedEmployeeId && requestedEmployeeId !== selfId) {
+        throw new ForbiddenException('Nu aveți acces la cererile altui angajat');
+      }
+      queryBuilder.andWhere('lr.employee_id = :scopeEmployeeId', {
+        scopeEmployeeId: selfId,
+      });
     }
 
     const requests = await queryBuilder.getMany();
-    return requests;
+    const nameById = await fetchEmployeeDisplayNames(
+      this.httpService,
+      requests.map((r) => r.employee_id),
+    );
+    return attachEmployeeDisplayNames(requests, nameById);
+  }
+
+  private suppliersBaseUrl(): string {
+    return (
+      process.env.SUPPLIERS_HTTP_URL ||
+      process.env.SUPPLIERS_SERVICE_URL ||
+      'http://localhost:3007'
+    );
+  }
+
+  private async fetchSupplierStaffEmployeeIds(
+    authorization?: string,
+  ): Promise<number[]> {
+    const base = this.suppliersBaseUrl();
+    const headers: Record<string, string> = {};
+    if (authorization) {
+      headers.Authorization = authorization;
+    }
+    try {
+      const myResp = await firstValueFrom(
+        this.httpService.get(`${base}/suppliers/my-supplier`, {
+          headers,
+          timeout: 8000,
+        }),
+      );
+      const supplierId = Number(myResp.data?.id);
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        return [];
+      }
+      const [driversResp, warehouseResp] = await Promise.all([
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/drivers`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+        firstValueFrom(
+          this.httpService.get(`${base}/suppliers/${supplierId}/warehouse`, {
+            headers,
+            timeout: 8000,
+          }),
+        ),
+      ]);
+      const ids = new Set<number>();
+      for (const row of [
+        ...(driversResp.data ?? []),
+        ...(warehouseResp.data ?? []),
+      ]) {
+        const id = Number(row?.employee_id);
+        if (Number.isFinite(id) && id > 0) {
+          ids.add(id);
+        }
+      }
+      return [...ids];
+    } catch (error: any) {
+      this.logger.warn(
+        `fetchSupplierStaffEmployeeIds failed: ${error?.message || error}`,
+      );
+      return [];
+    }
+  }
+
+  private isLeaveManager(user?: LeaveAccessUser): boolean {
+    return isLeaveAdminUser(user);
   }
 
   // Obținere cereri în așteptare
-  async findPending(currentUserId?: number): Promise<LeaveRequest[]> {
-    return this.findAll({ status: LeaveStatus.PENDING }, currentUserId);
+  async findPending(
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<LeaveRequest[]> {
+    return this.findAll({ status: LeaveStatus.PENDING }, user, authorization);
   }
 
   // Obținere cerere specifică
@@ -240,8 +424,8 @@ export class LeaveRequestsService implements OnModuleInit {
       throw new NotFoundException('Cererea de concediu nu a fost găsită');
     }
 
-    // Autorizare: angajatul poate vedea doar propriile cereri
-    if (currentUserId && !this.isManager(currentUserId) && leaveRequest.employee_id !== currentUserId) {
+    // Autorizare: angajatul poate vedea doar propriile cereri (dacă user e furnizat)
+    if (currentUserId != null && leaveRequest.employee_id !== currentUserId) {
       this.logger.warn(`User ${currentUserId} attempted to access leave request ${id} of employee ${leaveRequest.employee_id}`);
       throw new ForbiddenException('Nu ai permisiunea să vezi această cerere de concediu');
     }
@@ -250,28 +434,38 @@ export class LeaveRequestsService implements OnModuleInit {
   }
 
   // Actualizare status cerere (aprobare/respingere)
-  async updateStatus(id: number, dto: UpdateLeaveRequestStatusDto, currentUserId?: number): Promise<LeaveRequest> {
+  async updateStatus(
+    id: number,
+    dto: UpdateLeaveRequestStatusDto,
+    user?: LeaveAccessUser,
+    authorization?: string,
+  ): Promise<LeaveRequest> {
     const leaveRequest = await this.findOne(id);
 
     // Verifică dacă reviewerul există prin HTTP call către microserviciul employees
     try {
-      await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
-          headers: {
-            'x-internal-service': 'requests',
-            'x-service-secret': process.env.SERVICE_SECRET || ''
-          }
-        })
-      );
+      await this.fetchEmployeeById(dto.reviewed_by_id);
     } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
       this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
-    // Autorizare: doar managerii pot aproba/respinge cereri
-    if (currentUserId && !this.isManager(currentUserId)) {
-      this.logger.warn(`Non-manager user ${currentUserId} attempted to update leave request status`);
+    // Autorizare: admin sau furnizor (staff propriu) pot aproba/respinge
+    if (user && !isLeaveAdminUser(user) && !isFurnizorSupplierAdmin(user)) {
+      this.logger.warn(`Non-manager user ${user.sub} attempted to update leave request status`);
       throw new ForbiddenException('Nu ai permisiunea să aprobi/respingi cereri de concediu');
+    }
+
+    if (user && isFurnizorSupplierAdmin(user)) {
+      const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+      if (!staffIds.includes(leaveRequest.employee_id)) {
+        throw new ForbiddenException(
+          'Angajatul nu aparține furnizorului autentificat',
+        );
+      }
     }
 
     // Verifică dacă cererea poate fi modificată
@@ -406,11 +600,9 @@ export class LeaveRequestsService implements OnModuleInit {
     };
   }
 
-  // Helper pentru verificarea dacă utilizatorul este manager
-  private async isManager(userId: number): Promise<boolean> {
-    // For testing purposes, consider all users as managers
-    // In production, this should check the user's actual roles/permissions
-    return true;
+  // Helper pentru verificarea dacă utilizatorul este manager (admin concedii)
+  private isManager(user?: LeaveAccessUser): boolean {
+    return this.isLeaveManager(user);
   }
 
   // Obținere cereri pentru aprobare (pentru manageri)

@@ -107,8 +107,7 @@ export class RecipePreparationsService implements OnModuleInit {
     const queryBuilder = this.prepRepo
       .createQueryBuilder("preparation")
       .leftJoinAndSelect("preparation.recipe", "recipe")
-      .leftJoinAndSelect("recipe.category", "category")
-      .leftJoinAndSelect("preparation.labels", "labels");
+      .leftJoinAndSelect("recipe.category", "category");
 
     // Add location filter - if locationId is provided, filter by it
     // if not provided, still filter out preparations without location_id

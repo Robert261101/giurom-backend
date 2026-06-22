@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsPositive, Length, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsPositive, Min, Length } from 'class-validator';
 
 export class CreateSupplierProductDto {
   @ApiProperty()
@@ -49,16 +49,16 @@ export class CreateSupplierProductDto {
   is_active?: boolean;
 
   @ApiProperty({ required: false, description: 'Cantitate neta totala disponibila la furnizor (stoc furnizor)' })
-  @IsNumber()
   @IsOptional()
-  @Min(0)
-  net_quantity?: number;
+  @IsNumber()
+  @IsPositive()
+  net_quantity?: number | null;
 
   @ApiProperty({ required: false, description: 'Cantitate bruta totala disponibila la furnizor (stoc furnizor)' })
-  @IsNumber()
   @IsOptional()
-  @Min(0)
-  gross_quantity?: number;
+  @IsNumber()
+  @IsPositive()
+  gross_quantity?: number | null;
 
   @ApiProperty({ required: false, description: 'URL imagine produs' })
   @IsString()
