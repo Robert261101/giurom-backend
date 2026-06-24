@@ -41,6 +41,33 @@ export class UsersService {
   }
 
   /**
+   * Rezolvă company_id din locație (fără company_type).
+   */
+  private async resolveCompanyIdFromLocationId(
+    locationId: number,
+  ): Promise<number | null> {
+    try {
+      const locationsUrl =
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      const locationResponse = await firstValueFrom(
+        this.httpService.get(`${locationsUrl}/locations/${locationId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const location = locationResponse.data?.data || locationResponse.data;
+      const companyId = location?.company_id ?? location?.companyId ?? null;
+      const parsed = Number(companyId);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    } catch (error) {
+      console.error(
+        `Eroare la rezolvarea company_id din locația ${locationId}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Rezolvă company_id și company_type din locația implicită a angajatului.
    */
   async resolveCompanyContext(idEmployee: number): Promise<{
@@ -123,6 +150,21 @@ export class UsersService {
       employeeData?.position_default_id,
     );
     const companyContext = await this.resolveCompanyContext(idEmployee);
+    const workLocationId = employeeData?.work_location_default_id ?? null;
+    let resolvedCompanyId = companyContext.company_id;
+    if (resolvedCompanyId == null && workLocationId != null) {
+      resolvedCompanyId = await this.resolveCompanyIdFromLocationId(workLocationId);
+    }
+    const resolvedCompanyType =
+      companyContext.company_type ??
+      (() => {
+        const normalizedRoles = roles.map((role) =>
+          String(role).toLowerCase().trim(),
+        );
+        if (normalizedRoles.includes('furnizor')) return 'furnizor' as const;
+        if (normalizedRoles.includes('client')) return 'client' as const;
+        return null;
+      })();
 
     const withOperational = this.ensureCompaniesReadOwnForOperationalStaff(
       roles,
@@ -130,7 +172,7 @@ export class UsersService {
       employeeData?.position_default_id,
     );
     const effectivePermissions = this.ensureFurnizorTenantPermissions(
-      companyContext.company_type,
+      resolvedCompanyType,
       roles,
       withOperational,
       employeeData?.position_default_id,
@@ -145,9 +187,9 @@ export class UsersService {
       profile_image: options?.profile_image ?? null,
       birth_date: employeeData?.birth_date || '',
       department_id: employeeData?.department_default_id ?? null,
-      work_location_id: employeeData?.work_location_default_id ?? null,
-      company_id: companyContext.company_id,
-      company_type: companyContext.company_type,
+      work_location_id: workLocationId,
+      company_id: resolvedCompanyId,
+      company_type: resolvedCompanyType,
       position_default_id: employeeData?.position_default_id ?? null,
       roles,
       permissions: effectivePermissions,

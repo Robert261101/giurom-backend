@@ -71,6 +71,7 @@ import {
   isAdminOrSuperAdminFromPermissions,
   canManageSupplierProductClientMapping,
   isFurnizorProductManager,
+  resolveCompanyTypeFromAuth,
   type SupplierProductUserContext,
 } from './supplier-product-access';
 import * as fs from 'fs';
@@ -1809,35 +1810,100 @@ export class SuppliersService {
   /**
    * Operational supplier for the logged-in furnizor tenant (owner_company_id = JWT company_id).
    */
+  private async resolveCompanyIdFromWorkLocation(
+    workLocationId: number | null | undefined,
+  ): Promise<number | null> {
+    const locId = Number(workLocationId);
+    if (!Number.isFinite(locId) || locId <= 0) {
+      return null;
+    }
+    const location = await this.fetchLocation(locId);
+    const companyId = Number(location?.company_id ?? location?.companyId);
+    return Number.isFinite(companyId) && companyId > 0 ? companyId : null;
+  }
+
+  private async findOperationalSupplierByCompanyId(
+    companyId: number,
+  ): Promise<{ id: number; supplier_name: string } | null> {
+    const byOwner = await this.supplierRepo.findOne({
+      where: { owner_company_id: companyId },
+      select: ['id', 'supplier_name'],
+    });
+    if (byOwner) {
+      return { id: byOwner.id, supplier_name: byOwner.supplier_name };
+    }
+
+    const productRow = await this.supplierProductRepo
+      .createQueryBuilder('sp')
+      .innerJoinAndSelect('sp.supplier', 'supplier')
+      .where('sp.company_id = :companyId', { companyId })
+      .orderBy('sp.id', 'ASC')
+      .getOne();
+    if (productRow?.supplier) {
+      return {
+        id: productRow.supplier.id,
+        supplier_name: productRow.supplier.supplier_name,
+      };
+    }
+
+    return null;
+  }
+
   async findMySupplierForFurnizorTenant(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
+    roles?: string[] | null,
+    options?: {
+      workLocationId?: number | null;
+      employeeId?: number | null;
+    },
   ): Promise<{ id: number; supplier_name: string }> {
-    if (companyType !== 'furnizor') {
+    let resolvedCompanyId = Number(companyId);
+    if (!Number.isFinite(resolvedCompanyId) || resolvedCompanyId <= 0) {
+      resolvedCompanyId =
+        (await this.resolveCompanyIdFromWorkLocation(options?.workLocationId)) ??
+        Number.NaN;
+    }
+
+    if (Number.isFinite(resolvedCompanyId) && resolvedCompanyId > 0) {
+      const supplier = await this.findOperationalSupplierByCompanyId(
+        resolvedCompanyId,
+      );
+      if (supplier) {
+        return supplier;
+      }
+    }
+
+    const employeeId = Number(options?.employeeId);
+    if (Number.isFinite(employeeId) && employeeId > 0) {
+      const supplierIds = await this.getEmployeeSupplierIds(employeeId);
+      if (supplierIds.length === 1) {
+        const supplier = await this.supplierRepo.findOne({
+          where: { id: supplierIds[0] },
+          select: ['id', 'supplier_name'],
+        });
+        if (supplier) {
+          return { id: supplier.id, supplier_name: supplier.supplier_name };
+        }
+      }
+    }
+
+    const normalizedType = resolveCompanyTypeFromAuth(companyType, roles);
+    if (normalizedType !== 'furnizor') {
       throw new ForbiddenException(
         'Doar conturile de tip furnizor pot accesa furnizorul operațional asociat',
       );
     }
 
-    const resolvedCompanyId = Number(companyId);
     if (!Number.isFinite(resolvedCompanyId) || resolvedCompanyId <= 0) {
       throw new ForbiddenException(
         'Contextul companiei furnizor lipsește din sesiune',
       );
     }
 
-    const supplier = await this.supplierRepo.findOne({
-      where: { owner_company_id: resolvedCompanyId },
-      select: ['id', 'supplier_name'],
-    });
-
-    if (!supplier) {
-      throw new NotFoundException(
-        'Nu există un furnizor operațional asociat acestei companii',
-      );
-    }
-
-    return { id: supplier.id, supplier_name: supplier.supplier_name };
+    throw new NotFoundException(
+      'Nu există un furnizor operațional asociat acestei companii',
+    );
   }
 
   /**
@@ -1877,10 +1943,17 @@ export class SuppliersService {
   async findMySupplierProfileForFurnizorTenant(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
+    roles?: string[] | null,
+    options?: {
+      workLocationId?: number | null;
+      employeeId?: number | null;
+    },
   ): Promise<Supplier> {
     const summary = await this.findMySupplierForFurnizorTenant(
       companyId,
       companyType,
+      roles,
+      options,
     );
     return this.findOne(summary.id, undefined);
   }
@@ -5865,7 +5938,7 @@ export class SuppliersService {
   }
 
   /**
-   * Batch paginat pentru dashboard furnizor (max 15 / pagină).
+   * Batch paginat pentru dashboard furnizor și detaliu furnizor (max 20 / pagină).
    */
   async getSupplierOrdersBatchPaginated(
     supplierIds: number[],
