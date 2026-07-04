@@ -4,6 +4,7 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
+    "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "ts-node -r tsconfig-paths/register src/main.ts"
   },
@@ -28,6 +29,7 @@
     "typeorm": "^0.3.25"
   },
   "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
     "@types/node": "^20.11.5",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",

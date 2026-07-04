@@ -5,54 +5,10 @@ on:
     branches: [main]
 
 jobs:
-  deploy-main-backend:
-    name: Build & deploy backend principal
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Strip devDependencies (nodul de deploy nu mai rulează npm install)
-        run: npm prune --omit=dev
-
-      - name: Set up SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-
-      - name: Deploy (dist + node_modules + package.json) via rsync
-        run: |
-          rsync -avz --delete \
-            --exclude='.env' --exclude='.env.*' --exclude='uploads' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no" \
-            dist \
-            node_modules \
-            package.json \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/giurom-backend/
-
-      - name: Restart service with PM2
-        run: |
-          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              cd /home/${{ secrets.DEPLOY_USER }}/giurom-backend
-              pm2 restart giurom-backend --update-env || pm2 start dist/main.js --name giurom-backend
-              pm2 save
-            '
+  # NOTA: jobul pentru "backend principal" (radacina giurom-backend, port 3001) a fost
+  # eliminat - proiectul radacina nu are folder src/ (nici pe disk, nici in istoricul
+  # git de pe main), deci nu exista ce sa se compileze. Functionalitatea pare sa fi
+  # fost preluata de serviciul auth/ (veziv-auth2), care are cod sursa complet.
 
   deploy:
     name: Build & deploy ${{ matrix.service }}
@@ -112,7 +68,7 @@ jobs:
             ${{ matrix.service }}/dist \
             ${{ matrix.service }}/node_modules \
             ${{ matrix.service }}/package.json \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/${{ matrix.service }}/
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}/
 
       - name: Restart service with PM2
         run: |
@@ -120,7 +76,7 @@ jobs:
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
               export NVM_DIR="$HOME/.nvm"
               [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              cd /home/${{ secrets.DEPLOY_USER }}/${{ matrix.service }}
+              cd /home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}
               pm2 restart ${{ matrix.service }} --update-env || pm2 start dist/main.js --name ${{ matrix.service }}
               pm2 save
             '

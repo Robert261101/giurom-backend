@@ -4,6 +4,7 @@
   "description": "API Gateway pentru microserviciile Giurom",
   "main": "src/main.js",
   "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp -r src/. dist/",
     "start": "node src/main.js",
     "start:dev": "nodemon src/main.js"
   },
