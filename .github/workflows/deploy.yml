@@ -1,0 +1,76 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Build & deploy ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - auth
+          - company
+          - locations
+          - recipes
+          - stock
+          - suppliers-ms
+          - veziv-tasks
+          - calendar-ms
+          - employees
+          - requests-ms
+          - waste-records-ms
+          - attendance-ms
+          - notifications-ms
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.service }}
+        run: npm ci
+
+      - name: Build
+        working-directory: ${{ matrix.service }}
+        run: npm run build
+
+      - name: Strip devDependencies (nodul de deploy nu mai rulează npm install)
+        working-directory: ${{ matrix.service }}
+        run: npm prune --omit=dev
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy (dist + node_modules + package.json) via rsync
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no" \
+            ${{ matrix.service }}/dist \
+            ${{ matrix.service }}/node_modules \
+            ${{ matrix.service }}/package.json \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/${{ matrix.service }}/
+
+      - name: Restart service with PM2
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+              cd /home/${{ secrets.DEPLOY_USER }}/${{ matrix.service }}
+              pm2 restart ${{ matrix.service }} --update-env || pm2 start dist/main.js --name ${{ matrix.service }}
+              pm2 save
+            '
