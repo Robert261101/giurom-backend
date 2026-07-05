@@ -23,6 +23,8 @@
     "@nestjs/websockets": "^10.4.20",
     "amqp-connection-manager": "^4.1.14",
     "amqplib": "^0.10.8",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "firebase-admin": "^13.0.0",
     "mysql2": "^3.14.3",
     "passport-jwt": "^4.0.1",
