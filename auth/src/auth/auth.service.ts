@@ -90,7 +90,7 @@ export class AuthService {
         severity: 'MEDIUM',
         timestamp: new Date()
       });
-      throw new UnauthorizedException('Angajatul nu a fost găsit');
+      throw new UnauthorizedException('Credențiale incorecte');
     }
 
     // Verifică parola folosind bcrypt
@@ -108,7 +108,7 @@ export class AuthService {
         severity: 'MEDIUM',
         timestamp: new Date()
       });
-      throw new UnauthorizedException('Parola incorectă');
+      throw new UnauthorizedException('Credențiale incorecte');
     }
 
     // Detectează anomalii în comportament
