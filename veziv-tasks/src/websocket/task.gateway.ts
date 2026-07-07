@@ -7,10 +7,11 @@ import { Logger } from '@nestjs/common';
   path: '/tasks/socket.io',
   cors: {
     origin: [
-      "http://localhost:3000", 
-      "http://localhost:3001", 
-      "https://giurom.bitap.ro", 
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://giurom.bitap.ro",
       "http://giurom.bitap.ro",
+      "https://restosoft.eu",
       // Permite toate domeniile Vercel (pattern pentru subdomenii)
       /^https:\/\/.*\.vercel\.app$/,
       /^https:\/\/.*\.vercel\.app\/.*$/

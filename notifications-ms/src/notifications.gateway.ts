@@ -25,6 +25,7 @@ import { UserResolutionService } from "./user-resolution.service";
       "http://89.46.6.45:3000",
       "http://89.46.6.45",
       "https://89.46.6.45",
+      "https://restosoft.eu",
       /^https:\/\/.*\.vercel\.app$/,
       /^https:\/\/.*\.vercel\.app\/.*$/,
     ],
