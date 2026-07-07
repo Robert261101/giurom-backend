@@ -29,7 +29,7 @@ import { EmployeeAccessModule } from '../employee-access/employee-access.module'
     ExecutionModule,
     EmployeeAccessModule,
     JwtModule.register({
-      secret: 'your-secret-key',
+      secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h'},
     })
   ],
