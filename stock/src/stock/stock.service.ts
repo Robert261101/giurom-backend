@@ -2230,12 +2230,18 @@ export class StockService {
   }
 
   /**
-   * Calculează repo root-ul - similar cu employees și suppliers services
+   * Calculează repo root-ul - similar cu employees și suppliers services.
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
    */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Resolve repo root relative to this file location
-    // __dirname is .../giurom-backend/stock/src (dev with ts-node) or .../giurom-backend/stock/dist (prod)
-    const repoRoot = path.resolve(__dirname, "../../..");
+    // __dirname is .../giurom-backend/stock/src/stock (dev with ts-node) or .../giurom-backend/stock/dist/stock (prod)
+    let repoRoot = path.resolve(__dirname, "../../../..");
+    if (path.basename(repoRoot) === "giurom-backend") {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 

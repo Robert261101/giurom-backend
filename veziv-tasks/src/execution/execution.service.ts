@@ -2311,12 +2311,18 @@ export class ExecutionService {
   }
 
   /**
-   * Calculează repo root-ul - similar cu locations și stock services
+   * Calculează repo root-ul - similar cu locations și stock services.
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
    */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || '').trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Resolve repo root relative to this file location
     // __dirname is .../giurom-backend/veziv-tasks/src/execution (dev with ts-node) or .../giurom-backend/veziv-tasks/dist/execution (prod)
-    const repoRoot = path.resolve(__dirname, '../../..');
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 

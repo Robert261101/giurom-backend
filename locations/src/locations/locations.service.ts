@@ -161,14 +161,21 @@ export class LocationsService {
   }
 
   private getLocationsFilesRootDir(): string {
-    // Resolve to giurom root (one level above giurom-backend)
-    // __dirname is .../giurom-backend/locations/src (dev with ts-node) or .../giurom-backend/locations/dist (prod)
-    const repoRoot = path.resolve(__dirname, "../../../..");
-    return path.join(repoRoot, "files", "locations");
+    return path.join(this.getRepoRoot(), "files", "locations");
   }
 
+  /**
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
+   */
   private getRepoRoot(): string {
-    const repoRoot = path.resolve(__dirname, "../../..");
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+    if (fromEnv) return path.resolve(fromEnv);
+    // Resolve to giurom root (one level above giurom-backend)
+    // __dirname is .../giurom-backend/locations/src/locations (dev with ts-node) or .../giurom-backend/locations/dist/locations (prod)
+    let repoRoot = path.resolve(__dirname, "../../../..");
+    if (path.basename(repoRoot) === "giurom-backend") {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 
@@ -259,7 +266,7 @@ export class LocationsService {
       }
 
       // Get the company folder path using the company name
-      const companyFilesRootDir = path.resolve(__dirname, "../../../..");
+      const companyFilesRootDir = this.getRepoRoot();
       const companyFilesDir = path.join(
         companyFilesRootDir,
         "files",

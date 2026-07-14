@@ -20,9 +20,19 @@ export class CompanyService {
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {}
 
-  /** Același mod ca locations: getRepoRoot() + files/companies. */
+  /**
+   * Același mod ca locations: getRepoRoot() + files/companies.
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
+   */
   private getRepoRoot(): string {
-    return path.resolve(__dirname, '../../..');
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || '').trim();
+    if (fromEnv) return path.resolve(fromEnv);
+    // __dirname is .../giurom-backend/company/src/company (dev with ts-node) or .../giurom-backend/company/dist/company (prod)
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      repoRoot = path.dirname(repoRoot);
+    }
+    return repoRoot;
   }
 
   private getCompanyFilesRootDir(): string {

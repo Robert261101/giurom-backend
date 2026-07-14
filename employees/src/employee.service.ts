@@ -61,11 +61,13 @@ export class EmployeeService {
     if (this._filesRepoRootCache != null) {
       return this._filesRepoRootCache;
     }
-    if (process.env.FILES_BASE_PATH) {
-      this._filesRepoRootCache = path.resolve(process.env.FILES_BASE_PATH);
+    const fromEnv = (process.env.FILES_BASE_PATH || process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+    if (fromEnv) {
+      this._filesRepoRootCache = path.resolve(fromEnv);
       return this._filesRepoRootCache;
     }
-    let repoRoot = path.resolve(__dirname, "../../../..");
+    // __dirname is .../giurom-backend/employees/src (dev with ts-node) or .../giurom-backend/employees/dist (prod)
+    let repoRoot = path.resolve(__dirname, "../../..");
     if (path.basename(repoRoot) === "giurom-backend") {
       repoRoot = path.dirname(repoRoot);
     }

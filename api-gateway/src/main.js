@@ -66,9 +66,19 @@ app.get("/health", (req, res) => {
 });
 
 // Serve static files from images directory (must be before other middlewares)
-// API Gateway is in /home/giurombitap/api-gateway/src
-// Images are in /home/giurombitap/images
-const imagesPath = path.join(__dirname, "../../images");
+// Trebuie sa fie EXACT acelasi folder in care scriu backend-urile (stock/veziv-tasks/etc getRepoRoot()).
+// Pe server seteaza REPO_ROOT=/home/restosoft ca sa citesti din afara giurom-backend/giurom-frontend.
+function resolveRepoRoot() {
+  const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  // __dirname is .../giurom-backend/api-gateway/src
+  let repoRoot = path.resolve(__dirname, "../../..");
+  if (path.basename(repoRoot) === "giurom-backend") {
+    repoRoot = path.dirname(repoRoot);
+  }
+  return repoRoot;
+}
+const imagesPath = path.join(resolveRepoRoot(), "images");
 console.log("\n🟡 ========== API GATEWAY STATIC FILES ==========");
 console.log("📂 __dirname:", __dirname);
 console.log("📂 Images path calculat:", imagesPath);

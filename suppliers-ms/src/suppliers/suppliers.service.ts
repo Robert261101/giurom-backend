@@ -1463,7 +1463,12 @@ export class SuppliersService {
     return updated;
   }
 
+  /**
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
+   */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || '').trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Try computing from __dirname first
     let repoRoot = path.resolve(__dirname, '../../..'); // src -> suppliers-ms -> giurom-backend -> giurom
     if (path.basename(repoRoot) === 'giurom-backend') {
