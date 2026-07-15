@@ -122,7 +122,7 @@ export class AssignmentService {
     try {
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
+          `http://localhost:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -183,7 +183,7 @@ export class AssignmentService {
       const end = toLocalDateStr(endDate);
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
+          `http://localhost:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -254,7 +254,7 @@ export class AssignmentService {
     const base =
       process.env.EMPLOYEES_HTTP_URL ||
       process.env.GATEWAY_HTTP_URL ||
-      'http://giurom.bitap.ro:3002';
+      'http://localhost:3002';
     const url = `${base.replace(/\/+$/, '')}/employees/locations/${workLocationId}/employees`;
     const headers = {
       'x-internal-service': 'veziv-tasks',
@@ -288,7 +288,7 @@ export class AssignmentService {
       const REALLOC_HTTP_TIMEOUT_MS = 1000;
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
+          `http://localhost:3016/attendance/shifts?work_location_id=${workLocationId}&limit=500`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -340,7 +340,7 @@ export class AssignmentService {
       const base =
         process.env.EMPLOYEES_HTTP_URL ||
         process.env.GATEWAY_HTTP_URL ||
-        'http://giurom.bitap.ro:3002';
+        'http://localhost:3002';
       const headers = {
         'x-internal-service': 'veziv-tasks',
         'x-service-secret':
@@ -415,7 +415,7 @@ export class AssignmentService {
   ): Promise<number[]> {
     try {
       const locationsBase =
-        process.env.LOCATIONS_HTTP_URL || 'http://giurom.bitap.ro:3002';
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3002';
       const serviceSecret =
         process.env.SERVICE_SECRET || '';
       const authHeaders = {
@@ -465,7 +465,7 @@ export class AssignmentService {
 
       const managerShiftsResp = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${workLocationId}&department_id=${managerDeptId}&limit=1000`,
+          `http://localhost:3016/attendance/shifts?work_location_id=${workLocationId}&department_id=${managerDeptId}&limit=1000`,
           { headers: authHeaders, timeout: REALLOC_HTTP_TIMEOUT_MS },
         ),
       );
@@ -644,7 +644,7 @@ export class AssignmentService {
     try {
       const response = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+          `http://localhost:3002/employees/${employeeId}`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -667,7 +667,7 @@ export class AssignmentService {
         try {
           const response = await firstValueFrom(
             this.httpService.get(
-              `http://giurom.bitap.ro:3012/employees/${employeeId}`,
+              `http://localhost:3011/employees/${employeeId}`,
               {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
@@ -708,7 +708,7 @@ export class AssignmentService {
     try {
       const response = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3002/locations/work-location-departments/${departmentId}`,
+          `http://localhost:3002/locations/work-location-departments/${departmentId}`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -815,7 +815,7 @@ export class AssignmentService {
           `📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees via /employees/batch`,
         );
 
-        const employeesServiceUrl = 'http://giurom.bitap.ro:3012'; // internal employees HTTP service
+        const employeesServiceUrl = 'http://localhost:3011'; // internal employees HTTP service
         const headers = {
           'x-internal-service': 'veziv-tasks',
           'x-service-secret':
@@ -2452,7 +2452,7 @@ export class AssignmentService {
         // Apelează microserviciul attendance pentru a obține shift-ul angajatului astăzi
         const shiftsResponse = await firstValueFrom(
           this.httpService.get(
-            `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${user.work_location_id || 3}&limit=1000`,
+            `http://localhost:3016/attendance/shifts?work_location_id=${user.work_location_id || 3}&limit=1000`,
             {
               headers: {
                 'x-internal-service': 'veziv-tasks',
@@ -2514,7 +2514,7 @@ export class AssignmentService {
         try {
           const employeeResponse = await firstValueFrom(
             this.httpService.get(
-              `http://giurom.bitap.ro:3012/employees/${user.sub}`,
+              `http://localhost:3011/employees/${user.sub}`,
               {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
@@ -3003,7 +3003,7 @@ export class AssignmentService {
         // Preia informațiile despre angajat din microserviciul employees
         const employeeResponse = await firstValueFrom(
           this.httpService.get(
-            `http://giurom.bitap.ro:3002/employees/${user.sub}`,
+            `http://localhost:3002/employees/${user.sub}`,
             {
               headers: {
                 'x-internal-service': 'veziv-tasks',
@@ -3124,7 +3124,7 @@ export class AssignmentService {
         // Preia informațiile despre angajat din microserviciul employees
         const employeeResponse = await firstValueFrom(
           this.httpService.get(
-            `http://giurom.bitap.ro:3002/employees/${user.sub}`,
+            `http://localhost:3002/employees/${user.sub}`,
             {
               headers: {
                 'x-internal-service': 'veziv-tasks',
@@ -3141,7 +3141,7 @@ export class AssignmentService {
           // Preia informațiile despre locație din microserviciul locations
           const locationResponse = await firstValueFrom(
             this.httpService.get(
-              `http://giurom.bitap.ro:3002/locations/${employee.work_location_default_id}`,
+              `http://localhost:3002/locations/${employee.work_location_default_id}`,
               {
                 headers: {
                   'x-internal-service': 'veziv-tasks',
@@ -3158,7 +3158,7 @@ export class AssignmentService {
             // Preia toate locațiile din compania respectivă
             const companyLocationsResponse = await firstValueFrom(
               this.httpService.get(
-                `http://giurom.bitap.ro:3002/locations?company_id=${location.company_id}`,
+                `http://localhost:3002/locations?company_id=${location.company_id}`,
                 {
                   headers: {
                     'x-internal-service': 'veziv-tasks',

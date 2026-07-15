@@ -103,7 +103,7 @@ export class AttendanceService implements OnModuleInit {
         workDateRoz ??
         formatInTimeZone(new Date(), ROMANIA_TZ, 'yyyy-MM-dd');
       const response = await firstValueFrom(
-        this.httpService.post('http://giurom.bitap.ro:3002/tasks/executions/daily-points', {
+        this.httpService.post('http://localhost:3002/tasks/executions/daily-points', {
           employee_id: employeeId,
           total_points: points,
           work_date: workDate,
@@ -733,7 +733,7 @@ export class AttendanceService implements OnModuleInit {
           let employeeUserId: number | null = null;
           try {
             const employeeResponse = await firstValueFrom(
-              this.httpService.get(`http://giurom.bitap.ro:3002/employees/${shift.employee_id}`)
+              this.httpService.get(`http://localhost:3002/employees/${shift.employee_id}`)
             );
             employeeUserId = employeeResponse.data?.user_id || employeeResponse.data?.id || shift.employee_id;
           } catch (error) {

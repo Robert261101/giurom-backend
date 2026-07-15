@@ -536,7 +536,7 @@ export class ShiftChangeRequestsService {
     // Verifică dacă reviewerul există prin HTTP call
     try {
       await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://giurom.bitap.ro:3002'}/employees/${dto.reviewed_by_id}`, {
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://localhost:3002'}/employees/${dto.reviewed_by_id}`, {
           headers: {
             'x-internal-service': 'requests',
             'x-service-secret': process.env.SERVICE_SECRET || ''

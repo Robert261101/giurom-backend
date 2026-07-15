@@ -724,7 +724,7 @@ export class LocationsService {
 
     // Obține numele companiilor din companies microservice folosind un singur request batch
     const companiesUrl =
-      process.env.COMPANIES_HTTP_URL || "http://giurom.bitap.ro:3003";
+      process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
     const serviceSecret =
       process.env.SERVICE_SECRET || '';
 
@@ -780,7 +780,7 @@ export class LocationsService {
     if (workLocation.company_id) {
       try {
         const companiesUrl =
-          process.env.COMPANIES_HTTP_URL || "http://giurom.bitap.ro:3003";
+          process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
         const response = await axios.get(
           `${companiesUrl}/companies/${workLocation.company_id}`,
           {
@@ -1436,7 +1436,7 @@ export class LocationsService {
     }
     // TASKS_API_BASE = gateway (ex. 3002) sau URL direct tasks (ex. 3008). Path: /tasks/cron/manager-daily-payout
     const tasksApiBase =
-      process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3002";
+      process.env.TASKS_API_BASE || "http://localhost:3002";
     const tasksCronPath =
       tasksApiBase.replace(/\/$/, "") + "/tasks/cron/manager-daily-payout";
     // SERVICE_SECRET trebuie să fie identic în locations ȘI în tasks (veziv-tasks), altfel tasks răspunde 401
@@ -1787,7 +1787,7 @@ export class LocationsService {
 
       // For each employee, calculate bonus based on their daily points and approved revenues
       const tasksApiUrl =
-        process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3008";
+        process.env.TASKS_API_BASE || "http://localhost:3008";
       const workDate = new Date(revenueDate);
       workDate.setHours(0, 0, 0, 0);
 

@@ -61,7 +61,7 @@ export class ExecutionService {
     if (!employeeId) return 'Un angajat';
     try {
       const response = await this.httpService.axiosRef.get(
-        `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+        `http://localhost:3002/employees/${employeeId}`,
         {
           timeout: 5000,
           headers: {
@@ -1267,7 +1267,7 @@ export class ExecutionService {
       if (employeeId) {
         // Apelează microserviciul employees pentru a obține numele managerului
         const response = await fetch(
-          `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+          `http://localhost:3002/employees/${employeeId}`,
         );
         if (response.ok) {
           const managerInfo = await response.json();
@@ -2239,7 +2239,7 @@ export class ExecutionService {
     try {
       // Obține toate shift-urile pentru această locație
       const shiftsResponse = await this.httpService.axiosRef.get(
-        `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
+        `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
         {
           headers: {
             'x-internal-service': 'veziv-tasks',
@@ -2268,7 +2268,7 @@ export class ExecutionService {
       for (const shift of relevantShifts) {
         // Obține toate prezențele pentru acest shift
         const presencesResponse = await this.httpService.axiosRef.get(
-          `http://giurom.bitap.ro:3016/attendance/presences?shift_id=${shift.id}&limit=1000`,
+          `http://localhost:3016/attendance/presences?shift_id=${shift.id}&limit=1000`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',

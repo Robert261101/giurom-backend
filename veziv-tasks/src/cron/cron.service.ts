@@ -1189,7 +1189,7 @@ export class CronService {
       // Obține shift-urile din ziua respectivă
       const shiftsResponse = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=3&limit=1000`,
+          `http://localhost:3016/attendance/shifts?work_location_id=3&limit=1000`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -1611,7 +1611,7 @@ export class CronService {
       let availableEmployees: any[] = [];
 
       try {
-        const attendanceUrl = `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`;
+        const attendanceUrl = `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`;
         const secret = process.env.SERVICE_SECRET || '';
         const headers = {
           'x-internal-service': 'veziv-tasks',

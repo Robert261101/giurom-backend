@@ -1074,7 +1074,7 @@ export class ScheduledTasksService {
       // 1. Obține toți angajații activi din departament
       const employeesResponse = await firstValueFrom(
         this.httpService.get(
-          `http://giurom.bitap.ro:3002/employees?department_id=${departmentId}&is_active=true`,
+          `http://localhost:3002/employees?department_id=${departmentId}&is_active=true`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
@@ -1130,7 +1130,7 @@ export class ScheduledTasksService {
           }
           return await firstValueFrom(
             this.httpService.get(
-              `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=3&limit=2000`,
+              `http://localhost:3016/attendance/shifts?work_location_id=3&limit=2000`,
               { headers },
             ),
           );
@@ -1204,7 +1204,7 @@ export class ScheduledTasksService {
         // solicităm detaliile angajaților direct din employees/batch pe baza ID-urilor din pontaj.
         if (employeeIdsWorking.length > 0) {
           try {
-            const batchUrl = `http://giurom.bitap.ro:3002/employees/batch?ids=${encodeURIComponent(
+            const batchUrl = `http://localhost:3002/employees/batch?ids=${encodeURIComponent(
               employeeIdsWorking.join(','),
             )}`;
             const batchRes = await firstValueFrom(
@@ -1338,7 +1338,7 @@ export class ScheduledTasksService {
           }
           return await firstValueFrom(
             this.httpService.get(
-              `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=2000`,
+              `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=2000`,
               { headers },
             ),
           );
@@ -1413,7 +1413,7 @@ export class ScheduledTasksService {
 
         // Obține detaliile angajaților din employees/batch
         try {
-          const batchUrl = `http://giurom.bitap.ro:3002/employees/batch?ids=${encodeURIComponent(
+          const batchUrl = `http://localhost:3002/employees/batch?ids=${encodeURIComponent(
             employeeIdsWorking.join(','),
           )}`;
           const batchRes = await firstValueFrom(
