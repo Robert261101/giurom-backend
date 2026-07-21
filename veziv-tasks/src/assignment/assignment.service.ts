@@ -383,10 +383,10 @@ export class AssignmentService {
         (process.env.DB_DATABASE
           ? process.env.DB_DATABASE.replace(/tasks$/i, 'locations')
           : null) ||
-        'giurombitap_locations';
+        'restosoft_locations';
       const safeDbName = /^[a-zA-Z0-9_]+$/.test(dbName)
         ? dbName
-        : 'giurombitap_locations';
+        : 'restosoft_locations';
       const rows = await this.dataSource.query(
         `SELECT id FROM \`${safeDbName}\`.worklocation_departments WHERE work_location_id = ? AND LOWER(TRIM(name)) = 'manager' LIMIT 1`,
         [workLocationId],

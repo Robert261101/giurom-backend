@@ -340,7 +340,7 @@ export class SuppliersService {
     }
 
     const employeesDbName =
-      process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+      process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
     const placeholder = employeeIds.map(() => '?').join(',');
     let employeeRows: Array<{
       id: number;
@@ -4826,8 +4826,8 @@ export class SuppliersService {
     ));
 
     const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
 
     for (const userId of userIds) {
       try {
@@ -4895,8 +4895,8 @@ export class SuppliersService {
     ));
 
     const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
 
     if (userIds.length > 0) {
       try {
@@ -5078,8 +5078,8 @@ export class SuppliersService {
         // Obține numele angajaților pentru user_id-urile din aggregated
         const userIds = Array.from(new Set(Array.from(aggregated.values()).map(v => v.user_id).filter(id => id > 0)));
         const usersMap = new Map<number, { first_name?: string; last_name?: string; employee_id?: number }>();
-        const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+        const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
         
         for (const userId of userIds) {
           try {
@@ -5523,8 +5523,8 @@ export class SuppliersService {
     
     // Obține informații despre angajați din users -> id_employee -> employees
     // Similar cu ce am făcut pentru revenues în locations service
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
     
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching employee data for ${userIds.length} users via users -> employees`);
     

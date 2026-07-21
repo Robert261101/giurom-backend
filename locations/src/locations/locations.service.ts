@@ -111,7 +111,7 @@ export class LocationsService {
       // 3) Fallback: query direct în employees DB (dacă e disponibil)
       try {
         const employeesDbName =
-          process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+          process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
         const result = await this.dataSource.query(
           `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
           [employeeId],
@@ -537,7 +537,7 @@ export class LocationsService {
           // Încearcă să interogeze tabelul employees_locations din baza de date employees
           // Folosim numele complet al bazei de date în query
           const employeesDbName =
-            process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+            process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
           const result = await this.dataSource.query(
             `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
             [employeeId],
@@ -683,7 +683,7 @@ export class LocationsService {
       } else {
         try {
           const employeesDbName =
-            process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+            process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
           const result = await this.dataSource.query(
             `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
             [employeeId],
@@ -873,7 +873,7 @@ export class LocationsService {
 
               // Încearcă query direct la baza de date employees
               const employeesDbName =
-                process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+                process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
               const dbResult = await this.dataSource.query(
                 `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ? AND id_location = ?`,
                 [employeeId, id],
@@ -1511,9 +1511,9 @@ export class LocationsService {
 
     // Obține employee_id pentru fiecare revenue cu user_id
     // Trebuie să obținem id_employee din users bazat pe user_id
-    const authDbName = process.env.AUTH_DB_NAME || "giurombitap_auth";
+    const authDbName = process.env.AUTH_DB_NAME || "restosoft_auth";
     const employeesDbName =
-      process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+      process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
 
     const revenuesWithEmployeeId = await Promise.all(
       items.map(async (rev: any) => {
