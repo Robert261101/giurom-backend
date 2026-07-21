@@ -358,6 +358,29 @@ export class StockHttpService {
     }
   }
 
+  /**
+   * ID-urile de produse cu stoc la o locație, într-un singur request —
+   * folosit pentru filtrarea catalogului comandabil al unui furnizor
+   * (evită paginarea de 9/pagină din listStockItems, nepotrivită pentru
+   * locații cu sute de rânduri de stoc).
+   */
+  async getProductIdsAtLocation(locationId: number): Promise<number[]> {
+    const url = `${this.stockServiceUrl}/stock/items/location/${locationId}/product-ids`;
+    try {
+      this.logger.log(`📦 [StockHttpService] GET ${url}`);
+      const response = await firstValueFrom(
+        this.httpService.get(url, { headers: this.internalHeaders() }),
+      );
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error: any) {
+      const status = error?.response?.status;
+      this.logger.error(
+        `❌ [StockHttpService] Failed to get product ids (location_id=${locationId}): status=${status ?? 'N/A'}, message=${error?.message ?? error}`,
+      );
+      throw error;
+    }
+  }
+
   async listProductsByLocation(
     locationId: number,
   ): Promise<Array<Record<string, unknown>>> {

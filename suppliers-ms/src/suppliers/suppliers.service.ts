@@ -2918,15 +2918,9 @@ export class SuppliersService {
 
     let filteredProducts = products;
     if (resolvedLocationId != null) {
-      const stockRows = await this.stockHttpService.listStockItems(
-        resolvedLocationId,
-        5000,
-      );
-      const catalogProductIdsAtLocation = new Set(
-        stockRows
-          .map((row) => Number(row.product_id))
-          .filter((id) => Number.isFinite(id) && id > 0),
-      );
+      const productIdsAtLocation =
+        await this.stockHttpService.getProductIdsAtLocation(resolvedLocationId);
+      const catalogProductIdsAtLocation = new Set(productIdsAtLocation);
       filteredProducts = products.filter((sp) =>
         catalogProductIdsAtLocation.has(Number(sp.product_id)),
       );

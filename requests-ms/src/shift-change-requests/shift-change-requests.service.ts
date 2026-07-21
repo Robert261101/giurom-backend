@@ -554,7 +554,7 @@ export class ShiftChangeRequestsService {
       throw new ForbiddenException('Nu ai permisiunea să aprobi/respingi cereri de schimb de tură');
     }
 
-    if (user && isFurnizorSupplierAdmin(user)) {
+    if (user && !isLeaveAdminUser(user) && isFurnizorSupplierAdmin(user)) {
       const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
       if (
         !staffIds.includes(shiftChangeRequest.employee_id) ||

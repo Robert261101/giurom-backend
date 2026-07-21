@@ -1073,6 +1073,26 @@ export class StockService {
     };
   }
 
+  /**
+   * ID-urile distincte de produse cu rând de stoc la o locație — pentru filtre
+   * interne service-to-service (ex. catalogul comandabil al unui furnizor).
+   * Query unic, fără paginare — findAllStocksPaginated e capat la 9/pagină,
+   * inutilizabil pentru locații cu sute de rânduri de stoc.
+   */
+  async getProductIdsAtLocation(locationId: number): Promise<number[]> {
+    const rows = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select("DISTINCT stock.product_id", "product_id")
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
+      .getRawMany<{ product_id: number }>();
+
+    return rows
+      .map((row) => Number(row.product_id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  }
+
   async findAllStocksPaginated(
     page = 1,
     limit = 9,
