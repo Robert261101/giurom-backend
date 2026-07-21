@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -61,13 +61,13 @@ export class ExecutionService {
     if (!employeeId) return 'Un angajat';
     try {
       const response = await this.httpService.axiosRef.get(
-        `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+        `http://localhost:3002/employees/${employeeId}`,
         {
           timeout: 5000,
           headers: {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           },
         },
@@ -1267,7 +1267,7 @@ export class ExecutionService {
       if (employeeId) {
         // Apelează microserviciul employees pentru a obține numele managerului
         const response = await fetch(
-          `http://giurom.bitap.ro:3002/employees/${employeeId}`,
+          `http://localhost:3002/employees/${employeeId}`,
         );
         if (response.ok) {
           const managerInfo = await response.json();
@@ -2239,12 +2239,12 @@ export class ExecutionService {
     try {
       // Obține toate shift-urile pentru această locație
       const shiftsResponse = await this.httpService.axiosRef.get(
-        `http://giurom.bitap.ro:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
+        `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
         {
           headers: {
             'x-internal-service': 'veziv-tasks',
             'x-service-secret':
-              process.env.SERVICE_SECRET || 'default-service-secret',
+              process.env.SERVICE_SECRET || '',
             'Content-Type': 'application/json',
           },
         },
@@ -2268,12 +2268,12 @@ export class ExecutionService {
       for (const shift of relevantShifts) {
         // Obține toate prezențele pentru acest shift
         const presencesResponse = await this.httpService.axiosRef.get(
-          `http://giurom.bitap.ro:3016/attendance/presences?shift_id=${shift.id}&limit=1000`,
+          `http://localhost:3016/attendance/presences?shift_id=${shift.id}&limit=1000`,
           {
             headers: {
               'x-internal-service': 'veziv-tasks',
               'x-service-secret':
-                process.env.SERVICE_SECRET || 'default-service-secret',
+                process.env.SERVICE_SECRET || '',
               'Content-Type': 'application/json',
             },
           },
@@ -2311,12 +2311,18 @@ export class ExecutionService {
   }
 
   /**
-   * Calculează repo root-ul - similar cu locations și stock services
+   * Calculează repo root-ul - similar cu locations și stock services.
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
    */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || '').trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Resolve repo root relative to this file location
     // __dirname is .../giurom-backend/veziv-tasks/src/execution (dev with ts-node) or .../giurom-backend/veziv-tasks/dist/execution (prod)
-    const repoRoot = path.resolve(__dirname, '../../..');
+    let repoRoot = path.resolve(__dirname, '../../../..');
+    if (path.basename(repoRoot) === 'giurom-backend') {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 

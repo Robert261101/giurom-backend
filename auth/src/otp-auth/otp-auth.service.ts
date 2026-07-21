@@ -93,8 +93,6 @@ export class TwoFactorAuthService {
       this.logger.log(`🔍 DEBUG: OTP Storage keys după: ${Array.from(this.otpStorage.keys()).join(', ')}`);
 
       this.logger.log(`OTP trimis cu succes către ${user.phone} pentru ${user.email}`);
-      // Log OTP pentru debugging în dezvoltare
-      this.logger.log(`OTP generat: ${otp} (pentru debugging)`);
       
       return { 
         message: `OTP trimis cu succes pe numărul ${user.phone}` 
@@ -261,7 +259,6 @@ export class TwoFactorAuthService {
         this.logger.log(`📱 Message ID: ${response.data.msgId}`);
         this.logger.log(`💰 Cost: ${response.data.cost || 'N/A'}`);
         this.logger.log(`📊 Credite rămase: ${response.data.credits || 'N/A'}`);
-        this.logger.log(`🔢 OTP trimis: ${otp} (pentru debugging)`);
         return true;
       } else {
         this.logger.error(`❌ EROARE la trimiterea SMS:`);

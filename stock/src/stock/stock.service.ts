@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -152,7 +152,7 @@ export class StockService {
         const port = portMatch ? portMatch[1] : '3012';
         employeesServiceUrl = `http://localhost:${port}`;
       }
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'Content-Type': 'application/json', 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
       try {
         const idsParam = creatorIds.join(',');
@@ -214,7 +214,7 @@ export class StockService {
           const port = portMatch ? portMatch[1] : '3003';
           recipesUrl = `http://localhost:${port}`;
         }
-        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const serviceSecret = process.env.SERVICE_SECRET || '';
         const headers = { 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
 
         // Get preparation to obtain produced quantity and recipe id
@@ -1071,6 +1071,26 @@ export class StockService {
     return {
       below_minimum_count: Number(row?.below_minimum_count) || 0,
     };
+  }
+
+  /**
+   * ID-urile distincte de produse cu rând de stoc la o locație — pentru filtre
+   * interne service-to-service (ex. catalogul comandabil al unui furnizor).
+   * Query unic, fără paginare — findAllStocksPaginated e capat la 9/pagină,
+   * inutilizabil pentru locații cu sute de rânduri de stoc.
+   */
+  async getProductIdsAtLocation(locationId: number): Promise<number[]> {
+    const rows = await this.stockRepo
+      .createQueryBuilder("stock")
+      .select("DISTINCT stock.product_id", "product_id")
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
+      .getRawMany<{ product_id: number }>();
+
+    return rows
+      .map((row) => Number(row.product_id))
+      .filter((id) => Number.isFinite(id) && id > 0);
   }
 
   async findAllStocksPaginated(
@@ -2036,7 +2056,7 @@ export class StockService {
         );
       }
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       const headers = {
         "Content-Type": "application/json",
         "x-internal-service": "stock",
@@ -2230,12 +2250,18 @@ export class StockService {
   }
 
   /**
-   * Calculează repo root-ul - similar cu employees și suppliers services
+   * Calculează repo root-ul - similar cu employees și suppliers services.
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
    */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Resolve repo root relative to this file location
-    // __dirname is .../giurom-backend/stock/src (dev with ts-node) or .../giurom-backend/stock/dist (prod)
-    const repoRoot = path.resolve(__dirname, "../../..");
+    // __dirname is .../giurom-backend/stock/src/stock (dev with ts-node) or .../giurom-backend/stock/dist/stock (prod)
+    let repoRoot = path.resolve(__dirname, "../../../..");
+    if (path.basename(repoRoot) === "giurom-backend") {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 

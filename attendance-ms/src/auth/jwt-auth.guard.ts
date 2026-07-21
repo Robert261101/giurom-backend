@@ -13,10 +13,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     const request = context.switchToHttp().getRequest();
     const internalService = request.headers['x-internal-service'];
     const serviceSecret = request.headers['x-service-secret'];
-    const expectedSecret =
-      process.env.SERVICE_SECRET || 'default-service-secret';
+    const expectedSecret = process.env.SERVICE_SECRET;
 
-    if (internalService && serviceSecret && serviceSecret === expectedSecret) {
+    if (internalService && serviceSecret && expectedSecret && serviceSecret === expectedSecret) {
       request.internalService = internalService;
       request.user = {
         sub: 'internal',

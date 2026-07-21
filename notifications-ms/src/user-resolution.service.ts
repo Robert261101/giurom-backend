@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
@@ -17,7 +17,7 @@ export class UserResolutionService {
         this.httpService.get(`${apiGatewayUrl}/users/employee/${employeeOrUserId}`, {
           headers: {
             'x-internal-service': 'notifications',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+            'x-service-secret': process.env.SERVICE_SECRET || '',
           },
         })
       );

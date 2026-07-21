@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -43,7 +43,7 @@ export class RecipesLabelsService {
     const employeesMap = new Map<number, any>();
     
     if (employeeIds.length > 0 && this.httpService) {
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = {
         'Content-Type': 'application/json',
         'x-internal-service': 'recipes',

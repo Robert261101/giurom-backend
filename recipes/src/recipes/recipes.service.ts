@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan, DeepPartial } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -171,7 +171,7 @@ export class RecipeService {
                 this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
                   headers: {
                     'x-internal-service': 'recipes',
-                    'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                    'x-service-secret': process.env.SERVICE_SECRET || ''
                   }
                 })
               );
@@ -236,7 +236,7 @@ export class RecipeService {
               this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
                 headers: {
                   'x-internal-service': 'recipes',
-                  'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                  'x-service-secret': process.env.SERVICE_SECRET || ''
                 }
               })
             );
@@ -260,7 +260,7 @@ export class RecipeService {
                   this.httpService.get(`${this.stockServiceUrl}/stock/products/${rp.product_id}`, {
                     headers: {
                       'x-internal-service': 'recipes',
-                      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                      'x-service-secret': process.env.SERVICE_SECRET || ''
                     }
                   })
                 );
@@ -404,7 +404,7 @@ export class RecipeService {
     // Verify product exists via HTTP call
     try {
       const productUrl = `${this.stockServiceUrl}/stock/products/${createRecipeProductDto.product_id}`;
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = {
         'x-internal-service': 'recipes',
         'x-service-secret': serviceSecret
@@ -451,7 +451,7 @@ export class RecipeService {
             this.httpService.get(`${this.stockServiceUrl}/stock/products/${recipeProduct.product_id}`, {
               headers: {
                 'x-internal-service': 'recipes',
-                'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+                'x-service-secret': process.env.SERVICE_SECRET || ''
               }
             })
           );
@@ -483,7 +483,7 @@ export class RecipeService {
           this.httpService.get(`${this.stockServiceUrl}/stock/products/${updateRecipeProductDto.product_id}`, {
             headers: {
               'x-internal-service': 'recipes',
-              'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+              'x-service-secret': process.env.SERVICE_SECRET || ''
             }
           })
         );
@@ -643,7 +643,7 @@ export class RecipeService {
     // Unități care necesită numere întregi
     const wholeNumberUnits = ['buc', 'bucati', 'bucăți', 'sticla', 'sticle', 'cutie', 'cutii', 'pachet', 'pachete'];
 
-    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const serviceSecret = process.env.SERVICE_SECRET || '';
     const headers = {
       'x-internal-service': 'recipes',
       'x-service-secret': serviceSecret

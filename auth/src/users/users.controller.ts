@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -587,7 +587,7 @@ export class UsersController {
         this.httpService.get(`http://localhost:3012/employees/${user.id_employee}`, {
           headers: {
             'x-internal-service': 'auth',
-            'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret'
+            'x-service-secret': process.env.SERVICE_SECRET || ''
           }
         })
       );

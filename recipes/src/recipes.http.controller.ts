@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
+﻿import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Permissions } from './permissions/permissions.decorator';
 import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
@@ -377,7 +377,7 @@ export class RecipesHttpController {
     if (employeeId) {
       try {
         const employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const serviceSecret = process.env.SERVICE_SECRET || '';
         const headers = {
           'Content-Type': 'application/json',
           'x-internal-service': 'recipes',

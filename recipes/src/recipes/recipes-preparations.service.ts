@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -166,7 +166,7 @@ export class RecipePreparationsService implements OnModuleInit {
     try {
       const employeesServiceUrl =
         this.configService.get<string>("EMPLOYEES_HTTP_URL") || "http://localhost:3012";
-      const serviceSecret = process.env.SERVICE_SECRET || "default-service-secret";
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = {
         "Content-Type": "application/json",
         "x-internal-service": "recipes",
@@ -231,7 +231,7 @@ export class RecipePreparationsService implements OnModuleInit {
     // STEP 2: Verifică disponibilitatea TUTUROR ingredientelor ÎNAINTE de a consuma ceva
     if (allIngredients.length > 0) {
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       const headers = {
         "x-internal-service": "recipes",
         "x-service-secret": serviceSecret,
@@ -461,7 +461,7 @@ export class RecipePreparationsService implements OnModuleInit {
     const factor = Number(quantity) / baseQty;
 
     const serviceSecret =
-      process.env.SERVICE_SECRET || "default-service-secret";
+      process.env.SERVICE_SECRET || '';
     const headers = {
       "x-internal-service": "recipes",
       "x-service-secret": serviceSecret,

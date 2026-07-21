@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -53,8 +53,7 @@ export class StockHttpService {
     this.stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
-      process.env.SERVICE_SECRET ||
-      'default-service-secret';
+      process.env.SERVICE_SECRET || '';
   }
 
   private internalHeaders() {
@@ -354,6 +353,29 @@ export class StockHttpService {
       const status = error?.response?.status;
       this.logger.error(
         `❌ [StockHttpService] Failed to list stock (location_id=${locationId}): status=${status ?? 'N/A'}, message=${error?.message ?? error}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * ID-urile de produse cu stoc la o locație, într-un singur request —
+   * folosit pentru filtrarea catalogului comandabil al unui furnizor
+   * (evită paginarea de 9/pagină din listStockItems, nepotrivită pentru
+   * locații cu sute de rânduri de stoc).
+   */
+  async getProductIdsAtLocation(locationId: number): Promise<number[]> {
+    const url = `${this.stockServiceUrl}/stock/items/location/${locationId}/product-ids`;
+    try {
+      this.logger.log(`📦 [StockHttpService] GET ${url}`);
+      const response = await firstValueFrom(
+        this.httpService.get(url, { headers: this.internalHeaders() }),
+      );
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error: any) {
+      const status = error?.response?.status;
+      this.logger.error(
+        `❌ [StockHttpService] Failed to get product ids (location_id=${locationId}): status=${status ?? 'N/A'}, message=${error?.message ?? error}`,
       );
       throw error;
     }

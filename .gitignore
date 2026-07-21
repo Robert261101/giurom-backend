@@ -1,30 +1,39 @@
 # Common node_modules folders
 /node_modules
 /api-gateway/node_modules
+/attendance-ms/node_modules
+/auth/node_modules
 /calendar-ms/node_modules
 /company/node_modules
 /employees/node_modules
-/gateway/node_modules
 /locations/node_modules
 /notifications-ms/node_modules
 /recipes/node_modules
 /requests-ms/node_modules
 /stock/node_modules
 /suppliers-ms/node_modules
+/veziv-tasks/node_modules
+/waste-records-ms/node_modules
 
 # Dist folders (build output)
 /dist
 /api-gateway/dist
+/attendance-ms/dist
+/auth/dist
 /calendar-ms/dist
+/company/dist
 /employees/dist
-/gateway/dist
-/notification-service/dist
+/locations/dist
+/notifications-ms/dist
+/recipes/dist
 /requests-ms/dist
+/stock/dist
+/suppliers-ms/dist
+/veziv-tasks/dist
+/waste-records-ms/dist
 
 # Specific folders to ignore
 /labels
-/notification-service/dist
-/attendance-ms/node_modules
 
 # env files (can opt-in for committing if needed)
 .env*

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy, ClientProxyFactory, Transport } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -466,7 +466,7 @@ export class LeaveRequestsService implements OnModuleInit {
       throw new ForbiddenException('Nu ai permisiunea să aprobi/respingi cereri de concediu');
     }
 
-    if (user && isFurnizorSupplierAdmin(user)) {
+    if (user && !isLeaveAdminUser(user) && isFurnizorSupplierAdmin(user)) {
       const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
       if (!staffIds.includes(leaveRequest.employee_id)) {
         throw new ForbiddenException(

@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 3002;
 const target = (defaultUrl, envKey) =>
   (process.env[envKey] || defaultUrl).replace(/\/$/, "");
 
-app.use(bodyParser.json({ limit: "100mb" }));
-app.use(bodyParser.urlencoded({ limit: "100mb", extended: true }));
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 
 // Enable CORS
 app.use(
@@ -25,8 +25,9 @@ app.use(
       "http://giurom.bitap.ro",
       "http://89.46.6.45:3000",
       "http://89.46.6.45",
-      // Permite toate domeniile Vercel
-      /^https:\/\/.*\.vercel\.app$/,
+      // Adaugă domenii Vercel specifice via env (ex: VERCEL_ALLOWED_ORIGINS=https://giurom-frontend.vercel.app)
+      ...(process.env.VERCEL_ALLOWED_ORIGINS || "https://giurom-frontend.vercel.app")
+        .split(",").map(s => s.trim()).filter(Boolean),
     ],
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
     credentials: true,
@@ -65,9 +66,19 @@ app.get("/health", (req, res) => {
 });
 
 // Serve static files from images directory (must be before other middlewares)
-// API Gateway is in /home/giurombitap/api-gateway/src
-// Images are in /home/giurombitap/images
-const imagesPath = path.join(__dirname, "../../images");
+// Trebuie sa fie EXACT acelasi folder in care scriu backend-urile (stock/veziv-tasks/etc getRepoRoot()).
+// Pe server seteaza REPO_ROOT=/home/restosoft ca sa citesti din afara giurom-backend/giurom-frontend.
+function resolveRepoRoot() {
+  const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  // __dirname is .../giurom-backend/api-gateway/src
+  let repoRoot = path.resolve(__dirname, "../../..");
+  if (path.basename(repoRoot) === "giurom-backend") {
+    repoRoot = path.dirname(repoRoot);
+  }
+  return repoRoot;
+}
+const imagesPath = path.join(resolveRepoRoot(), "images");
 console.log("\n🟡 ========== API GATEWAY STATIC FILES ==========");
 console.log("📂 __dirname:", __dirname);
 console.log("📂 Images path calculat:", imagesPath);

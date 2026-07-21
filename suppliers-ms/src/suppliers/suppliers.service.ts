@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
 import {
   Repository,
@@ -153,8 +153,7 @@ export class SuppliersService {
       'http://localhost:3004';
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
-      process.env.SERVICE_SECRET ||
-      'default-service-secret';
+      process.env.SERVICE_SECRET || '';
   }
 
   /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus), pentru notificări pe locație. */
@@ -342,7 +341,7 @@ export class SuppliersService {
     }
 
     const employeesDbName =
-      process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+      process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
     const placeholder = employeeIds.map(() => '?').join(',');
     let employeeRows: Array<{
       id: number;
@@ -1465,7 +1464,12 @@ export class SuppliersService {
     return updated;
   }
 
+  /**
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
+   */
   private getRepoRoot(): string {
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || '').trim();
+    if (fromEnv) return path.resolve(fromEnv);
     // Try computing from __dirname first
     let repoRoot = path.resolve(__dirname, '../../..'); // src -> suppliers-ms -> giurom-backend -> giurom
     if (path.basename(repoRoot) === 'giurom-backend') {
@@ -1497,7 +1501,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              const serviceSecret = process.env.SERVICE_SECRET || '';
               
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: {
@@ -2987,15 +2991,9 @@ export class SuppliersService {
 
     let filteredProducts = products;
     if (resolvedLocationId != null) {
-      const stockRows = await this.stockHttpService.listStockItems(
-        resolvedLocationId,
-        5000,
-      );
-      const catalogProductIdsAtLocation = new Set(
-        stockRows
-          .map((row) => Number(row.product_id))
-          .filter((id) => Number.isFinite(id) && id > 0),
-      );
+      const productIdsAtLocation =
+        await this.stockHttpService.getProductIdsAtLocation(resolvedLocationId);
+      const catalogProductIdsAtLocation = new Set(productIdsAtLocation);
       filteredProducts = products.filter((sp) =>
         catalogProductIdsAtLocation.has(Number(sp.product_id)),
       );
@@ -4901,8 +4899,8 @@ export class SuppliersService {
     ));
 
     const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
 
     for (const userId of userIds) {
       try {
@@ -4970,8 +4968,8 @@ export class SuppliersService {
     ));
 
     const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
 
     if (userIds.length > 0) {
       try {
@@ -5049,7 +5047,7 @@ export class SuppliersService {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}${locationId != null ? `, location_id=${locationId}` : ''}`);
     
     const stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';
-    const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const serviceSecret = process.env.SERVICE_SECRET || '';
     const headers = {
       'x-internal-service': 'suppliers',
       'x-service-secret': serviceSecret
@@ -5153,8 +5151,8 @@ export class SuppliersService {
         // Obține numele angajaților pentru user_id-urile din aggregated
         const userIds = Array.from(new Set(Array.from(aggregated.values()).map(v => v.user_id).filter(id => id > 0)));
         const usersMap = new Map<number, { first_name?: string; last_name?: string; employee_id?: number }>();
-        const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+        const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
         
         for (const userId of userIds) {
           try {
@@ -5598,8 +5596,8 @@ export class SuppliersService {
     
     // Obține informații despre angajați din users -> id_employee -> employees
     // Similar cu ce am făcut pentru revenues în locations service
-    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
     
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching employee data for ${userIds.length} users via users -> employees`);
     
@@ -5781,7 +5779,7 @@ export class SuppliersService {
     const orderItemToOriginalQty = new Map<number, number>();
     const orderToSupplierName = new Map<number, string>();
     if (userIds.length > 0) {
-      const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+      const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'x-internal-service': 'suppliers', 'x-service-secret': serviceSecret };
       let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
       if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
@@ -6475,7 +6473,7 @@ export class SuppliersService {
               let companyName = 'UnknownCompany';
               try {
                 const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-                const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+                const serviceSecret = process.env.SERVICE_SECRET || '';
                 console.log(`🏢 [addDocument] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
 
                 const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
@@ -6725,7 +6723,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = this.configService.get<string>('COMPANIES_HTTP_URL') || 'http://localhost:3003';
-              const serviceSecret = this.configService.get<string>('SERVICE_SECRET') || 'default-service-secret';
+              const serviceSecret = this.configService.get<string>('SERVICE_SECRET') || '';
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
                 timeout: 3000,
@@ -6811,7 +6809,7 @@ export class SuppliersService {
           let companyName = 'UnknownCompany';
           try {
             const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-            const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+            const serviceSecret = process.env.SERVICE_SECRET || '';
             const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
               headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
               timeout: 3000,
@@ -6836,7 +6834,7 @@ export class SuppliersService {
             let companyName = 'UnknownCompany';
             try {
               const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-              const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+              const serviceSecret = process.env.SERVICE_SECRET || '';
               const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {
                 headers: { 'x-internal-service': 'locations', 'x-service-secret': serviceSecret, 'Content-Type': 'application/json' },
                 timeout: 3000,
@@ -7091,7 +7089,7 @@ export class SuppliersService {
       let companyName = 'UnknownCompany';
       try {
         const companiesUrl = process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
-        const serviceSecret = process.env.SERVICE_SECRET || 'default-service-secret';
+        const serviceSecret = process.env.SERVICE_SECRET || '';
         this.logger.log(`🏢 [updateFolderPathsForLocationBoundSupplier] Fetching company details from: ${companiesUrl}/companies/${location.company_id}`);
         
         const response = await firstValueFrom(this.httpService.get(`${companiesUrl}/companies/${location.company_id}`, {

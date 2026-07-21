@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   CanActivate,
   ExecutionContext,
@@ -228,7 +228,7 @@ export class PermissionsGuard implements CanActivate {
             headers: {
               "x-internal-service": "locations",
               "x-service-secret":
-                process.env.SERVICE_SECRET || "default-service-secret",
+                process.env.SERVICE_SECRET || '',
               "Content-Type": "application/json",
             },
             timeout: 3000, // 3 second timeout
@@ -264,7 +264,7 @@ export class PermissionsGuard implements CanActivate {
           try {
             // Verifică direct din employees_locations din DB
             const employeesDbName =
-              process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+              process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
             const result = await this.dataSource.query(
               `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ? AND id_location = ?`,
               [employeeId, locationId],

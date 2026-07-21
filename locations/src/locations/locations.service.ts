@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -71,7 +71,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -111,7 +111,7 @@ export class LocationsService {
       // 3) Fallback: query direct în employees DB (dacă e disponibil)
       try {
         const employeesDbName =
-          process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+          process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
         const result = await this.dataSource.query(
           `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
           [employeeId],
@@ -161,14 +161,21 @@ export class LocationsService {
   }
 
   private getLocationsFilesRootDir(): string {
-    // Resolve to giurom root (one level above giurom-backend)
-    // __dirname is .../giurom-backend/locations/src (dev with ts-node) or .../giurom-backend/locations/dist (prod)
-    const repoRoot = path.resolve(__dirname, "../../../..");
-    return path.join(repoRoot, "files", "locations");
+    return path.join(this.getRepoRoot(), "files", "locations");
   }
 
+  /**
+   * Pe server setează REPO_ROOT=/home/restosoft ca să salvezi în afara giurom-backend/giurom-frontend.
+   */
   private getRepoRoot(): string {
-    const repoRoot = path.resolve(__dirname, "../../..");
+    const fromEnv = (process.env.REPO_ROOT || process.env.IMAGES_ROOT || "").trim();
+    if (fromEnv) return path.resolve(fromEnv);
+    // Resolve to giurom root (one level above giurom-backend)
+    // __dirname is .../giurom-backend/locations/src/locations (dev with ts-node) or .../giurom-backend/locations/dist/locations (prod)
+    let repoRoot = path.resolve(__dirname, "../../../..");
+    if (path.basename(repoRoot) === "giurom-backend") {
+      repoRoot = path.dirname(repoRoot);
+    }
     return repoRoot;
   }
 
@@ -185,7 +192,7 @@ export class LocationsService {
       const companiesUrl =
         process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       const response = await axios.get(
         `${companiesUrl}/companies/${location.company_id}`,
         {
@@ -233,7 +240,7 @@ export class LocationsService {
         const companiesUrl =
           process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
         const serviceSecret =
-          process.env.SERVICE_SECRET || "default-service-secret";
+          process.env.SERVICE_SECRET || '';
 
         const response = await axios.get(
           `${companiesUrl}/companies/${location.company_id}`,
@@ -259,7 +266,7 @@ export class LocationsService {
       }
 
       // Get the company folder path using the company name
-      const companyFilesRootDir = path.resolve(__dirname, "../../../..");
+      const companyFilesRootDir = this.getRepoRoot();
       const companyFilesDir = path.join(
         companyFilesRootDir,
         "files",
@@ -472,7 +479,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -530,7 +537,7 @@ export class LocationsService {
           // Încearcă să interogeze tabelul employees_locations din baza de date employees
           // Folosim numele complet al bazei de date în query
           const employeesDbName =
-            process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+            process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
           const result = await this.dataSource.query(
             `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
             [employeeId],
@@ -637,7 +644,7 @@ export class LocationsService {
           headers: {
             "x-internal-service": "locations",
             "x-service-secret":
-              process.env.SERVICE_SECRET || "default-service-secret",
+              process.env.SERVICE_SECRET || '',
             "Content-Type": "application/json",
           },
           timeout: 3000,
@@ -676,7 +683,7 @@ export class LocationsService {
       } else {
         try {
           const employeesDbName =
-            process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+            process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
           const result = await this.dataSource.query(
             `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ?`,
             [employeeId],
@@ -717,9 +724,9 @@ export class LocationsService {
 
     // Obține numele companiilor din companies microservice folosind un singur request batch
     const companiesUrl =
-      process.env.COMPANIES_HTTP_URL || "http://giurom.bitap.ro:3003";
+      process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
     const serviceSecret =
-      process.env.SERVICE_SECRET || "default-service-secret";
+      process.env.SERVICE_SECRET || '';
 
     try {
       const requestHeaders = {
@@ -773,14 +780,14 @@ export class LocationsService {
     if (workLocation.company_id) {
       try {
         const companiesUrl =
-          process.env.COMPANIES_HTTP_URL || "http://giurom.bitap.ro:3003";
+          process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
         const response = await axios.get(
           `${companiesUrl}/companies/${workLocation.company_id}`,
           {
             headers: {
               "x-internal-service": "locations",
               "x-service-secret":
-                process.env.SERVICE_SECRET || "default-service-secret",
+                process.env.SERVICE_SECRET || '',
             },
             timeout: 2000,
           },
@@ -831,7 +838,7 @@ export class LocationsService {
               headers: {
                 "x-internal-service": "locations",
                 "x-service-secret":
-                  process.env.SERVICE_SECRET || "default-service-secret",
+                  process.env.SERVICE_SECRET || '',
                 "Content-Type": "application/json",
               },
               timeout: 3000,
@@ -866,7 +873,7 @@ export class LocationsService {
 
               // Încearcă query direct la baza de date employees
               const employeesDbName =
-                process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+                process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
               const dbResult = await this.dataSource.query(
                 `SELECT id_location FROM ${employeesDbName}.employees_locations WHERE employee_id = ? AND id_location = ?`,
                 [employeeId, id],
@@ -1429,12 +1436,12 @@ export class LocationsService {
     }
     // TASKS_API_BASE = gateway (ex. 3002) sau URL direct tasks (ex. 3008). Path: /tasks/cron/manager-daily-payout
     const tasksApiBase =
-      process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3002";
+      process.env.TASKS_API_BASE || "http://localhost:3002";
     const tasksCronPath =
       tasksApiBase.replace(/\/$/, "") + "/tasks/cron/manager-daily-payout";
     // SERVICE_SECRET trebuie să fie identic în locations ȘI în tasks (veziv-tasks), altfel tasks răspunde 401
     const serviceSecret =
-      process.env.SERVICE_SECRET || "default-service-secret";
+      process.env.SERVICE_SECRET || '';
     const hasCustomSecret = !!process.env.SERVICE_SECRET;
     console.log(
       `📤 [MANAGER PAYOUT TRIGGER] Apel tasks: ${tasksCronPath} (work_location_id=${workLocationId}, work_date=${revenueDate}), x-service-secret: ${hasCustomSecret ? "din env" : "implicit"}`,
@@ -1504,9 +1511,9 @@ export class LocationsService {
 
     // Obține employee_id pentru fiecare revenue cu user_id
     // Trebuie să obținem id_employee din users bazat pe user_id
-    const authDbName = process.env.AUTH_DB_NAME || "giurombitap_auth";
+    const authDbName = process.env.AUTH_DB_NAME || "restosoft_auth";
     const employeesDbName =
-      process.env.EMPLOYEES_DB_NAME || "giurombitap_employees";
+      process.env.EMPLOYEES_DB_NAME || "restosoft_employees";
 
     const revenuesWithEmployeeId = await Promise.all(
       items.map(async (rev: any) => {
@@ -1736,7 +1743,7 @@ export class LocationsService {
       const employeesEndpoint = `${employeesUrl}/employees/locations/${locationId}/employees`;
       let employees: any[] = [];
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
       try {
         console.log(`🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`);
         const response = await axios.get(employeesEndpoint, {
@@ -1780,7 +1787,7 @@ export class LocationsService {
 
       // For each employee, calculate bonus based on their daily points and approved revenues
       const tasksApiUrl =
-        process.env.TASKS_API_BASE || "http://giurom.bitap.ro:3008";
+        process.env.TASKS_API_BASE || "http://localhost:3008";
       const workDate = new Date(revenueDate);
       workDate.setHours(0, 0, 0, 0);
 
@@ -1987,7 +1994,7 @@ export class LocationsService {
       const companiesUrl =
         process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
       const serviceSecret =
-        process.env.SERVICE_SECRET || "default-service-secret";
+        process.env.SERVICE_SECRET || '';
 
       const response = await axios.get(
         `${companiesUrl}/companies/${location.company_id}`,
@@ -2414,7 +2421,7 @@ export class LocationsService {
           const companiesUrl =
             process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
           const serviceSecret =
-            process.env.SERVICE_SECRET || "default-service-secret";
+            process.env.SERVICE_SECRET || '';
           const response = await axios.get(
             `${companiesUrl}/companies/${location.company_id}`,
             {
@@ -2516,7 +2523,7 @@ export class LocationsService {
           const companiesUrl =
             process.env.COMPANIES_HTTP_URL || "http://localhost:3003";
           const serviceSecret =
-            process.env.SERVICE_SECRET || "default-service-secret";
+            process.env.SERVICE_SECRET || '';
 
           const response = await axios.get(
             `${companiesUrl}/companies/${location.company_id}`,

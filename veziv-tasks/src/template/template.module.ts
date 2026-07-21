@@ -13,7 +13,7 @@ import { TemplateLocation } from './entity/template-location.entity';
     TypeOrmModule.forFeature([TaskTemplate, TaskElement, TemplateLocation]),
     NotificationsModule,
     JwtModule.register({
-      secret: 'your-secret-key',
+      secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '59m'},
     })
   ],

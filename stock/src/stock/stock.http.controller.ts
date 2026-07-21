@@ -131,6 +131,11 @@ export class StockHttpController {
       },
     );
   }
+  @Get("items/location/:locationId/product-ids") @Permissions("stock.read") async getProductIdsAtLocation(
+    @Param("locationId") locationId: string,
+  ) {
+    return await this.service.getProductIdsAtLocation(Number(locationId));
+  }
   @Get("items/:id") @Permissions("stock.read") async getStock(
     @Param("id") id: string,
   ) {
