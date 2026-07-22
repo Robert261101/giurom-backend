@@ -136,11 +136,24 @@ export class SuppliersHttpController {
   @ApiResponse({ status: 200, description: "Furnizor găsit" })
   @ApiResponse({ status: 403, description: "Nu este cont furnizor sau lipsește company_id" })
   @ApiResponse({ status: 404, description: "Niciun furnizor asociat companiei" })
-  getMySupplier(@Request() req?: { user?: { company_id?: number | null; company_type?: string | null } }) {
+  getMySupplier(@Request() req?: {
+    user?: {
+      userId?: number | null;
+      company_id?: number | null;
+      company_type?: string | null;
+      roles?: string[];
+      work_location_id?: number | null;
+    };
+  }) {
     const user = req?.user;
     return this.service.findMySupplierForFurnizorTenant(
       user?.company_id,
       user?.company_type,
+      user?.roles,
+      {
+        workLocationId: user?.work_location_id,
+        employeeId: user?.userId,
+      },
     );
   }
 
@@ -151,12 +164,25 @@ export class SuppliersHttpController {
       "Profil complet furnizor operațional (produse, documente) pentru cont furnizor",
   })
   getMySupplierProfile(
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+    @Request() req?: {
+      user?: {
+        userId?: number | null;
+        company_id?: number | null;
+        company_type?: string | null;
+        roles?: string[];
+        work_location_id?: number | null;
+      };
+    },
   ) {
     const user = req?.user;
     return this.service.findMySupplierProfileForFurnizorTenant(
       user?.company_id,
       user?.company_type,
+      user?.roles,
+      {
+        workLocationId: user?.work_location_id,
+        employeeId: user?.userId,
+      },
     );
   }
 
@@ -714,7 +740,7 @@ export class SuppliersHttpController {
   }
 
   /**
-   * Batch paginat — dashboard furnizor (implicit limit 15, max 15).
+   * Batch paginat — dashboard furnizor / detaliu furnizor (implicit limit 15, max 20).
    * GET /suppliers/orders/batch/paginated?supplier_ids=1&page=1&limit=15
    */
   @Get("orders/batch/paginated")

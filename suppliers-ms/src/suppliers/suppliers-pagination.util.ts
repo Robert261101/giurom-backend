@@ -1,5 +1,5 @@
 export const DEFAULT_ORDERS_PAGE_LIMIT = 15;
-export const MAX_ORDERS_PAGE_LIMIT = 15;
+export const MAX_ORDERS_PAGE_LIMIT = 20;
 
 export type OrdersPaginationMeta = {
   page: number;

@@ -202,48 +202,56 @@ export class RecipesLabelsService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async emitExpiringLabelsNotifications(): Promise<void> {
-    const now = new Date();
-    const inTwoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    try {
+      const now = new Date();
+      const inTwoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-    // Join to preparation -> recipe to compute expiration
-    const labels = await this.labelRepo
-      .createQueryBuilder('label')
-      .leftJoinAndSelect('label.preparation', 'prep')
-      .leftJoinAndSelect('prep.recipe', 'recipe')
-      .where('prep.produced_at IS NOT NULL')
-      .getMany();
+      // Join to preparation -> recipe to compute expiration
+      const labels = await this.labelRepo
+        .createQueryBuilder('label')
+        .leftJoinAndSelect('label.preparation', 'prep')
+        .leftJoinAndSelect('prep.recipe', 'recipe')
+        .where('prep.produced_at IS NOT NULL')
+        .getMany();
 
-    for (const label of labels) {
-      const producedAt = label.preparation?.produced_at as unknown as Date;
-      const expHours = (label.preparation?.recipe as any)?.expiration_hours || 48;
-      if (!producedAt) continue;
-      const expirationAt = new Date(producedAt);
-      expirationAt.setHours(expirationAt.getHours() + expHours);
+      for (const label of labels) {
+        const producedAt = label.preparation?.produced_at as unknown as Date;
+        const expHours = (label.preparation?.recipe as any)?.expiration_hours || 48;
+        if (!producedAt) continue;
+        const expirationAt = new Date(producedAt);
+        expirationAt.setHours(expirationAt.getHours() + expHours);
 
-      if (expirationAt > now && expirationAt <= inTwoHours) {
-        try {
-          await firstValueFrom(this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
-            labelId: label.id,
-            labelCode: label.label_code,
-            preparationId: label.recipe_preparation_id,
-            expiresAt: expirationAt.toISOString(),
-          }));
-        } catch {
-          // Ignore transient RMQ errors
+        if (expirationAt > now && expirationAt <= inTwoHours) {
+          try {
+            await firstValueFrom(this.rmq.emit({ cmd: 'labels.expiring-soon' }, {
+              labelId: label.id,
+              labelCode: label.label_code,
+              preparationId: label.recipe_preparation_id,
+              expiresAt: expirationAt.toISOString(),
+            }));
+          } catch {
+            // Ignore transient RMQ errors
+          }
+        }
+        if (expirationAt <= now) {
+          try {
+            await firstValueFrom(this.rmq.emit({ cmd: 'labels.expired' }, {
+              labelId: label.id,
+              labelCode: label.label_code,
+              preparationId: label.recipe_preparation_id,
+              expiresAt: expirationAt.toISOString(),
+            }));
+          } catch {
+            // Ignore transient RMQ errors
+          }
         }
       }
-      if (expirationAt <= now) {
-        try {
-          await firstValueFrom(this.rmq.emit({ cmd: 'labels.expired' }, {
-            labelId: label.id,
-            labelCode: label.label_code,
-            preparationId: label.recipe_preparation_id,
-            expiresAt: expirationAt.toISOString(),
-          }));
-        } catch {
-          // Ignore transient RMQ errors
-        }
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      if (message.includes("doesn't exist")) {
+        return;
       }
+      throw error;
     }
   }
 }
