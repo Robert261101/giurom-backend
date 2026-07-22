@@ -974,6 +974,10 @@ export class UsersService {
     return role;
   }
 
+  async findRoleByName(name: string): Promise<Role | null> {
+    return this.roleRepository.findOne({ where: { name } });
+  }
+
   async updateRole(
     id: number,
     updateRoleDto: { name?: string; description?: string },

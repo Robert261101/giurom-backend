@@ -72,6 +72,7 @@ async function bootstrap() {
 
   app.use('/auth/login', loginRateLimit);
   app.use('/auth/validate-identifier', loginRateLimit);
+  app.use('/auth/register/supplier', loginRateLimit);
   app.use('/2fa', loginRateLimit);
   app.use(generalRateLimit);
   // Validare globală a DTO-urilor - doar pentru body, nu pentru query params
