@@ -49,7 +49,10 @@ import { PermissionsGuard } from "../permissions/permissions.guard";
 import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
 import { UpdateSupplierNomenclatorProductDto } from "./dto/update-supplier-nomenclator-product.dto";
 import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
-import { buildSupplierProductUserContext } from "./supplier-product-access";
+import {
+  buildSupplierProductUserContext,
+  buildSupplierAccessRequester,
+} from "./supplier-product-access";
 import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 
 @ApiTags("suppliers")
@@ -82,22 +85,6 @@ export class SuppliersHttpController {
     }
 
     this.logger.log(`[SUPPLIERS HTTP] GET /suppliers called with query location_id=${location_id} resolved locationId=${locationId}`);
-    this.logger.log(`[SUPPLIERS HTTP] Authorization header: ${req?.headers?.authorization ? 'PRESENT' : 'MISSING'}`);
-    if (req?.headers?.authorization) {
-      this.logger.log(`[SUPPLIERS HTTP] Authorization header value: Bearer ${req.headers.authorization.substring(0, 50)}...`);
-      // Decode JWT to log permissions
-      try {
-        const jwt = require('jsonwebtoken');
-        const token = req.headers.authorization.replace('Bearer ', '');
-        const decoded = jwt.decode(token);
-        this.logger.log(`[SUPPLIERS HTTP] JWT decoded payload: ${JSON.stringify(decoded)}`);
-        this.logger.log(`[SUPPLIERS HTTP] JWT permissions: ${JSON.stringify(decoded?.permissions || [])}`);
-      } catch (error) {
-        this.logger.error(`[SUPPLIERS HTTP] Failed to decode JWT: ${(error as any)?.message || error}`);
-      }
-    }
-    this.logger.log(`[SUPPLIERS HTTP] User from JWT: ${JSON.stringify(req?.user ?? {})}`);
-    this.logger.log(`[SUPPLIERS HTTP] Received headers: ${JSON.stringify(req?.headers ?? {})}`);
 
     // Dacă încă nu avem location_id, aruncă eroare
     if (!locationId) {
@@ -535,16 +522,16 @@ export class SuppliersHttpController {
   ) {
     this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
     // Obține location_id din query sau din user context
+    const user = req?.user;
     let locationId: number | undefined;
     const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
     if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
       locationId = maybeLid as number;
     } else {
-      const user = req?.user;
       locationId = user?.work_location_id || user?.work_location_default_id;
     }
-    // location_id opțional: dacă lipsește, returnăm furnizorul fără verificare locație (ex. pentru documente / sync)
-    return this.service.findOne(Number(id), locationId);
+    // location_id folosit doar pentru mesajul de eroare / filtrare; accesul real e verificat independent mai jos.
+    return this.service.findOne(Number(id), locationId, buildSupplierAccessRequester(user));
   }
 
   @Patch(":id")
@@ -559,7 +546,12 @@ export class SuppliersHttpController {
   ) {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.service.update(Number(id), dto, selectedWorkLocationId);
+    return this.service.update(
+      Number(id),
+      dto,
+      selectedWorkLocationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Delete(":id")
@@ -573,7 +565,11 @@ export class SuppliersHttpController {
   ) {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.service.remove(Number(id), selectedWorkLocationId);
+    return this.service.remove(
+      Number(id),
+      selectedWorkLocationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   // Measurement Variants (products/:productId must stay before generic :supplierId routes if added)

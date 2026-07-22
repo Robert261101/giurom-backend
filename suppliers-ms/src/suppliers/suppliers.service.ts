@@ -72,6 +72,7 @@ import {
   canManageSupplierProductClientMapping,
   isFurnizorProductManager,
   type SupplierProductUserContext,
+  type SupplierAccessRequester,
 } from './supplier-product-access';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -182,7 +183,7 @@ export class SuppliersService {
         target_url,
       };
       
-      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData)}`);
       
       await firstValueFrom(
         this.notificationsClient.emit({ cmd: 'suppliers.notification' }, notificationData)
@@ -253,7 +254,7 @@ export class SuppliersService {
   }
 
   async createWithDocuments(dto: CreateSupplierWithDocumentsDto, location_id?: number): Promise<Supplier> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating supplier with documents: ${JSON.stringify(dto, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating supplier with documents: ${JSON.stringify(dto)}`);
     
     const existingSupplier = await this.supplierRepo.findOne({
       where: [
@@ -2220,7 +2221,81 @@ export class SuppliersService {
     };
   }
 
-  async findOne(id: number, location_id?: number): Promise<Supplier> {
+  /** Locațiile reale la care angajatul are acces, verificate via employees-ms (nu doar declarate de client). */
+  private async getEmployeeLocationIds(requester?: SupplierAccessRequester): Promise<number[]> {
+    const fallback = [requester?.work_location_id, requester?.work_location_default_id].filter(
+      (v): v is number => Number.isFinite(v as number) && (v as number) > 0,
+    );
+
+    const employeeId = requester?.userId;
+    if (!employeeId || !Number.isFinite(employeeId)) {
+      return Array.from(new Set(fallback));
+    }
+
+    try {
+      const employeesServiceUrl =
+        this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
+      const resp: any = await firstValueFrom(
+        this.httpService.get(`${employeesServiceUrl}/employees/${employeeId}/locations`, {
+          headers: this.internalServiceHeaders(),
+          timeout: 3000,
+        }),
+      );
+      const rows = Array.isArray(resp?.data) ? resp.data : [];
+      const ids = rows
+        .map((el: any) => Number(el.idLocation ?? el.id_location ?? el.locationId ?? el.location_id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+      return Array.from(new Set([...ids, ...fallback]));
+    } catch (error: any) {
+      this.logger.error(
+        `⚠️ [getEmployeeLocationIds] Nu am putut obține locațiile angajatului ${employeeId}: ${error?.message || error}`,
+      );
+      return Array.from(new Set(fallback));
+    }
+  }
+
+  /**
+   * Verifică — independent de orice `location_id` trimis de client — dacă angajatul curent
+   * are efectiv acces la cel puțin una dintre locațiile la care e asignat furnizorul.
+   * Admin/superadmin (sau permisiuni company-wide) sar peste verificare.
+   * Fără `requester` = apel intern (server-to-server), comportament neschimbat.
+   */
+  private async assertSupplierAccessibleToRequester(
+    supplier: Supplier,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    if (!requester) {
+      return;
+    }
+    if (
+      requester.isAdmin ||
+      requester.isSuperAdmin ||
+      isAdminOrSuperAdminFromPermissions(requester.permissions || [])
+    ) {
+      return;
+    }
+
+    const supplierLocationIds = (supplier.locations || [])
+      .map((loc: any) => Number(loc.id_location))
+      .filter((id: number) => Number.isFinite(id) && id > 0);
+
+    if (supplierLocationIds.length === 0) {
+      throw new NotFoundException(`Furnizorul cu ID ${supplier.id} nu a fost găsit`);
+    }
+
+    const employeeLocationIds = await this.getEmployeeLocationIds(requester);
+    const hasAccess = supplierLocationIds.some((id) => employeeLocationIds.includes(id));
+
+    if (!hasAccess) {
+      throw new NotFoundException(`Furnizorul cu ID ${supplier.id} nu a fost găsit`);
+    }
+  }
+
+  async findOne(
+    id: number,
+    location_id?: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<Supplier> {
     // Încărcare explicită folders + documents cu QueryBuilder pentru a evita relațiile nested neîncărcate
     const qb = this.supplierRepo
       .createQueryBuilder('supplier')
@@ -2250,6 +2325,9 @@ export class SuppliersService {
       }
     }
 
+    // Verificare reală de acces (independentă de ce location_id a trimis clientul) — vezi assertSupplierAccessibleToRequester.
+    await this.assertSupplierAccessibleToRequester(supplier, requester);
+
     const folders = (supplier as any).folders || [];
     this.logger.log(`📂 [findOne] Furnizor ${id}: ${folders.length} foldere returnate`);
     folders.forEach((f: any, i: number) => {
@@ -2260,10 +2338,15 @@ export class SuppliersService {
     return supplier;
   }
 
-  async update(id: number, dto: UpdateSupplierDto, selectedWorkLocationId?: number): Promise<Supplier> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier ${id} with data: ${JSON.stringify(dto, null, 2)}`);
-    
-    const supplier = await this.findOne(id, undefined); // Nu verificăm location_id la update
+  async update(
+    id: number,
+    dto: UpdateSupplierDto,
+    selectedWorkLocationId?: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<Supplier> {
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier ${id} with data: ${JSON.stringify(dto)}`);
+
+    const supplier = await this.findOne(id, undefined, requester);
     if (dto.registration_number || dto.vat_number) {
       const existingSupplier = await this.supplierRepo.findOne({
         where: [
@@ -2299,10 +2382,14 @@ export class SuppliersService {
     return updatedSupplier;
   }
 
-  async remove(id: number, selectedWorkLocationId?: number): Promise<void> {
+  async remove(
+    id: number,
+    selectedWorkLocationId?: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier ${id}`);
-    
-    const supplier = await this.findOne(id);
+
+    const supplier = await this.findOne(id, undefined, requester);
     const supplierName = supplier.supplier_name;
     const supplierNameSimplified = this.simplifySupplierName(supplier.supplier_name);
     
@@ -2353,7 +2440,7 @@ export class SuppliersService {
     dto: CreateSupplierProductDto,
     userContext?: SupplierProductUserContext,
   ): Promise<SupplierProduct> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Adding product to supplier with data: ${JSON.stringify(dto, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Adding product to supplier with data: ${JSON.stringify(dto)}`);
 
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
@@ -2414,11 +2501,11 @@ export class SuppliersService {
       gross_quantity: quantities.gross_quantity,
       net_quantity: quantities.net_quantity,
     });
-    this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct, null, 2)}`);
+    this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct)}`);
 
     const savedProduct = await this.supplierProductRepo.save(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
-    this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct, null, 2)}`);
+    this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct)}`);
     this.logger.log(`💾 [SUPPLIERS SERVICE] Persisted fields - net_quantity: ${savedProduct.net_quantity}, gross_quantity: ${savedProduct.gross_quantity}, unit_of_measure: ${savedProduct.unit_of_measure}`);
     
     // Send notification for new product
@@ -2612,33 +2699,38 @@ export class SuppliersService {
       'http://localhost:3006';
     const nameCache = new Map<number, string>();
 
-    return Promise.all(
-      rows.map(async (row) => {
-        let client_stock_product_name: string | null = null;
-        if (!nameCache.has(row.client_stock_product_id)) {
-          try {
-            const resp = await firstValueFrom(
-              this.httpService.get(
-                `${stockUrl}/stock/products/${row.client_stock_product_id}`,
-                {
-                  headers: this.internalServiceHeaders(),
-                  timeout: 3000,
-                },
-              ),
-            );
-            const name = resp.data?.name ?? resp.data?.product_name ?? null;
-            if (name) {
-              nameCache.set(row.client_stock_product_id, String(name));
-            }
-          } catch {
-            /* optional label */
+    // Un singur request batch pentru toate ID-urile distincte, în loc de N cereri concurente (una per produs).
+    const distinctIds = [...new Set(rows.map((row) => row.client_stock_product_id))];
+    if (distinctIds.length > 0) {
+      try {
+        const resp = await firstValueFrom(
+          this.httpService.get(`${stockUrl}/stock/products/names`, {
+            params: { ids: distinctIds.join(',') },
+            headers: this.internalServiceHeaders(),
+            timeout: 3000,
+          }),
+        );
+        const items: Array<{ id: number; name: string }> = Array.isArray(resp.data)
+          ? resp.data
+          : Array.isArray(resp.data?.data)
+            ? resp.data.data
+            : [];
+        for (const item of items) {
+          if (item?.name) {
+            nameCache.set(Number(item.id), String(item.name));
           }
         }
-        client_stock_product_name =
-          nameCache.get(row.client_stock_product_id) ?? null;
-        return { ...row, client_stock_product_name };
-      }),
-    );
+      } catch (error: any) {
+        this.logger.warn(
+          `⚠️ [getClientProductMappingsForSupplier] Nu am putut obține numele produselor: ${error?.message || error}`,
+        );
+      }
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      client_stock_product_name: nameCache.get(row.client_stock_product_id) ?? null,
+    }));
   }
 
   async upsertSupplierProductClientConfig(
@@ -3035,7 +3127,7 @@ export class SuppliersService {
   }
 
   async createOrder(dto: CreateSupplierOrderDto): Promise<SupplierOrder> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating order with data: ${JSON.stringify(dto, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating order with data: ${JSON.stringify(dto)}`);
     
     const orderStatus = (dto.status || OrderStatus.DRAFT) as OrderStatus;
     const resolvedSupplierLocationId =
@@ -5709,7 +5801,7 @@ export class SuppliersService {
       const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'x-internal-service': 'suppliers', 'x-service-secret': serviceSecret };
       let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
         const port = portMatch ? portMatch[1] : '3012';
         employeesServiceUrl = `http://localhost:${port}`;
@@ -6183,7 +6275,7 @@ export class SuppliersService {
     updateData: UpdateSupplierProductDto,
     userContext?: SupplierProductUserContext,
   ): Promise<SupplierProduct> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier product ${productId} with data: ${JSON.stringify(updateData, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating supplier product ${productId} with data: ${JSON.stringify(updateData)}`);
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
@@ -6219,7 +6311,7 @@ export class SuppliersService {
       supplierProduct.net_quantity = quantities.net_quantity;
     }
     const updated = await this.supplierProductRepo.save(supplierProduct);
-    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated, null, 2)}`);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated)}`);
     return updated;
   }
 
@@ -6250,7 +6342,7 @@ export class SuppliersService {
     dto: CreateSupplierProductMeasurementVariantDto,
     userContext?: SupplierProductUserContext,
   ): Promise<SupplierProductMeasurementVariant> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating measurement variant with data: ${JSON.stringify(dto, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating measurement variant with data: ${JSON.stringify(dto)}`);
 
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
@@ -6273,7 +6365,7 @@ export class SuppliersService {
 
     const variant = this.supplierProductMeasurementVariantRepo.create(dto);
     const savedVariant = await this.supplierProductMeasurementVariantRepo.save(variant);
-    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant created successfully: ${JSON.stringify(savedVariant, null, 2)}`);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant created successfully: ${JSON.stringify(savedVariant)}`);
     return savedVariant;
   }
 
@@ -6298,7 +6390,7 @@ export class SuppliersService {
     updateData: Partial<SupplierProductMeasurementVariant>,
     userContext?: SupplierProductUserContext,
   ): Promise<SupplierProductMeasurementVariant> {
-    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating measurement variant ${variantId} with data: ${JSON.stringify(updateData, null, 2)}`);
+    this.logger.log(`🔍 [SUPPLIERS SERVICE] Updating measurement variant ${variantId} with data: ${JSON.stringify(updateData)}`);
     const variant = await this.supplierProductMeasurementVariantRepo.findOne({ where: { id: variantId } });
     if (!variant) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Measurement variant not found: ${variantId}`);
@@ -6325,7 +6417,7 @@ export class SuppliersService {
 
     Object.assign(variant, updateData);
     const updated = await this.supplierProductMeasurementVariantRepo.save(variant);
-    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant updated successfully: ${JSON.stringify(updated, null, 2)}`);
+    this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant updated successfully: ${JSON.stringify(updated)}`);
     return updated;
   }
 

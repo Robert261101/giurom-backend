@@ -6,6 +6,26 @@ import rateLimit from 'express-rate-limit';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ResponseInterceptor } from './common/response.interceptor';
+import { timingSafeEqual } from 'crypto';
+
+/**
+ * Bypass-ul de rate limit pentru apeluri interne trebuie să valideze secretul,
+ * nu doar prezența header-elor — altfel oricine trimite x-internal-service +
+ * x-service-secret (orice valoare) ocolește protecția anti-brute-force.
+ */
+function isTrustedInternalRequest(req: { headers: Record<string, unknown> }): boolean {
+  const expected = process.env.SERVICE_SECRET;
+  const provided = req.headers['x-service-secret'];
+  if (!expected || !req.headers['x-internal-service'] || typeof provided !== 'string') {
+    return false;
+  }
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
 
 function getAllowedOrigins(): string[] {
   const isProd = process.env.NODE_ENV === 'production';
@@ -31,17 +51,25 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
-  
-  // Configurare Swagger
-  const config = new DocumentBuilder()
-    .setTitle('Veziv Auth API')
-    .setDescription('API pentru autentificare și autorizare')
-    .setVersion('1.0')
-    .addTag('auth')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+
+  // În spatele Apache (reverse proxy) — fără asta, express-rate-limit vede IP-ul
+  // proxy-ului pentru toate request-urile (o singură găleată comună pentru toți userii)
+  // în loc de IP-ul real al clientului din X-Forwarded-For. `1` = are încredere doar
+  // în primul hop upstream (Apache), nu în tot lanțul XFF (care ar permite spoofing).
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
+  // Configurare Swagger — doar în afara producției (expune toate rutele + schema DTO-urilor)
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Veziv Auth API')
+      .setDescription('API pentru autentificare și autorizare')
+      .setVersion('1.0')
+      .addTag('auth')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document);
+  }
 
   // Protecție HTTP Headers
   app.use(helmet());
@@ -58,7 +86,7 @@ async function bootstrap() {
     message: { message: 'Prea multe încercări de autentificare. Încearcă din nou în 15 minute.' },
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => !!(req.headers['x-internal-service'] && req.headers['x-service-secret']),
+    skip: (req) => isTrustedInternalRequest(req),
   });
 
   const generalRateLimit = rateLimit({
@@ -67,7 +95,7 @@ async function bootstrap() {
     message: { message: 'Prea multe request-uri. Încearcă din nou mai târziu.' },
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => !!(req.headers['x-internal-service'] && req.headers['x-service-secret']),
+    skip: (req) => isTrustedInternalRequest(req),
   });
 
   app.use('/auth/login', loginRateLimit);

@@ -23,7 +23,7 @@ export async function fetchColleagueIdsByLocation(
       headers: {
         'x-internal-service': 'requests',
         'x-service-secret':
-          process.env.SERVICE_SECRET || 'default-service-secret',
+          process.env.SERVICE_SECRET || '',
       },
       timeout: 8000,
     }),

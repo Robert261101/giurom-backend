@@ -958,14 +958,14 @@ export class AttendanceService implements OnModuleInit {
 
   private internalHeaders(authorization?: string): Record<string, string> {
     const headers: Record<string, string> = this.userAuthHeaders(authorization);
-    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const secret = process.env.SERVICE_SECRET || '';
     headers['x-internal-service'] = 'attendance-ms';
     headers['x-service-secret'] = secret;
     return headers;
   }
 
   private serviceOnlyHeaders(): Record<string, string> {
-    const secret = process.env.SERVICE_SECRET || 'default-service-secret';
+    const secret = process.env.SERVICE_SECRET || '';
     return {
       'x-internal-service': 'attendance-ms',
       'x-service-secret': secret,
@@ -1461,7 +1461,7 @@ export class AttendanceService implements OnModuleInit {
         headers: {
           'x-internal-service': 'attendance',
           'x-service-secret':
-            process.env.SERVICE_SECRET || 'default-service-secret',
+            process.env.SERVICE_SECRET || '',
         },
         timeout: 8000,
       }),

@@ -1785,11 +1785,46 @@ export class LocationsService {
         return fallback;
       };
 
-      // For each employee, calculate bonus based on their daily points and approved revenues
+      // Puncte per angajat pentru toată locația, într-un singur apel agregat
+      // (înlocuiește fan-out-ul de până la 60 de request-uri secvențiale per angajat).
       const tasksApiUrl =
         process.env.TASKS_API_BASE || "http://localhost:3008";
       const workDate = new Date(revenueDate);
       workDate.setHours(0, 0, 0, 0);
+
+      const pointsByEmployeeId = new Map<number, number>();
+      try {
+        const pointsUrl = `${tasksApiUrl}/executions/location-employee-points`;
+        const pointsResponse = await axios.get(pointsUrl, {
+          params: {
+            location_id: locationId,
+            startDate: normalizedDate,
+            endDate: normalizedDate,
+          },
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-service": "locations",
+            "x-service-secret": serviceSecret,
+          },
+        });
+        const rows = Array.isArray(pointsResponse.data)
+          ? pointsResponse.data
+          : Array.isArray(pointsResponse.data?.data)
+            ? pointsResponse.data.data
+            : [];
+        for (const row of rows) {
+          const employeeId = Number(row.employee_id);
+          const points = Number(row.total_points || 0);
+          if (Number.isFinite(employeeId) && employeeId > 0) {
+            pointsByEmployeeId.set(employeeId, points);
+          }
+        }
+      } catch (error: any) {
+        console.error(
+          `❌ [BONUS CALC] Could not fetch location-employee-points for location ${locationId}, revenue_date: ${normalizedDate}:`,
+          error?.message ?? error,
+        );
+      }
 
       const earnings: Array<{ employeeId: number; amount: number }> = [];
 
@@ -1798,43 +1833,7 @@ export class LocationsService {
           const employeeId = Number(employee.id || employee.employee_id);
           if (!employeeId) continue;
 
-          // Get employee daily points for this revenue_date (date when revenue was created, not approval date)
-          let employeePoints = 0;
-          try {
-            const pointsUrl = `${tasksApiUrl}/executions/daily-points/${employeeId}/${normalizedDate}`;
-            const pointsResponse = await axios.get(pointsUrl, {
-              headers: { "Content-Type": "application/json" },
-            });
-            const pointsData = pointsResponse.data;
-            employeePoints = Number(
-              pointsData?.total_points || pointsData?.data?.total_points || 0,
-            );
-          } catch (error) {
-            console.log(
-              `⚠️ [BONUS CALC] Could not fetch points for employee ${employeeId}, revenue_date: ${normalizedDate}`,
-            );
-            // Try alternative endpoint
-            try {
-              const rangeUrl = `${tasksApiUrl}/executions/employee-points/${employeeId}?startDate=${normalizedDate}&endDate=${normalizedDate}`;
-              const rangeResponse = await axios.get(rangeUrl, {
-                headers: { "Content-Type": "application/json" },
-              });
-              const rangeData = Array.isArray(rangeResponse.data)
-                ? rangeResponse.data
-                : Array.isArray(rangeResponse.data?.data)
-                  ? rangeResponse.data.data
-                  : [];
-              if (rangeData.length > 0) {
-                employeePoints = Number(
-                  rangeData[0]?.total_points || rangeData[0]?.points || 0,
-                );
-              }
-            } catch (rangeError) {
-              console.log(
-                `⚠️ [BONUS CALC] Could not fetch points from range endpoint for employee ${employeeId}, revenue_date: ${normalizedDate}`,
-              );
-            }
-          }
+          const employeePoints = pointsByEmployeeId.get(employeeId) || 0;
 
           if (employeePoints <= 0) {
             console.log(

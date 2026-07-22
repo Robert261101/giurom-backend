@@ -9,6 +9,9 @@ import { Server, Socket } from "socket.io";
 import { Injectable, Logger } from "@nestjs/common";
 import { UserResolutionService } from "./user-resolution.service";
 
+// IP-ul public al serverului — configurabil via env, cu fallback la valoarea curentă (nu se schimbă comportamentul implicit).
+const PUBLIC_SERVER_IP = process.env.PUBLIC_SERVER_IP || "89.46.6.45";
+
 @WebSocketGateway({
   namespace: "/notifications",
   path: "/notifications/socket.io",
@@ -22,9 +25,9 @@ import { UserResolutionService } from "./user-resolution.service";
       "http://giurom.bitap.ro:3001",
       "https://giurom.bitap.ro:3000",
       "https://giurom.bitap.ro:3001",
-      "http://89.46.6.45:3000",
-      "http://89.46.6.45",
-      "https://89.46.6.45",
+      `http://${PUBLIC_SERVER_IP}:3000`,
+      `http://${PUBLIC_SERVER_IP}`,
+      `https://${PUBLIC_SERVER_IP}`,
       "https://restosoft.eu",
       /^https:\/\/.*\.vercel\.app$/,
       /^https:\/\/.*\.vercel\.app\/.*$/,

@@ -35,7 +35,7 @@ export class LeaveRequestsService implements OnModuleInit {
   private internalServiceHeaders(): Record<string, string> {
     return {
       'x-internal-service': 'requests',
-      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
     };
   }
 

@@ -13,7 +13,10 @@ const target = (defaultUrl, envKey) =>
   (process.env[envKey] || defaultUrl).replace(/\/$/, "");
 
 app.use(bodyParser.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
+app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
+
+// IP-ul public al serverului — configurabil via env, cu fallback la valoarea curentă (nu se schimbă comportamentul implicit).
+const PUBLIC_SERVER_IP = process.env.PUBLIC_SERVER_IP || "89.46.6.45";
 
 // Enable CORS
 app.use(
@@ -23,8 +26,8 @@ app.use(
       "http://localhost:3001",
       "https://giurom.bitap.ro",
       "http://giurom.bitap.ro",
-      "http://89.46.6.45:3000",
-      "http://89.46.6.45",
+      `http://${PUBLIC_SERVER_IP}:3000`,
+      `http://${PUBLIC_SERVER_IP}`,
       // Adaugă domenii Vercel specifice via env (ex: VERCEL_ALLOWED_ORIGINS=https://giurom-frontend.vercel.app)
       ...(process.env.VERCEL_ALLOWED_ORIGINS || "https://giurom-frontend.vercel.app")
         .split(",").map(s => s.trim()).filter(Boolean),

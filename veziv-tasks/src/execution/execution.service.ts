@@ -36,6 +36,12 @@ import {
 
 @Injectable()
 export class ExecutionService {
+  private static readonly shiftsByLocationCache = new Map<
+    number,
+    { shifts: any[]; timestamp: number }
+  >();
+  private static readonly SHIFTS_CACHE_TTL_MS = 60 * 1000;
+
   constructor(
     @InjectRepository(TaskExecution)
     private executionRepository: Repository<TaskExecution>,
@@ -194,16 +200,15 @@ export class ExecutionService {
       `[ExecutionService.create] Creating execution ${savedExecution.id} with ${answers?.length || 0} answers`,
     );
     if (answers && answers.length > 0) {
-      for (const answerDto of answers) {
-        console.log(
-          `[ExecutionService.create] Processing answer for element ${answerDto.task_element_id} with value:`,
-          answerDto.value,
-        );
+      // Un singur query batch pentru toate elementele (în loc de câte un findOne per răspuns).
+      const elementIds = [...new Set(answers.map((a) => a.task_element_id))];
+      const elements = await this.taskElementRepository.find({
+        where: { id: In(elementIds) },
+      });
+      const elementById = new Map(elements.map((el) => [el.id, el]));
 
-        // Verifică dacă elementul există
-        const element = await this.taskElementRepository.findOne({
-          where: { id: answerDto.task_element_id },
-        });
+      const answerEntities = answers.map((answerDto) => {
+        const element = elementById.get(answerDto.task_element_id);
 
         if (!element) {
           console.error(
@@ -260,18 +265,16 @@ export class ExecutionService {
           }
         }
 
-        const answer = this.answerRepository.create({
+        return this.answerRepository.create({
           task_element_id: answerDto.task_element_id,
           value: answerDto.value || '',
           task_execution_id: savedExecution.id,
           score_awarded: score_awarded,
         });
-        const savedAnswer = await this.answerRepository.save(answer);
-        console.log(
-          `[ExecutionService.create] Saved answer ${savedAnswer.id} for element ${answerDto.task_element_id} with value:`,
-          answerDto.value,
-        );
-      }
+      });
+
+      // Un singur INSERT batch pentru toate răspunsurile, în loc de câte unul per răspuns.
+      await this.answerRepository.save(answerEntities);
       console.log(
         `[ExecutionService.create] Saved ${answers.length} answers for execution ${savedExecution.id}`,
       );
@@ -2232,30 +2235,46 @@ export class ExecutionService {
   // Puncte manager: sursă unică manager_daily_payout (populat la încasare/cron), nu la fiecare task.
 
   // ===== METODĂ PENTRU GĂSIREA MANAGERULUI PREZENT LA UN MOMENT DAT =====
+  private async fetchShiftsForLocationCached(locationId: number): Promise<any[]> {
+    const cached = ExecutionService.shiftsByLocationCache.get(locationId);
+    if (cached && Date.now() - cached.timestamp < ExecutionService.SHIFTS_CACHE_TTL_MS) {
+      return cached.shifts;
+    }
+
+    const shiftsResponse = await this.httpService.axiosRef.get(
+      `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
+      {
+        headers: {
+          'x-internal-service': 'veziv-tasks',
+          'x-service-secret':
+            process.env.SERVICE_SECRET || '',
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    let allShifts: any[] = [];
+    if (Array.isArray(shiftsResponse.data)) {
+      allShifts = shiftsResponse.data;
+    } else if (shiftsResponse.data?.data) {
+      allShifts = shiftsResponse.data.data;
+    }
+
+    ExecutionService.shiftsByLocationCache.set(locationId, {
+      shifts: allShifts,
+      timestamp: Date.now(),
+    });
+    return allShifts;
+  }
+
   private async findManagerAtTime(
     locationId: number,
     completionTime: Date,
   ): Promise<any> {
     try {
-      // Obține toate shift-urile pentru această locație
-      const shiftsResponse = await this.httpService.axiosRef.get(
-        `http://localhost:3016/attendance/shifts?work_location_id=${locationId}&limit=1000`,
-        {
-          headers: {
-            'x-internal-service': 'veziv-tasks',
-            'x-service-secret':
-              process.env.SERVICE_SECRET || '',
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      let allShifts: any[] = [];
-      if (Array.isArray(shiftsResponse.data)) {
-        allShifts = shiftsResponse.data;
-      } else if (shiftsResponse.data?.data) {
-        allShifts = shiftsResponse.data.data;
-      }
+      // Shift-urile locației se schimbă rar — cache scurt evită re-fetch la fiecare finalizare
+      // de task (findManagerAtTime rulează pe cale fierbinte, la fiecare completare).
+      const allShifts = await this.fetchShiftsForLocationCached(locationId);
 
       // Filtrează shift-urile care conțin ora de finalizare
       const relevantShifts: any[] = allShifts.filter((shift: any) => {

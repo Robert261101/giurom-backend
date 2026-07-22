@@ -30,6 +30,37 @@ export function buildSupplierProductUserContext(user?: {
   };
 }
 
+export interface SupplierAccessRequester {
+  userId?: number;
+  work_location_id?: number;
+  work_location_default_id?: number;
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
+  permissions?: string[];
+}
+
+export function buildSupplierAccessRequester(user?: {
+  userId?: number;
+  work_location_id?: number;
+  work_location_default_id?: number;
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
+  permissions?: string[];
+}): SupplierAccessRequester {
+  return {
+    userId: Number.isFinite(Number(user?.userId)) ? Number(user?.userId) : undefined,
+    work_location_id: Number.isFinite(Number(user?.work_location_id))
+      ? Number(user?.work_location_id)
+      : undefined,
+    work_location_default_id: Number.isFinite(Number(user?.work_location_default_id))
+      ? Number(user?.work_location_default_id)
+      : undefined,
+    isAdmin: user?.isAdmin === true,
+    isSuperAdmin: user?.isSuperAdmin === true,
+    permissions: Array.isArray(user?.permissions) ? user.permissions : [],
+  };
+}
+
 export function isAdminOrSuperAdminFromPermissions(
   permissions: string[],
 ): boolean {

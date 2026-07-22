@@ -79,7 +79,7 @@ export class ShiftChangeRequestsService {
       process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
     const internalHeaders = {
       'x-internal-service': 'requests',
-      'x-service-secret': process.env.SERVICE_SECRET || 'default-service-secret',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
     };
 
     // Verifică dacă angajatul care cere schimbul există și obține location_id prin HTTP call

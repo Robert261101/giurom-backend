@@ -366,7 +366,7 @@ export class EmployeeService {
     return {
       "x-internal-service": "employees",
       "x-service-secret":
-        process.env.SERVICE_SECRET || "default-service-secret",
+        process.env.SERVICE_SECRET || "",
       "Content-Type": "application/json",
     };
   }
@@ -653,7 +653,17 @@ export class EmployeeService {
   async findByIdsBasic(
     ids: number[],
   ): Promise<
-    Array<Pick<Employee, "id" | "first_name" | "last_name" | "email">>
+    Array<
+      Pick<
+        Employee,
+        | "id"
+        | "first_name"
+        | "last_name"
+        | "email"
+        | "is_active"
+        | "work_location_default_id"
+      >
+    >
   > {
     if (!ids || ids.length === 0) {
       return [];
@@ -663,7 +673,14 @@ export class EmployeeService {
 
     const employees = await this.employeeRepository.find({
       where: { id: In(uniqueIds) },
-      select: ["id", "first_name", "last_name", "email"],
+      select: [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "is_active",
+        "work_location_default_id",
+      ],
     });
 
     return employees;
