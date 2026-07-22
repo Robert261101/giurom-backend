@@ -53,6 +53,12 @@ export class CompanyHttpController {
 		return this.service.findByIdsBasic(idList);
 	}
 
+	@Get('internal/furnizor-dropdown')
+	@UseGuards(InternalServiceGuard)
+	findFurnizorDropdownForRegistration() {
+		return this.service.findFurnizorCompaniesForRegistration();
+	}
+
 	@Get('for-own')
 	@Permissions('companies.read_own')
 	findForOwn() {

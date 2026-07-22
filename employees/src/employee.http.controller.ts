@@ -201,7 +201,17 @@ export class EmployeeHttpController {
     @Query("ids") ids: string,
     @Request() req: any,
   ): Promise<
-    Array<Pick<Employee, "id" | "first_name" | "last_name" | "email">>
+    Array<
+      Pick<
+        Employee,
+        | "id"
+        | "first_name"
+        | "last_name"
+        | "email"
+        | "work_location_default_id"
+        | "is_active"
+      >
+    >
   > {
     if (!ids) {
       return [];

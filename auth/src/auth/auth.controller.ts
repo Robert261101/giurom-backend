@@ -4,6 +4,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseIntPipe,
   Post,
   Request,
   UseGuards,
@@ -25,6 +27,7 @@ import { SignInDto } from './dto/sign-in.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ValidateIdentifierDto } from './dto/validate-identifier.dto';
+import { RegisterSupplierDto } from './dto/register-supplier.dto';
 import { HttpService } from '@nestjs/axios';
 import { logAction } from '../common/logging.util';
 
@@ -458,4 +461,34 @@ export class AuthController {
       throw error;
     }
   }
-} 
+
+  @ApiOperation({
+    summary: 'Listează companiile furnizor pentru formularul public de înregistrare',
+  })
+  @Get('register/supplier/companies')
+  getRegisterSupplierCompanies() {
+    return this.authService.getRegisterSupplierCompanies();
+  }
+
+  @ApiOperation({
+    summary: 'Listează locațiile unei companii furnizor pentru înregistrare publică',
+  })
+  @Get('register/supplier/companies/:companyId/locations')
+  getRegisterSupplierLocations(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ) {
+    return this.authService.getRegisterSupplierLocations(companyId);
+  }
+
+  @ApiOperation({
+    summary: 'Înregistrare cont furnizor (public)',
+    description:
+      'Creează supplier, employee, user și atribuie rolul furnizor pentru o companie și locație existente',
+  })
+  @ApiBody({ type: RegisterSupplierDto })
+  @HttpCode(HttpStatus.CREATED)
+  @Post('register/supplier')
+  registerSupplier(@Body() dto: RegisterSupplierDto) {
+    return this.authService.registerSupplier(dto);
+  }
+}

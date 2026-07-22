@@ -71,6 +71,7 @@ import {
   isAdminOrSuperAdminFromPermissions,
   canManageSupplierProductClientMapping,
   isFurnizorProductManager,
+  resolveCompanyTypeFromAuth,
   type SupplierProductUserContext,
 } from './supplier-product-access';
 import * as fs from 'fs';
@@ -304,6 +305,26 @@ export class SuppliersService {
   }
 
   /** Names for magazioneri/șoferi — callers with order.read (incl. furnizor tenant). */
+  private getEmployeesServiceUrl(): string {
+    let employeesServiceUrl =
+      this.configService.get<string>('EMPLOYEES_HTTP_URL') ||
+      process.env.EMPLOYEES_HTTP_URL ||
+      'http://localhost:3011';
+    if (
+      employeesServiceUrl.includes('bitap.ro') ||
+      employeesServiceUrl.includes('89.46.6.45')
+    ) {
+      const portMatch = employeesServiceUrl.match(/:(\d+)/);
+      const port = portMatch ? portMatch[1] : '3011';
+      employeesServiceUrl = `http://localhost:${port}`;
+    }
+    return employeesServiceUrl.replace(/\/$/, '');
+  }
+
+  /**
+   * Îmbogățește staff furnizor cu nume/email din employees-ms.
+   * Prioritate: HTTP batch (sursă de adevăr). Fallback: cross-DB SQL pe giurombitap_employees.
+   */
   private async enrichSupplierStaffWithEmployeeNames<
     T extends { employee_id: number; role: string },
   >(rows: T[]): Promise<
@@ -312,6 +333,7 @@ export class SuppliersService {
         first_name: string | null;
         last_name: string | null;
         full_name: string | null;
+        email: string | null;
         work_location_default_id: number | null;
         is_active: boolean;
       }
@@ -334,30 +356,105 @@ export class SuppliersService {
         first_name: null,
         last_name: null,
         full_name: null,
+        email: null,
         work_location_default_id: null,
         is_active: true,
       }));
     }
 
-    const employeesDbName =
-      process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
-    const placeholder = employeeIds.map(() => '?').join(',');
-    let employeeRows: Array<{
+    type EmployeeEnrichRow = {
       id: number;
       first_name: string | null;
       last_name: string | null;
+      email: string | null;
       work_location_default_id: number | null;
       is_active: number | boolean | null;
-    }> = [];
+    };
 
+    let employeeRows: EmployeeEnrichRow[] = [];
+    let enrichSource: 'http-batch' | 'cross-db' | 'none' = 'none';
+
+    // 1) HTTP batch — nu depinde de cross-DB / EMPLOYEES_DB_NAME
     try {
-      employeeRows = await this.connection.query(
-        `SELECT id, first_name, last_name, work_location_default_id, is_active FROM ${employeesDbName}.employees WHERE id IN (${placeholder})`,
-        employeeIds,
+      const serviceSecret = process.env.SERVICE_SECRET || '';
+      const headers = {
+        'x-internal-service': 'suppliers',
+        'x-service-secret': serviceSecret,
+      };
+      const url = `${this.getEmployeesServiceUrl()}/employees/batch?ids=${employeeIds.join(',')}`;
+      this.logger.log(
+        `[STAFF-ENRICH] HTTP batch GET ${url} (ids=${employeeIds.join(',')})`,
+      );
+      const resp: any = await firstValueFrom(
+        this.httpService.get(url, { headers, timeout: 8000 }),
+      );
+      const raw = resp?.data?.data ?? resp?.data ?? resp;
+      const list = Array.isArray(raw) ? raw : [];
+      employeeRows = list.map((e: any) => ({
+        id: Number(e.id),
+        first_name: e.first_name ?? null,
+        last_name: e.last_name ?? null,
+        email: e.email ?? null,
+        work_location_default_id:
+          e.work_location_default_id != null
+            ? Number(e.work_location_default_id)
+            : null,
+        is_active: e.is_active ?? true,
+      }));
+      enrichSource = 'http-batch';
+      this.logger.log(
+        `[STAFF-ENRICH] HTTP batch returned ${employeeRows.length} row(s): ${JSON.stringify(
+          employeeRows.map((r) => ({
+            id: r.id,
+            first_name: r.first_name,
+            last_name: r.last_name,
+            email: r.email,
+          })),
+        )}`,
       );
     } catch (error: any) {
+      const status = error?.response?.status;
+      const body = error?.response?.data;
+      this.logger.error(
+        `[STAFF-ENRICH] HTTP batch FAILED status=${status ?? 'N/A'} message=${error?.message} body=${JSON.stringify(body)}`,
+      );
+    }
+
+    // 2) Fallback cross-DB dacă HTTP nu a returnat rânduri
+    if (!employeeRows.length) {
+      const employeesDbName =
+        this.configService.get<string>('EMPLOYEES_DB_NAME') ||
+        process.env.EMPLOYEES_DB_NAME ||
+        'giurombitap_employees';
+      const placeholder = employeeIds.map(() => '?').join(',');
+      const sql = `SELECT id, first_name, last_name, email, work_location_default_id, is_active FROM \`${employeesDbName}\`.employees WHERE id IN (${placeholder})`;
+      try {
+        this.logger.log(
+          `[STAFF-ENRICH] Fallback SQL db=${employeesDbName} ids=${employeeIds.join(',')}`,
+        );
+        const result: any = await this.connection.query(sql, employeeIds);
+        // TypeORM/mysql2: de obicei array de rânduri; uneori [rows, fields]
+        if (Array.isArray(result) && result.length > 0 && Array.isArray(result[0]) && !('id' in (result[0] as object))) {
+          employeeRows = result[0] as EmployeeEnrichRow[];
+        } else if (Array.isArray(result)) {
+          employeeRows = result as EmployeeEnrichRow[];
+        } else {
+          employeeRows = [];
+        }
+        enrichSource = 'cross-db';
+        this.logger.log(
+          `[STAFF-ENRICH] SQL returned ${employeeRows.length} row(s)`,
+        );
+      } catch (error: any) {
+        this.logger.error(
+          `[STAFF-ENRICH] SQL FAILED db=${employeesDbName}: ${error?.message}`,
+        );
+      }
+    }
+
+    if (!employeeRows.length) {
       this.logger.warn(
-        `⚠️ [SUPPLIERS SERVICE] Could not load employee names for supplier staff: ${error?.message}`,
+        `[STAFF-ENRICH] No employee rows for ids=${employeeIds.join(',')} (source=${enrichSource})`,
       );
     }
 
@@ -367,6 +464,7 @@ export class SuppliersService {
         first_name: string | null;
         last_name: string | null;
         full_name: string | null;
+        email: string | null;
         work_location_default_id: number | null;
         is_active: boolean;
       }
@@ -384,6 +482,7 @@ export class SuppliersService {
         first_name: firstName,
         last_name: lastName,
         full_name: fullName,
+        email: row.email ?? null,
         work_location_default_id:
           row.work_location_default_id != null
             ? Number(row.work_location_default_id)
@@ -399,6 +498,7 @@ export class SuppliersService {
         first_name: names?.first_name ?? null,
         last_name: names?.last_name ?? null,
         full_name: names?.full_name ?? null,
+        email: names?.email ?? null,
         work_location_default_id: names?.work_location_default_id ?? null,
         is_active: names?.is_active ?? true,
       };
@@ -414,6 +514,7 @@ export class SuppliersService {
       first_name: string | null;
       last_name: string | null;
       full_name: string | null;
+      email: string | null;
     }>
   > {
     const rows = await this.employeeSupplierRepo.find({
@@ -436,6 +537,7 @@ export class SuppliersService {
       first_name: string | null;
       last_name: string | null;
       full_name: string | null;
+      email: string | null;
     }>
   > {
     const rows = await this.employeeSupplierRepo.find({
@@ -1813,35 +1915,100 @@ export class SuppliersService {
   /**
    * Operational supplier for the logged-in furnizor tenant (owner_company_id = JWT company_id).
    */
+  private async resolveCompanyIdFromWorkLocation(
+    workLocationId: number | null | undefined,
+  ): Promise<number | null> {
+    const locId = Number(workLocationId);
+    if (!Number.isFinite(locId) || locId <= 0) {
+      return null;
+    }
+    const location = await this.fetchLocation(locId);
+    const companyId = Number(location?.company_id ?? location?.companyId);
+    return Number.isFinite(companyId) && companyId > 0 ? companyId : null;
+  }
+
+  private async findOperationalSupplierByCompanyId(
+    companyId: number,
+  ): Promise<{ id: number; supplier_name: string } | null> {
+    const byOwner = await this.supplierRepo.findOne({
+      where: { owner_company_id: companyId },
+      select: ['id', 'supplier_name'],
+    });
+    if (byOwner) {
+      return { id: byOwner.id, supplier_name: byOwner.supplier_name };
+    }
+
+    const productRow = await this.supplierProductRepo
+      .createQueryBuilder('sp')
+      .innerJoinAndSelect('sp.supplier', 'supplier')
+      .where('sp.company_id = :companyId', { companyId })
+      .orderBy('sp.id', 'ASC')
+      .getOne();
+    if (productRow?.supplier) {
+      return {
+        id: productRow.supplier.id,
+        supplier_name: productRow.supplier.supplier_name,
+      };
+    }
+
+    return null;
+  }
+
   async findMySupplierForFurnizorTenant(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
+    roles?: string[] | null,
+    options?: {
+      workLocationId?: number | null;
+      employeeId?: number | null;
+    },
   ): Promise<{ id: number; supplier_name: string }> {
-    if (companyType !== 'furnizor') {
+    let resolvedCompanyId = Number(companyId);
+    if (!Number.isFinite(resolvedCompanyId) || resolvedCompanyId <= 0) {
+      resolvedCompanyId =
+        (await this.resolveCompanyIdFromWorkLocation(options?.workLocationId)) ??
+        Number.NaN;
+    }
+
+    if (Number.isFinite(resolvedCompanyId) && resolvedCompanyId > 0) {
+      const supplier = await this.findOperationalSupplierByCompanyId(
+        resolvedCompanyId,
+      );
+      if (supplier) {
+        return supplier;
+      }
+    }
+
+    const employeeId = Number(options?.employeeId);
+    if (Number.isFinite(employeeId) && employeeId > 0) {
+      const supplierIds = await this.getEmployeeSupplierIds(employeeId);
+      if (supplierIds.length === 1) {
+        const supplier = await this.supplierRepo.findOne({
+          where: { id: supplierIds[0] },
+          select: ['id', 'supplier_name'],
+        });
+        if (supplier) {
+          return { id: supplier.id, supplier_name: supplier.supplier_name };
+        }
+      }
+    }
+
+    const normalizedType = resolveCompanyTypeFromAuth(companyType, roles);
+    if (normalizedType !== 'furnizor') {
       throw new ForbiddenException(
         'Doar conturile de tip furnizor pot accesa furnizorul operațional asociat',
       );
     }
 
-    const resolvedCompanyId = Number(companyId);
     if (!Number.isFinite(resolvedCompanyId) || resolvedCompanyId <= 0) {
       throw new ForbiddenException(
         'Contextul companiei furnizor lipsește din sesiune',
       );
     }
 
-    const supplier = await this.supplierRepo.findOne({
-      where: { owner_company_id: resolvedCompanyId },
-      select: ['id', 'supplier_name'],
-    });
-
-    if (!supplier) {
-      throw new NotFoundException(
-        'Nu există un furnizor operațional asociat acestei companii',
-      );
-    }
-
-    return { id: supplier.id, supplier_name: supplier.supplier_name };
+    throw new NotFoundException(
+      'Nu există un furnizor operațional asociat acestei companii',
+    );
   }
 
   /**
@@ -1881,10 +2048,17 @@ export class SuppliersService {
   async findMySupplierProfileForFurnizorTenant(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
+    roles?: string[] | null,
+    options?: {
+      workLocationId?: number | null;
+      employeeId?: number | null;
+    },
   ): Promise<Supplier> {
     const summary = await this.findMySupplierForFurnizorTenant(
       companyId,
       companyType,
+      roles,
+      options,
     );
     return this.findOne(summary.id, undefined);
   }
@@ -4827,7 +5001,7 @@ export class SuppliersService {
 
     const usersMap = new Map<number, string>();
     const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
 
     for (const userId of userIds) {
       try {
@@ -4896,7 +5070,7 @@ export class SuppliersService {
 
     const usersMap = new Map<number, string>();
     const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
 
     if (userIds.length > 0) {
       try {
@@ -5079,7 +5253,7 @@ export class SuppliersService {
         const userIds = Array.from(new Set(Array.from(aggregated.values()).map(v => v.user_id).filter(id => id > 0)));
         const usersMap = new Map<number, { first_name?: string; last_name?: string; employee_id?: number }>();
         const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
+        const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
         
         for (const userId of userIds) {
           try {
@@ -5524,7 +5698,7 @@ export class SuppliersService {
     // Obține informații despre angajați din users -> id_employee -> employees
     // Similar cu ce am făcut pentru revenues în locations service
     const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'restosoft_employees';
+    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
     
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching employee data for ${userIds.length} users via users -> employees`);
     
@@ -5708,12 +5882,7 @@ export class SuppliersService {
     if (userIds.length > 0) {
       const serviceSecret = process.env.SERVICE_SECRET || '';
       const headers = { 'x-internal-service': 'suppliers', 'x-service-secret': serviceSecret };
-      let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
-        const portMatch = employeesServiceUrl.match(/:(\d+)/);
-        const port = portMatch ? portMatch[1] : '3012';
-        employeesServiceUrl = `http://localhost:${port}`;
-      }
+      let employeesServiceUrl = this.getEmployeesServiceUrl();
       for (const uid of userIds) {
         try {
           const resp: any = await firstValueFrom(this.httpService.get(`${employeesServiceUrl}/employees/${uid}`, { headers }));
@@ -5863,7 +6032,7 @@ export class SuppliersService {
   }
 
   /**
-   * Batch paginat pentru dashboard furnizor (max 15 / pagină).
+   * Batch paginat pentru dashboard furnizor și detaliu furnizor (max 20 / pagină).
    */
   async getSupplierOrdersBatchPaginated(
     supplierIds: number[],

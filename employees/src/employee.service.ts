@@ -653,7 +653,17 @@ export class EmployeeService {
   async findByIdsBasic(
     ids: number[],
   ): Promise<
-    Array<Pick<Employee, "id" | "first_name" | "last_name" | "email">>
+    Array<
+      Pick<
+        Employee,
+        | "id"
+        | "first_name"
+        | "last_name"
+        | "email"
+        | "work_location_default_id"
+        | "is_active"
+      >
+    >
   > {
     if (!ids || ids.length === 0) {
       return [];
@@ -663,7 +673,14 @@ export class EmployeeService {
 
     const employees = await this.employeeRepository.find({
       where: { id: In(uniqueIds) },
-      select: ["id", "first_name", "last_name", "email"],
+      select: [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "work_location_default_id",
+        "is_active",
+      ],
     });
 
     return employees;

@@ -88,6 +88,14 @@ export class CreateSupplierDto {
   @IsNumber()
   @IsOptional()
   location_id?: number;
+
+  @ApiProperty({
+    required: false,
+    description: 'ID companie tenant furnizor (companies.id); setat intern la înregistrare',
+  })
+  @IsNumber()
+  @IsOptional()
+  owner_company_id?: number;
 }
 
 

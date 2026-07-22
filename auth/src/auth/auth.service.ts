@@ -1,4 +1,6 @@
-import { Injectable, UnauthorizedException, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, BadRequestException, NotFoundException, ConflictException, InternalServerErrorException } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { JwtService } from '@nestjs/jwt';
@@ -9,6 +11,7 @@ import { TokenRotationService } from '../common/security/token-rotation.service'
 import { SecurityAlertsService, SecurityEventType } from '../common/security/security-alerts.service';
 import { AnomalyDetectionService } from '../common/security/anomaly-detection.service';
 import { TwoFactorAuthService } from '../2fa-auth/2fa-auth.service';
+import { RegisterSupplierDto } from './dto/register-supplier.dto';
 import * as bcrypt from 'bcryptjs';
 
 
@@ -27,7 +30,8 @@ export class AuthService {
     private tokenRotationService: TokenRotationService,
     private securityAlertsService: SecurityAlertsService,
     private anomalyDetectionService: AnomalyDetectionService,
-    private twoFactorAuthService: TwoFactorAuthService
+    private twoFactorAuthService: TwoFactorAuthService,
+    private readonly httpService: HttpService,
   ) {}
 
   async signIn(
@@ -359,4 +363,398 @@ export class AuthService {
     // For any other URL, return as is
     return profileImageUrl;
   }
-} 
+
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      'X-Internal-Service': 'auth-service',
+      'X-Service-Secret': process.env.SERVICE_SECRET || '',
+    };
+  }
+
+  private companiesUrl(): string {
+    return process.env.COMPANIES_HTTP_URL || 'http://localhost:3003';
+  }
+
+  private locationsUrl(): string {
+    return process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+  }
+
+  private employeesUrl(): string {
+    return process.env.EMPLOYEES_SERVICE_URL || 'http://localhost:3011';
+  }
+
+  private suppliersUrl(): string {
+    return process.env.SUPPLIERS_HTTP_URL || 'http://localhost:3007';
+  }
+
+  private unwrapPayload<T>(data: unknown): T {
+    if (data && typeof data === 'object' && 'data' in (data as object)) {
+      return (data as { data: T }).data;
+    }
+    return data as T;
+  }
+
+  private extractErrorMessage(error: unknown): string {
+    const err = error as {
+      response?: { data?: { message?: string | string[] } };
+      message?: string;
+    };
+    const msg = err?.response?.data?.message;
+    if (Array.isArray(msg)) return msg.join(', ');
+    if (typeof msg === 'string' && msg.trim()) return msg;
+    if (typeof err?.message === 'string') return err.message;
+    return 'Eroare necunoscută';
+  }
+
+  async getRegisterSupplierCompanies(): Promise<{ id: number; name: string }[]> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${this.companiesUrl()}/companies/internal/furnizor-dropdown`,
+          { headers: this.internalServiceHeaders() },
+        ),
+      );
+      const payload = this.unwrapPayload<{ id: number; name: string }[]>(
+        response.data,
+      );
+      return Array.isArray(payload) ? payload : [];
+    } catch (error) {
+      this.logger.error(
+        `Eroare la încărcarea companiilor furnizor: ${this.extractErrorMessage(error)}`,
+      );
+      throw new InternalServerErrorException(
+        'Nu s-au putut încărca companiile furnizor',
+      );
+    }
+  }
+
+  async getRegisterSupplierLocations(
+    companyId: number,
+  ): Promise<{ id: number; name: string }[]> {
+    const parsedCompanyId = Number(companyId);
+    if (!Number.isFinite(parsedCompanyId) || parsedCompanyId <= 0) {
+      throw new BadRequestException('ID companie invalid');
+    }
+
+    await this.assertFurnizorCompany(parsedCompanyId);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${this.locationsUrl()}/locations/company/${parsedCompanyId}`,
+          { headers: this.internalServiceHeaders() },
+        ),
+      );
+      const locations = this.unwrapPayload<
+        Array<{ id: number; location_name: string }>
+      >(response.data);
+      if (!Array.isArray(locations)) return [];
+      return locations.map((loc) => ({
+        id: loc.id,
+        name: loc.location_name,
+      }));
+    } catch (error) {
+      this.logger.error(
+        `Eroare la încărcarea locațiilor pentru compania ${parsedCompanyId}: ${this.extractErrorMessage(error)}`,
+      );
+      throw new InternalServerErrorException(
+        'Nu s-au putut încărca locațiile companiei',
+      );
+    }
+  }
+
+  private async assertFurnizorCompany(companyId: number): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.companiesUrl()}/companies/${companyId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const company = this.unwrapPayload<{
+        id: number;
+        company_type?: string;
+      }>(response.data);
+      if (!company?.id) {
+        throw new NotFoundException('Compania selectată nu există');
+      }
+      const companyType = String(
+        company.company_type ?? '',
+      ).toLowerCase();
+      if (companyType !== 'furnizor') {
+        throw new BadRequestException(
+          'Compania selectată nu este de tip furnizor',
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 404) {
+        throw new NotFoundException('Compania selectată nu există');
+      }
+      throw new InternalServerErrorException(
+        'Nu s-a putut verifica compania selectată',
+      );
+    }
+  }
+
+  private async assertLocationBelongsToCompany(
+    locationId: number,
+    companyId: number,
+  ): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${this.locationsUrl()}/locations/${locationId}`,
+          { headers: this.internalServiceHeaders() },
+        ),
+      );
+      const location = this.unwrapPayload<{
+        id: number;
+        company_id?: number;
+        companyId?: number;
+      }>(response.data);
+      if (!location?.id) {
+        throw new NotFoundException('Locația selectată nu există');
+      }
+      const locCompanyId = Number(
+        location.company_id ?? location.companyId,
+      );
+      if (!Number.isFinite(locCompanyId) || locCompanyId !== companyId) {
+        throw new BadRequestException(
+          'Locația selectată nu aparține companiei alese',
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 404) {
+        throw new NotFoundException('Locația selectată nu există');
+      }
+      throw new InternalServerErrorException(
+        'Nu s-a putut verifica locația selectată',
+      );
+    }
+  }
+
+  private async deleteSupplierInternal(supplierId: number): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(`${this.suppliersUrl()}/suppliers/${supplierId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Rollback: nu s-a putut șterge supplier ${supplierId}: ${this.extractErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private async deleteEmployeeInternal(employeeId: number): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(
+          `${this.employeesUrl()}/employees/${employeeId}`,
+          { headers: this.internalServiceHeaders() },
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Rollback: nu s-a putut șterge employee ${employeeId}: ${this.extractErrorMessage(error)}`,
+      );
+    }
+  }
+
+  async registerSupplier(
+    dto: RegisterSupplierDto,
+  ): Promise<{ message: string; employee_id: number; supplier_id: number }> {
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Parolele nu coincid');
+    }
+
+    const companyId = Number(dto.company_id);
+    const locationId = Number(dto.location_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new BadRequestException('ID companie invalid');
+    }
+    if (!Number.isFinite(locationId) || locationId <= 0) {
+      throw new BadRequestException('ID locație invalid');
+    }
+
+    await this.assertFurnizorCompany(companyId);
+    await this.assertLocationBelongsToCompany(locationId, companyId);
+
+    const furnizorRole = await this.usersService.findRoleByName('furnizor');
+    if (!furnizorRole) {
+      throw new InternalServerErrorException(
+        'Rolul furnizor lipsește din sistem. Contactați administratorul.',
+      );
+    }
+
+    let supplierId: number | null = null;
+    let employeeId: number | null = null;
+    let userId: number | null = null;
+
+    try {
+      const supplierPayload = {
+        ...dto.supplier,
+        is_active: true,
+        owner_company_id: companyId,
+      };
+
+      let supplierResponse;
+      try {
+        supplierResponse = await firstValueFrom(
+          this.httpService.post(
+            `${this.suppliersUrl()}/suppliers?location_id=${locationId}`,
+            supplierPayload,
+            {
+              headers: {
+                ...this.internalServiceHeaders(),
+                'x-work-location-id': String(locationId),
+              },
+            },
+          ),
+        );
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/duplicat|duplicate|există deja/i.test(message)) {
+          if (/vat|cif|fiscal/i.test(message)) {
+            throw new ConflictException('Există deja un furnizor cu acest CUI/CIF');
+          }
+          throw new ConflictException('Există deja un furnizor cu aceste date');
+        }
+        if (/owner_company|UQ_suppliers_owner_company/i.test(message)) {
+          throw new ConflictException(
+            'Compania furnizor are deja un furnizor operațional asociat',
+          );
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea furnizorul',
+        );
+      }
+
+      const supplier = this.unwrapPayload<{ id: number }>(
+        supplierResponse.data,
+      );
+      supplierId = Number(supplier?.id);
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        throw new InternalServerErrorException(
+          'Răspuns invalid de la serviciul furnizori',
+        );
+      }
+
+      const employeePayload = {
+        ...dto.employee,
+        work_location_default_id: locationId,
+        is_active: true,
+      };
+
+      let employeeResponse;
+      try {
+        employeeResponse = await firstValueFrom(
+          this.httpService.post(
+            `${this.employeesUrl()}/employees?location_id=${locationId}`,
+            employeePayload,
+            {
+              headers: {
+                ...this.internalServiceHeaders(),
+                'x-work-location-id': String(locationId),
+              },
+            },
+          ),
+        );
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/email există deja|email already/i.test(message)) {
+          throw new ConflictException(
+            'Există deja un angajat cu acest email',
+          );
+        }
+        if (/cnp|personal_number/i.test(message)) {
+          throw new ConflictException('Există deja un angajat cu acest CNP');
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea angajatul',
+        );
+      }
+
+      const employee = this.unwrapPayload<{ id: number }>(
+        employeeResponse.data,
+      );
+      employeeId = Number(employee?.id);
+      if (!Number.isFinite(employeeId) || employeeId <= 0) {
+        throw new InternalServerErrorException(
+          'Răspuns invalid de la serviciul angajați',
+        );
+      }
+
+      let user;
+      try {
+        user = await this.usersService.create({
+          id_employee: employeeId,
+          password: dto.password,
+          is_active: true,
+          is_2fa: false,
+        });
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/există deja/i.test(message)) {
+          throw new ConflictException(
+            'Există deja un cont pentru acest angajat',
+          );
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea contul utilizator',
+        );
+      }
+      userId = user.id;
+
+      try {
+        await this.usersService.createUserRole({
+          userId: user.id,
+          roleId: furnizorRole.id,
+        });
+      } catch (error) {
+        throw new InternalServerErrorException(
+          `Nu s-a putut atribui rolul furnizor: ${this.extractErrorMessage(error)}`,
+        );
+      }
+
+      return {
+        message: 'Contul de furnizor a fost creat cu succes',
+        employee_id: employeeId,
+        supplier_id: supplierId,
+      };
+    } catch (error) {
+      if (userId != null && employeeId != null) {
+        try {
+          await this.usersService.remove(employeeId);
+        } catch (rollbackErr) {
+          this.logger.warn(
+            `Rollback user eșuat: ${this.extractErrorMessage(rollbackErr)}`,
+          );
+        }
+      }
+      if (employeeId != null) {
+        await this.deleteEmployeeInternal(employeeId);
+      }
+      if (supplierId != null) {
+        await this.deleteSupplierInternal(supplierId);
+      }
+      throw error;
+    }
+  }
+}

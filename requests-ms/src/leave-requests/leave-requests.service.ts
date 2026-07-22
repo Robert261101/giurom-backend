@@ -256,16 +256,23 @@ export class LeaveRequestsService implements OnModuleInit {
       queryBuilder.andWhere('lr.leave_type LIKE :leaveType', { leaveType: `%${filters.leave_type}%` });
     }
 
-    // Filtrare pe perioada
+    // Filtrare pe perioada (overlap: concediile care intersectează intervalul)
     if (filters.start_date && filters.end_date) {
+      const startDate = new Date(filters.start_date);
+      const endDate = new Date(filters.end_date);
+      endDate.setHours(23, 59, 59, 999);
       queryBuilder.andWhere(
-        'lr.start_datetime >= :startDate AND lr.end_datetime <= :endDate',
-        { startDate: new Date(filters.start_date), endDate: new Date(filters.end_date) }
+        'lr.start_datetime <= :endDate AND lr.end_datetime >= :startDate',
+        { startDate, endDate },
       );
     } else if (filters.start_date) {
-      queryBuilder.andWhere('lr.start_datetime >= :startDate', { startDate: new Date(filters.start_date) });
+      queryBuilder.andWhere('lr.end_datetime >= :startDate', {
+        startDate: new Date(filters.start_date),
+      });
     } else if (filters.end_date) {
-      queryBuilder.andWhere('lr.end_datetime <= :endDate', { endDate: new Date(filters.end_date) });
+      const endDate = new Date(filters.end_date);
+      endDate.setHours(23, 59, 59, 999);
+      queryBuilder.andWhere('lr.start_datetime <= :endDate', { endDate });
     }
 
     // Filtrare pe reviewer

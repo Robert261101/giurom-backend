@@ -12,6 +12,7 @@ export function buildSupplierProductUserContext(user?: {
   company_id?: number | null;
   company_type?: string | null;
   permissions?: string[];
+  roles?: string[];
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
 }): SupplierProductUserContext {
@@ -22,12 +23,31 @@ export function buildSupplierProductUserContext(user?: {
       : null;
   return {
     companyId,
-    companyType:
-      typeof user?.company_type === 'string' ? user.company_type : null,
+    companyType: resolveCompanyTypeFromAuth(
+      user?.company_type,
+      user?.roles,
+    ),
     permissions: Array.isArray(user?.permissions) ? user.permissions : [],
     isAdmin: user?.isAdmin === true,
     isSuperAdmin: user?.isSuperAdmin === true,
   };
+}
+
+export function resolveCompanyTypeFromAuth(
+  companyType: string | null | undefined,
+  roles?: string[] | null,
+): 'furnizor' | 'client' | null {
+  const normalized =
+    typeof companyType === 'string' ? companyType.toLowerCase().trim() : null;
+  if (normalized === 'furnizor' || normalized === 'client') {
+    return normalized;
+  }
+  const roleNames = Array.isArray(roles)
+    ? roles.map((role) => String(role).toLowerCase().trim())
+    : [];
+  if (roleNames.includes('furnizor')) return 'furnizor';
+  if (roleNames.includes('client')) return 'client';
+  return null;
 }
 
 export function isAdminOrSuperAdminFromPermissions(
