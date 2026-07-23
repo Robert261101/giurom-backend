@@ -12,8 +12,20 @@ const PORT = process.env.PORT || 3002;
 const target = (defaultUrl, envKey) =>
   (process.env[envKey] || defaultUrl).replace(/\/$/, "");
 
-app.use(bodyParser.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
+function isSocketIoRequest(req) {
+  const url = req.originalUrl || req.url || "";
+  return /\/socket\.io(\/|\?|$)/.test(url);
+}
+
+// Socket.IO folosește body text/plain — bodyParser + rescrierea JSON din onProxyReq corupe pachetele (POST 400).
+app.use((req, res, next) => {
+  if (isSocketIoRequest(req)) return next();
+  bodyParser.json({ limit: "10mb" })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (isSocketIoRequest(req)) return next();
+  bodyParser.urlencoded({ limit: "10mb", extended: true })(req, res, next);
+});
 
 // IP-ul public al serverului — configurabil via env, cu fallback la valoarea curentă (nu se schimbă comportamentul implicit).
 const PUBLIC_SERVER_IP = process.env.PUBLIC_SERVER_IP || "89.46.6.45";
@@ -286,7 +298,11 @@ Object.keys(microservices).forEach((path) => {
       });
 
       // Forward body for POST/PUT/PATCH so downstream never waits for missing body (inclusiv body "{}").
+      // Socket.IO polling: lasă http-proxy să pipe-uiască body-ul raw (altfel POST → 400 Bad Request).
       try {
+        if (isSocketIoRequest(req)) {
+          return;
+        }
         if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
           const bodyData = JSON.stringify(req.body != null ? req.body : {});
           if (!proxyReq.getHeader("content-type")) {
