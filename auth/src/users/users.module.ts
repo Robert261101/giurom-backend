@@ -9,11 +9,13 @@ import { Role } from './entities/role.entity';
 import { Permission } from './entities/permission.entity';
 import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
+import { GuardsModule } from '../guards/guards.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Role, Permission, UserRole, RolePermission]),
-    HttpModule
+    HttpModule,
+    GuardsModule,
   ],
   controllers: [UsersController, UsersMicroController],
   providers: [UsersService],

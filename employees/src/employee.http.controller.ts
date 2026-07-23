@@ -134,6 +134,50 @@ export class EmployeeHttpController {
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const user = req?.user;
     const perms = (user?.permissions as string[]) || [];
+    const roles = ((user?.roles as string[]) || []).map((r) =>
+      String(r).toLowerCase().trim(),
+    );
+    const isGlobalAdmin =
+      perms.includes("assignment.read_all") ||
+      roles.includes("admin") ||
+      roles.includes("super-admin") ||
+      roles.includes("superadmin") ||
+      Boolean(req?.bypassAuth);
+
+    const companyId = Number(user?.company_id);
+    const hasValidCompany =
+      Number.isFinite(companyId) && companyId > 0;
+
+    // Tenant non-global: doar angajații propriei companii (nu avem încredere în company_id din query)
+    if (user && !isGlobalAdmin && hasValidCompany) {
+      let employees = await this.employeeService.findAllByCompany(companyId);
+      const isActiveFilter =
+        is_active !== undefined ? is_active === "true" : undefined;
+      if (isActiveFilter !== undefined) {
+        employees = employees.filter((e) => Boolean(e.is_active) === isActiveFilter);
+      }
+      const locRaw = location_id || work_location_id;
+      if (locRaw != null && String(locRaw).trim() !== "") {
+        const locId = parseInt(String(locRaw), 10);
+        if (Number.isFinite(locId) && locId > 0) {
+          await this.employeeService.assertLocationInCompany(locId, companyId);
+          const atLocation = await this.employeeService.findForOwn(locId);
+          const idSet = new Set(atLocation.map((e) => e.id));
+          employees = employees.filter((e) => idSet.has(e.id));
+        }
+      }
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+      const total = employees.length;
+      const start = (pageNum - 1) * limitNum;
+      const slice = employees.slice(start, start + limitNum);
+      return {
+        employees: slice,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limitNum) || 1),
+      };
+    }
+
     const hasReadOwn =
       perms.includes("employees.read_own") || perms.includes("order.read");
     const hasRead = perms.includes("employees.read");
@@ -985,8 +1029,33 @@ export class EmployeeHttpController {
   @ApiParam({ name: "companyId", description: "ID-ul companiei" })
   @ApiResponse({ status: 200, description: "Lista angajaților companiei" })
   async getEmployeesByCompany(
+    @Request() req: any,
     @Param("companyId", ParseIntPipe) companyId: number,
   ) {
+    const user = req?.user;
+    if (!req?.bypassAuth && user) {
+      const perms = (user?.permissions as string[]) || [];
+      const roles = ((user?.roles as string[]) || []).map((r: string) =>
+        String(r).toLowerCase().trim(),
+      );
+      const isGlobalAdmin =
+        perms.includes("assignment.read_all") ||
+        roles.includes("admin") ||
+        roles.includes("super-admin") ||
+        roles.includes("superadmin");
+      if (!isGlobalAdmin) {
+        const jwtCompanyId = Number(user.company_id);
+        if (
+          !Number.isFinite(jwtCompanyId) ||
+          jwtCompanyId <= 0 ||
+          jwtCompanyId !== companyId
+        ) {
+          throw new ForbiddenException(
+            "Nu puteți lista angajații unei alte companii",
+          );
+        }
+      }
+    }
     return this.employeeService.findAllByCompany(companyId);
   }
 

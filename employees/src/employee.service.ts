@@ -450,25 +450,35 @@ export class EmployeeService {
 
   // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
   async findAllByCompany(companyId: number): Promise<Employee[]> {
-    // 1) Preia toate locațiile companiei din microserviciul locations
+    // 1) Preia toate locațiile companiei — endpoint dedicat (nu GET /locations?company_id=, care e ignorat)
     const baseUrl = process.env.LOCATIONS_HTTP_URL || "http://localhost:3004";
     let locationIds: number[] = [];
     try {
-      const resp = await axios.get(`${baseUrl}/locations`, {
-        params: { company_id: companyId },
-        headers: {
-          "x-internal-service": "employees",
-          "x-service-secret":
-            process.env.SERVICE_SECRET || '',
-          "Content-Type": "application/json",
+      const resp = await axios.get(
+        `${baseUrl}/locations/company/${companyId}`,
+        {
+          headers: {
+            "x-internal-service": "employees",
+            "x-service-secret":
+              process.env.SERVICE_SECRET || "",
+            "Content-Type": "application/json",
+          },
+          timeout: 8000,
         },
-      });
-      const locations = (resp.data?.locations || resp.data || []) as any[];
+      );
+      const locations = (
+        Array.isArray(resp.data)
+          ? resp.data
+          : resp.data?.locations || resp.data?.data || []
+      ) as any[];
       locationIds = locations
-        .map((l: any) => l.id)
-        .filter((id: any) => typeof id === "number");
+        .map((l: any) => Number(l?.id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
     } catch (e) {
-      // Dacă microserviciul nu răspunde, întoarce gol (nicio locație -> niciun angajat)
+      console.error(
+        `[EMPLOYEES] findAllByCompany: failed to load locations for company ${companyId}:`,
+        (e as Error)?.message || e,
+      );
       return [];
     }
 
@@ -478,10 +488,10 @@ export class EmployeeService {
     const qb = this.employeeRepository
       .createQueryBuilder("employee")
       .leftJoin("employee.employeeLocations", "el")
-      .where("employee.work_location_default_id IN (:...locIds)", {
-        locIds: locationIds,
-      })
-      .orWhere("el.idLocation IN (:...locIds)", { locIds: locationIds })
+      .where(
+        "(employee.work_location_default_id IN (:...locIds) OR el.idLocation IN (:...locIds))",
+        { locIds: locationIds },
+      )
       .orderBy("employee.created_at", "DESC")
       .distinct(true);
 
