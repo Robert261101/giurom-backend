@@ -38,6 +38,19 @@ export class CompanyService {
   private getCompanyFilesRootDir(): string {
     return path.join(this.getRepoRoot(), 'files', 'companies');
   }
+
+  /**
+   * Verifică că fullPath (deja rezolvat cu path.resolve) rămâne strict în interiorul lui baseDir —
+   * blochează path traversal (ex. folder/path="../../etc/passwd" din query/body, controlat de client).
+   * Compară cu path.sep la final ca "baseDir-evil" să nu treacă ca fiind în interiorul "baseDir".
+   */
+  private assertPathWithinBase(fullPath: string, baseDir: string): void {
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedFull = path.resolve(fullPath);
+    if (resolvedFull !== resolvedBase && !resolvedFull.startsWith(resolvedBase + path.sep)) {
+      throw new NotFoundException('Cale invalidă');
+    }
+  }
   /**
    * Creează pe server structura obligatorie: files/companies/[nume companie]/ și Locații/.
    * La crearea unei locații se vor crea obligatoriu sub Locații/[nume locație]/ folderele Angajați și Furnizori.
@@ -160,14 +173,16 @@ export class CompanyService {
         // Create folder directory if specified - inside the "Companie" folder
         let folderPath = '';
         if (doc.folder) {
-          folderPath = path.join(companyDir, 'Companie', doc.folder);
+          const companieBaseDir = path.join(companyDir, 'Companie');
+          folderPath = path.join(companieBaseDir, doc.folder);
+          this.assertPathWithinBase(folderPath, companieBaseDir);
           if (!fs.existsSync(folderPath)) {
             fs.mkdirSync(folderPath, { recursive: true });
           }
         }
 
         let locationPath = doc.location_path || '';
-        
+
         // If document has content, save it to disk
         if (doc.content) {
           try {
@@ -176,11 +191,12 @@ export class CompanyService {
             if (base64Data.includes(',')) {
               base64Data = base64Data.split(',')[1];
             }
-            
+
             const fileName = doc.fileName || doc.document_name || `document_${Date.now()}.txt`;
             // Save file in folder directory if specified, otherwise in company directory
             const filePath = folderPath ? path.join(folderPath, fileName) : path.join(companyDir, fileName);
-            
+            this.assertPathWithinBase(filePath, folderPath || companyDir);
+
             const buffer = Buffer.from(base64Data, 'base64');
             fs.writeFileSync(filePath, buffer);
             
@@ -368,14 +384,16 @@ export class CompanyService {
     // Create folder directory if specified - inside the "Companie" folder
     let folderPath = '';
     if (dto.folder) {
-      folderPath = path.join(companyDir, 'Companie', dto.folder);
+      const companieBaseDir = path.join(companyDir, 'Companie');
+      folderPath = path.join(companieBaseDir, dto.folder);
+      this.assertPathWithinBase(folderPath, companieBaseDir);
       if (!fs.existsSync(folderPath)) {
         fs.mkdirSync(folderPath, { recursive: true });
       }
     }
 
     let locationPath = dto.location_path || '';
-    
+
     // If document has content, save it to disk
     if (dto.file_content) {
       try {
@@ -384,11 +402,12 @@ export class CompanyService {
         if (base64Data.includes(',')) {
           base64Data = base64Data.split(',')[1];
         }
-        
+
         const fileName = dto.document_name;
         // Save file in folder directory if specified, otherwise in company directory
         const filePath = folderPath ? path.join(folderPath, fileName) : path.join(companyDir, fileName);
-        
+        this.assertPathWithinBase(filePath, folderPath || companyDir);
+
         const buffer = Buffer.from(base64Data, 'base64');
         fs.writeFileSync(filePath, buffer);
         
@@ -452,7 +471,8 @@ export class CompanyService {
       const basePath = this.getCompanyFilesRootDir();
       const relativePath = document.location_path.replace('/files/companies/', '');
       const filePath = path.join(basePath, relativePath);
-      
+      this.assertPathWithinBase(filePath, basePath);
+
       // Remove the physical file if it exists
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
@@ -476,7 +496,8 @@ export class CompanyService {
     const basePath = this.getCompanyFilesRootDir();
     const relativePath = document.location_path.replace('/files/companies/', '');
     const filePath = path.join(basePath, relativePath);
-    
+    this.assertPathWithinBase(filePath, basePath);
+
     if (!fs.existsSync(filePath)) {
       throw new NotFoundException('Fișierul nu a fost găsit pe disk');
     }
@@ -580,6 +601,7 @@ export class CompanyService {
     const companyDir = path.join(rootDir, company.company_name);
     const companieDir = path.join(companyDir, 'Companie');
     const folderPath = path.resolve(path.join(companieDir, folder.trim()));
+    this.assertPathWithinBase(folderPath, companieDir);
 
     try {
       if (!fs.existsSync(companyDir)) fs.mkdirSync(companyDir, { recursive: true });
@@ -603,7 +625,7 @@ export class CompanyService {
     const companyDir = path.join(rootDir, company.company_name);
     const companieDir = path.join(companyDir, 'Companie');
     const folderPath = path.resolve(path.join(companieDir, folder.trim()));
-    if (!folderPath.startsWith(companieDir)) throw new Error('Cale invalidă');
+    this.assertPathWithinBase(folderPath, companieDir);
     if (!fs.existsSync(folderPath)) return;
     fs.rmSync(folderPath, { recursive: true });
   }
@@ -853,7 +875,8 @@ export class CompanyService {
     }
     
     const fullFolderPath = path.join(companyDir, correctedFolderPath);
-    
+    this.assertPathWithinBase(fullFolderPath, companyDir);
+
     if (!fs.existsSync(fullFolderPath) || !fs.statSync(fullFolderPath).isDirectory()) {
       return [];
     }
@@ -926,15 +949,16 @@ export class CompanyService {
     
     // Build full path to the file
     const fullFilePath = path.join(companyDir, filePath);
-    
+    this.assertPathWithinBase(fullFilePath, companyDir);
+
     if (!fs.existsSync(fullFilePath) || !fs.statSync(fullFilePath).isFile()) {
       throw new NotFoundException('Fișierul nu a fost găsit');
     }
-    
+
     const fileName = path.basename(fullFilePath);
     const mimeType = this.getMimeType(fileName);
     const fileBuffer = fs.readFileSync(fullFilePath);
-    
+
     return {
       data: fileBuffer.toString('base64'),
       mimeType,
