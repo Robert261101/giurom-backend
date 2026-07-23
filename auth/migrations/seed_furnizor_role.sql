@@ -11,6 +11,7 @@ SELECT v.name, v.grp, v.descr FROM (
   SELECT 'locations.update' AS name, 'locations' AS grp, 'Permite editarea locațiilor' AS descr
   UNION ALL SELECT 'users.read', 'users', 'Vizualizare conturi de autentificare'
   UNION ALL SELECT 'users.create', 'users', 'Creare conturi de autentificare'
+  UNION ALL SELECT 'products.read', 'products', 'Vizualizare produse stoc'
 ) v
 WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.name = v.name);
 
@@ -22,12 +23,14 @@ WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'furnizor');
 -- 3. Leagă permisiunile de rolul "furnizor"
 -- companies.read_own / locations.read sunt necesare doar ca sa vada propria
 -- companie/locatii (fara ele, pagina principala da 403 la incarcare).
+-- products.read / stock.read sunt necesare pentru pagina de stoc/produse proprii.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON p.name IN (
   'locations.update', 'users.read', 'users.create',
-  'companies.read_own', 'locations.read'
+  'companies.read_own', 'locations.read',
+  'products.read', 'stock.read'
 )
 WHERE r.name = 'furnizor'
   AND NOT EXISTS (
