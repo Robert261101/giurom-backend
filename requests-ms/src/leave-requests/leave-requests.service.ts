@@ -420,7 +420,9 @@ export class LeaveRequestsService implements OnModuleInit {
   }
 
   // Obținere cerere specifică
-  async findOne(id: number, currentUserId?: number): Promise<LeaveRequest> {
+  // Notă securitate: identitatea vine STRICT din JWT (user), niciodată dintr-un header
+  // trimis de client (x-user-id era falsificabil/omisibil de client).
+  async findOne(id: number, user?: LeaveAccessUser): Promise<LeaveRequest> {
     const leaveRequest = await this.leaveRequestRepo.findOne({
       where: { id },
       // Employee relations removed - using HTTP calls to employees microservice
@@ -431,10 +433,13 @@ export class LeaveRequestsService implements OnModuleInit {
       throw new NotFoundException('Cererea de concediu nu a fost găsită');
     }
 
-    // Autorizare: angajatul poate vedea doar propriile cereri (dacă user e furnizat)
-    if (currentUserId != null && leaveRequest.employee_id !== currentUserId) {
-      this.logger.warn(`User ${currentUserId} attempted to access leave request ${id} of employee ${leaveRequest.employee_id}`);
-      throw new ForbiddenException('Nu ai permisiunea să vezi această cerere de concediu');
+    // Autorizare: adminii de concedii văd tot; restul doar propriile cereri.
+    if (user && !isLeaveAdminUser(user)) {
+      const currentUserId = getCanonicalEmployeeId(user);
+      if (currentUserId != null && leaveRequest.employee_id !== currentUserId) {
+        this.logger.warn(`User ${currentUserId} attempted to access leave request ${id} of employee ${leaveRequest.employee_id}`);
+        throw new ForbiddenException('Nu ai permisiunea să vezi această cerere de concediu');
+      }
     }
 
     return leaveRequest;
@@ -449,14 +454,21 @@ export class LeaveRequestsService implements OnModuleInit {
   ): Promise<LeaveRequest> {
     const leaveRequest = await this.findOne(id);
 
+    // Notă securitate: cine aprobă vine STRICT din JWT, nu din dto.reviewed_by_id
+    // (trimis de client) — altfel un aprobator putea atribui decizia oricărui alt
+    // angajat, falsificând jurnalul de audit sau ocolind verificarea "nu-ți aproba
+    // propria cerere". dto.reviewed_by_id rămâne fallback doar pentru apeluri fără user
+    // (intern/internal-service).
+    const reviewedById = (user ? getCanonicalEmployeeId(user) : null) ?? dto.reviewed_by_id;
+
     // Verifică dacă reviewerul există prin HTTP call către microserviciul employees
     try {
-      await this.fetchEmployeeById(dto.reviewed_by_id);
+      await this.fetchEmployeeById(reviewedById);
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
-      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
+      this.logger.error(`Reviewer with ID ${reviewedById} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
@@ -482,15 +494,15 @@ export class LeaveRequestsService implements OnModuleInit {
     }
 
     // Verifică dacă nu încearcă să-și aprobe propria cerere
-    if (leaveRequest.employee_id === dto.reviewed_by_id) {
-      this.logger.error(`Employee ${dto.reviewed_by_id} attempted to review their own leave request ${id}`);
+    if (leaveRequest.employee_id === reviewedById) {
+      this.logger.error(`Employee ${reviewedById} attempted to review their own leave request ${id}`);
       throw new BadRequestException('Nu poți aproba/respinge propria cerere de concediu');
     }
 
     // Actualizează cererea
     const oldStatus = leaveRequest.status;
     leaveRequest.status = dto.status;
-    leaveRequest.reviewed_by_id = dto.reviewed_by_id;
+    leaveRequest.reviewed_by_id = reviewedById;
     leaveRequest.reviewed_at = new Date();
 
     // Adaugă comentariul de review dacă există
@@ -515,7 +527,7 @@ export class LeaveRequestsService implements OnModuleInit {
             leaveType: leaveRequest.leave_type,
             startDate: leaveRequest.start_datetime.toISOString(),
             endDate: leaveRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
           },
           `/pontaj/${leaveRequest.employee_id}`,
           leaveRequest.location_id ?? undefined,
@@ -531,7 +543,7 @@ export class LeaveRequestsService implements OnModuleInit {
             leaveType: leaveRequest.leave_type,
             startDate: leaveRequest.start_datetime.toISOString(),
             endDate: leaveRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
             comment: dto.review_comment,
           },
           `/pontaj/${leaveRequest.employee_id}`,
@@ -546,8 +558,19 @@ export class LeaveRequestsService implements OnModuleInit {
   }
 
   // Ștergere cerere (doar dacă este pending și de către creator)
-  async remove(id: number, currentUserId?: number): Promise<void> {
-    const leaveRequest = await this.findOne(id, currentUserId);
+  // Notă securitate: identitatea vine STRICT din JWT (user), nu dintr-un header client.
+  async remove(id: number, user?: LeaveAccessUser): Promise<void> {
+    const leaveRequest = await this.leaveRequestRepo.findOne({ where: { id } });
+    if (!leaveRequest) {
+      throw new NotFoundException('Cererea de concediu nu a fost găsită');
+    }
+
+    // Autorizare: doar creatorul poate șterge cererea
+    const currentUserId = getCanonicalEmployeeId(user);
+    if (currentUserId != null && leaveRequest.employee_id !== currentUserId) {
+      this.logger.warn(`User ${currentUserId} attempted to delete leave request ${id} of employee ${leaveRequest.employee_id}`);
+      throw new ForbiddenException('Nu poți șterge cereri de concediu ale altor angajați');
+    }
 
     // Verifică dacă cererea poate fi ștearsă
     if (leaveRequest.status !== LeaveStatus.PENDING) {
@@ -555,17 +578,18 @@ export class LeaveRequestsService implements OnModuleInit {
       throw new BadRequestException('Doar cererile în așteptare pot fi șterse');
     }
 
-    // Autorizare: doar creatorul poate șterge cererea
-    if (currentUserId && leaveRequest.employee_id !== currentUserId) {
-      this.logger.warn(`User ${currentUserId} attempted to delete leave request ${id} of employee ${leaveRequest.employee_id}`);
-      throw new ForbiddenException('Nu poți șterge cereri de concediu ale altor angajați');
-    }
-
     await this.leaveRequestRepo.remove(leaveRequest);
   }
 
   // Obținere statistici pentru un angajat
-  async getEmployeeStats(employeeId: number, year?: number): Promise<any> {
+  // Notă securitate: doar admin de concedii, sau angajatul pentru statisticile proprii.
+  async getEmployeeStats(employeeId: number, year?: number, user?: LeaveAccessUser): Promise<any> {
+    if (user && !isLeaveAdminUser(user)) {
+      const currentUserId = getCanonicalEmployeeId(user);
+      if (currentUserId == null || currentUserId !== employeeId) {
+        throw new ForbiddenException('Nu ai permisiunea să vezi statisticile altui angajat');
+      }
+    }
     const currentYear = year || new Date().getFullYear();
     
     const queryBuilder = this.leaveRequestRepo.createQueryBuilder('lr')

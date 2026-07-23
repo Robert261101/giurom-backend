@@ -697,7 +697,14 @@ export class ShiftChangeRequestsService {
   }
 
   // Obținere statistici pentru un angajat
-  async getEmployeeStats(employeeId: number, year?: number): Promise<any> {
+  // Notă securitate: doar admin de concedii/schimburi, sau angajatul pentru statisticile proprii.
+  async getEmployeeStats(employeeId: number, year?: number, user?: LeaveAccessUser): Promise<any> {
+    if (user && !isLeaveAdminUser(user)) {
+      const currentUserId = getCanonicalEmployeeId(user);
+      if (currentUserId == null || currentUserId !== employeeId) {
+        throw new ForbiddenException('Nu ai permisiunea să vezi statisticile altui angajat');
+      }
+    }
     const currentYear = year || new Date().getFullYear();
     
     const queryBuilder = this.shiftChangeRepo.createQueryBuilder('scr')

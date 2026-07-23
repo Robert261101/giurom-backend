@@ -19,6 +19,7 @@ import { CreateRecipePreparationDto } from './recipes/dto/create-recipe-preparat
 import { UpdateRecipePreparationDto } from './recipes/dto/update-recipe-preparation.dto';
 import { CreateRecipeLabelDto } from './recipes/dto/create-recipe-label.dto';
 import { CreateRecipeLocationDto } from './recipes/dto/create-recipe-location.dto';
+import { buildRecipeAccessRequester } from './recipes/recipe-access';
 
 @Controller()
 export class RecipesHttpController {
@@ -63,7 +64,7 @@ export class RecipesHttpController {
       search: q.search,
       category_id,
       location_id
-    });
+    }, buildRecipeAccessRequester(req?.user));
     
     // Return in the format expected by the frontend
     return {
@@ -91,8 +92,8 @@ export class RecipesHttpController {
     if (!location_id) {
       throw new BadRequestException('Nu se poate crea o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
     }
-    
-    return this.recipes.create(dto, location_id);
+
+    return this.recipes.create(dto, location_id, buildRecipeAccessRequester(req?.user));
   }
 
   // Categories
@@ -231,8 +232,8 @@ export class RecipesHttpController {
     if (!location_id) {
       throw new BadRequestException('Nu se poate accesa o rețetă fără o locație asignată. Vă rugăm să selectați o locație.');
     }
-    
-    return this.recipes.findOne(Number(id), location_id);
+
+    return this.recipes.findOne(Number(id), location_id, buildRecipeAccessRequester(req?.user));
   }
   @Patch('recipes/:id')
   @Permissions('recipes.update')
@@ -246,7 +247,7 @@ export class RecipesHttpController {
       const user = req?.user;
       location_id = user?.work_location_id || user?.work_location_default_id;
     }
-    return this.recipes.update(Number(id), dto, location_id);
+    return this.recipes.update(Number(id), dto, location_id, buildRecipeAccessRequester(req?.user));
   }
   @Delete('recipes/:id')
   @Permissions('recipes.delete')
@@ -254,9 +255,10 @@ export class RecipesHttpController {
     @Param('id') id: string,
     @Headers('x-work-location-id') xWorkLocationId?: string,
     @Query('location_id') location_id?: string,
+    @Request() req?: any,
   ) {
     const selectedWorkLocationId = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
-    return this.recipes.remove(Number(id), selectedWorkLocationId);
+    return this.recipes.remove(Number(id), selectedWorkLocationId, buildRecipeAccessRequester(req?.user));
   }
 
   // Preparations

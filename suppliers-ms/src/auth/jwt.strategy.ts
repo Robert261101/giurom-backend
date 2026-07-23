@@ -1,24 +1,21 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { resolveCompanyTypeFromAuth } from '../suppliers/supplier-product-access';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  private readonly logger = new Logger(JwtStrategy.name);
-
   constructor() {
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET nu este configurat în variabilele de mediu');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: process.env.JWT_SECRET || 'your-secret-key',
+      secretOrKey: process.env.JWT_SECRET,
     });
   }
 
   async validate(payload: any) {
-    this.logger.log(`[JwtStrategy] JWT payload received: ${JSON.stringify(payload)}`);
-    this.logger.log(`[JwtStrategy] Extracted permissions: ${JSON.stringify(payload.permissions || [])}`);
-    this.logger.log(`[JwtStrategy] User work_location_id: ${payload.work_location_id}, work_location_default_id: ${payload.work_location_default_id}`);
-
     const roles = Array.isArray(payload.roles)
       ? payload.roles.map((role: unknown) => String(role))
       : [];
@@ -39,7 +36,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       isSuperAdmin: payload.isSuperAdmin === true,
     };
 
-    this.logger.log(`[JwtStrategy] Validated user: ${JSON.stringify(user)}`);
     return user;
   }
 }

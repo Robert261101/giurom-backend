@@ -454,6 +454,8 @@ export class EmployeeHttpController {
   }
 
   @Get("phone/:phone")
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
+  @Permissions("employees.read")
   @ApiOperation({
     summary: "Găsește angajat după telefon",
     description:

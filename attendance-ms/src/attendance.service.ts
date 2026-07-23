@@ -866,7 +866,7 @@ export class AttendanceService implements OnModuleInit {
     return { data, total, page, limit };
   }
 
-  async findPresenceInflexionById(id: number): Promise<PresenceInflexion> {
+  async findPresenceInflexionById(id: number, user?: any): Promise<PresenceInflexion> {
     const inflexion = await this.presenceInflexionRepository.findOne({
       where: { id },
       relations: ['presence', 'presence.shift'],
@@ -876,21 +876,33 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Punctul de inflexiune cu ID-ul ${id} nu a fost găsit`);
     }
 
+    // Notă securitate: fără verificare, orice user cu attendance.read/update/delete putea
+    // citi/edita/șterge punctele GPS ale oricărui angajat. Se verifică acum că angajatul
+    // curent e chiar cel căruia îi aparține tura, sau un admin cu attendance.update.
+    if (user !== undefined) {
+      const targetEmployeeId = inflexion.presence?.shift?.employee_id;
+      if (targetEmployeeId != null) {
+        const ctx = buildAttendanceUserContext(user);
+        assertEmployeeSelfOrManager(ctx, targetEmployeeId);
+      }
+    }
+
     return inflexion;
   }
 
   async updatePresenceInflexion(
-    id: number, 
+    id: number,
     updateInflexionDto: UpdatePresenceInflexionDto,
+    user?: any,
   ): Promise<PresenceInflexion> {
-    const inflexion = await this.findPresenceInflexionById(id);
+    const inflexion = await this.findPresenceInflexionById(id, user);
 
     Object.assign(inflexion, updateInflexionDto);
     return await this.presenceInflexionRepository.save(inflexion);
   }
 
-  async deletePresenceInflexion(id: number): Promise<void> {
-    const inflexion = await this.findPresenceInflexionById(id);
+  async deletePresenceInflexion(id: number, user?: any): Promise<void> {
+    const inflexion = await this.findPresenceInflexionById(id, user);
     await this.presenceInflexionRepository.remove(inflexion);
   }
 

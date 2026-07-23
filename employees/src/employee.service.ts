@@ -88,6 +88,19 @@ export class EmployeeService {
     return path.join(this.getFilesRepoRoot(), "files", "employees");
   }
 
+  /**
+   * Verifică că fullPath (deja rezolvat) rămâne strict în interiorul lui baseDir —
+   * blochează path traversal (ex. numele de folder trimis de client conține "../../etc").
+   * Compară cu path.sep la final ca "baseDir-evil" să nu treacă ca fiind în interiorul "baseDir".
+   */
+  private assertPathWithinBase(fullPath: string, baseDir: string): void {
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedFull = path.resolve(fullPath);
+    if (resolvedFull !== resolvedBase && !resolvedFull.startsWith(resolvedBase + path.sep)) {
+      throw new BadRequestException("Cale invalidă");
+    }
+  }
+
   private simplifyEmployeeName(firstName: string, lastName: string): string {
     const fullName = `${firstName} ${lastName}`;
     return fullName
@@ -2518,6 +2531,7 @@ export class EmployeeService {
         repoRoot,
         folderPathRel.split("/").join(path.sep),
       );
+      this.assertPathWithinBase(absoluteDir, repoRoot);
       if (!fs.existsSync(absoluteDir)) {
         fs.mkdirSync(absoluteDir, { recursive: true });
         console.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
@@ -2583,6 +2597,8 @@ export class EmployeeService {
         .replace(/\/+$/, "");
       const oldDir = path.join(repoRoot, oldPathRel.split("/").join(path.sep));
       const newDir = path.join(repoRoot, newPathRel.split("/").join(path.sep));
+      this.assertPathWithinBase(oldDir, repoRoot);
+      this.assertPathWithinBase(newDir, repoRoot);
       if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
         try {
           fs.renameSync(oldDir, newDir);
@@ -2651,6 +2667,7 @@ export class EmployeeService {
             repoRoot,
             pathRel.split("/").join(path.sep),
           );
+          this.assertPathWithinBase(absolutePath, repoRoot);
           if (fs.existsSync(absolutePath)) {
             fs.rmSync(absolutePath, { recursive: true, force: true });
             console.log(

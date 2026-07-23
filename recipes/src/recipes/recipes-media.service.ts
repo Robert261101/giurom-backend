@@ -40,6 +40,18 @@ export class RecipeMediaService {
     return fileLink?.includes('/api/images/recipes/') ?? false;
   }
 
+  /**
+   * Verifică că fullPath (deja rezolvat) rămâne strict în interiorul lui baseDir —
+   * blochează path traversal (ex. file_name trimis de client conține "../../etc").
+   */
+  private assertPathWithinBase(fullPath: string, baseDir: string): void {
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedFull = path.resolve(fullPath);
+    if (resolvedFull !== resolvedBase && !resolvedFull.startsWith(resolvedBase + path.sep)) {
+      throw new BadRequestException('Cale invalidă');
+    }
+  }
+
   // Creează un nou fișier media pentru rețetă
   async createMedia(createMediaDto: CreateRecipeMediaDto): Promise<RecipeMedia> {
     console.log('📥 Received createMediaDto:', {
@@ -60,9 +72,11 @@ export class RecipeMediaService {
     }
 
     // Nume unic: timestamp + nume original (același pattern ca la produse în images/products)
+    // path.basename elimină orice segment de director din numele trimis de client — blochează path traversal.
+    const safeFileName = path.basename(createMediaDto.file_name || '');
     const timestamp = Date.now();
-    const fileExtension = createMediaDto.file_name.split('.').pop() || 'jpg';
-    const baseFileName = createMediaDto.file_name.replace(/\.[^/.]+$/, '') || 'recipe-media';
+    const fileExtension = safeFileName.split('.').pop() || 'jpg';
+    const baseFileName = safeFileName.replace(/\.[^/.]+$/, '') || 'recipe-media';
     const uniqueFileName = `${timestamp}_${baseFileName}.${fileExtension}`;
 
     // Salvare în images/recipes/ (același pattern ca images/products)
@@ -77,6 +91,7 @@ export class RecipeMediaService {
     if (createMediaDto.file_content) {
       try {
         const filePath = path.join(imagesDir, uniqueFileName);
+        this.assertPathWithinBase(filePath, imagesDir);
         let base64Data = createMediaDto.file_content;
         if (base64Data.includes(',')) {
           base64Data = base64Data.split(',')[1];
@@ -147,10 +162,12 @@ export class RecipeMediaService {
     const media = await this.findOneMedia(media_id);
     let filePath: string;
     if (this.isNewImagesPath(media.file_link)) {
-      const fileName = media.file_link.replace(/^.*\/api\/images\/recipes\//, '').split('?')[0];
+      const fileName = path.basename(media.file_link.replace(/^.*\/api\/images\/recipes\//, '').split('?')[0]);
       filePath = path.join(this.getRecipesImagesDir(), fileName);
+      this.assertPathWithinBase(filePath, this.getRecipesImagesDir());
     } else {
-      filePath = path.join(this.getRecipesFilesRootDir(), media.recipe_id.toString(), media.file_name);
+      filePath = path.join(this.getRecipesFilesRootDir(), media.recipe_id.toString(), path.basename(media.file_name));
+      this.assertPathWithinBase(filePath, this.getRecipesFilesRootDir());
     }
     if (!fs.existsSync(filePath)) {
       throw new NotFoundException('Fișierul nu a fost găsit pe disk');
@@ -184,10 +201,12 @@ export class RecipeMediaService {
     try {
       let filePath: string;
       if (this.isNewImagesPath(media.file_link)) {
-        const fileName = media.file_link.replace(/^.*\/api\/images\/recipes\//, '').split('?')[0];
+        const fileName = path.basename(media.file_link.replace(/^.*\/api\/images\/recipes\//, '').split('?')[0]);
         filePath = path.join(this.getRecipesImagesDir(), fileName);
+        this.assertPathWithinBase(filePath, this.getRecipesImagesDir());
       } else {
-        filePath = path.join(this.getRecipesFilesRootDir(), media.recipe_id.toString(), media.file_name);
+        filePath = path.join(this.getRecipesFilesRootDir(), media.recipe_id.toString(), path.basename(media.file_name));
+        this.assertPathWithinBase(filePath, this.getRecipesFilesRootDir());
       }
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);

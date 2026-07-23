@@ -7,6 +7,7 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { Injectable, Logger } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
 import { UserResolutionService } from "./user-resolution.service";
 
 // IP-ul public al serverului — configurabil via env, cu fallback la valoarea curentă (nu se schimbă comportamentul implicit).
@@ -45,10 +46,30 @@ export class NotificationsGateway
 
   private readonly logger = new Logger(NotificationsGateway.name);
 
-  constructor(private readonly userResolution: UserResolutionService) {}
+  constructor(
+    private readonly userResolution: UserResolutionService,
+    private readonly jwtService: JwtService,
+  ) {}
 
+  // Autentifică handshake-ul cu JWT-ul real (auth.token sau query.token) — un client
+  // neautentificat nu se poate conecta deloc, deci nu poate să se abloneze la room-ul altui user.
   handleConnection(client: Socket) {
-    // Connection logging disabled to reduce noise
+    try {
+      const token =
+        (client.handshake.auth as any)?.token ||
+        (client.handshake.query as any)?.token;
+      if (!token || typeof token !== "string") {
+        client.disconnect(true);
+        return;
+      }
+      const payload = this.jwtService.verify(token);
+      (client.data as any).userId = payload?.sub ?? payload?.userId;
+      if ((client.data as any).userId == null) {
+        client.disconnect(true);
+      }
+    } catch {
+      client.disconnect(true);
+    }
   }
 
   handleDisconnect(client: Socket) {
@@ -56,10 +77,15 @@ export class NotificationsGateway
   }
 
   @SubscribeMessage("join")
-  async handleJoin(client: Socket, payload: { userId: number | string }) {
-    const fromPayload = Number(payload.userId);
-    // JWT sub = id_employee; notificările sunt emise la room user:user_id
-    const resolvedUserId = await this.userResolution.resolveToUserId(fromPayload);
+  async handleJoin(client: Socket) {
+    // Nu se mai are încredere în userId-ul trimis de client — se folosește strict
+    // identitatea rezolvată din JWT la handleConnection.
+    const verifiedUserId = (client.data as any)?.userId;
+    if (verifiedUserId == null) {
+      client.disconnect(true);
+      return;
+    }
+    const resolvedUserId = await this.userResolution.resolveToUserId(Number(verifiedUserId));
     const room = `user:${resolvedUserId}`;
     client.join(room);
     client.emit("joined", { userId: resolvedUserId, room, socketId: client.id });

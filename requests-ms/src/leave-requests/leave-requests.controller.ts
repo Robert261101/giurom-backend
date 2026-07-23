@@ -9,7 +9,6 @@ import {
   Query,
   ParseIntPipe,
   HttpStatus,
-  Headers,
   UseGuards,
   Request,
 } from '@nestjs/common';
@@ -128,10 +127,12 @@ export class LeaveRequestsController {
   })
   findOne(
     @Param('id', ParseIntPipe) id: number,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown },
   ): Promise<LeaveRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.findOne(id, userId);
+    return this.leaveRequestsService.findOne(
+      id,
+      req.user as Parameters<LeaveRequestsService['findOne']>[1],
+    );
   }
 
   // PATCH /leave-requests/:id – modificare status și aprobare
@@ -193,10 +194,12 @@ export class LeaveRequestsController {
   })
   remove(
     @Param('id', ParseIntPipe) id: number,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown },
   ): Promise<void> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.leaveRequestsService.remove(id, userId);
+    return this.leaveRequestsService.remove(
+      id,
+      req.user as Parameters<LeaveRequestsService['remove']>[1],
+    );
   }
 
   // GET /leave-requests/employee/:employeeId/stats – statistici angajat
@@ -210,8 +213,13 @@ export class LeaveRequestsController {
   })
   getEmployeeStats(
     @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Query('year') year?: number,
+    @Query('year') year: number | undefined,
+    @Request() req: { user?: unknown },
   ): Promise<any> {
-    return this.leaveRequestsService.getEmployeeStats(employeeId, year);
+    return this.leaveRequestsService.getEmployeeStats(
+      employeeId,
+      year,
+      req.user as Parameters<LeaveRequestsService['getEmployeeStats']>[2],
+    );
   }
 }

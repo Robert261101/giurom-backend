@@ -20,6 +20,7 @@ import { UpdateRecipeProductDto } from './dto/update-recipe-product.dto';
 import { CreateRecipeLocationDto } from './dto/create-recipe-location.dto';
 import { RecipeMediaService } from './recipes-media.service';
 import { ProductRef } from '../external/product-ref.entity';
+import { isRecipeAdminUser, type RecipeAccessRequester } from './recipe-access';
 
 @Injectable()
 export class RecipeService {
@@ -78,7 +79,14 @@ export class RecipeService {
 
   // ==================== RECIPES METHODS ====================
 
-  async create(createRecipeDto: CreateRecipeDto, location_id?: number): Promise<Recipe> {
+  async create(createRecipeDto: CreateRecipeDto, location_id?: number, requester?: RecipeAccessRequester): Promise<Recipe> {
+    // Verificare reală de acces: nu asigna rețeta la o locație pe care angajatul n-o are.
+    if (requester && !isRecipeAdminUser(requester.permissions || []) && location_id != null) {
+      const employeeLocationIds = await this.getEmployeeLocationIds(requester);
+      if (!employeeLocationIds.includes(location_id)) {
+        throw new BadRequestException('Nu ai acces la locația specificată');
+      }
+    }
     // `is_consumable` este per-locație (recipe_locations), nu global.
     const { is_consumable, ...rest } = createRecipeDto as any;
     const recipe = this.recipesRepository.create(rest as DeepPartial<Recipe>);
@@ -115,15 +123,24 @@ export class RecipeService {
     return savedRecipe;
   }
 
-  async findAll(params: { 
-    page?: number; 
-    limit?: number; 
-    search?: string; 
+  async findAll(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
     category_id?: number;
     location_id: number; // OBLIGATORIU
     difficulty?: 'easy' | 'medium' | 'hard';
     max_cooking_time?: number;
-  }): Promise<{ recipes: Recipe[]; total: number; totalPages: number }> {
+  }, requester?: RecipeAccessRequester): Promise<{ recipes: Recipe[]; total: number; totalPages: number }> {
+    // Verificare reală de acces: location_id vine de la client (query/JWT), dar trebuie
+    // să fie efectiv o locație a angajatului — altfel oricine ar putea citi rețetele
+    // (date sensibile de business) ale altei companii doar ghicind un location_id.
+    if (requester && !isRecipeAdminUser(requester.permissions || [])) {
+      const employeeLocationIds = await this.getEmployeeLocationIds(requester);
+      if (!employeeLocationIds.includes(params.location_id)) {
+        throw new BadRequestException('Nu ai acces la locația specificată');
+      }
+    }
     const page = params.page ?? 1;
     const limit = params.limit ?? 10;
     const queryBuilder = this.recipesRepository.createQueryBuilder('recipe')
@@ -190,7 +207,76 @@ export class RecipeService {
     return { recipes, total, totalPages };
   }
 
-  async findOne(id: number, location_id?: number): Promise<Recipe> {
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      'x-internal-service': 'recipes',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
+    };
+  }
+
+  /** Locațiile reale la care angajatul are acces, verificate via employees-ms (nu doar declarate de client). */
+  private async getEmployeeLocationIds(requester?: RecipeAccessRequester): Promise<number[]> {
+    const fallback = [requester?.work_location_id, requester?.work_location_default_id].filter(
+      (v): v is number => Number.isFinite(v as number) && (v as number) > 0,
+    );
+
+    const employeeId = requester?.userId;
+    if (!employeeId || !Number.isFinite(employeeId)) {
+      return Array.from(new Set(fallback));
+    }
+
+    try {
+      const employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3011';
+      const resp: any = await firstValueFrom(
+        this.httpService.get(`${employeesServiceUrl}/employees/${employeeId}/locations`, {
+          headers: this.internalServiceHeaders(),
+          timeout: 3000,
+        }),
+      );
+      const rows = Array.isArray(resp?.data) ? resp.data : [];
+      const ids = rows
+        .map((el: any) => Number(el.idLocation ?? el.id_location ?? el.locationId ?? el.location_id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+      return Array.from(new Set([...ids, ...fallback]));
+    } catch {
+      return Array.from(new Set(fallback));
+    }
+  }
+
+  /**
+   * Verifică — independent de orice `location_id` trimis de client — dacă angajatul curent
+   * are efectiv acces la cel puțin una dintre locațiile la care e asignată rețeta.
+   * Admin/manager company-wide (assignment.read_all/read_company) sare peste verificare.
+   * Fără `requester` = apel intern (server-to-server), comportament neschimbat.
+   */
+  private async assertRecipeAccessibleToRequester(
+    recipe: Recipe,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    if (!requester) {
+      return;
+    }
+    if (isRecipeAdminUser(requester.permissions || [])) {
+      return;
+    }
+
+    const recipeLocationIds = (recipe.recipeLocations || [])
+      .map((rl: any) => Number(rl.idLocation))
+      .filter((id: number) => Number.isFinite(id) && id > 0);
+
+    if (recipeLocationIds.length === 0) {
+      throw new NotFoundException(`Rețeta cu ID ${recipe.id} nu a fost găsită`);
+    }
+
+    const employeeLocationIds = await this.getEmployeeLocationIds(requester);
+    const hasAccess = recipeLocationIds.some((id) => employeeLocationIds.includes(id));
+
+    if (!hasAccess) {
+      throw new NotFoundException(`Rețeta cu ID ${recipe.id} nu a fost găsită`);
+    }
+  }
+
+  async findOne(id: number, location_id?: number, requester?: RecipeAccessRequester): Promise<Recipe> {
     const recipe = await this.recipesRepository.findOne({
       where: { id },
       relations: [
@@ -218,6 +304,10 @@ export class RecipeService {
         throw new NotFoundException(`Rețeta cu ID ${id} nu este asignată la locația specificată`);
       }
     }
+
+    // Verificare reală de acces (independentă de ce location_id a trimis clientul) —
+    // vezi assertRecipeAccessibleToRequester. Blochează accesul cross-companie la rețete.
+    await this.assertRecipeAccessibleToRequester(recipe, requester);
 
     // Expune `is_consumable` și `consumabil_pentru_angajat` per locație (pentru afișare în UI)
     if (location_id !== undefined) {
@@ -277,8 +367,15 @@ export class RecipeService {
     return recipe;
   }
 
-  async update(id: number, updateRecipeDto: UpdateRecipeDto, location_id?: number): Promise<Recipe> {
-    const recipe = await this.findOne(id, undefined); // Nu verificăm location_id la update
+  async update(
+    id: number,
+    updateRecipeDto: UpdateRecipeDto,
+    location_id?: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<Recipe> {
+    // location_id nu restricționează update-ul (o rețetă poate fi asignată la mai multe
+    // locații), dar `requester` verifică independent că angajatul are acces la rețetă.
+    const recipe = await this.findOne(id, undefined, requester);
     const oldName = recipe.name;
     const { is_consumable, ...rest } = updateRecipeDto as any;
     Object.assign(recipe, rest);
@@ -317,8 +414,12 @@ export class RecipeService {
     return updatedRecipe;
   }
 
-  async remove(id: number, selectedWorkLocationId?: number): Promise<void> {
-    const recipe = await this.findOne(id, undefined);
+  async remove(
+    id: number,
+    selectedWorkLocationId?: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    const recipe = await this.findOne(id, undefined, requester);
     const recipeName = recipe.name;
     await this.recipesRepository.remove(recipe);
     await this.sendRecipeNotification(

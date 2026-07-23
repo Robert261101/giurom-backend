@@ -34,42 +34,38 @@ export class NotificationsController {
   ) {}
 
   // HTTP endpoints for frontend
+  // Notă securitate: userId NU se ia niciodată din query — doar din JWT (req.user),
+  // altfel orice user autentificat ar putea citi/marca notificările altui user.
   @Get("unread-count")
   @Permissions("notifications.read")
-  getUnreadCountHttp(@Request() req, @Query("userId") userId?: string) {
-    // Use the userId from query params if provided, otherwise use the authenticated user's ID
-    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
+  getUnreadCountHttp(@Request() req) {
+    const targetUserId = req.user?.userId ?? req.user?.sub;
     return this.service.getUnreadCount(targetUserId);
   }
 
   // List notifications
   @Get()
   @Permissions("notifications.read")
-  findAll(@Request() req, @Query("userId") userId?: string) {
-    // Use the userId from query params if provided, otherwise use the authenticated user's ID
-    const targetUserId = userId ? parseInt(userId, 10) : req.user?.userId;
+  findAll(@Request() req) {
+    const targetUserId = req.user?.userId ?? req.user?.sub;
     return this.service.findAll(targetUserId);
   }
 
   // Mark all as read – trebuie înainte de :id/read ca „mark-all-read” să nu fie interpretat ca id
   @Patch("mark-all-read")
   @Permissions("notifications.update")
-  markAllAsRead(@Request() req, @Query("userId") userId?: string) {
-    const raw = userId
-      ? parseInt(userId, 10)
-      : (req.user?.userId ?? req.user?.sub);
+  markAllAsRead(@Request() req) {
+    const raw = req.user?.userId ?? req.user?.sub;
     const targetUserId = Number.isNaN(raw) ? undefined : raw;
-    this.logger.log(
-      `mark-all-read apelat, targetUserId=${targetUserId}, query userId=${userId ?? "nu"}`,
-    );
     return this.service.markAllAsRead(targetUserId);
   }
 
   // Mark one as read
   @Patch(":id/read")
   @Permissions("notifications.update")
-  markAsRead(@Param("id") id: string) {
-    return this.service.markAsRead(Number(id));
+  markAsRead(@Param("id") id: string, @Request() req) {
+    const targetUserId = req.user?.userId ?? req.user?.sub;
+    return this.service.markAsRead(Number(id), targetUserId);
   }
 
   // Trigger expiring labels check (demo/seed)

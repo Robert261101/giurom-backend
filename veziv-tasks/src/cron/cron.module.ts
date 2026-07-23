@@ -35,7 +35,7 @@ import { AssignmentModule } from '../assignment/assignment.module';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         const secret =
-          configService.get<string>('JWT_SECRET') || 'your-secret-key';
+          configService.get<string>('JWT_SECRET');
         const expiresIn =
           configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '24h';
         return {

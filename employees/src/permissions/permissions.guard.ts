@@ -33,12 +33,22 @@ export class PermissionsGuard implements CanActivate {
 
     if (hasAny) return true;
 
-    // Dacă nu are niciuna, verifică dacă încearcă să vadă propriile date
+    // Dacă nu are niciuna, verifică dacă încearcă să vadă (nu să modifice/șteargă)
+    // propriile date — doar dacă endpoint-ul chiar permite explicit "read_own".
+    // Altfel orice angajat ar putea PATCH/DELETE propriul rând doar pe baza ID-ului,
+    // fără să aibă employees.update/.delete.
     // Poate fi /employees/:id sau /employees/:employeeId/... (pentru locații, etc.)
     const requestId = request.params?.id || request.params?.employeeId;
     const userEmployeeId = user.id || user.userId; // id_employee din JWT
 
-    if (requestId && userEmployeeId && String(requestId) === String(userEmployeeId)) return true;
+    if (
+      requestId &&
+      userEmployeeId &&
+      String(requestId) === String(userEmployeeId) &&
+      requiredPermissions.includes('employees.read_own')
+    ) {
+      return true;
+    }
 
     this.logger.warn(`User missing required permissions (need one of): ${requiredPermissions.join(', ')}`);
     throw new ForbiddenException('Permisiuni insuficiente');

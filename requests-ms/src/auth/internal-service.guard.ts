@@ -1,5 +1,13 @@
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
+import { timingSafeEqual } from 'crypto';
+
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
@@ -25,7 +33,7 @@ export class InternalServiceGuard implements CanActivate {
         throw new UnauthorizedException('SERVICE_SECRET nu este configurat în variabilele de mediu');
       }
 
-      if (serviceSecret === expectedSecret) {
+      if (secretsMatch(serviceSecret, expectedSecret)) {
         // Mark request as internal service request
         request.internalService = internalService;
         // Bypass all other guards by adding a special flag

@@ -1,4 +1,4 @@
-﻿import { Injectable, Inject, Logger } from '@nestjs/common';
+﻿import { Injectable, Inject, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, LessThanOrEqual, MoreThan, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -1508,8 +1508,21 @@ export class NotificationsService {
     return saved;
   }
 
-  async markAsRead(id: number) {
-    await this.repo.update({ id } as any, { status: 'read' } as any);
+  async markAsRead(id: number, userId?: number) {
+    if (userId == null) {
+      throw new ForbiddenException('Utilizator neautentificat');
+    }
+    const resolvedUserId = await this.userResolution.resolveToUserId(userId);
+    const userIds = [resolvedUserId, userId].filter((v, i, a) => v != null && a.indexOf(v) === i);
+    const result = await this.repo
+      .createQueryBuilder()
+      .update(NotificationEntity)
+      .set({ status: 'read' } as any)
+      .where('id = :id AND user_id IN (:...userIds)', { id, userIds })
+      .execute();
+    if (!result.affected) {
+      throw new NotFoundException('Notificarea nu a fost găsită');
+    }
     const count = await this.repo.count({ where: { status: 'unread' } as any });
     this.gateway.emitUnreadCount(count);
     return { id };
