@@ -82,35 +82,7 @@ function resolveRepoRoot() {
   return repoRoot;
 }
 const imagesPath = path.join(resolveRepoRoot(), "images");
-console.log("\n🟡 ========== API GATEWAY STATIC FILES ==========");
-console.log("📂 __dirname:", __dirname);
-console.log("📂 Images path calculat:", imagesPath);
-console.log("📂 Path absolut:", path.resolve(imagesPath));
-console.log("🟡 ===============================================\n");
-
-// Log all image requests for debugging
-app.use("/api/images", (req, res, next) => {
-  const fullPath = path.join(imagesPath, req.path);
-  const exists = require("fs").existsSync(fullPath);
-  console.log("\n🔴 ========== CERERE IMAGINE ==========");
-  console.log("🌐 URL cerut:", req.path);
-  console.log("📂 Path complet căutat:", fullPath);
-  console.log("✅ Fișierul există?", exists);
-  if (!exists) {
-    console.log("❌ FIȘIERUL NU EXISTĂ LA ACEST PATH!");
-    // List files in directory to see what's there
-    const dir = path.dirname(fullPath);
-    if (require("fs").existsSync(dir)) {
-      const files = require("fs").readdirSync(dir);
-      console.log(
-        "📋 Fișiere în director:",
-        files.length > 0 ? files.slice(0, 5) : "GOL",
-      );
-    }
-  }
-  console.log("🔴 =====================================\n");
-  next();
-});
+console.log(`📂 API Gateway static images path: ${imagesPath}`);
 
 app.use(
   "/api/images",
@@ -152,41 +124,35 @@ const microservices = {
   "/employees": {
     target: target("http://localhost:3011", "EMPLOYEES_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Attendance microservice
   "/attendance": {
     target: target("http://localhost:3016", "ATTENDANCE_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Calendar microservice
   "/calendar": {
     target: target("http://localhost:3010", "CALENDAR_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Requests microservice (leave-requests and shift-change-requests)
   "/leave-requests": {
     target: target("http://localhost:3013", "REQUESTS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   "/shift-change-requests": {
     target: target("http://localhost:3013", "REQUESTS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Notifications microservice
   "/notifications": {
     target: target("http://localhost:3020", "NOTIFICATIONS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
     ws: true,
   },
 
@@ -194,76 +160,65 @@ const microservices = {
   "/companies": {
     target: target("http://localhost:3003", "COMPANIES_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Locations HTTP
   "/locations": {
     target: target("http://localhost:3004", "LOCATIONS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Recipes HTTP
   "/recipes": {
     target: target("http://localhost:3005", "RECIPES_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Recipe Preparations HTTP
   "/recipe-preparations": {
     target: target("http://localhost:3005", "RECIPES_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Recipe Labels HTTP
   "/recipe-labels": {
     target: target("http://localhost:3005", "RECIPES_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Stock HTTP
   "/stock": {
     target: target("http://localhost:3006", "STOCK_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Categories (part of stock microservice)
   "/categories": {
     target: target("http://localhost:3006", "STOCK_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Suppliers HTTP
   "/suppliers": {
     target: target("http://localhost:3007", "SUPPLIERS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Waste Records HTTP
   "/waste-records": {
     target: target("http://localhost:3014", "WASTE_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Waste HTTP (alias)
   "/waste": {
     target: target("http://localhost:3014", "WASTE_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
   // Veziv Tasks Service
   "/tasks": {
     target: target("http://localhost:3008", "TASKS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
     ws: true,
   },
 
@@ -271,7 +226,6 @@ const microservices = {
   "/templates": {
     target: target("http://localhost:3008", "TASKS_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
     pathRewrite: { "^/templates": "/tasks/templates" },
   },
 
@@ -279,14 +233,12 @@ const microservices = {
   "/auth": {
     target: target("http://localhost:3021", "AUTH_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 
   // Users Service (part of auth)
   "/users": {
     target: target("http://localhost:3021", "AUTH_SERVICE_URL"),
     changeOrigin: true,
-    logLevel: "debug",
   },
 };
 
@@ -299,35 +251,18 @@ Object.keys(microservices).forEach((path) => {
   const proxyMiddleware = createProxyMiddleware({
     target: config.target,
     changeOrigin: config.changeOrigin,
-    logLevel: config.logLevel,
+    logLevel: "warn",
     pathRewrite: config.pathRewrite,
     ws: config.ws,
     onProxyReq: (proxyReq, req, res) => {
-      console.log(
-        `[${new Date().toISOString()}] Proxying ${req.method} ${req.originalUrl} -> ${config.target}${req.url}`,
-      );
-      if (req.originalUrl && req.originalUrl.startsWith('/suppliers')) {
-        console.log(`[${new Date().toISOString()}] API Gateway suppliers proxy active. Target: ${config.target}${req.url}`);
-      }
-
       // Forward authorization headers - check all possible variations and case-insensitive
-      const authHeader = req.headers.authorization || 
-                        req.headers.Authorization || 
-                        req.headers['authorization'] || 
+      const authHeader = req.headers.authorization ||
+                        req.headers.Authorization ||
+                        req.headers['authorization'] ||
                         req.headers['Authorization'];
-      
+
       if (authHeader) {
-        console.log(`[${new Date().toISOString()}] Forwarding Authorization header: ${authHeader.substring(0, 20)}...`);
         proxyReq.setHeader("Authorization", authHeader);
-      } else {
-        console.log(`[${new Date().toISOString()}] No Authorization header found in request`);
-        // Log all headers that contain 'auth' for debugging
-        const authHeaders = Object.keys(req.headers).filter(key => 
-          key.toLowerCase().includes('auth') || key.toLowerCase().includes('authorization')
-        );
-        if (authHeaders.length > 0) {
-          console.log(`[${new Date().toISOString()}] Found auth-related headers:`, authHeaders);
-        }
       }
 
       // Forward other important headers that might be needed for authentication and context
@@ -364,11 +299,6 @@ Object.keys(microservices).forEach((path) => {
           err && err.message,
         );
       }
-    },
-    onProxyRes: (proxyRes, req, res) => {
-      console.log(
-        `[${new Date().toISOString()}] Response ${proxyRes.statusCode} for ${req.method} ${req.originalUrl}`,
-      );
     },
     onError: (err, req, res) => {
       const url = (req && (req.originalUrl || req.url)) || "unknown";

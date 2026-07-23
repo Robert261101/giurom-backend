@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ConflictException, Inject } from '@nestj
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
+import axios from 'axios';
 import { Company } from './entity/company.entity';
 import { CompanyDocument } from './entity/company-document.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -11,6 +12,17 @@ import { CreateCompanyDocumentDto } from './dto/create-company-document.dto';
 import { UpdateCompanyDocumentDto } from './dto/update-company-document.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+
+/**
+ * Identitatea celui care cere accesul la o companie/document, derivată din JWT (nu din companyId trimis de client).
+ * Lipsă (`undefined`) = apel intern server-to-server (InternalServiceGuard), verificarea e sărită ca înainte.
+ */
+export interface CompanyAccessRequester {
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
+  /** Header-ul "Authorization: Bearer ..." original al cererii, reutilizat pentru apelul către locations-ms. */
+  authHeader?: string;
+}
 
 @Injectable()
 export class CompanyService {
@@ -49,6 +61,55 @@ export class CompanyService {
     const resolvedFull = path.resolve(fullPath);
     if (resolvedFull !== resolvedBase && !resolvedFull.startsWith(resolvedBase + path.sep)) {
       throw new NotFoundException('Cale invalidă');
+    }
+  }
+
+  /**
+   * Companiile la care angajatul curent are efectiv acces, derivate din locațiile lui
+   * (via endpointul deja existent `GET /locations/my/companies`, care rezolvă intern
+   * employees-ms + company_id per work-location). Independent de orice companyId trimis de client.
+   */
+  private async getRequesterAccessibleCompanyIds(authHeader: string): Promise<number[]> {
+    const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+    try {
+      const resp = await axios.get(`${locationsUrl}/locations/my/companies`, {
+        headers: { Authorization: authHeader },
+        timeout: 3000,
+      });
+      const rows = Array.isArray(resp.data) ? resp.data : [];
+      return rows
+        .map((c: any) => Number(c.id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+    } catch (error: any) {
+      console.error(
+        `⚠️ [getRequesterAccessibleCompanyIds] Nu am putut obține companiile angajatului: ${error?.message || error}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Verifică — independent de companyId trimis de client — că angajatul curent are efectiv
+   * acces la compania cerută (prin locațiile la care e asignat). Admin/superadmin sar peste verificare.
+   * Fără `requester` = apel intern server-to-server (InternalServiceGuard), comportament neschimbat.
+   * 404 (nu 403) ca să nu confirme unui utilizator neautorizat că ID-ul respectiv există.
+   */
+  private async assertCompanyAccessibleToRequester(
+    companyId: number,
+    requester?: CompanyAccessRequester,
+  ): Promise<void> {
+    if (!requester) {
+      return;
+    }
+    if (requester.isAdmin || requester.isSuperAdmin) {
+      return;
+    }
+    if (!requester.authHeader) {
+      throw new NotFoundException(`Compania cu ID-ul ${companyId} nu a fost găsită`);
+    }
+    const accessibleIds = await this.getRequesterAccessibleCompanyIds(requester.authHeader);
+    if (!accessibleIds.includes(companyId)) {
+      throw new NotFoundException(`Compania cu ID-ul ${companyId} nu a fost găsită`);
     }
   }
   /**
@@ -267,22 +328,24 @@ export class CompanyService {
     };
   }
 
-  async findCompanyById(id: number): Promise<Company> {
+  async findCompanyById(id: number, requester?: CompanyAccessRequester): Promise<Company> {
     const company = await this.companyRepository.findOne({ where: { id }, relations: ['documents'] });
     if (!company) throw new NotFoundException(`Compania cu ID-ul ${id} nu a fost găsită`);
+    await this.assertCompanyAccessibleToRequester(id, requester);
     return company;
   }
 
-  async findCompanyByCui(cui: string): Promise<Company> {
+  async findCompanyByCui(cui: string, requester?: CompanyAccessRequester): Promise<Company> {
     const company = await this.companyRepository.findOne({ where: { cui }, relations: ['documents'] });
     if (!company) throw new NotFoundException(`Compania cu CUI-ul ${cui} nu a fost găsită`);
+    await this.assertCompanyAccessibleToRequester(company.id, requester);
     return company;
   }
 
-  async updateCompany(id: number, dto: UpdateCompanyDto, work_location_id?: number): Promise<Company> {
+  async updateCompany(id: number, dto: UpdateCompanyDto, work_location_id?: number, requester?: CompanyAccessRequester): Promise<Company> {
     console.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
-    
-    const company = await this.findCompanyById(id);
+
+    const company = await this.findCompanyById(id, requester);
     if (dto.cui && dto.cui !== company.cui) {
       const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
       if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
@@ -323,10 +386,10 @@ export class CompanyService {
     return updatedCompany;
   }
 
-  async removeCompany(id: number, work_location_id?: number): Promise<void> {
+  async removeCompany(id: number, work_location_id?: number, requester?: CompanyAccessRequester): Promise<void> {
     console.log(`🔍 [COMPANY SERVICE] Removing company ${id}`);
-    
-    const company = await this.findCompanyById(id);
+
+    const company = await this.findCompanyById(id, requester);
     const companyName = company.company_name;
     await this.companyRepository.remove(company);
     
@@ -355,8 +418,8 @@ export class CompanyService {
     }
   }
 
-  async createCompanyDocument(dto: CreateCompanyDocumentDto & { file_content?: string; expire_date?: string }): Promise<CompanyDocument> {
-    const company = await this.findCompanyById(dto.company_id);
+  async createCompanyDocument(dto: CreateCompanyDocumentDto & { file_content?: string; expire_date?: string }, requester?: CompanyAccessRequester): Promise<CompanyDocument> {
+    const company = await this.findCompanyById(dto.company_id, requester);
     
     // Create directory for company if it doesn't exist
     const companyDir = path.join(this.getCompanyFilesRootDir(), company.company_name);
@@ -416,13 +479,13 @@ export class CompanyService {
     return await this.companyDocumentRepository.save(document);
   }
 
-  async findCompanyDocuments(companyId: number): Promise<CompanyDocument[]> {
-    await this.findCompanyById(companyId);
+  async findCompanyDocuments(companyId: number, requester?: CompanyAccessRequester): Promise<CompanyDocument[]> {
+    await this.findCompanyById(companyId, requester);
     return await this.companyDocumentRepository.find({ where: { company_id: companyId }, relations: ['company'], order: { upload_date: 'DESC' } });
   }
 
-  async findCompanyDocumentsByFolder(companyId: number, folder: string): Promise<CompanyDocument[]> {
-    await this.findCompanyById(companyId);
+  async findCompanyDocumentsByFolder(companyId: number, folder: string, requester?: CompanyAccessRequester): Promise<CompanyDocument[]> {
+    await this.findCompanyById(companyId, requester);
     return await this.companyDocumentRepository.find({ 
       where: { 
         company_id: companyId,
@@ -433,20 +496,21 @@ export class CompanyService {
     });
   }
 
-  async findDocumentById(documentId: number): Promise<CompanyDocument> {
+  async findDocumentById(documentId: number, requester?: CompanyAccessRequester): Promise<CompanyDocument> {
     const document = await this.companyDocumentRepository.findOne({ where: { id: documentId }, relations: ['company'] });
     if (!document) throw new NotFoundException(`Documentul cu ID-ul ${documentId} nu a fost găsit`);
+    await this.assertCompanyAccessibleToRequester(document.company_id, requester);
     return document;
   }
 
-  async updateCompanyDocument(documentId: number, dto: UpdateCompanyDocumentDto): Promise<CompanyDocument> {
-    const document = await this.findDocumentById(documentId);
+  async updateCompanyDocument(documentId: number, dto: UpdateCompanyDocumentDto, requester?: CompanyAccessRequester): Promise<CompanyDocument> {
+    const document = await this.findDocumentById(documentId, requester);
     Object.assign(document, dto);
     return await this.companyDocumentRepository.save(document);
   }
 
-  async removeCompanyDocument(documentId: number): Promise<void> {
-    const document = await this.findDocumentById(documentId);
+  async removeCompanyDocument(documentId: number, requester?: CompanyAccessRequester): Promise<void> {
+    const document = await this.findDocumentById(documentId, requester);
     
     // Remove physical file from disk
     try {
@@ -472,8 +536,8 @@ export class CompanyService {
   }
 
   // Serve a company file from disk
-  async serveCompanyFile(fileId: number, forceDownload: boolean = false): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
-    const document = await this.findDocumentById(fileId);
+  async serveCompanyFile(fileId: number, forceDownload: boolean = false, requester?: CompanyAccessRequester): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
+    const document = await this.findDocumentById(fileId, requester);
     
     // Construct the file path from the location_path
     const basePath = this.getCompanyFilesRootDir();
@@ -539,8 +603,8 @@ export class CompanyService {
    * Returnează lista de foldere: din DB (cu documente) + de pe disk (directoare din Companie/).
    * Astfel după refresh în UI apar și folderele goale create cu createCompanyFolder.
    */
-  async getCompanyFolders(companyId: number): Promise<string[]> {
-    const company = await this.findCompanyById(companyId);
+  async getCompanyFolders(companyId: number, requester?: CompanyAccessRequester): Promise<string[]> {
+    const company = await this.findCompanyById(companyId, requester);
     const fromDb = await this.companyDocumentRepository.find({
       where: { company_id: companyId },
       select: ['folder'],
@@ -577,9 +641,9 @@ export class CompanyService {
    * @param companyId ID companie
    * @param folder Cale folder (ex: "Folder nou" sau "Parent/Child"); se creează sub files/companies/{nume}/Companie/
    */
-  async createCompanyFolder(companyId: number, folder: string): Promise<void> {
+  async createCompanyFolder(companyId: number, folder: string, requester?: CompanyAccessRequester): Promise<void> {
     if (!folder || !folder.trim()) return;
-    const company = await this.findCompanyById(companyId);
+    const company = await this.findCompanyById(companyId, requester);
     const rootDir = path.resolve(this.getCompanyFilesRootDir());
     const companyDir = path.join(rootDir, company.company_name);
     const companieDir = path.join(companyDir, 'Companie');
@@ -601,9 +665,9 @@ export class CompanyService {
   /**
    * Șterge pe disk un folder din Companie (și subfoldere). Documentele din DB cu folder=X rămân; poți adăuga ștergere lor dacă e nevoie.
    */
-  async deleteCompanyFolder(companyId: number, folder: string): Promise<void> {
+  async deleteCompanyFolder(companyId: number, folder: string, requester?: CompanyAccessRequester): Promise<void> {
     if (!folder || !folder.trim()) return;
-    const company = await this.findCompanyById(companyId);
+    const company = await this.findCompanyById(companyId, requester);
     const rootDir = path.resolve(this.getCompanyFilesRootDir());
     const companyDir = path.join(rootDir, company.company_name);
     const companieDir = path.join(companyDir, 'Companie');
@@ -614,8 +678,8 @@ export class CompanyService {
   }
 
   // Get file system structure from files/company directory
-  async getCompanyFileStructure(companyId: number): Promise<any> {
-    const company = await this.findCompanyById(companyId);
+  async getCompanyFileStructure(companyId: number, requester?: CompanyAccessRequester): Promise<any> {
+    const company = await this.findCompanyById(companyId, requester);
     
     // Try both paths: files/company/{companyName} and files/companies/{companyId}
     const repoRoot = this.getRepoRoot();
@@ -692,8 +756,8 @@ export class CompanyService {
   }
 
   // Get files from a specific folder path on server
-  async getFilesFromFolder(companyId: number, folderPath: string): Promise<Array<{ name: string; path: string; size?: number; modified?: Date }>> {
-    const company = await this.findCompanyById(companyId);
+  async getFilesFromFolder(companyId: number, folderPath: string, requester?: CompanyAccessRequester): Promise<Array<{ name: string; path: string; size?: number; modified?: Date }>> {
+    const company = await this.findCompanyById(companyId, requester);
     
     // Try both paths: files/company/{companyName} and files/companies/{companyId}
     const repoRoot = this.getRepoRoot();
@@ -889,8 +953,8 @@ export class CompanyService {
   }
 
   // Serve a file from a specific folder path on server
-  async serveFileFromPath(companyId: number, filePath: string, forceDownload: boolean = false): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
-    const company = await this.findCompanyById(companyId);
+  async serveFileFromPath(companyId: number, filePath: string, forceDownload: boolean = false, requester?: CompanyAccessRequester): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
+    const company = await this.findCompanyById(companyId, requester);
     
     // Try both paths: files/company/{companyName} and files/companies/{companyId}
     const repoRoot = this.getRepoRoot();
