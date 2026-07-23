@@ -102,7 +102,7 @@ module.exports = {
       name: 'notifications-ms',
       cwd: `${REPO_ROOT}/giurom-backend/notifications-ms`,
       script: 'dist/main.js',
-      env: { ...nestjsEnv },
+      env: { ...nestjsEnv, PORT: 3020 },
     },
     {
       name: 'veziv-tasks',
