@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # Prea multe rsync/SSH simultane reseteaza conexiunea pe server (exit 255).
+      max-parallel: 4
       matrix:
         service:
           - api-gateway
@@ -62,21 +64,50 @@ jobs:
 
       - name: Deploy (dist + node_modules + package.json) via rsync
         run: |
-          rsync -avz --delete \
-            --exclude='.env' --exclude='.env.*' --exclude='uploads' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no" \
-            ${{ matrix.service }}/dist \
-            ${{ matrix.service }}/node_modules \
-            ${{ matrix.service }}/package.json \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}/
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+          REMOTE="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}/"
+
+          for attempt in 1 2 3 4 5; do
+            echo "Rsync attempt ${attempt}/5 for ${{ matrix.service }}..."
+            if rsync -avz --delete \
+              --exclude='.env' --exclude='.env.*' --exclude='uploads' \
+              -e "ssh ${SSH_OPTS}" \
+              ${{ matrix.service }}/dist \
+              ${{ matrix.service }}/node_modules \
+              ${{ matrix.service }}/package.json \
+              "${REMOTE}"; then
+              echo "Rsync succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            if [ "${attempt}" -lt 5 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+
+          echo "Rsync failed after 5 attempts for ${{ matrix.service }}"
+          exit 1
 
       - name: Restart service with PM2
         run: |
-          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              cd /home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}
-              pm2 restart ${{ matrix.service }} --update-env || pm2 start dist/main.js --name ${{ matrix.service }}
-              pm2 save
-            '
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+
+          for attempt in 1 2 3 4 5; do
+            echo "PM2 restart attempt ${attempt}/5 for ${{ matrix.service }}..."
+            if ssh ${SSH_OPTS} \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+                cd /home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}
+                pm2 restart ${{ matrix.service }} --update-env || pm2 start dist/main.js --name ${{ matrix.service }}
+                pm2 save
+              '; then
+              echo "PM2 restart succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            if [ "${attempt}" -lt 5 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+
+          echo "PM2 restart failed after 5 attempts for ${{ matrix.service }}"
+          exit 1
