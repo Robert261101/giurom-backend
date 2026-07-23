@@ -1,6 +1,12 @@
 import { NestFactory } from '@nestjs/core';
+import { config as loadEnv } from 'dotenv';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';
+import { ensurePr35CompanySchema } from './database/ensure-pr35-schema';
+
+// DB_* sunt în company/.env — trebuie încărcate înainte de migrarea automată la boot
+loadEnv({ path: join(__dirname, '..', '.env') });
 
 function getAllowedOrigins(): string[] {
   const isProd = process.env.NODE_ENV === 'production';
@@ -16,6 +22,8 @@ async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
     throw new Error('SERVICE_SECRET must be set in production. Do not use default fallback.');
   }
+
+  await ensurePr35CompanySchema();
 
   const httpApp = await NestFactory.create(AppModule, { bodyParser: false });
   httpApp.use(json({ limit: '50mb' }));
