@@ -2,6 +2,7 @@
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -15,6 +16,16 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 import { firstValueFrom } from 'rxjs';
+
+/** Payload JWT relevant pentru scope tenant pe /users. */
+export type RequesterAuthContext = {
+  sub?: number;
+  id?: number;
+  company_id?: number | null;
+  company_type?: string | null;
+  roles?: string[];
+  permissions?: string[];
+};
 
 @Injectable()
 export class UsersService {
@@ -682,12 +693,106 @@ export class UsersService {
       'leave-requests.create',
       'leave-requests.read',
       'leave-requests.update',
+      // Setări → Conturi: creare cont autentificare pentru angajații propriei companii
+      'users.read',
+      'users.create',
     ]) {
       if (!out.includes(perm)) {
         out.push(perm);
       }
     }
     return out;
+  }
+
+  /** Super-admin / admin global — fără filtrare pe company_id. */
+  isGlobalUsersAdmin(requester?: RequesterAuthContext | null): boolean {
+    if (!requester) return false;
+    const roles = (requester.roles || []).map((r) =>
+      String(r).toLowerCase().trim(),
+    );
+    if (roles.includes('super-admin') || roles.includes('superadmin')) {
+      return true;
+    }
+    if (roles.includes('admin')) {
+      return true;
+    }
+    const perms = requester.permissions || [];
+    return perms.includes('assignment.read_all');
+  }
+
+  /**
+   * ID-uri angajați din compania dată (via microserviciul employees, apel intern).
+   */
+  async findEmployeeIdsByCompany(companyId: number): Promise<number[]> {
+    try {
+      const employeesUrl =
+        process.env.EMPLOYEES_SERVICE_URL || 'http://localhost:3011';
+      const response = await firstValueFrom(
+        this.httpService.get(`${employeesUrl}/employees/company/${companyId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const data = response.data?.data || response.data;
+      const list = Array.isArray(data) ? data : [];
+      return list
+        .map((e: { id?: number }) => Number(e?.id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+    } catch (error) {
+      console.error(
+        `Eroare la listarea angajaților pentru company ${companyId}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Listează userii: global = toți; altfel doar cei cu id_employee din compania JWT.
+   */
+  async findAllForRequester(
+    requester: RequesterAuthContext,
+    includeInactive = false,
+  ): Promise<User[]> {
+    const all = await this.findAll(includeInactive);
+    if (this.isGlobalUsersAdmin(requester)) {
+      return all;
+    }
+    const companyId = Number(requester.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      return [];
+    }
+    const employeeIds = await this.findEmployeeIdsByCompany(companyId);
+    const idSet = new Set(employeeIds);
+    return all.filter((u) => idSet.has(u.id_employee));
+  }
+
+  /**
+   * Creează cont autentificare; pentru non-global verifică că angajatul e din aceeași companie.
+   */
+  async createForRequester(
+    requester: RequesterAuthContext,
+    createUserDto: CreateUserDto,
+  ): Promise<User> {
+    if (!this.isGlobalUsersAdmin(requester)) {
+      const companyId = Number(requester.company_id);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        throw new ForbiddenException(
+          'Compania utilizatorului nu este determinată; nu puteți crea conturi',
+        );
+      }
+      const targetContext = await this.resolveCompanyContext(
+        createUserDto.id_employee,
+      );
+      if (
+        targetContext.company_id == null ||
+        Number(targetContext.company_id) !== companyId
+      ) {
+        throw new ForbiddenException(
+          'Angajatul selectat nu aparține companiei dumneavoastră',
+        );
+      }
+    }
+    return this.create(createUserDto);
   }
 
   /**

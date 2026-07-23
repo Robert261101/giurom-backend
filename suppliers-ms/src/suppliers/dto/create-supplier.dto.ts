@@ -17,7 +17,7 @@ export class CreateSupplierDto {
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
-  @Matches(/^[A-Z]{2}[0-9]{8,10}$/)
+  @Matches(/^[A-Z]{2}[0-9]{2,10}$/)
   vat_number: string;
 
   @ApiProperty()

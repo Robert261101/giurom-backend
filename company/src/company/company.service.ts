@@ -235,23 +235,6 @@ export class CompanyService {
     return { companies, total, totalPages: Math.ceil(total / limit) };
   }
 
-  /** Companii tenant furnizor pentru dropdown înregistrare publică (apel intern auth). */
-  async findFurnizorCompaniesForRegistration(): Promise<
-    { id: number; name: string }[]
-  > {
-    const companies = await this.companyRepository
-      .createQueryBuilder('company')
-      .select(['company.id', 'company.company_name'])
-      .where('company.company_type = :type', { type: 'furnizor' })
-      .orderBy('company.company_name', 'ASC')
-      .getMany();
-
-    return companies.map((company) => ({
-      id: company.id,
-      name: company.company_name,
-    }));
-  }
-
   // Returnează doar id și company_name pentru utilizatori cu permisiunea companies.read_own
   async findForOwn(): Promise<{ id: number; company_name: string }[]> {
     const companies = await this.companyRepository

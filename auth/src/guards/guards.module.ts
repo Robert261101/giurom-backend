@@ -8,6 +8,7 @@ import { RolesGuard } from './roles.guard';
   imports: [
     ConfigModule,
     JwtModule.registerAsync({
+      global: true,
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         const jwtSecret = configService.get<string>('JWT_SECRET');
@@ -15,7 +16,6 @@ import { RolesGuard } from './roles.guard';
           throw new Error('JWT_SECRET nu este configurat în variabilele de mediu');
         }
         return {
-          global: true,
           secret: jwtSecret,
           signOptions: { 
             expiresIn: configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m' 
@@ -26,6 +26,6 @@ import { RolesGuard } from './roles.guard';
     }),
   ],
   providers: [AuthGuard, RolesGuard],
-  exports: [AuthGuard, RolesGuard],
+  exports: [AuthGuard, RolesGuard, JwtModule],
 })
 export class GuardsModule {} 

@@ -253,9 +253,9 @@ export class LocationsHttpController {
 	@Delete('assignments/:id')
 	removeAssignment(@Param('id') id: string) { return this.service.removeTaskTemplateAssignment(parseInt(id, 10)); }
 
-	// Revenue points endpoints
+	// Revenue points endpoints — configurare pe locație existentă = update, nu create
 	@Post(':id/revenue-intervals')
-	@Permissions('locations.create')
+	@Permissions('locations.update')
 	setIntervals(@Param('id') id: string, @Body() body: { intervals: Array<{ min: number; max?: number | null; points: number }> }) {
 		return this.service.setRevenueIntervals(parseInt(id, 10), body.intervals || []);
 	}

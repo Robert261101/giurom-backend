@@ -39,8 +39,10 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Fără permisiuni');
     }
 
-    const hasAll = requiredPermissions.every((perm) => (user.permissions as string[]).includes(perm));
-    if (!hasAll) {
+    const hasAny = requiredPermissions.some((perm) =>
+      (user.permissions as string[]).includes(perm),
+    );
+    if (!hasAny) {
       throw new ForbiddenException('Permisiuni insuficiente');
     }
     return true;

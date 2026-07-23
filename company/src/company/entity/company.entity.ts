@@ -70,6 +70,22 @@ export class Company {
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   notes: string | null;
 
+  /** Proveniența datelor firmei: preluate din ANAF sau introduse manual. */
+  @Column({
+    type: 'enum',
+    enum: ['anaf', 'manual'],
+    default: 'manual',
+  })
+  data_source: 'anaf' | 'manual';
+
+  /** Momentul ultimei preluări ANAF folosite la salvare (null pentru manual). */
+  @Column({ type: 'datetime', nullable: true })
+  anaf_verified_at: Date | null;
+
+  /** Snapshot intern normalizat al datelor ANAF (nu răspunsul brut). */
+  @Column({ type: 'json', nullable: true })
+  anaf_original_data: Record<string, unknown> | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsDateString, IsBoolean, IsOptional, IsNotEmpty, Length, Matches, IsUrl, IsIn } from 'class-validator';
+import { IsString, IsEmail, IsDateString, IsBoolean, IsOptional, IsNotEmpty, Length, Matches, IsUrl, IsIn, IsObject } from 'class-validator';
 
 export class CreateCompanyDto {
   @ApiProperty({ description: 'Numele companiei', example: 'SC Giurom SRL', maxLength: 255 })
@@ -125,4 +125,31 @@ export class CreateCompanyDto {
   @IsOptional()
   @Length(0, 1000)
   notes?: string;
+
+  @ApiProperty({
+    description: 'Proveniența datelor firmei (anaf sau manual)',
+    enum: ['anaf', 'manual'],
+    default: 'manual',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @IsIn(['anaf', 'manual'])
+  data_source?: 'anaf' | 'manual';
+
+  @ApiProperty({
+    description: 'Momentul ultimei preluări ANAF folosite la salvare',
+    required: false,
+  })
+  @IsDateString()
+  @IsOptional()
+  anaf_verified_at?: string | null;
+
+  @ApiProperty({
+    description: 'Snapshot intern normalizat al datelor ANAF',
+    required: false,
+  })
+  @IsObject()
+  @IsOptional()
+  anaf_original_data?: Record<string, unknown> | null;
 } 

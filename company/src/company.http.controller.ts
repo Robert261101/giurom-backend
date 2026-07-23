@@ -53,12 +53,6 @@ export class CompanyHttpController {
 		return this.service.findByIdsBasic(idList);
 	}
 
-	@Get('internal/furnizor-dropdown')
-	@UseGuards(InternalServiceGuard)
-	findFurnizorDropdownForRegistration() {
-		return this.service.findFurnizorCompaniesForRegistration();
-	}
-
 	@Get('for-own')
 	@Permissions('companies.read_own')
 	findForOwn() {
@@ -99,14 +93,14 @@ export class CompanyHttpController {
 
 	// Documents
 	@Get(':companyId/documents')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getDocs(@Param('companyId') companyId: string) { 
 		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId}`);
 		return this.service.findCompanyDocuments(parseInt(companyId, 10)); 
 	}
 
 	@Get(':companyId/documents/folders')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getCompanyFolders(@Param('companyId') companyId: string) {
 		console.log(`[COMPANY CONTROLLER] Getting folders for company ${companyId}`);
 		return this.service.getCompanyFolders(parseInt(companyId, 10));
@@ -125,14 +119,14 @@ export class CompanyHttpController {
 	}
 
 	@Get(':companyId/documents/structure')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getCompanyFileStructure(@Param('companyId') companyId: string) {
 		console.log(`[COMPANY CONTROLLER] Getting file structure for company ${companyId}`);
 		return this.service.getCompanyFileStructure(parseInt(companyId, 10));
 	}
 
 	@Get(':companyId/documents/folder-files')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getFilesFromFolder(
 		@Param('companyId') companyId: string,
 		@Query('path') folderPath: string
@@ -142,7 +136,7 @@ export class CompanyHttpController {
 	}
 
 	@Get(':companyId/documents/file')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	async serveFileFromPath(
 		@Param('companyId') companyId: string,
 		@Query('path') filePath: string,
@@ -171,14 +165,14 @@ export class CompanyHttpController {
 	}
 
 	@Get(':companyId/documents/folder/:folder')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getDocsByFolder(@Param('companyId') companyId: string, @Param('folder') folder: string) {
 		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId} in folder ${folder}`);
 		return this.service.findCompanyDocumentsByFolder(parseInt(companyId, 10), folder);
 	}
 
 	@Get('documents/:documentId/info')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	getDoc(@Param('documentId') documentId: string) { 
 		console.log(`[COMPANY CONTROLLER] Getting document info for ID ${documentId}`);
 		return this.service.findDocumentById(parseInt(documentId, 10)); 
@@ -223,7 +217,7 @@ export class CompanyHttpController {
 
 	// Serve company file (download or inline based on query)
 	@Get('documents/:fileId')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	async getCompanyFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Query('download') download: string,
@@ -253,7 +247,7 @@ export class CompanyHttpController {
 
 	// Force inline view
 	@Get('documents/:fileId/view')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	async viewCompanyFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Res() res: Response,

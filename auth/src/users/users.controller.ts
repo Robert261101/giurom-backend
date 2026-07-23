@@ -15,6 +15,7 @@
   ArgumentMetadata,
   Injectable,
   NotFoundException,
+  UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
@@ -28,6 +29,7 @@ import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { AuthGuard, RolesGuard, Permissions } from '../guards';
 
 // Pipe custom care nu validează nimic - doar returnează valoarea
 @Injectable()
@@ -46,6 +48,8 @@ export class UsersController {
   ) {}
 
   @Post()
+  @UseGuards(AuthGuard, RolesGuard)
+  @Permissions('users.create')
   @ApiOperation({ summary: 'Creează un utilizator nou' })
   @ApiBody({
     description: 'Datele pentru crearea unui utilizator nou',
@@ -71,16 +75,27 @@ export class UsersController {
   })
   @ApiResponse({ status: 201, description: 'Utilizatorul a fost creat cu succes', type: User })
   @ApiResponse({ status: 409, description: 'Utilizatorul cu acest id_employee există deja' })
-  async create(@Body() createUserDto: CreateUserDto): Promise<User> {
-    return this.usersService.create(createUserDto);
+  async create(
+    @Req() req: Request & { user?: any },
+    @Body() createUserDto: CreateUserDto,
+  ): Promise<User> {
+    return this.usersService.createForRequester(req.user || {}, createUserDto);
   }
 
   @Get()
+  @UseGuards(AuthGuard, RolesGuard)
+  @Permissions('users.read')
   @ApiOperation({ summary: 'Returnează utilizatorii (opțional inclusiv dezactivați)' })
   @ApiQuery({ name: 'includeInactive', required: false, description: 'Dacă este "true", returnează toți utilizatorii, inclusiv cei dezactivați' })
   @ApiResponse({ status: 200, description: 'Lista utilizatorilor', type: [User] })
-  async findAll(@Query('includeInactive') includeInactive?: string): Promise<User[]> {
-    return this.usersService.findAll(includeInactive === 'true');
+  async findAll(
+    @Req() req: Request & { user?: any },
+    @Query('includeInactive') includeInactive?: string,
+  ): Promise<User[]> {
+    return this.usersService.findAllForRequester(
+      req.user || {},
+      includeInactive === 'true',
+    );
   }
 
   @Get('employee/:id_employee')
