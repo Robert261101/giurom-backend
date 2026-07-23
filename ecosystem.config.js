@@ -60,7 +60,7 @@ module.exports = {
       name: 'company',
       cwd: `${REPO_ROOT}/giurom-backend/company`,
       script: 'dist/main.js',
-      env: { ...nestjsEnv, REPO_ROOT },
+      env: { ...nestjsEnv, REPO_ROOT, LOCATIONS_HTTP_URL: 'http://127.0.0.1:3004' },
     },
     {
       name: 'locations',

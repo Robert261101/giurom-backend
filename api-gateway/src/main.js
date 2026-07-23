@@ -26,6 +26,8 @@ app.use(
       "http://localhost:3001",
       "https://giurom.bitap.ro",
       "http://giurom.bitap.ro",
+      "https://restosoft.eu",
+      "http://restosoft.eu",
       `http://${PUBLIC_SERVER_IP}:3000`,
       `http://${PUBLIC_SERVER_IP}`,
       // Adaugă domenii Vercel specifice via env (ex: VERCEL_ALLOWED_ORIGINS=https://giurom-frontend.vercel.app)
