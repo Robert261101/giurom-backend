@@ -2916,6 +2916,71 @@ export class SuppliersService {
     );
   }
 
+  /**
+   * Ca assertSupplierLinkedToClientCompany, dar în loc să respingă cu 403 atunci când
+   * furnizorul nu are încă nicio locație a companiei client, creează automat asocierea
+   * (la locația de lucru curentă, dacă e cunoscută, altfel la prima locație a companiei).
+   * Configurarea unei mapări de produs implică deja intenția clientului de a folosi
+   * furnizorul, deci pasul manual separat „Locații → Asociază furnizor" devine inutil aici.
+   */
+  private async ensureSupplierLinkedToClientCompany(
+    supplierId: number,
+    clientCompanyId: number,
+    selectedWorkLocationId?: number,
+  ): Promise<void> {
+    const rows = await this.supplierLocationsRepo.find({
+      where: { supplier_id: supplierId },
+    });
+    let hadFetchFailure = false;
+    for (const row of rows) {
+      const { location, failed } = await this.fetchLocationOrFail(row.id_location);
+      if (failed) {
+        hadFetchFailure = true;
+        continue;
+      }
+      const locCompanyId = Number(
+        location?.company_id ?? location?.companyId ?? 0,
+      );
+      if (locCompanyId === clientCompanyId) {
+        return;
+      }
+    }
+    if (hadFetchFailure) {
+      throw new ServiceUnavailableException(
+        'Nu am putut verifica asocierea furnizorului (serviciul de locații nu a răspuns). Reîncearcă.',
+      );
+    }
+
+    let targetLocationId: number | null = null;
+    if (
+      selectedWorkLocationId != null &&
+      Number.isFinite(selectedWorkLocationId) &&
+      selectedWorkLocationId > 0
+    ) {
+      const { location, failed } = await this.fetchLocationOrFail(selectedWorkLocationId);
+      if (failed) {
+        throw new ServiceUnavailableException(
+          'Nu am putut verifica locația de lucru (serviciul de locații nu a răspuns). Reîncearcă.',
+        );
+      }
+      const locCompanyId = Number(location?.company_id ?? location?.companyId ?? 0);
+      if (location && locCompanyId === clientCompanyId) {
+        targetLocationId = selectedWorkLocationId;
+      }
+    }
+    if (targetLocationId == null) {
+      const companyLocationIds = await this.fetchCompanyLocationIds(clientCompanyId);
+      if (companyLocationIds.length === 0) {
+        throw new BadRequestException(
+          'Compania nu are nicio locație configurată, deci furnizorul nu poate fi asociat automat',
+        );
+      }
+      targetLocationId = companyLocationIds[0];
+    }
+
+    await this.assignSupplierToLocation(supplierId, targetLocationId);
+  }
+
   private async assertClientStockProductInCompanyNomenclator(
     clientStockProductId: number,
     clientCompanyId: number,
@@ -3058,7 +3123,11 @@ export class SuppliersService {
       );
     }
 
-    await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
+    await this.ensureSupplierLinkedToClientCompany(
+      supplierId,
+      clientCompanyId,
+      selectedWorkLocationId,
+    );
 
     const supplierProduct = await this.supplierProductRepo.findOne({
       where: { id: supplierProductId, supplier_id: supplierId },
