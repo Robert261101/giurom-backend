@@ -241,7 +241,109 @@ export class AttendanceService implements OnModuleInit {
     return { data, total, page, limit };
   }
 
-  async findShiftById(id: number): Promise<Shift> {
+  private async assertEmployeeInCompany(
+    employeeId: number,
+    companyId: number,
+  ): Promise<void> {
+    const base =
+      process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(`${base}/employees/company/${companyId}`, {
+          headers: {
+            'x-internal-service': 'attendance',
+            'x-service-secret': process.env.SERVICE_SECRET || '',
+          },
+          timeout: 8000,
+        }),
+      );
+      const list = Array.isArray(resp.data?.data)
+        ? resp.data.data
+        : Array.isArray(resp.data)
+          ? resp.data
+          : [];
+      const ids = list
+        .map((e: { id?: number }) => Number(e?.id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+      if (!ids.includes(employeeId)) {
+        throw new ForbiddenException(
+          'Angajatul nu aparține companiei dumneavoastră',
+        );
+      }
+    } catch (error: any) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException(
+        'Nu s-a putut verifica apartenența angajatului la companie',
+      );
+    }
+  }
+
+  private async assertEmployeeAttendanceAccess(
+    targetEmployeeId: number,
+    user?: any,
+    authorization?: string,
+    opts?: { allowedEmployeeIds?: number[]; requireManage?: boolean },
+  ): Promise<void> {
+    if (!user) {
+      return;
+    }
+
+    const ctx = buildAttendanceUserContext(user);
+    const requireManage = opts?.requireManage === true;
+
+    if (ctx.employeeId != null && ctx.employeeId === targetEmployeeId) {
+      return;
+    }
+    if (opts?.allowedEmployeeIds?.includes(targetEmployeeId)) {
+      return;
+    }
+
+    if (ctx.permissions.includes('assignment.read_all')) {
+      if (!requireManage || hasAttendanceManagePermission(ctx.permissions)) {
+        return;
+      }
+    }
+
+    if (
+      ctx.permissions.includes('assignment.read_company') &&
+      !ctx.permissions.includes('assignment.read_all')
+    ) {
+      if (
+        (!requireManage ||
+          hasAttendanceManagePermission(ctx.permissions)) &&
+        ctx.companyId != null
+      ) {
+        await this.assertEmployeeInCompany(targetEmployeeId, ctx.companyId);
+        return;
+      }
+    }
+
+    if (isFurnizorTenant(ctx)) {
+      await this.assertFurnizorStaffMember(
+        targetEmployeeId,
+        ctx,
+        authorization,
+      );
+      return;
+    }
+
+    if (isOperationalStaffUser(user) && !requireManage) {
+      const colleagueIds = await this.fetchOperationalColleagueIds(user);
+      if (colleagueIds.includes(targetEmployeeId)) {
+        return;
+      }
+    }
+
+    throw new ForbiddenException('Nu aveți acces la pontajul acestui angajat');
+  }
+
+  async findShiftById(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<Shift> {
     const shift = await this.shiftRepository.findOne({
       where: { id },
       relations: ['presences'],
@@ -251,11 +353,24 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Schimbul cu ID-ul ${id} nu a fost găsit`);
     }
 
+    if (user) {
+      await this.assertEmployeeAttendanceAccess(
+        shift.employee_id,
+        user,
+        authorization,
+      );
+    }
+
     return shift;
   }
 
-  async updateShift(id: number, updateShiftDto: UpdateShiftDto): Promise<Shift> {
-    const shift = await this.findShiftById(id);
+  async updateShift(
+    id: number,
+    updateShiftDto: UpdateShiftDto,
+    user?: any,
+    authorization?: string,
+  ): Promise<Shift> {
+    const shift = await this.findShiftById(id, user, authorization);
 
     if (updateShiftDto.start_datetime || updateShiftDto.end_datetime) {
         const startDate = updateShiftDto.start_datetime
@@ -313,15 +428,12 @@ export class AttendanceService implements OnModuleInit {
     return savedShift;
   }
 
-  async deleteShift(id: number): Promise<void> {
-    const shift = await this.shiftRepository.findOne({
-      where: { id },
-      relations: ['presences'],
-    });
-
-    if (!shift) {
-      throw new NotFoundException(`Schimbul cu ID-ul ${id} nu a fost găsit`);
-    }
+  async deleteShift(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<void> {
+    const shift = await this.findShiftById(id, user, authorization);
 
     const startDtDel = shift.start_datetime instanceof Date ? shift.start_datetime : new Date(shift.start_datetime);
     const locId = (shift as any).work_location_id;
@@ -600,7 +712,11 @@ export class AttendanceService implements OnModuleInit {
     return { data, total, page: pageNum, limit: limitNum };
   }
 
-  async findPresenceById(id: number): Promise<Presence> {
+  async findPresenceById(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<Presence> {
     const presence = await this.presenceRepository.findOne({
       where: { id },
       relations: ['shift', 'inflexions'],
@@ -610,11 +726,24 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Prezența cu ID-ul ${id} nu a fost găsită`);
     }
 
+    if (user && presence.shift?.employee_id != null) {
+      await this.assertEmployeeAttendanceAccess(
+        presence.shift.employee_id,
+        user,
+        authorization,
+      );
+    }
+
     return presence;
   }
 
-  async updatePresence(id: number, updatePresenceDto: UpdatePresenceDto, user?: any): Promise<Presence> {
-    const presence = await this.findPresenceById(id);
+  async updatePresence(
+    id: number,
+    updatePresenceDto: UpdatePresenceDto,
+    user?: any,
+    authorization?: string,
+  ): Promise<Presence> {
+    const presence = await this.findPresenceById(id, user, authorization);
 
     console.log('[AttendanceService] updatePresence called:', {
       presenceId: id,
@@ -626,6 +755,15 @@ export class AttendanceService implements OnModuleInit {
 
     // Verifică dacă utilizatorul are permisiunea attendance.update
     const hasUpdatePermission = user?.permissions?.includes('attendance.update') || false;
+
+    if (hasUpdatePermission && presence.shift?.employee_id != null) {
+      await this.assertEmployeeAttendanceAccess(
+        presence.shift.employee_id,
+        user,
+        authorization,
+        { requireManage: true },
+      );
+    }
     
     // Dacă utilizatorul nu are permisiunea, verifică dacă prezența aparține angajatului
     if (!hasUpdatePermission) {
@@ -642,7 +780,9 @@ export class AttendanceService implements OnModuleInit {
         throw new BadRequestException('Nu aveți permisiunea de a modifica această prezență');
       }
       
-      const shift = await this.findShiftById(presence.shift_id);
+      const shift = await this.shiftRepository.findOne({
+        where: { id: presence.shift_id },
+      });
       const shiftEmployeeId = Number(shift?.employee_id);
       const userEmployeeIdNum = Number(userEmployeeId);
       
@@ -784,15 +924,12 @@ export class AttendanceService implements OnModuleInit {
     return savedPresence;
   }
 
-  async deletePresence(id: number): Promise<void> {
-    const presence = await this.presenceRepository.findOne({
-      where: { id },
-      relations: ['inflexions', 'shift'],
-    });
-
-    if (!presence) {
-      throw new NotFoundException(`Prezența cu ID-ul ${id} nu a fost găsită`);
-    }
+  async deletePresence(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<void> {
+    const presence = await this.findPresenceById(id, user, authorization);
 
     // Delete all associated inflexions
     for (const inflexion of presence.inflexions) {
@@ -866,7 +1003,11 @@ export class AttendanceService implements OnModuleInit {
     return { data, total, page, limit };
   }
 
-  async findPresenceInflexionById(id: number, user?: any): Promise<PresenceInflexion> {
+  async findPresenceInflexionById(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<PresenceInflexion> {
     const inflexion = await this.presenceInflexionRepository.findOne({
       where: { id },
       relations: ['presence', 'presence.shift'],
@@ -876,15 +1017,12 @@ export class AttendanceService implements OnModuleInit {
       throw new NotFoundException(`Punctul de inflexiune cu ID-ul ${id} nu a fost găsit`);
     }
 
-    // Notă securitate: fără verificare, orice user cu attendance.read/update/delete putea
-    // citi/edita/șterge punctele GPS ale oricărui angajat. Se verifică acum că angajatul
-    // curent e chiar cel căruia îi aparține tura, sau un admin cu attendance.update.
-    if (user !== undefined) {
-      const targetEmployeeId = inflexion.presence?.shift?.employee_id;
-      if (targetEmployeeId != null) {
-        const ctx = buildAttendanceUserContext(user);
-        assertEmployeeSelfOrManager(ctx, targetEmployeeId);
-      }
+    if (user && inflexion.presence?.shift?.employee_id != null) {
+      await this.assertEmployeeAttendanceAccess(
+        inflexion.presence.shift.employee_id,
+        user,
+        authorization,
+      );
     }
 
     return inflexion;
@@ -894,15 +1032,20 @@ export class AttendanceService implements OnModuleInit {
     id: number,
     updateInflexionDto: UpdatePresenceInflexionDto,
     user?: any,
+    authorization?: string,
   ): Promise<PresenceInflexion> {
-    const inflexion = await this.findPresenceInflexionById(id, user);
+    const inflexion = await this.findPresenceInflexionById(id, user, authorization);
 
     Object.assign(inflexion, updateInflexionDto);
     return await this.presenceInflexionRepository.save(inflexion);
   }
 
-  async deletePresenceInflexion(id: number, user?: any): Promise<void> {
-    const inflexion = await this.findPresenceInflexionById(id, user);
+  async deletePresenceInflexion(
+    id: number,
+    user?: any,
+    authorization?: string,
+  ): Promise<void> {
+    const inflexion = await this.findPresenceInflexionById(id, user, authorization);
     await this.presenceInflexionRepository.remove(inflexion);
   }
 

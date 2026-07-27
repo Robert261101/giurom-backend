@@ -775,6 +775,23 @@ export class LocationsService {
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
 
+    if (user && !user.bypassAuth) {
+      const perms = (user.permissions as string[]) || [];
+      const isGlobalAdmin = perms.includes('assignment.read_all');
+      if (!isGlobalAdmin) {
+        const jwtCompanyId = Number(user.company_id);
+        if (
+          Number.isFinite(jwtCompanyId) &&
+          jwtCompanyId > 0 &&
+          Number(workLocation.company_id) !== jwtCompanyId
+        ) {
+          throw new ForbiddenException(
+            'Locația nu aparține companiei dumneavoastră',
+          );
+        }
+      }
+    }
+
     // Încearcă să obții numele companiei pentru a-l include în răspuns
     let companyName: string | undefined;
     if (workLocation.company_id) {
@@ -958,8 +975,9 @@ export class LocationsService {
   async updateWorkLocation(
     id: number,
     dto: UpdateWorkLocationDto,
+    user?: any,
   ): Promise<WorkLocation> {
-    const workLocation = await this.findWorkLocationById(id);
+    const workLocation = await this.findWorkLocationById(id, user);
     const oldName = workLocation.location_name;
     Object.assign(workLocation, dto);
     const updatedLocation = await this.workLocationRepository.save(
@@ -983,8 +1001,8 @@ export class LocationsService {
     return updatedLocation;
   }
 
-  async removeWorkLocation(id: number): Promise<void> {
-    const workLocation = await this.findWorkLocationById(id);
+  async removeWorkLocation(id: number, user?: any): Promise<void> {
+    const workLocation = await this.findWorkLocationById(id, user);
     const locationName = workLocation.location_name;
 
     // Get related departments count

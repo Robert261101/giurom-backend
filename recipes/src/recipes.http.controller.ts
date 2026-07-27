@@ -135,29 +135,39 @@ export class RecipesHttpController {
   // Recipe products (ingredients)
   @Post('recipes/recipe-products')
   @Permissions('recipes.update')
-  addRecipeProduct(@Body() dto: CreateRecipeProductDto) { return this.recipes.addProductToRecipe(dto); }
+  addRecipeProduct(@Body() dto: CreateRecipeProductDto, @Request() req?: any) {
+    return this.recipes.addProductToRecipe(dto, buildRecipeAccessRequester(req?.user));
+  }
   @Patch('recipes/recipe-products/:id')
   @Permissions('recipes.update')
-  updateRecipeProduct(@Param('id') id: string, @Body() dto: UpdateRecipeProductDto) { return this.recipes.updateRecipeProduct(Number(id), dto); }
+  updateRecipeProduct(@Param('id') id: string, @Body() dto: UpdateRecipeProductDto, @Request() req?: any) {
+    return this.recipes.updateRecipeProduct(Number(id), dto, buildRecipeAccessRequester(req?.user));
+  }
   @Delete('recipes/recipe-products/:id')
   @Permissions('recipes.update')
-  removeRecipeProduct(@Param('id') id: string) { return this.recipes.removeRecipeProduct(Number(id)); }
+  removeRecipeProduct(@Param('id') id: string, @Request() req?: any) {
+    return this.recipes.removeRecipeProduct(Number(id), buildRecipeAccessRequester(req?.user));
+  }
 
   // Recipe products list for a recipe
   @Get('recipes/:id/products')
   @Permissions('recipes.read')
-  getRecipeProducts(@Param('id') id: string) { return this.recipes.findRecipeProducts(Number(id)); }
+  getRecipeProducts(@Param('id') id: string, @Request() req?: any) {
+    return this.recipes.findRecipeProducts(Number(id), buildRecipeAccessRequester(req?.user));
+  }
 
   // Recipe Media endpoints
   @Post('recipes/:id/media')
   @Permissions('recipes.create')
-  uploadMedia(@Param('id') id: string, @Body() dto: CreateRecipeMediaDto) {
+  async uploadMedia(@Param('id') id: string, @Body() dto: CreateRecipeMediaDto, @Request() req?: any) {
+    await this.recipes.ensureRecipeAccess(Number(id), buildRecipeAccessRequester(req?.user));
     return this.media.createMedia({ ...dto, recipe_id: Number(id) });
   }
 
   @Get('recipes/:id/media')
   @Permissions('recipes.read')
-  getRecipeMedia(@Param('id') id: string) {
+  async getRecipeMedia(@Param('id') id: string, @Request() req?: any) {
+    await this.recipes.ensureRecipeAccess(Number(id), buildRecipeAccessRequester(req?.user));
     return this.media.findMediaByRecipe(Number(id));
   }
 
@@ -180,39 +190,62 @@ export class RecipesHttpController {
   // Recipe recipes (rețete ca ingrediente)
   @Post('recipes/:id/recipe-ingredients')
   @Permissions('recipes.update')
-  addRecipeIngredient(
+  async addRecipeIngredient(
     @Param('id') recipeId: string,
-    @Body() body: { ingredient_recipe_id: number; quantity: number; notes?: string }
+    @Body() body: { ingredient_recipe_id: number; quantity: number; notes?: string },
+    @Request() req?: any,
   ) {
-    return this.recipes.addRecipeToRecipe(Number(recipeId), body.ingredient_recipe_id, body.quantity, body.notes);
+    const requester = buildRecipeAccessRequester(req?.user);
+    return this.recipes.addRecipeToRecipe(
+      Number(recipeId),
+      body.ingredient_recipe_id,
+      body.quantity,
+      body.notes,
+      requester,
+    );
   }
 
   @Get('recipes/:id/recipe-ingredients')
   @Permissions('recipes.read')
-  getRecipeIngredients(@Param('id') id: string) { return this.recipes.getRecipeRecipes(Number(id)); }
+  getRecipeIngredients(@Param('id') id: string, @Request() req?: any) {
+    return this.recipes.getRecipeRecipes(Number(id), buildRecipeAccessRequester(req?.user));
+  }
 
   @Patch('recipes/recipe-ingredients/:id')
   @Permissions('recipes.update')
   updateRecipeIngredient(
     @Param('id') id: string,
-    @Body() body: { quantity: number; notes?: string }
+    @Body() body: { quantity: number; notes?: string },
+    @Request() req?: any,
   ) {
-    return this.recipes.updateRecipeRecipe(Number(id), body.quantity, body.notes);
+    return this.recipes.updateRecipeRecipe(
+      Number(id),
+      body.quantity,
+      body.notes,
+      buildRecipeAccessRequester(req?.user),
+    );
   }
 
   @Delete('recipes/recipe-ingredients/:id')
   @Permissions('recipes.update')
-  removeRecipeIngredient(@Param('id') id: string) { return this.recipes.removeRecipeRecipe(Number(id)); }
+  removeRecipeIngredient(@Param('id') id: string, @Request() req?: any) {
+    return this.recipes.removeRecipeRecipe(Number(id), buildRecipeAccessRequester(req?.user));
+  }
 
   // Get scaled ingredients with stock availability (placed before recipes/:id to avoid route conflicts)
   @Get('recipes/:id/scaled-ingredients-with-stock')
   @Permissions('preparation.create')
   getScaledIngredientsWithStock(
     @Param('id') id: string,
-    @Query('quantity') quantity: string
+    @Query('quantity') quantity: string,
+    @Request() req?: any,
   ) {
     const qty = Number(quantity) || 1000;
-    return this.recipes.getScaledIngredientsWithStock(Number(id), qty);
+    return this.recipes.getScaledIngredientsWithStock(
+      Number(id),
+      qty,
+      buildRecipeAccessRequester(req?.user),
+    );
   }
 
   // Recipe by id (placed after static subpaths to avoid matching conflicts)
@@ -293,73 +326,90 @@ export class RecipesHttpController {
   
   @Get('recipe-preparations/batch')
   @Permissions('preparation.read')
-  getPreparationsBatch(@Query('ids') ids?: string) {
+  getPreparationsBatch(@Query('ids') ids?: string, @Request() req?: any) {
     const list = String(ids || '')
       .split(',')
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n) && n > 0);
-    return this.preps.findMany(list);
+    return this.preps.findMany(list, buildRecipeAccessRequester(req?.user));
   }
 
   @Get('recipe-preparations/:id')
   @Permissions('preparation.read')
-  getPreparation(@Param('id') id: string) { return this.preps.findOne(Number(id)); }
+  getPreparation(@Param('id') id: string, @Request() req?: any) {
+    return this.preps.findOne(Number(id), buildRecipeAccessRequester(req?.user));
+  }
   
   @Post('recipe-preparations')
   @Permissions('preparation.create')
-  createPreparation(@Body() dto: CreateRecipePreparationDto) { return this.preps.create(dto); }
+  createPreparation(@Body() dto: CreateRecipePreparationDto, @Request() req?: any) {
+    return this.preps.create(dto, buildRecipeAccessRequester(req?.user));
+  }
   
   @Patch('recipe-preparations/:id')
   @Permissions('preparation.update')
-  updatePreparation(@Param('id') id: string, @Body() dto: UpdateRecipePreparationDto) {
+  updatePreparation(@Param('id') id: string, @Body() dto: UpdateRecipePreparationDto, @Request() req?: any) {
     const payload: any = { ...dto };
     if (payload.produced_at && typeof payload.produced_at === 'string') {
       payload.produced_at = new Date(payload.produced_at) as any;
     }
-    return this.preps.update(Number(id), payload);
+    return this.preps.update(Number(id), payload, buildRecipeAccessRequester(req?.user));
   }
   
   @Delete('recipe-preparations/:id')
   @Permissions('preparation.delete')
-  removePreparation(@Param('id') id: string) { return this.preps.remove(Number(id)); }
+  removePreparation(@Param('id') id: string, @Request() req?: any) {
+    return this.preps.remove(Number(id), buildRecipeAccessRequester(req?.user));
+  }
   
   @Post('recipe-preparations/prepare-with-stock')
   @Permissions('preparation.create')
-  prepareWithStock(@Body() dto: CreateRecipePreparationDto) { return this.preps.prepareWithStock(dto); }
+  prepareWithStock(@Body() dto: CreateRecipePreparationDto, @Request() req?: any) {
+    return this.preps.prepareWithStock(dto, buildRecipeAccessRequester(req?.user));
+  }
 
   // Labels
   @Get('recipe-labels')
   @Permissions('recipes.read')
-  labelsAll() { return this.labels.findAll(); }
+  labelsAll(@Request() req?: any) {
+    return this.labels.findAll(buildRecipeAccessRequester(req?.user));
+  }
   
   @Get('recipe-labels/:id')
   @Permissions('recipes.read')
-  labelsOne(@Param('id') id: string) { return this.labels.findOne(Number(id)); }
+  labelsOne(@Param('id') id: string, @Request() req?: any) {
+    return this.labels.findOne(Number(id), buildRecipeAccessRequester(req?.user));
+  }
   
   @Post('recipe-labels')
   @Permissions('recipes.create')
   labelsCreate(@Body() dto: CreateRecipeLabelDto, @Request() req: any) { 
-    return this.labels.create(dto, req.user); 
+    const requester = buildRecipeAccessRequester(req.user);
+    return this.labels.create(dto, req.user, requester); 
   }
   
   @Delete('recipe-labels/:id')
   @Permissions('recipes.delete')
-  labelsRemove(@Param('id') id: string) { return this.labels.remove(Number(id)); }
+  labelsRemove(@Param('id') id: string, @Request() req?: any) {
+    return this.labels.remove(Number(id), buildRecipeAccessRequester(req?.user));
+  }
   
   // Print label
   @Post('recipe-labels/:id/print')
   @Permissions('recipes.create')
   async printLabel(
     @Param('id') id: string,
-    @Body() body: { copies?: number }
+    @Body() body: { copies?: number },
+    @Request() req?: any,
   ) {
-    const label = await this.labels.findOne(Number(id));
+    const requester = buildRecipeAccessRequester(req?.user);
+    const label = await this.labels.findOne(Number(id), requester);
     if (!label) {
       throw new NotFoundException('Eticheta nu a fost găsită');
     }
     
     // Obține preparatul pentru a extrage datele necesare
-    const prep = await this.preps.findOne(label.recipe_preparation_id);
+    const prep = await this.preps.findOne(label.recipe_preparation_id, requester);
     if (!prep) {
       throw new NotFoundException('Preparatul nu a fost găsit');
     }

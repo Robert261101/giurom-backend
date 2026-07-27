@@ -3,6 +3,7 @@
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   Logger,
 } from "@nestjs/common";
@@ -47,6 +48,13 @@ import { OrderList } from "./entities/order-list.entity";
 import { CreateOrderListDto } from "./dto/create-order-list.dto";
 import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 import {
+  StockJwtUser,
+  getJwtCompanyId,
+  getJwtWorkLocationId,
+  isGlobalStockAdmin,
+  assertLocationAllowed,
+} from './stock-access';
+import {
   PaginatedStockResponse,
   StockListQueryFilters,
   StockLocationSummary,
@@ -55,6 +63,83 @@ import {
 @Injectable()
 export class StockService {
   private readonly logger = new Logger(StockService.name);
+  private locationIdsByCompanyCache = new Map<
+    number,
+    { ids: number[]; timestamp: number }
+  >();
+  private readonly LOCATION_CACHE_TTL_MS = 60_000;
+
+  private internalHeaders(): Record<string, string> {
+    return {
+      'x-internal-service': 'stock-ms',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
+    };
+  }
+
+  async resolvePermittedLocationIds(user?: StockJwtUser): Promise<number[]> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return [];
+    }
+    const companyId = getJwtCompanyId(user);
+    if (companyId != null) {
+      const cached = this.locationIdsByCompanyCache.get(companyId);
+      if (
+        cached &&
+        Date.now() - cached.timestamp < this.LOCATION_CACHE_TTL_MS
+      ) {
+        return cached.ids;
+      }
+      const locationsUrl =
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      try {
+        const response = await firstValueFrom(
+          this.httpService!.get(
+            `${locationsUrl}/locations/company/${companyId}`,
+            { headers: this.internalHeaders(), timeout: 8000 },
+          ),
+        );
+        const payload = response.data as { data?: unknown } | unknown[];
+        const data =
+          payload &&
+          typeof payload === 'object' &&
+          !Array.isArray(payload) &&
+          'data' in payload
+            ? (payload as { data?: unknown }).data
+            : payload;
+        const list = Array.isArray(data) ? data : [];
+        const ids = list
+          .map((row: { id?: number }) => Number(row?.id))
+          .filter((id: number) => Number.isFinite(id) && id > 0);
+        this.locationIdsByCompanyCache.set(companyId, {
+          ids,
+          timestamp: Date.now(),
+        });
+        if (ids.length > 0) {
+          return ids;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    const workLocationId = getJwtWorkLocationId(user);
+    return workLocationId != null ? [workLocationId] : [];
+  }
+
+  private async assertStockLocationAllowed(
+    user: StockJwtUser | undefined,
+    locationId: number | null | undefined,
+  ): Promise<void> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return;
+    }
+    const permitted = await this.resolvePermittedLocationIds(user);
+    if (permitted.length === 0) {
+      throw new ForbiddenException(
+        'Locația/compania nu este determinată pentru utilizator',
+      );
+    }
+    assertLocationAllowed(user, locationId, permitted);
+  }
 
   constructor(
     @InjectRepository(Product)
@@ -639,14 +724,32 @@ export class StockService {
     return this.normalizeProductPhoto(merged);
   }
 
-  async findProduct(id: number): Promise<Product> {
+  async findProduct(id: number, user?: StockJwtUser): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException("Produsul nu a fost găsit");
+    if (user && !isGlobalStockAdmin(user)) {
+      const stocks = await this.stockRepo.find({ where: { product_id: id } });
+      const permitted = await this.resolvePermittedLocationIds(user);
+      if (permitted.length > 0 && stocks.length > 0) {
+        const hasAccess = stocks.some((s) =>
+          permitted.includes(Number(s.location_id)),
+        );
+        if (!hasAccess) {
+          throw new ForbiddenException(
+            'Produsul nu este disponibil în locațiile companiei dumneavoastră',
+          );
+        }
+      }
+    }
     return this.normalizeProductPhoto(product);
   }
 
-  async updateProduct(id: number, dto: UpdateProductDto): Promise<Product> {
-    const product = await this.findProduct(id);
+  async updateProduct(
+    id: number,
+    dto: UpdateProductDto,
+    user?: StockJwtUser,
+  ): Promise<Product> {
+    const product = await this.findProduct(id, user);
     this.logger.log(
       `🔄 [updateProduct] Product ID ${id} - Current photo: ${product.photo || "no photo"}, New photo: ${dto.photo || "no change"}`
     );
@@ -715,8 +818,8 @@ export class StockService {
     return updated;
   }
 
-  async deleteProduct(id: number): Promise<void> {
-    const product = await this.findProduct(id);
+  async deleteProduct(id: number, user?: StockJwtUser): Promise<void> {
+    const product = await this.findProduct(id, user);
     const stockCount = await this.stockRepo.count({
       where: { product_id: id },
     });
@@ -1150,17 +1253,23 @@ export class StockService {
 
   async findStock(
     id: number,
+    user?: StockJwtUser,
   ): Promise<Stock & { transactions?: StockTransaction[] }> {
     const s = await this.stockRepo.findOne({
       where: { id },
       relations: ["product", "transactions"],
     });
     if (!s) throw new NotFoundException("Stocul nu a fost găsit");
+    await this.assertStockLocationAllowed(user, s.location_id ?? null);
     return s;
   }
 
-  async updateStock(id: number, dto: UpdateStockDto): Promise<Stock> {
-    const stock = await this.findStock(id);
+  async updateStock(
+    id: number,
+    dto: UpdateStockDto,
+    user?: StockJwtUser,
+  ): Promise<Stock> {
+    const stock = await this.findStock(id, user);
     if (dto.quantity !== undefined) {
       stock.quantity = Number(dto.quantity);
     }
@@ -1176,8 +1285,8 @@ export class StockService {
     return await this.stockRepo.save(stock);
   }
 
-  async deleteStock(id: number): Promise<void> {
-    const stock = await this.findStock(id);
+  async deleteStock(id: number, user?: StockJwtUser): Promise<void> {
+    const stock = await this.findStock(id, user);
     if (Number(stock.quantity) > 0) {
       throw new BadRequestException(
         "Nu se poate șterge stocul agregat cât timp cantitatea este mai mare decât 0",
@@ -1670,27 +1779,40 @@ export class StockService {
 
   // === WASTE RECORDS ===
 
-  async findAllWasteRecords(): Promise<WasteRecord[]> {
+  async findAllWasteRecords(user?: StockJwtUser): Promise<WasteRecord[]> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return await this.wasteRecordRepo.find({
+        relations: ["product"],
+        order: { created_at: "DESC" },
+      });
+    }
+    const permitted = await this.resolvePermittedLocationIds(user);
+    if (permitted.length === 0) {
+      return [];
+    }
     return await this.wasteRecordRepo.find({
+      where: { location_id: In(permitted) },
       relations: ["product"],
       order: { created_at: "DESC" },
     });
   }
 
-  async findWasteRecord(id: number): Promise<WasteRecord> {
+  async findWasteRecord(id: number, user?: StockJwtUser): Promise<WasteRecord> {
     const wasteRecord = await this.wasteRecordRepo.findOne({
       where: { id },
       relations: ["product"],
     });
     if (!wasteRecord) throw new NotFoundException("Waste record not found");
+    await this.assertStockLocationAllowed(user, wasteRecord.location_id ?? null);
     return wasteRecord;
   }
 
   async updateWasteRecord(
     id: number,
-    dto: UpdateWasteRecordDto
+    dto: UpdateWasteRecordDto,
+    user?: StockJwtUser,
   ): Promise<WasteRecord> {
-    const wasteRecord = await this.findWasteRecord(id);
+    const wasteRecord = await this.findWasteRecord(id, user);
 
     // Validate that either product_id or recipe_preparation_id is provided
     const finalProductId =
@@ -1727,8 +1849,8 @@ export class StockService {
     return await this.wasteRecordRepo.save(wasteRecord);
   }
 
-  async deleteWasteRecord(id: number): Promise<void> {
-    const wasteRecord = await this.findWasteRecord(id);
+  async deleteWasteRecord(id: number, user?: StockJwtUser): Promise<void> {
+    const wasteRecord = await this.findWasteRecord(id, user);
     await this.wasteRecordRepo.remove(wasteRecord);
   }
 

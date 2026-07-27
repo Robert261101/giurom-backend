@@ -576,7 +576,64 @@ export class EmployeeService {
     };
   }
 
-  async findOne(id: number): Promise<Employee> {
+  async assertCanAccessEmployee(
+    employeeId: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<void> {
+    if (!user || user.bypassAuth) {
+      return;
+    }
+    const perms = user.permissions || [];
+    if (perms.includes('assignment.read_all')) {
+      return;
+    }
+    const selfId = Number(user.sub ?? user.id);
+    if (Number.isFinite(selfId) && selfId === employeeId) {
+      return;
+    }
+    const companyId = Number(user.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new ForbiddenException(
+        'Compania utilizatorului nu este determinată',
+      );
+    }
+    const employee = await this.employeeRepository.findOne({
+      where: { id: employeeId },
+    });
+    if (!employee) {
+      throw new NotFoundException(
+        `Angajatul cu ID-ul ${employeeId} nu a fost găsit`,
+      );
+    }
+    if (employee.work_location_default_id) {
+      await this.assertLocationInCompany(
+        employee.work_location_default_id,
+        companyId,
+      );
+      return;
+    }
+    throw new ForbiddenException(
+      'Angajatul nu aparține companiei dumneavoastră',
+    );
+  }
+
+  async findOne(
+    id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<Employee> {
+    await this.assertCanAccessEmployee(id, user);
     const employee = await this.employeeRepository.findOne({
       where: { id },
     });
@@ -786,8 +843,15 @@ export class EmployeeService {
     id: number,
     updateEmployeeDto: UpdateEmployeeDto,
     selectedWorkLocationId?: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<Employee> {
-    const employee = await this.findOne(id);
+    const employee = await this.findOne(id, user);
 
     // Verifică unicitatea email-ului (dacă se schimbă)
     if (updateEmployeeDto.email && updateEmployeeDto.email !== employee.email) {
@@ -859,7 +923,18 @@ export class EmployeeService {
   }
 
   // Ștergerea unui angajat
-  async remove(id: number, selectedWorkLocationId?: number): Promise<{ message: string }> {
+  async remove(
+    id: number,
+    selectedWorkLocationId?: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<{ message: string }> {
+    await this.assertCanAccessEmployee(id, user);
     const employee = await this.employeeRepository.findOne({ where: { id } });
 
     if (!employee) {
@@ -981,7 +1056,17 @@ export class EmployeeService {
   }
 
   // Activarea/dezactivarea unui angajat
-  async toggleActive(id: number): Promise<Employee> {
+  async toggleActive(
+    id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<Employee> {
+    await this.assertCanAccessEmployee(id, user);
     const employee = await this.findOne(id);
     employee.is_active = !employee.is_active;
 

@@ -609,7 +609,11 @@ export class ExecutionService {
     return [];
   }
 
-  async findOne(id: number): Promise<TaskExecution> {
+  async findOne(
+    id: number,
+    user?: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<TaskExecution> {
     const execution = await this.executionRepository.findOne({
       where: { id },
       relations: [
@@ -626,7 +630,39 @@ export class ExecutionService {
       throw new NotFoundException(`Execuția cu ID ${id} nu a fost găsită`);
     }
 
+    if (user) {
+      await this.assertCanAccessExecution(execution, user, authorization);
+    }
+
     return execution;
+  }
+
+  private async assertCanAccessExecution(
+    execution: TaskExecution,
+    user: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<void> {
+    const assignment =
+      execution.task_assignment ??
+      (await this.taskAssignmentRepository.findOne({
+        where: { id: execution.task_assignment_id },
+      }));
+
+    if (assignment) {
+      await this.employeeAccessService.assertCanReadAssignment(
+        user,
+        assignment,
+        authorization,
+      );
+      return;
+    }
+
+    const selfId = getCanonicalEmployeeId(user);
+    if (selfId != null && Number(execution.employee_id) === Number(selfId)) {
+      return;
+    }
+
+    throw new ForbiddenException('Nu ai dreptul să accesezi această execuție');
   }
 
   /**

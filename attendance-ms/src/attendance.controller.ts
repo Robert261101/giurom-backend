@@ -129,8 +129,15 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Schimbul nu a fost găsit',
   })
-  async findShiftById(@Param('id', ParseIntPipe) id: number): Promise<Shift> {
-    return await this.attendanceService.findShiftById(id);
+  async findShiftById(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<Shift> {
+    return await this.attendanceService.findShiftById(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   @Patch('shifts/:id')
@@ -156,8 +163,14 @@ export class AttendanceController {
   async updateShift(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateShiftDto: UpdateShiftDto,
+    @Request() req: any,
   ): Promise<Shift> {
-    return await this.attendanceService.updateShift(id, updateShiftDto);
+    return await this.attendanceService.updateShift(
+      id,
+      updateShiftDto,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   @Delete('shifts/:id')
@@ -175,8 +188,15 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Schimbul nu a fost găsit',
   })
-  async deleteShift(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return await this.attendanceService.deleteShift(id);
+  async deleteShift(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<void> {
+    return await this.attendanceService.deleteShift(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   // PRESENCE ENDPOINTS
@@ -248,8 +268,15 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Prezența nu a fost găsită',
   })
-  async findPresenceById(@Param('id', ParseIntPipe) id: number): Promise<Presence> {
-    return await this.attendanceService.findPresenceById(id);
+  async findPresenceById(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<Presence> {
+    return await this.attendanceService.findPresenceById(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   @Patch('presences/:id')
@@ -273,7 +300,12 @@ export class AttendanceController {
     @Body() updatePresenceDto: UpdatePresenceDto,
     @Request() req: any,
   ): Promise<Presence> {
-    return await this.attendanceService.updatePresence(id, updatePresenceDto, req.user);
+    return await this.attendanceService.updatePresence(
+      id,
+      updatePresenceDto,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   @Delete('presences/:id')
@@ -291,8 +323,15 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Prezența nu a fost găsită',
   })
-  async deletePresence(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return await this.attendanceService.deletePresence(id);
+  async deletePresence(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<void> {
+    return await this.attendanceService.deletePresence(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   // PRESENCE INFLEXION ENDPOINTS
@@ -362,7 +401,11 @@ export class AttendanceController {
     @Param('id', ParseIntPipe) id: number,
     @Request() req: any,
   ): Promise<PresenceInflexion> {
-    return await this.attendanceService.findPresenceInflexionById(id, req?.user);
+    return await this.attendanceService.findPresenceInflexionById(
+      id,
+      req?.user,
+      req.headers?.authorization,
+    );
   }
 
   @Patch('presence-inflexions/:id')
@@ -386,7 +429,12 @@ export class AttendanceController {
     @Body() updateInflexionDto: UpdatePresenceInflexionDto,
     @Request() req: any,
   ): Promise<PresenceInflexion> {
-    return await this.attendanceService.updatePresenceInflexion(id, updateInflexionDto, req?.user);
+    return await this.attendanceService.updatePresenceInflexion(
+      id,
+      updateInflexionDto,
+      req?.user,
+      req.headers?.authorization,
+    );
   }
 
   @Delete('presence-inflexions/:id')
@@ -408,7 +456,11 @@ export class AttendanceController {
     @Param('id', ParseIntPipe) id: number,
     @Request() req: any,
   ): Promise<void> {
-    return await this.attendanceService.deletePresenceInflexion(id, req?.user);
+    return await this.attendanceService.deletePresenceInflexion(
+      id,
+      req?.user,
+      req.headers?.authorization,
+    );
   }
 
   // MY ACTIVE SHIFT - verifică dacă angajatul curent are tură activă

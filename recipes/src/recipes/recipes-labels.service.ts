@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -8,6 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecipeLabel } from './entities/recipe-label.entity';
 import { RecipePreparation } from './entities/recipe-preparation.entity';
+import { RecipeService } from './recipes.service';
+import { RecipeAccessRequester, isRecipeAdminUser } from './recipe-access';
 
 @Injectable()
 export class RecipesLabelsService {
@@ -19,6 +21,8 @@ export class RecipesLabelsService {
     @Inject('NOTIFICATIONS_RMQ') private readonly rmq: ClientProxy,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => RecipeService))
+    private readonly recipesService: RecipeService,
   ) {
     let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
     if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
@@ -29,14 +33,47 @@ export class RecipesLabelsService {
     this.employeesServiceUrl = employeesServiceUrl;
   }
 
-  async findAll(): Promise<any[]> {
+  private async assertLabelAccess(
+    label: RecipeLabel,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    const prep = await this.prepRepo.findOne({
+      where: { id: label.recipe_preparation_id },
+    });
+    if (!prep) {
+      throw new NotFoundException('Label not found');
+    }
+    await this.recipesService.assertPreparationRecipeAccess(
+      prep.recipe_id,
+      prep.location_id,
+      requester,
+    );
+  }
+
+  async findAll(requester?: RecipeAccessRequester): Promise<any[]> {
     const labels = await this.labelRepo.find({ 
       order: { generated_at: 'DESC' },
       relations: ['preparation', 'preparation.recipe']
     });
 
+    const filteredLabels =
+      !requester || isRecipeAdminUser(requester.permissions || [])
+        ? labels
+        : (
+            await Promise.all(
+              labels.map(async (label) => {
+                try {
+                  await this.assertLabelAccess(label, requester);
+                  return label;
+                } catch {
+                  return null;
+                }
+              }),
+            )
+          ).filter((label): label is RecipeLabel => label != null);
+
     // Populează numele angajaților pentru label-uri care au generated_by_employee_id
-    const employeeIds = labels
+    const employeeIds = filteredLabels
       .map(label => label.generated_by_employee_id)
       .filter((id): id is number => id !== null && id !== undefined);
     
@@ -69,7 +106,7 @@ export class RecipesLabelsService {
     }
 
     // Adaugă numele angajatului la fiecare label
-    return labels.map(label => {
+    return filteredLabels.map(label => {
       const labelAny = label as any;
       if (label.generated_by_employee_id && employeesMap.has(label.generated_by_employee_id)) {
         const employee = employeesMap.get(label.generated_by_employee_id)!;
@@ -81,9 +118,10 @@ export class RecipesLabelsService {
     });
   }
 
-  async findOne(id: number): Promise<RecipeLabel> {
+  async findOne(id: number, requester?: RecipeAccessRequester): Promise<RecipeLabel> {
     const label = await this.labelRepo.findOne({ where: { id } });
     if (!label) throw new NotFoundException('Label not found');
+    await this.assertLabelAccess(label, requester);
     return label;
   }
 
@@ -136,10 +174,18 @@ export class RecipesLabelsService {
     return `${baseCode}${nextNumber}`;
   }
 
-  async create(dto: { recipe_preparation_id: number; label_code?: string }, user?: any): Promise<RecipeLabel> {
+  async create(
+    dto: { recipe_preparation_id: number; label_code?: string },
+    user?: any,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeLabel> {
     const prep = await this.prepRepo.findOne({ where: { id: dto.recipe_preparation_id } });
     if (!prep) throw new NotFoundException('Preparation not found');
-    
+    await this.recipesService.assertPreparationRecipeAccess(
+      prep.recipe_id,
+      prep.location_id,
+      requester,
+    );
     // Dacă nu e furnizat un cod personalizat, generează-l automat
     const code = dto.label_code || await this.generateCode(user);
     
@@ -194,9 +240,10 @@ export class RecipesLabelsService {
     return savedLabel;
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, requester?: RecipeAccessRequester): Promise<void> {
     const label = await this.labelRepo.findOne({ where: { id } });
     if (!label) throw new NotFoundException('Label not found');
+    await this.assertLabelAccess(label, requester);
     await this.labelRepo.remove(label);
   }
 

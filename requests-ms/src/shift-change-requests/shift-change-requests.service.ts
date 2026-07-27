@@ -74,7 +74,11 @@ export class ShiftChangeRequestsService {
   }
 
   // Creare cerere de schimb de tură
-  async create(dto: CreateShiftChangeRequestDto, currentUserId?: number): Promise<ShiftChangeRequest> {
+  async create(
+    dto: CreateShiftChangeRequestDto,
+    user?: LeaveAccessUser,
+    _authorization?: string,
+  ): Promise<ShiftChangeRequest> {
     const employeesBase =
       process.env.EMPLOYEES_HTTP_URL || 'http://localhost:3011';
     const internalHeaders = {
@@ -124,10 +128,20 @@ export class ShiftChangeRequestsService {
       );
     }
 
-    // Autorizare: angajatul poate crea cereri doar pentru sine
-    if (currentUserId && currentUserId !== dto.employee_id) {
-      this.logger.warn(`User ${currentUserId} attempted to create shift change request for employee ${dto.employee_id}`);
-      throw new ForbiddenException('Nu poți crea cereri de schimb de tură pentru alți angajați');
+    // Autorizare: angajatul poate crea cereri doar pentru sine (identitate din JWT, nu header client)
+    const canonicalEmployeeId = user ? getCanonicalEmployeeId(user) : null;
+    if (canonicalEmployeeId != null && canonicalEmployeeId !== dto.employee_id) {
+      this.logger.warn(
+        `User ${canonicalEmployeeId} attempted to create shift change request for employee ${dto.employee_id}`,
+      );
+      throw new ForbiddenException(
+        'Nu poți crea cereri de schimb de tură pentru alți angajați',
+      );
+    }
+    if (canonicalEmployeeId == null && user) {
+      throw new ForbiddenException(
+        'Utilizatorul autentificat nu a putut fi identificat ca angajat',
+      );
     }
 
     // Verifică dacă angajatul înlocuitor există și aparține aceleiași locații
@@ -320,7 +334,7 @@ export class ShiftChangeRequestsService {
     authorization?: string,
   ): Promise<void> {
     if (!user) {
-      return;
+      throw new ForbiddenException('Utilizator neautentificat');
     }
     assertJwtEmployeeIdConsistency(user);
 
@@ -513,13 +527,14 @@ export class ShiftChangeRequestsService {
       throw new NotFoundException('Cererea de schimb de tură nu a fost găsită');
     }
 
-    if (user) {
-      await this.assertShiftChangeReadAccess(
-        shiftChangeRequest,
-        user,
-        authorization,
-      );
+    if (!user) {
+      throw new ForbiddenException('Utilizator neautentificat');
     }
+    await this.assertShiftChangeReadAccess(
+      shiftChangeRequest,
+      user,
+      authorization,
+    );
 
     return shiftChangeRequest;
   }
@@ -533,10 +548,16 @@ export class ShiftChangeRequestsService {
   ): Promise<ShiftChangeRequest> {
     const shiftChangeRequest = await this.findOne(id, user, authorization);
 
+    const reviewedById =
+      (user ? getCanonicalEmployeeId(user) : null) ?? dto.reviewed_by_id;
+    if (reviewedById == null) {
+      throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
+    }
+
     // Verifică dacă reviewerul există prin HTTP call
     try {
       await firstValueFrom(
-        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://localhost:3002'}/employees/${dto.reviewed_by_id}`, {
+        this.httpService.get(`${process.env.API_GATEWAY_URL || 'http://localhost:3002'}/employees/${reviewedById}`, {
           headers: {
             'x-internal-service': 'requests',
             'x-service-secret': process.env.SERVICE_SECRET || ''
@@ -544,17 +565,17 @@ export class ShiftChangeRequestsService {
         })
       );
     } catch (error) {
-      this.logger.error(`Reviewer with ID ${dto.reviewed_by_id} not found: ${error.message}`);
+      this.logger.error(`Reviewer with ID ${reviewedById} not found: ${error.message}`);
       throw new NotFoundException('Managerul care aprobă nu a fost găsit');
     }
 
     // Autorizare: admin sau furnizor (staff propriu) pot aproba/respinge
-    if (user && !isLeaveAdminUser(user) && !isFurnizorSupplierAdmin(user)) {
-      this.logger.warn(`Non-manager user ${user.sub} attempted to update shift change request status`);
+    if (!user || (!isLeaveAdminUser(user) && !isFurnizorSupplierAdmin(user))) {
+      this.logger.warn(`Non-manager user ${user?.sub} attempted to update shift change request status`);
       throw new ForbiddenException('Nu ai permisiunea să aprobi/respingi cereri de schimb de tură');
     }
 
-    if (user && !isLeaveAdminUser(user) && isFurnizorSupplierAdmin(user)) {
+    if (!isLeaveAdminUser(user) && isFurnizorSupplierAdmin(user)) {
       const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
       if (
         !staffIds.includes(shiftChangeRequest.employee_id) ||
@@ -573,15 +594,15 @@ export class ShiftChangeRequestsService {
     }
 
     // Verifică dacă nu încearcă să-și aprobe propria cerere
-    if (shiftChangeRequest.employee_id === dto.reviewed_by_id || shiftChangeRequest.replacement_id === dto.reviewed_by_id) {
-      this.logger.error(`Employee ${dto.reviewed_by_id} attempted to review their own shift change request ${id}`);
+    if (shiftChangeRequest.employee_id === reviewedById || shiftChangeRequest.replacement_id === reviewedById) {
+      this.logger.error(`Employee ${reviewedById} attempted to review their own shift change request ${id}`);
       throw new BadRequestException('Nu poți aproba/respinge o cerere în care ești implicat');
     }
 
     // Actualizează cererea
     const oldStatus = shiftChangeRequest.status;
     shiftChangeRequest.status = dto.status;
-    shiftChangeRequest.reviewed_by_id = dto.reviewed_by_id;
+    shiftChangeRequest.reviewed_by_id = reviewedById;
     shiftChangeRequest.reviewed_at = new Date();
 
     // Adaugă comentariul de review dacă există
@@ -608,7 +629,7 @@ export class ShiftChangeRequestsService {
             replacementId: shiftChangeRequest.replacement_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
           },
           `/pontaj/${shiftChangeRequest.employee_id}`,
           locId,
@@ -624,7 +645,7 @@ export class ShiftChangeRequestsService {
             employeeId: shiftChangeRequest.employee_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
           },
           `/pontaj/${shiftChangeRequest.replacement_id}`,
           locId,
@@ -641,7 +662,7 @@ export class ShiftChangeRequestsService {
             replacementId: shiftChangeRequest.replacement_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
             comment: dto.review_comment,
           },
           `/pontaj/${shiftChangeRequest.employee_id}`,
@@ -658,7 +679,7 @@ export class ShiftChangeRequestsService {
             employeeId: shiftChangeRequest.employee_id,
             startDate: shiftChangeRequest.start_datetime.toISOString(),
             endDate: shiftChangeRequest.end_datetime.toISOString(),
-            reviewerId: dto.reviewed_by_id,
+            reviewerId: reviewedById,
             comment: dto.review_comment,
           },
           `/pontaj/${shiftChangeRequest.replacement_id}`,

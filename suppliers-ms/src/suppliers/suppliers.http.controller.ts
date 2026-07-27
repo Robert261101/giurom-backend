@@ -581,8 +581,8 @@ export class SuppliersHttpController {
   @Patch("order-items/:itemId/toggle-availability")
   @Permissions("order.read")
   @ApiOperation({ summary: "Toggle availability_status for a supplier order item" })
-  toggleItemAvailability(@Param("itemId") itemId: string) {
-    return this.service.toggleItemAvailability(Number(itemId));
+  toggleItemAvailability(@Param("itemId") itemId: string, @Request() req: any) {
+    return this.service.toggleItemAvailability(Number(itemId), req?.user);
   }
 
   @Get(":id")
@@ -920,19 +920,19 @@ export class SuppliersHttpController {
 
   @Post("orders")
   @Permissions("order.create")
-  createOrder(@Body() dto: any) {
-    return this.service.createOrder(dto);
+  createOrder(@Body() dto: any, @Request() req: any) {
+    return this.service.createOrder(dto, req?.user);
   }
 
   @Patch("orders/:orderId/deliver")
   @Permissions("order.update")
-  deliver(@Param("orderId") orderId: string) {
-    return this.service.markOrderAsDelivered(Number(orderId));
+  deliver(@Param("orderId") orderId: string, @Request() req: any) {
+    return this.service.markOrderAsDelivered(Number(orderId), req?.user);
   }
 
   @Patch("orders/:orderId/return-to-supplier")
   @Permissions("order.update")
-  returnToSupplier(@Param("orderId") orderId: string) {
+  returnToSupplier(@Param("orderId") orderId: string, @Request() req: any) {
     return this.service.returnOrderToSupplier(Number(orderId));
   }
 
@@ -942,8 +942,9 @@ export class SuppliersHttpController {
   sendBackToMagazioner(
     @Param("orderId") orderId: string,
     @Body() dto: SendBackToMagazionerDto,
+    @Request() req: any,
   ) {
-    return this.service.sendOrderBackToMagazioner(Number(orderId), dto);
+    return this.service.sendOrderBackToMagazioner(Number(orderId), dto, req?.user);
   }
 
   @Patch("orders/:orderId/warehouse-review")
@@ -952,31 +953,33 @@ export class SuppliersHttpController {
   warehouseReviewOrder(
     @Param("orderId") orderId: string,
     @Body() dto: WarehouseReviewDto,
+    @Request() req: any,
   ) {
-    return this.service.warehouseReview(Number(orderId), dto);
+    return this.service.warehouseReview(Number(orderId), dto, req?.user);
   }
 
   @Post("orders/partial-reception")
   @Permissions("order.reception")
-  partialReception(@Body() dto: any) {
-    return this.service.markOrderAsPartiallyReceived(dto);
+  partialReception(@Body() dto: any, @Request() req: any) {
+    return this.service.markOrderAsPartiallyReceived(dto, req?.user);
   }
 
   @Post("orders/receptions/approve")
   @Permissions("order.approve")
   @ApiOperation({ summary: "Aprobă recepțiile și creează stock items" })
-  approveReceptions(@Body() dto: ApproveReceptionDto) {
-    return this.service.approveReceptions(dto.orderId, dto.receptionIds);
+  approveReceptions(@Body() dto: ApproveReceptionDto, @Request() req: any) {
+    return this.service.approveReceptions(dto.orderId, dto.receptionIds, req?.user);
   }
 
   @Post("orders/receptions/reject")
   @Permissions("order.approve")
   @ApiOperation({ summary: "Respinge recepțiile" })
-  rejectReceptions(@Body() dto: RejectReceptionDto) {
+  rejectReceptions(@Body() dto: RejectReceptionDto, @Request() req: any) {
     return this.service.rejectReceptions(
       dto.orderId,
       dto.receptionIds,
       dto.reason,
+      req?.user,
     );
   }
 
@@ -986,10 +989,16 @@ export class SuppliersHttpController {
   createAssignment(
     @Param("orderId") orderId: string,
     @Body() dto: CreateSupplierOrderAssignmentDto,
-    @Headers("x-user-id") userId?: string,
+    @Request() req: any,
   ) {
-    const createdBy = userId ? Number(userId) : undefined;
-    return this.service.createOrderAssignment(Number(orderId), dto, createdBy);
+    const createdBy = req?.user?.sub ?? req?.user?.userId;
+    const actorId = createdBy != null ? Number(createdBy) : undefined;
+    return this.service.createOrderAssignment(
+      Number(orderId),
+      dto,
+      Number.isFinite(actorId) && actorId! > 0 ? actorId : undefined,
+      req?.user,
+    );
   }
 
   @Patch("order-assignments/:assignmentId/approve")
@@ -997,10 +1006,14 @@ export class SuppliersHttpController {
   @ApiOperation({ summary: "Marchează o atribuire magazioner ca finalizată" })
   approveAssignment(
     @Param("assignmentId") assignmentId: string,
-    @Headers("x-user-id") userId?: string,
+    @Request() req: any,
   ) {
-    const approver = userId ? Number(userId) : undefined;
-    return this.service.approveOrderAssignment(Number(assignmentId), approver);
+    const approver = req?.user?.sub ?? req?.user?.userId;
+    const actorId = approver != null ? Number(approver) : undefined;
+    return this.service.approveOrderAssignment(
+      Number(assignmentId),
+      Number.isFinite(actorId) && actorId! > 0 ? actorId : undefined,
+    );
   }
 
   @Post("orders/:orderId/driver-assignments")
@@ -1010,10 +1023,16 @@ export class SuppliersHttpController {
   createDriverAssignment(
     @Param("orderId") orderId: string,
     @Body() dto: CreateSupplierOrderDriverAssignmentDto,
-    @Headers("x-user-id") userId?: string,
+    @Request() req: any,
   ) {
-    const assignedBy = userId ? Number(userId) : undefined;
-    return this.service.createDriverAssignment(Number(orderId), dto, assignedBy);
+    const assignedBy = req?.user?.sub ?? req?.user?.userId;
+    const actorId = assignedBy != null ? Number(assignedBy) : undefined;
+    return this.service.createDriverAssignment(
+      Number(orderId),
+      dto,
+      Number.isFinite(actorId) && actorId! > 0 ? actorId : undefined,
+      req?.user,
+    );
   }
 
   @Get("drivers/:driverId/delivery-priorities")
@@ -1059,8 +1078,8 @@ export class SuppliersHttpController {
   /** Șoferii și conturile furnizor au `order.read`, nu `order.approve`. */
   @PermissionsAny("order.approve", "order.read")
   @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
-  completeDriverAssignment(@Param("assignmentId") assignmentId: string) {
-    return this.service.completeDriverAssignment(Number(assignmentId));
+  completeDriverAssignment(@Param("assignmentId") assignmentId: string, @Request() req: any) {
+    return this.service.completeDriverAssignment(Number(assignmentId), req?.user);
   }
 
   @Get("storekeepers/:employeeId/orders/paginated")
@@ -1099,8 +1118,9 @@ export class SuppliersHttpController {
   updateOrderStatus(
     @Param("orderId") orderId: string,
     @Body("status") status: string,
+    @Request() req: any,
   ) {
-    return this.service.updateOrderStatus(Number(orderId), status);
+    return this.service.updateOrderStatus(Number(orderId), status, req?.user);
   }
 
   @Patch("orders/:orderId/delivery-date")
@@ -1110,8 +1130,9 @@ export class SuppliersHttpController {
   updateOrderDeliveryDate(
     @Param("orderId") orderId: string,
     @Body() dto: UpdateOrderDeliveryDateDto,
+    @Request() req: any,
   ) {
-    return this.service.updateOrderDeliveryDate(Number(orderId), dto);
+    return this.service.updateOrderDeliveryDate(Number(orderId), dto, req?.user);
   }
 
   @Get("orders/reception-report")
@@ -1167,7 +1188,7 @@ export class SuppliersHttpController {
     description:
       "Lista de ID-uri de comenzi, separate prin virgulă (ex: 1,2,3)",
   })
-  getOrderReceptionsBatch(@Query("order_ids") orderIdsRaw: string) {
+  getOrderReceptionsBatch(@Query("order_ids") orderIdsRaw: string, @Request() req: any) {
     if (!orderIdsRaw) {
       return [];
     }
@@ -1181,21 +1202,21 @@ export class SuppliersHttpController {
       return [];
     }
 
-    return this.service.getOrderReceptionsBatch(orderIds);
+    return this.service.getOrderReceptionsBatch(orderIds, req?.user);
   }
 
   @Get("orders/:orderId/receptions")
   @Permissions("order.read")
   @ApiOperation({ summary: "Obține recepțiile pentru o comandă" })
-  getOrderReceptions(@Param("orderId") orderId: string) {
-    return this.service.getOrderReceptions(Number(orderId));
+  getOrderReceptions(@Param("orderId") orderId: string, @Request() req: any) {
+    return this.service.getOrderReceptions(Number(orderId), req?.user);
   }
 
   @Get("orders/:orderId/cancelled-items")
   @Permissions("order.read")
   @ApiOperation({ summary: "Obține item-urile anulate pentru o comandă" })
-  getOrderCancelledItems(@Param("orderId") orderId: string) {
-    return this.service.getOrderCancelledItems(Number(orderId));
+  getOrderCancelledItems(@Param("orderId") orderId: string, @Request() req: any) {
+    return this.service.getOrderCancelledItems(Number(orderId), req?.user);
   }
 
   /**
@@ -1207,7 +1228,7 @@ export class SuppliersHttpController {
   @ApiOperation({
     summary: "Obține item-urile anulate pentru mai multe comenzi (batch)",
   })
-  getOrderCancelledItemsBatch(@Query("order_ids") orderIdsRaw: string) {
+  getOrderCancelledItemsBatch(@Query("order_ids") orderIdsRaw: string, @Request() req: any) {
     if (!orderIdsRaw) {
       return [];
     }
@@ -1221,7 +1242,7 @@ export class SuppliersHttpController {
       return [];
     }
 
-    return this.service.getOrderCancelledItemsBatch(orderIds);
+    return this.service.getOrderCancelledItemsBatch(orderIds, req?.user);
   }
 
   @Post("orders/:orderId/cancel-remaining")
@@ -1233,8 +1254,9 @@ export class SuppliersHttpController {
   cancelRemaining(
     @Param("orderId") orderId: string,
     @Body() dto: CancelRemainingDto,
+    @Request() req: any,
   ) {
-    return this.service.cancelRemainingQuantity(Number(orderId), dto.reason);
+    return this.service.cancelRemainingQuantity(Number(orderId), dto.reason, req?.user);
   }
 
   @Post("orders/cancel-items")
@@ -1242,8 +1264,8 @@ export class SuppliersHttpController {
   @ApiOperation({
     summary: "Anulează item-uri dintr-o comandă (nouă abordare)",
   })
-  cancelOrderItems(@Body() dto: CancelOrderItemsDto) {
-    return this.service.cancelOrderItems(dto);
+  cancelOrderItems(@Body() dto: CancelOrderItemsDto, @Request() req: any) {
+    return this.service.cancelOrderItems(dto, req?.user);
   }
   @Get(":supplierId/orders/:orderId/email-link")
   @Permissions("order.read")

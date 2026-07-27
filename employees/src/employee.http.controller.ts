@@ -604,12 +604,12 @@ export class EmployeeHttpController {
     description: "Angajatul a fost găsit",
     type: Employee,
   })
-  async findOne(@Param("id") id: string): Promise<Employee> {
+  async findOne(@Param("id") id: string, @Request() req?: any): Promise<Employee> {
     const numericId = Number(id);
     if (!Number.isFinite(numericId) || numericId <= 0) {
       throw new ForbiddenException("ID angajat invalid");
     }
-    return this.employeeService.findOne(numericId);
+    return this.employeeService.findOne(numericId, req?.user);
   }
 
   @Patch(":id")
@@ -635,7 +635,7 @@ export class EmployeeHttpController {
   ): Promise<Employee> {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.employeeService.update(+id, updateEmployeeDto, selectedWorkLocationId);
+    return this.employeeService.update(+id, updateEmployeeDto, selectedWorkLocationId, req?.user);
   }
 
   @Patch(":id/toggle-active")
@@ -650,8 +650,8 @@ export class EmployeeHttpController {
     description: "Statusul angajatului a fost schimbat cu succes",
     type: Employee,
   })
-  async toggleActive(@Param("id") id: string): Promise<Employee> {
-    return this.employeeService.toggleActive(+id);
+  async toggleActive(@Param("id") id: string, @Request() req?: any): Promise<Employee> {
+    return this.employeeService.toggleActive(+id, req?.user);
   }
 
   @Delete(":id")
@@ -676,7 +676,7 @@ export class EmployeeHttpController {
   ): Promise<{ message: string }> {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.employeeService.remove(+id, selectedWorkLocationId);
+    return this.employeeService.remove(+id, selectedWorkLocationId, req?.user);
   }
 
   // Serve employee file (download or inline based on query)

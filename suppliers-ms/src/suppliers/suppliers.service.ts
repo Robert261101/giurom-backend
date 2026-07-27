@@ -36,6 +36,16 @@ import { SupplierDocument, DocumentType } from './entities/supplier-document.ent
 import { SupplierLocations } from './entities/supplier-locations.entity';
 import { SupplierProductClientMapping } from './entities/supplier-product-client-mapping.entity';
 import { buildSupplierProductImageFields } from './supplier-product-image.helper';
+import {
+  buildSupplierProductUserContext,
+  isAdminOrSuperAdminFromContext,
+} from './supplier-product-access';
+import {
+  assertOrderCompanyAccess,
+  filterOrdersByRequesterCompany,
+  OrderRequesterUser,
+  resolveOrderActorUserId,
+} from './order-access';
 import { EmployeeSupplier } from './entities/employee-supplier.entity';
 import {
   SupplierOrderAssignment,
@@ -565,41 +575,44 @@ export class SuppliersService {
     throw new NotImplementedException('returnOrderToSupplier not implemented yet');
   }
 
-  async sendOrderBackToMagazioner(orderId: number, dto: SendBackToMagazionerDto): Promise<SupplierOrder> {
-    const order = await this.orderRepo.findOne({
-      where: { id: orderId },
+  async sendOrderBackToMagazioner(
+    orderId: number,
+    dto: SendBackToMagazionerDto,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
+    const order = await this.findOrderForRequester(orderId, user);
+    const orderWithRelations = await this.orderRepo.findOne({
+      where: { id: order.id },
       relations: ['items', 'supplier'],
     });
-    if (!order) {
-      throw new NotFoundException('Comanda nu a fost găsită');
-    }
+    const targetOrder = orderWithRelations ?? order;
 
-    order.status = OrderStatus.MAGAZIONER;
+    targetOrder.status = OrderStatus.MAGAZIONER;
     if (dto.notes) {
-      order.notes = dto.notes;
+      targetOrder.notes = dto.notes;
     }
-    await this.orderRepo.save(order);
+    await this.orderRepo.save(targetOrder);
 
-    if (order.supplier_location_id != null) {
+    if (targetOrder.supplier_location_id != null) {
       await this.sendOrderNotification(
         'order_returned_to_magazioner',
         'Comandă retrimisă la magazioner',
-        `Comanda ${orderId} (${order.supplier?.supplier_name ?? 'N/A'}) a fost retrimisă la magazioner`,
-        order.supplier_location_id,
+        `Comanda ${orderId} (${targetOrder.supplier?.supplier_name ?? 'N/A'}) a fost retrimisă la magazioner`,
+        targetOrder.supplier_location_id,
         orderId,
-        { orderId, supplierName: order.supplier?.supplier_name, notes: dto.notes },
+        { orderId, supplierName: targetOrder.supplier?.supplier_name, notes: dto.notes },
         '/magazioner/dashboard',
       );
     }
 
-    return order;
+    return targetOrder;
   }
 
-  async toggleItemAvailability(itemId: number): Promise<SupplierOrderItem> {
-    const item = await this.orderItemRepo.findOne({ where: { id: itemId } });
-    if (!item) {
-      throw new NotFoundException(`Item-ul ${itemId} nu a fost găsit`);
-    }
+  async toggleItemAvailability(
+    itemId: number,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrderItem> {
+    const item = await this.findOrderItemForRequester(itemId, user);
     const current = item.availability_status || 'available';
     const newStatus = current === 'unavailable' ? 'available' : 'unavailable';
     await this.orderItemRepo.update(itemId, { availability_status: newStatus });
@@ -627,7 +640,12 @@ export class SuppliersService {
     return updated as SupplierOrderItem;
   }
 
-  async warehouseReview(orderId: number, dto: WarehouseReviewDto): Promise<SupplierOrder> {
+  async warehouseReview(
+    orderId: number,
+    dto: WarehouseReviewDto,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
+    await this.findOrderForRequester(orderId, user);
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, {
         where: { id: orderId },
@@ -1056,7 +1074,9 @@ export class SuppliersService {
     supplierOrderId: number,
     dto: CreateSupplierOrderAssignmentDto,
     createdByUserId?: number,
+    user?: OrderRequesterUser,
   ): Promise<SupplierOrderAssignment> {
+    await this.findOrderForRequester(supplierOrderId, user);
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, {
         where: { id: supplierOrderId },
@@ -1093,7 +1113,9 @@ export class SuppliersService {
     orderId: number,
     dto: CreateSupplierOrderDriverAssignmentDto,
     assignedByUserId?: number,
+    user?: OrderRequesterUser,
   ): Promise<SupplierOrderDriverAssignment> {
+    await this.findOrderForRequester(orderId, user);
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, { where: { id: orderId } });
       if (!order) {
@@ -1409,7 +1431,17 @@ export class SuppliersService {
     });
   }
 
-  async completeDriverAssignment(assignmentId: number): Promise<SupplierOrderDriverAssignment> {
+  async completeDriverAssignment(
+    assignmentId: number,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrderDriverAssignment> {
+    const existing = await this.connection.getRepository(SupplierOrderDriverAssignment).findOne({
+      where: { id: assignmentId },
+    });
+    if (!existing) {
+      throw new NotFoundException('Atribuirea nu a fost găsită');
+    }
+    await this.findOrderForRequester(existing.supplier_order_id, user);
     return this.connection.transaction(async (manager) => {
       const da = await manager.findOne(SupplierOrderDriverAssignment, {
         where: { id: assignmentId },
@@ -1542,7 +1574,12 @@ export class SuppliersService {
     return { rows: assignmentRows, total };
   }
 
-  async updateOrderDeliveryDate(orderId: number, dto: UpdateOrderDeliveryDateDto): Promise<SupplierOrder> {
+  async updateOrderDeliveryDate(
+    orderId: number,
+    dto: UpdateOrderDeliveryDateDto,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
+    await this.findOrderForRequester(orderId, user);
     const order = await this.orderRepo.findOne({ where: { id: orderId } });
     if (!order) {
       throw new NotFoundException('Comanda nu a fost găsită');
@@ -3413,8 +3450,29 @@ export class SuppliersService {
     return { supplierProduct, variantId };
   }
 
-  async createOrder(dto: CreateSupplierOrderDto): Promise<SupplierOrder> {
+  async createOrder(dto: CreateSupplierOrderDto, user?: OrderRequesterUser): Promise<SupplierOrder> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Creating order with data: ${JSON.stringify(dto)}`);
+
+    if (user) {
+      const ctx = buildSupplierProductUserContext(user);
+      if (
+        !isAdminOrSuperAdminFromContext(ctx) &&
+        ctx.companyId != null &&
+        dto.company_id != null &&
+        Number(dto.company_id) !== ctx.companyId
+      ) {
+        throw new ForbiddenException('company_id nu aparține companiei dumneavoastră');
+      }
+      if (!isAdminOrSuperAdminFromContext(ctx) && ctx.companyId != null) {
+        dto = { ...dto, company_id: ctx.companyId };
+      }
+      if (dto.created_by_user_id == null) {
+        const actorId = resolveOrderActorUserId(user);
+        if (actorId != null) {
+          dto = { ...dto, created_by_user_id: actorId };
+        }
+      }
+    }
     
     const orderStatus = (dto.status || OrderStatus.DRAFT) as OrderStatus;
     const resolvedSupplierLocationId =
@@ -3547,9 +3605,13 @@ export class SuppliersService {
     await this.orderDocumentRepo.save(document);
   }
 
-  async markOrderAsDelivered(orderId: number): Promise<SupplierOrder> {
+  async markOrderAsDelivered(
+    orderId: number,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Marking order ${orderId} as delivered`);
     
+    await this.findOrderForRequester(orderId, user);
     const order = await this.orderRepo.findOne({ where: { id: orderId }, relations: ['items', 'supplier'] });
     if (!order) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order not found: ${orderId}`);
@@ -3664,9 +3726,13 @@ export class SuppliersService {
     return updatedOrder;
   }
 
-  async markOrderAsPartiallyReceived(dto: PartialReceptionDto): Promise<SupplierOrder> {
+  async markOrderAsPartiallyReceived(
+    dto: PartialReceptionDto,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Processing partial reception for order ${dto.orderId}`);
     
+    await this.findOrderForRequester(dto.orderId, user);
     const order = await this.orderRepo.findOne({ 
       where: { id: dto.orderId }, 
       relations: ['items', 'supplier'] 
@@ -4429,15 +4495,60 @@ export class SuppliersService {
     }
   }
 
-  async updateOrderStatus(
+  async findOrderForRequester(
     orderId: number,
-    status: string,
+    user?: OrderRequesterUser,
   ): Promise<SupplierOrder> {
     const order = await this.orderRepo.findOne({
       where: { id: orderId },
       relations: ['items'],
     });
-    if (!order) throw new NotFoundException('Comanda nu a fost găsită');
+    if (!order) {
+      throw new NotFoundException('Comanda nu a fost găsită');
+    }
+    const ctx: SupplierProductUserContext | undefined = user
+      ? buildSupplierProductUserContext(user)
+      : undefined;
+    assertOrderCompanyAccess(order, ctx);
+    return order;
+  }
+
+  async findOrderItemForRequester(
+    itemId: number,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrderItem> {
+    const item = await this.orderItemRepo.findOne({ where: { id: itemId } });
+    if (!item) {
+      throw new NotFoundException(`Item-ul ${itemId} nu a fost găsit`);
+    }
+    await this.findOrderForRequester(item.order_id, user);
+    return item;
+  }
+
+  private async filterOrderIdsForRequester(
+    orderIds: number[],
+    user?: OrderRequesterUser,
+  ): Promise<number[]> {
+    if (!orderIds.length || !user) {
+      return orderIds;
+    }
+    const ctx = buildSupplierProductUserContext(user);
+    if (isAdminOrSuperAdminFromContext(ctx)) {
+      return orderIds;
+    }
+    const orders = await this.orderRepo.find({
+      where: { id: In(orderIds) },
+      select: ['id', 'company_id'],
+    });
+    return filterOrdersByRequesterCompany(orders, user).map((o) => o.id);
+  }
+
+  async updateOrderStatus(
+    orderId: number,
+    status: string,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
+    const order = await this.findOrderForRequester(orderId, user);
 
     const previousStatus = order.status;
     const newStatus = status as OrderStatus;
@@ -4504,9 +4615,13 @@ export class SuppliersService {
    * Anulează item-uri dintr-o comandă
    * Creează înregistrări în supplier_order_cancelled_items pentru item-urile anulate
    */
-  async cancelOrderItems(dto: { orderId: number; items: Array<{ itemId: number; returnedQuantity: number; returnReason?: string }> }): Promise<SupplierOrder> {
+  async cancelOrderItems(
+    dto: { orderId: number; items: Array<{ itemId: number; returnedQuantity: number; returnReason?: string }> },
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
     this.logger.log(`🚫 [SUPPLIERS SERVICE] Cancelling items for order ${dto.orderId}`);
     
+    await this.findOrderForRequester(dto.orderId, user);
     const order = await this.orderRepo.findOne({ 
       where: { id: dto.orderId }, 
       relations: ['items'] 
@@ -4636,12 +4751,17 @@ export class SuppliersService {
    * Marchează restul ca returnat cu motivul specificat
    * @deprecated Folosește cancelOrderItems în loc de această metodă
    */
-  async cancelRemainingQuantity(orderId: number, reason?: string): Promise<SupplierOrder> {
+  async cancelRemainingQuantity(
+    orderId: number,
+    reason?: string,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrder> {
     this.logger.log(
       `🧪 [DEBUG cancel] cancelRemainingQuantity CALLED orderId=${orderId} reason=${reason ?? 'null'}`,
     );
     this.logger.log(`🚫 [SUPPLIERS SERVICE] Cancelling remaining quantity for order ${orderId}`);
     
+    await this.findOrderForRequester(orderId, user);
     const order = await this.orderRepo.findOne({ 
       where: { id: orderId }, 
       relations: ['items'] 
@@ -4764,7 +4884,7 @@ export class SuppliersService {
       items: receptionItems,
     };
 
-    const updatedOrder = await this.markOrderAsPartiallyReceived(partialReceptionDto);
+    const updatedOrder = await this.markOrderAsPartiallyReceived(partialReceptionDto, user);
     // Persist cancelled items entries so they appear in cancelled-items view
     if (cancelItems.length > 0) {
       try {
@@ -4779,7 +4899,7 @@ export class SuppliersService {
         }
 
         this.logger.log(`🚫 [SUPPLIERS SERVICE] Creating cancelled items records for order ${orderId}`);
-        await this.cancelOrderItems({ orderId: order.id, items: cancelItems as any });
+        await this.cancelOrderItems({ orderId: order.id, items: cancelItems as any }, user);
         this.logger.log(`✅ [SUPPLIERS SERVICE] Cancelled items recorded for order ${orderId}`);
       } catch (e: any) {
         this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to create cancelled items for order ${orderId}: ${e?.message || e}`, e?.stack);
@@ -4799,7 +4919,7 @@ export class SuppliersService {
 
     if (newPendingReceptions.length > 0) {
       const receptionIds = newPendingReceptions.map(r => r.id);
-      await this.approveReceptions(orderId, receptionIds);
+      await this.approveReceptions(orderId, receptionIds, user);
       this.logger.log(`✅ [SUPPLIERS SERVICE] Approved ${receptionIds.length} return receptions automatically`);
     }
 
@@ -4873,9 +4993,14 @@ export class SuppliersService {
   /**
    * Aprobă recepțiile pentru o comandă și creează stock items
    */
-  async approveReceptions(orderId: number, receptionIds: number[]): Promise<{ approved: number; stockCreated: number }> {
+  async approveReceptions(
+    orderId: number,
+    receptionIds: number[],
+    user?: OrderRequesterUser,
+  ): Promise<{ approved: number; stockCreated: number }> {
     this.logger.log(`✅ [SUPPLIERS SERVICE] Approving ${receptionIds.length} receptions for order ${orderId}`);
     
+    await this.findOrderForRequester(orderId, user);
     // Găsește recepțiile cu status PENDING
     const receptions = await this.orderItemReceptionRepo.find({
       where: {
@@ -5063,7 +5188,7 @@ export class SuppliersService {
     if (cancelledPayload.length > 0) {
       try {
         this.logger.log(`🚫 [SUPPLIERS SERVICE] Creating cancelled items from approved receptions for order ${orderId}`);
-        await this.cancelOrderItems({ orderId, items: cancelledPayload as any });
+        await this.cancelOrderItems({ orderId, items: cancelledPayload as any }, user);
         this.logger.log(`✅ [SUPPLIERS SERVICE] Cancelled items created from approved receptions for order ${orderId}`);
       } catch (e: any) {
         this.logger.error(`❌ [SUPPLIERS SERVICE] Failed to create cancelled items from approved receptions for order ${orderId}: ${e?.message || e}`, e?.stack);
@@ -5114,9 +5239,15 @@ export class SuppliersService {
   /**
    * Respinge recepțiile pentru o comandă
    */
-  async rejectReceptions(orderId: number, receptionIds: number[], reason?: string): Promise<{ rejected: number }> {
+  async rejectReceptions(
+    orderId: number,
+    receptionIds: number[],
+    reason?: string,
+    user?: OrderRequesterUser,
+  ): Promise<{ rejected: number }> {
     this.logger.log(`❌ [SUPPLIERS SERVICE] Rejecting ${receptionIds.length} receptions for order ${orderId}`);
     
+    await this.findOrderForRequester(orderId, user);
     // Găsește recepțiile cu status PENDING
     const receptions = await this.orderItemReceptionRepo.find({
       where: {
@@ -5167,7 +5298,11 @@ export class SuppliersService {
   /**
    * Obține toate recepțiile pentru o comandă cu numele utilizatorilor
    */
-  async getOrderCancelledItems(orderId: number): Promise<SupplierOrderCancelledItem[]> {
+  async getOrderCancelledItems(
+    orderId: number,
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrderCancelledItem[]> {
+    await this.findOrderForRequester(orderId, user);
     return this.cancelledItemRepo.find({
       where: { order_id: orderId },
       relations: ['orderItem'],
@@ -5178,13 +5313,21 @@ export class SuppliersService {
    * Batch: item-uri anulate pentru mai multe comenzi.
    * Folosit în rapoarte pentru a evita N+1 request-uri (o singură interogare pe cancelledItemRepo).
    */
-  async getOrderCancelledItemsBatch(orderIds: number[]): Promise<SupplierOrderCancelledItem[]> {
+  async getOrderCancelledItemsBatch(
+    orderIds: number[],
+    user?: OrderRequesterUser,
+  ): Promise<SupplierOrderCancelledItem[]> {
     if (!orderIds || orderIds.length === 0) {
       return [];
     }
 
+    const allowedOrderIds = await this.filterOrderIdsForRequester(orderIds, user);
+    if (allowedOrderIds.length === 0) {
+      return [];
+    }
+
     return this.cancelledItemRepo.find({
-      where: { order_id: In(orderIds) as any },
+      where: { order_id: In(allowedOrderIds) as any },
       relations: ['orderItem'],
     });
   }
@@ -5288,9 +5431,13 @@ export class SuppliersService {
     return usersMap;
   }
 
-  async getOrderReceptions(orderId: number): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
+  async getOrderReceptions(
+    orderId: number,
+    user?: OrderRequesterUser,
+  ): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions for order ${orderId}`);
     
+    await this.findOrderForRequester(orderId, user);
     const receptions = await this.orderItemReceptionRepo.find({
       where: { supplier_order_id: orderId },
       order: { created_at: 'DESC' },
@@ -5310,12 +5457,20 @@ export class SuppliersService {
     })) as Array<SupplierOrderItemReception & { user_name?: string }>;
   }
 
-  async getOrderReceptionsBatch(orderIds: number[]): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
+  async getOrderReceptionsBatch(
+    orderIds: number[],
+    user?: OrderRequesterUser,
+  ): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
     if (!orderIds || orderIds.length === 0) {
       return [];
     }
 
-    const uniqueOrderIds = Array.from(new Set(orderIds));
+    const allowedOrderIds = await this.filterOrderIdsForRequester(orderIds, user);
+    if (allowedOrderIds.length === 0) {
+      return [];
+    }
+
+    const uniqueOrderIds = Array.from(new Set(allowedOrderIds));
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions batch for ${uniqueOrderIds.length} orders`);
 
     const receptions = await this.orderItemReceptionRepo.find({

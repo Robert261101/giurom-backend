@@ -2037,8 +2037,27 @@ export class AssignmentService {
     return updatedAssignment;
   }
 
-  async remove(id: number): Promise<void> {
-    const assignment = await this.findOne(id);
+  async remove(
+    id: number,
+    user?: EmployeeAccessUser,
+    authorization?: string,
+  ): Promise<void> {
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id },
+      relations: ['template', 'elements', 'elements.task_element'],
+    });
+
+    if (!assignment) {
+      throw new NotFoundException(`Assignment cu ID ${id} nu a fost găsit`);
+    }
+
+    if (user) {
+      await this.employeeAccessService.assertCanManageAssignment(
+        user,
+        assignment,
+        authorization,
+      );
+    }
 
     // Dacă este un task părinte cu recurență, șterge și task-urile copil
     if (assignment.recurrence_settings?.enabled) {

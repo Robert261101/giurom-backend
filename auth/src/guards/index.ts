@@ -1,6 +1,7 @@
 // Guards
 export { AuthGuard } from './auth.guard';
 export { RolesGuard } from './roles.guard';
+export { InternalServiceGuard } from '../auth/internal-service.guard';
 
 // Decorators
 export { Roles } from './decorators/roles.decorator';

@@ -58,10 +58,13 @@ export class ShiftChangeRequestsController {
   })
   create(
     @Body() createShiftChangeRequestDto: CreateShiftChangeRequestDto,
-    @Headers('x-user-id') currentUserId?: string,
+    @Request() req: { user?: unknown; headers?: { authorization?: string } },
   ): Promise<ShiftChangeRequest> {
-    const userId = currentUserId ? parseInt(currentUserId) : undefined;
-    return this.shiftChangeRequestsService.create(createShiftChangeRequestDto, userId);
+    return this.shiftChangeRequestsService.create(
+      createShiftChangeRequestDto,
+      req.user as Parameters<ShiftChangeRequestsService['create']>[1],
+      req.headers?.authorization,
+    );
   }
 
   // GET /shift-change-requests – listare cereri cu filtrare opțională

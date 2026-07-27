@@ -67,14 +67,16 @@ export class StockHttpController {
   }
   @Get("products/:id") @Permissions("products.read") async getProduct(
     @Param("id") id: string,
+    @Request() req?: any,
   ) {
-    return await this.service.findProduct(Number(id));
+    return await this.service.findProduct(Number(id), req?.user);
   }
   @Patch("products/:id") @Permissions("stock.update") async updateProduct(
     @Param("id") id: string,
     @Body() dto: UpdateProductDto,
+    @Request() req?: any,
   ) {
-    return await this.service.updateProduct(Number(id), dto);
+    return await this.service.updateProduct(Number(id), dto, req?.user);
   }
   @Patch("products/:id/at-location")
   @Permissions("stock.update")
@@ -95,8 +97,9 @@ export class StockHttpController {
   }
   @Delete("products/:id") @Permissions("stock.delete") async deleteProduct(
     @Param("id") id: string,
+    @Request() req?: any,
   ) {
-    return await this.service.deleteProduct(Number(id));
+    return await this.service.deleteProduct(Number(id), req?.user);
   }
 
   // Stock items
@@ -147,19 +150,22 @@ export class StockHttpController {
   }
   @Get("items/:id") @Permissions("stock.read") async getStock(
     @Param("id") id: string,
+    @Request() req?: any,
   ) {
-    return await this.service.findStock(Number(id));
+    return await this.service.findStock(Number(id), req?.user);
   }
   @Patch("items/:id") @Permissions("stock.update") async updateStock(
     @Param("id") id: string,
     @Body() dto: UpdateStockDto,
+    @Request() req?: any,
   ) {
-    return await this.service.updateStock(Number(id), dto);
+    return await this.service.updateStock(Number(id), dto, req?.user);
   }
   @Delete("items/:id") @Permissions("stock.delete") async deleteStock(
     @Param("id") id: string,
+    @Request() req?: any,
   ) {
-    return await this.service.deleteStock(Number(id));
+    return await this.service.deleteStock(Number(id), req?.user);
   }
 
   // Transactions
@@ -388,14 +394,14 @@ export class StockHttpController {
 
   @Get("waste-records")
   @Permissions("stock.read")
-  async getWasteRecords() {
-    return await this.service.findAllWasteRecords();
+  async getWasteRecords(@Request() req?: any) {
+    return await this.service.findAllWasteRecords(req?.user);
   }
 
   @Get("waste-records/:id")
   @Permissions("stock.read")
-  async getWasteRecord(@Param("id") id: string) {
-    return await this.service.findWasteRecord(Number(id));
+  async getWasteRecord(@Param("id") id: string, @Request() req?: any) {
+    return await this.service.findWasteRecord(Number(id), req?.user);
   }
 
   @Patch("waste-records/:id")
@@ -403,14 +409,15 @@ export class StockHttpController {
   async updateWasteRecord(
     @Param("id") id: string,
     @Body() dto: UpdateWasteRecordDto,
+    @Request() req?: any,
   ) {
-    return await this.service.updateWasteRecord(Number(id), dto);
+    return await this.service.updateWasteRecord(Number(id), dto, req?.user);
   }
 
   @Delete("waste-records/:id")
   @Permissions("stock.delete")
-  async deleteWasteRecord(@Param("id") id: string) {
-    return await this.service.deleteWasteRecord(Number(id));
+  async deleteWasteRecord(@Param("id") id: string, @Request() req?: any) {
+    return await this.service.deleteWasteRecord(Number(id), req?.user);
   }
 
   // === CATEGORY ENDPOINTS ===
