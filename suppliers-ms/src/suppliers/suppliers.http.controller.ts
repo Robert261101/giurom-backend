@@ -590,37 +590,30 @@ export class SuppliersHttpController {
   findOne(
     @Param("id") id: string,
     @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ) {
-    this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
-@Get(":id")
-@Permissions("suppliers.read")
-findOne(
-  @Param("id") id: string,
-  @Query("location_id") location_id?: string,
-  @Request() req?: any,
-) {
-  this.logger.log(
-    `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
-  );
+    this.logger.log(
+      `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
+    );
 
-  // Verificarea pe supplier_locations se aplică doar dacă
-  // location_id este trimis explicit.
-  const maybeLid = location_id
-    ? parseInt(location_id, 10)
-    : undefined;
-
-  const locationId =
-    Number.isFinite(maybeLid as number) &&
-    (maybeLid as number) > 0
-      ? (maybeLid as number)
+    // Verificarea pe supplier_locations se aplică doar dacă
+    // location_id este trimis explicit.
+    const maybeLid = location_id
+      ? parseInt(location_id, 10)
       : undefined;
 
-  return this.service.findOne(
-    Number(id),
-    locationId,
-    buildSupplierAccessRequester(req?.user),
-  );
-}
+    const locationId =
+      Number.isFinite(maybeLid as number) &&
+      (maybeLid as number) > 0
+        ? (maybeLid as number)
+        : undefined;
+
+    return this.service.findOne(
+      Number(id),
+      locationId,
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
 
   @Patch(":id")
   @Permissions("suppliers.update")
