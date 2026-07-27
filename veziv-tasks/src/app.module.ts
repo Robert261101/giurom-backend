@@ -72,7 +72,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET') || 'your-secret-key';
+        const secret = configService.get<string>('JWT_SECRET');
         const expiresIn = configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '24h';
         console.log('🔍 [AppModule] JWT Secret configurat în veziv-tasks:', secret);
         console.log('🔍 [AppModule] JWT ExpiresIn configurat în veziv-tasks:', expiresIn);

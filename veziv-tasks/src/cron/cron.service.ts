@@ -1,7 +1,7 @@
 ﻿import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, Raw } from 'typeorm';
+import { Repository, Not, IsNull, Raw, In } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import {
   TaskAssignment,
@@ -166,6 +166,26 @@ export class CronService {
       `📋 Found ${activeAssignments.length} active assignments to process`,
     );
 
+    // Un singur query batch pentru execuțiile deja finalizate (în loc de un findOne per assignment în buclă).
+    const alreadyCompletedByAssignmentId = new Map<
+      number,
+      { completed_at: Date }
+    >();
+    if (activeAssignments.length > 0) {
+      const completedExecutions = await this.executionRepository.find({
+        where: {
+          task_assignment_id: In(activeAssignments.map((a) => a.id)),
+          completed_at: Not(IsNull()),
+        },
+      });
+      for (const exec of completedExecutions) {
+        // Prima execuție finalizată găsită per assignment (echivalent cu findOne anterior).
+        if (!alreadyCompletedByAssignmentId.has(exec.task_assignment_id)) {
+          alreadyCompletedByAssignmentId.set(exec.task_assignment_id, exec);
+        }
+      }
+    }
+
     let completedCount = 0;
     let totalPointsDeducted = 0;
 
@@ -206,12 +226,7 @@ export class CronService {
 
         // Dacă angajatul a finalizat deja sarcina (ex.: sarcina realocată finalizată înainte de introducere încasare), nu scădem puncte – doar o marcăm închisă
         const alreadyCompletedByEmployee =
-          await this.executionRepository.findOne({
-            where: {
-              task_assignment_id: assignment.id,
-              completed_at: Not(IsNull()),
-            },
-          });
+          alreadyCompletedByAssignmentId.get(assignment.id);
         if (alreadyCompletedByEmployee) {
           this.logger.log(
             `✅ Task ${assignment.id} already completed by employee ${assignment.assigned_to_id} (e.g. reallocated task finished before end of day) – marking as completed, no deduction`,

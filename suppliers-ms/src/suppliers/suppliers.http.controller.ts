@@ -49,7 +49,10 @@ import { PermissionsGuard } from "../permissions/permissions.guard";
 import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
 import { UpdateSupplierNomenclatorProductDto } from "./dto/update-supplier-nomenclator-product.dto";
 import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
-import { buildSupplierProductUserContext } from "./supplier-product-access";
+import {
+  buildSupplierProductUserContext,
+  buildSupplierAccessRequester,
+} from "./supplier-product-access";
 import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 
 @ApiTags("suppliers")
@@ -82,22 +85,6 @@ export class SuppliersHttpController {
     }
 
     this.logger.log(`[SUPPLIERS HTTP] GET /suppliers called with query location_id=${location_id} resolved locationId=${locationId}`);
-    this.logger.log(`[SUPPLIERS HTTP] Authorization header: ${req?.headers?.authorization ? 'PRESENT' : 'MISSING'}`);
-    if (req?.headers?.authorization) {
-      this.logger.log(`[SUPPLIERS HTTP] Authorization header value: Bearer ${req.headers.authorization.substring(0, 50)}...`);
-      // Decode JWT to log permissions
-      try {
-        const jwt = require('jsonwebtoken');
-        const token = req.headers.authorization.replace('Bearer ', '');
-        const decoded = jwt.decode(token);
-        this.logger.log(`[SUPPLIERS HTTP] JWT decoded payload: ${JSON.stringify(decoded)}`);
-        this.logger.log(`[SUPPLIERS HTTP] JWT permissions: ${JSON.stringify(decoded?.permissions || [])}`);
-      } catch (error) {
-        this.logger.error(`[SUPPLIERS HTTP] Failed to decode JWT: ${(error as any)?.message || error}`);
-      }
-    }
-    this.logger.log(`[SUPPLIERS HTTP] User from JWT: ${JSON.stringify(req?.user ?? {})}`);
-    this.logger.log(`[SUPPLIERS HTTP] Received headers: ${JSON.stringify(req?.headers ?? {})}`);
 
     // Dacă încă nu avem location_id, aruncă eroare
     if (!locationId) {
@@ -605,15 +592,35 @@ export class SuppliersHttpController {
     @Query("location_id") location_id?: string,
   ) {
     this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
-    // Verificarea pe supplier_locations se aplică DOAR dacă location_id e trimis explicit în query.
-    // Catalogul global (/furnizori) trebuie să poată deschide orice furnizor fără asociere.
-    const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
-    const locationId =
-      Number.isFinite(maybeLid as number) && (maybeLid as number) > 0
-        ? (maybeLid as number)
-        : undefined;
-    return this.service.findOne(Number(id), locationId);
-  }
+@Get(":id")
+@Permissions("suppliers.read")
+findOne(
+  @Param("id") id: string,
+  @Query("location_id") location_id?: string,
+  @Request() req?: any,
+) {
+  this.logger.log(
+    `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
+  );
+
+  // Verificarea pe supplier_locations se aplică doar dacă
+  // location_id este trimis explicit.
+  const maybeLid = location_id
+    ? parseInt(location_id, 10)
+    : undefined;
+
+  const locationId =
+    Number.isFinite(maybeLid as number) &&
+    (maybeLid as number) > 0
+      ? (maybeLid as number)
+      : undefined;
+
+  return this.service.findOne(
+    Number(id),
+    locationId,
+    buildSupplierAccessRequester(req?.user),
+  );
+}
 
   @Patch(":id")
   @Permissions("suppliers.update")
@@ -627,7 +634,12 @@ export class SuppliersHttpController {
   ) {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.service.update(Number(id), dto, selectedWorkLocationId);
+    return this.service.update(
+      Number(id),
+      dto,
+      selectedWorkLocationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Delete(":id")
@@ -641,7 +653,11 @@ export class SuppliersHttpController {
   ) {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.service.remove(Number(id), selectedWorkLocationId);
+    return this.service.remove(
+      Number(id),
+      selectedWorkLocationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   // Measurement Variants (products/:productId must stay before generic :supplierId routes if added)

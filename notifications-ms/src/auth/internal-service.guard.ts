@@ -1,6 +1,14 @@
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { RpcArgumentsHost } from '@nestjs/common/interfaces';
+import { timingSafeEqual } from 'crypto';
+
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
@@ -28,7 +36,7 @@ export class InternalServiceGuard implements CanActivate {
           throw new UnauthorizedException('SERVICE_SECRET nu este configurat în variabilele de mediu');
         }
 
-        if (serviceSecret === expectedSecret) {
+        if (secretsMatch(serviceSecret, expectedSecret)) {
           // For RPC, we can't modify the request object, but we can allow the request
           this.logger.log(`Internal service request allowed for service: ${internalService} (RPC)`);
           return true;

@@ -9,6 +9,12 @@ import {
   type EmployeeAccessUser,
 } from './employee-access';
 
+// Cache scurt per proces pentru staff-ul furnizorului — evită 3 apeluri HTTP redundante
+// (my-supplier + drivers + warehouse) per element atunci când verificarea rulează într-o
+// buclă (ex. createBatch pe zeci de assignment-uri cu același token de autorizare).
+const supplierStaffIdsCache = new Map<string, { ids: number[]; timestamp: number }>();
+const SUPPLIER_STAFF_IDS_CACHE_TTL_MS = 10 * 1000;
+
 @Injectable()
 export class EmployeeAccessService {
   constructor(private readonly httpService: HttpService) {}
@@ -32,7 +38,7 @@ export class EmployeeAccessService {
     }
     headers['x-internal-service'] = 'veziv-tasks';
     headers['x-service-secret'] =
-      process.env.SERVICE_SECRET || 'default-service-secret';
+      process.env.SERVICE_SECRET || '';
     return headers;
   }
 
@@ -92,6 +98,12 @@ export class EmployeeAccessService {
   async fetchSupplierStaffEmployeeIds(
     authorization?: string,
   ): Promise<number[]> {
+    const cacheKey = authorization ?? '__internal__';
+    const cached = supplierStaffIdsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < SUPPLIER_STAFF_IDS_CACHE_TTL_MS) {
+      return cached.ids;
+    }
+
     const base = this.suppliersBaseUrl();
     const headers = this.userAuthHeaders(authorization);
     try {
@@ -129,7 +141,9 @@ export class EmployeeAccessService {
           ids.add(id);
         }
       }
-      return [...ids];
+      const result = [...ids];
+      supplierStaffIdsCache.set(cacheKey, { ids: result, timestamp: Date.now() });
+      return result;
     } catch {
       return [];
     }
@@ -222,6 +236,96 @@ export class EmployeeAccessService {
       throw new ForbiddenException(
         'Angajatul nu aparține locației selectate pentru sarcină',
       );
+    }
+  }
+
+  /** Batch: id -> profil de bază (is_active, work_location_default_id), un singur apel HTTP pentru N angajați. */
+  private async fetchEmployeeProfilesBatch(
+    employeeIds: number[],
+    authorization?: string,
+  ): Promise<
+    Map<number, { is_active?: boolean; work_location_default_id?: number | null }>
+  > {
+    const map = new Map<
+      number,
+      { is_active?: boolean; work_location_default_id?: number | null }
+    >();
+    const uniqueIds = [
+      ...new Set(employeeIds.filter((id) => Number.isFinite(id) && id > 0)),
+    ];
+    if (uniqueIds.length === 0) {
+      return map;
+    }
+
+    const headers = this.userAuthHeaders(authorization);
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(`${this.employeesBaseUrl()}/employees/batch`, {
+          headers,
+          params: { ids: uniqueIds.join(',') },
+          timeout: 8000,
+        }),
+      );
+      const rows = Array.isArray(resp.data) ? resp.data : [];
+      for (const row of rows) {
+        const id = Number(row?.id);
+        if (Number.isFinite(id) && id > 0) {
+          map.set(id, {
+            is_active: row?.is_active,
+            work_location_default_id: row?.work_location_default_id ?? null,
+          });
+        }
+      }
+    } catch {
+      // map rămâne gol pentru ID-uri nerezolvate — apelantul tratează ca profil negăsit
+    }
+    return map;
+  }
+
+  /**
+   * Versiune batch a assertSupplierAssigneeAtLocation — verifică TOȚI assignee-ii cu un
+   * singur apel pentru staffIds (cache scurt) + un singur apel batch pentru profile,
+   * în loc de câte 2 apeluri HTTP secvențiale per assignee (N+1 la crearea în masă).
+   */
+  async assertSupplierAssigneesAtLocationBatch(
+    user: EmployeeAccessUser | undefined,
+    assigneeIds: Array<number | null | undefined>,
+    locationId: number | null | undefined,
+    authorization?: string,
+  ): Promise<void> {
+    if (!isFurnizorSupplierAdmin(user ?? {})) {
+      return;
+    }
+    const locId = Number(locationId);
+    if (!Number.isFinite(locId) || locId <= 0) {
+      throw new ForbiddenException('Locația este obligatorie pentru sarcină');
+    }
+
+    const ids = assigneeIds.map((id) => Number(id));
+    if (ids.some((id) => !Number.isFinite(id) || id <= 0)) {
+      throw new ForbiddenException('Angajat invalid pentru atribuire');
+    }
+
+    const staffIds = await this.fetchSupplierStaffEmployeeIds(authorization);
+    for (const id of ids) {
+      if (!staffIds.includes(id)) {
+        throw new ForbiddenException(
+          'Angajatul nu aparține staff-ului furnizorului',
+        );
+      }
+    }
+
+    const profiles = await this.fetchEmployeeProfilesBatch(ids, authorization);
+    for (const id of ids) {
+      const profile = profiles.get(id);
+      if (!profile || profile.is_active === false) {
+        throw new ForbiddenException('Angajatul nu este activ');
+      }
+      if (Number(profile.work_location_default_id) !== locId) {
+        throw new ForbiddenException(
+          'Angajatul nu aparține locației selectate pentru sarcină',
+        );
+      }
     }
   }
 

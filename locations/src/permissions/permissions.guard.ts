@@ -11,6 +11,13 @@ import { DataSource } from "typeorm";
 import axios from "axios";
 import { PERMISSIONS_KEY } from "./permissions.decorator";
 
+// Cache scurt (per proces) pentru employees_locations — evită un apel HTTP sincron
+// către employees-ms la fiecare request GET /locations/:id pentru angajați cu acces
+// la mai multe locații. Atribuirile angajat-locație se schimbă rar, deci un TTL scurt
+// e sigur și reduce drastic latența fără a introduce date stale semnificative.
+const employeeLocationsCache = new Map<number, { locations: any[]; timestamp: number }>();
+const EMPLOYEE_LOCATIONS_CACHE_TTL_MS = 60 * 1000;
+
 @Injectable()
 export class PermissionsGuard implements CanActivate {
   private readonly logger = new Logger(PermissionsGuard.name);
@@ -218,26 +225,33 @@ export class PermissionsGuard implements CanActivate {
         return true;
       }
 
-      // Verificare 2: Verifică în employees_locations prin employees microservice
+      // Verificare 2: Verifică în employees_locations prin employees microservice (cu cache scurt per proces)
       try {
-        const employeesUrl =
-          process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
-        const response = await axios.get(
-          `${employeesUrl}/employees/${employeeId}/locations`,
-          {
-            headers: {
-              "x-internal-service": "locations",
-              "x-service-secret":
-                process.env.SERVICE_SECRET || '',
-              "Content-Type": "application/json",
-            },
-            timeout: 3000, // 3 second timeout
-          },
-        );
+        const cached = employeeLocationsCache.get(employeeId);
+        const now = Date.now();
+        let employeeLocations: any[];
 
-        const employeeLocations = Array.isArray(response.data)
-          ? response.data
-          : [];
+        if (cached && now - cached.timestamp < EMPLOYEE_LOCATIONS_CACHE_TTL_MS) {
+          employeeLocations = cached.locations;
+        } else {
+          const employeesUrl =
+            process.env.EMPLOYEES_HTTP_URL || "http://localhost:3011";
+          const response = await axios.get(
+            `${employeesUrl}/employees/${employeeId}/locations`,
+            {
+              headers: {
+                "x-internal-service": "locations",
+                "x-service-secret":
+                  process.env.SERVICE_SECRET || '',
+                "Content-Type": "application/json",
+              },
+              timeout: 3000, // 3 second timeout
+            },
+          );
+          employeeLocations = Array.isArray(response.data) ? response.data : [];
+          employeeLocationsCache.set(employeeId, { locations: employeeLocations, timestamp: now });
+        }
+
         const locationIdNum = parseInt(locationId, 10);
         const hasAccess = employeeLocations.some((el: any) => {
           const elLocationId =

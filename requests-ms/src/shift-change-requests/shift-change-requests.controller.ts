@@ -115,9 +115,14 @@ export class ShiftChangeRequestsController {
   })
   getEmployeeStats(
     @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Query('year') year?: number,
+    @Query('year') year: number | undefined,
+    @Request() req: { user?: unknown },
   ): Promise<any> {
-    return this.shiftChangeRequestsService.getEmployeeStats(employeeId, year);
+    return this.shiftChangeRequestsService.getEmployeeStats(
+      employeeId,
+      year,
+      req.user as Parameters<ShiftChangeRequestsService['getEmployeeStats']>[2],
+    );
   }
 
   // GET /shift-change-requests/employee/:employeeId – cereri pentru un angajat

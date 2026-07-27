@@ -1523,13 +1523,15 @@ export class AssignmentService {
             'Toți participanții trebuie să fie în aceeași locație',
           );
         }
-        await this.employeeAccessService.assertSupplierAssigneeAtLocation(
-          user,
-          dto.assigned_to_id,
-          locationId,
-          authorization,
-        );
       }
+      // Verificare batch (un singur set de apeluri HTTP pentru tot lotul, nu per-assignee) —
+      // înlocuiește fostul N+1 care verifica fiecare assignee individual, secvențial.
+      await this.employeeAccessService.assertSupplierAssigneesAtLocationBatch(
+        user,
+        createAssignmentDtos.map((dto) => dto.assigned_to_id),
+        locationId,
+        authorization,
+      );
       if (createAssignmentDtos.length > 1) {
         sharedGroupId = buildLocationDepartmentGroupId(locationId);
       } else {
@@ -1549,29 +1551,33 @@ export class AssignmentService {
     );
 
     const createdAssignments: TaskAssignment[] = [];
+    // Concurență mărginită — rulează câte 5 creări simultan în loc de secvențial (1 câte 1),
+    // dar fără să epuizeze pool-ul de conexiuni DB (~10 per serviciu) rulând totul deodată.
+    const CREATE_CONCURRENCY = 5;
 
-    for (const createAssignmentDto of createAssignmentDtos) {
-      if (sharedGroupId) {
-        createAssignmentDto.department_group_id = sharedGroupId;
-        createAssignmentDto.assignment_mode = AssignmentMode.EVERYONE_GETS_IT;
-      } else if (user && isFurnizorSupplierAdmin(user)) {
-        createAssignmentDto.assignment_mode = AssignmentMode.INDIVIDUAL;
-        createAssignmentDto.department_group_id = undefined;
-      }
-      try {
-        const assignment = await this.create(
-          createAssignmentDto,
-          user,
-          authorization,
-        );
-        createdAssignments.push(assignment);
-      } catch (error) {
-        console.error(
-          `❌ [ASSIGNMENT SERVICE] Error creating assignment in batch:`,
-          error,
-        );
-        throw error;
-      }
+    for (let i = 0; i < createAssignmentDtos.length; i += CREATE_CONCURRENCY) {
+      const chunk = createAssignmentDtos.slice(i, i + CREATE_CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map(async (createAssignmentDto) => {
+          if (sharedGroupId) {
+            createAssignmentDto.department_group_id = sharedGroupId;
+            createAssignmentDto.assignment_mode = AssignmentMode.EVERYONE_GETS_IT;
+          } else if (user && isFurnizorSupplierAdmin(user)) {
+            createAssignmentDto.assignment_mode = AssignmentMode.INDIVIDUAL;
+            createAssignmentDto.department_group_id = undefined;
+          }
+          try {
+            return await this.create(createAssignmentDto, user, authorization);
+          } catch (error) {
+            console.error(
+              `❌ [ASSIGNMENT SERVICE] Error creating assignment in batch:`,
+              error,
+            );
+            throw error;
+          }
+        }),
+      );
+      createdAssignments.push(...chunkResults);
     }
 
     console.log(
@@ -1749,28 +1755,35 @@ export class AssignmentService {
       scalarPatch.scheduled_datetime = updateData.scheduled_datetime;
     }
 
-    for (const sibling of activeSiblings) {
-      if (Object.keys(scalarPatch).length > 0) {
-        await this.assignmentRepository.update(sibling.id, scalarPatch);
-      }
-      if (updateAssignmentDto.elements !== undefined) {
-        await this.elementRepository.delete({ task_assignment_id: sibling.id });
-        if (updateAssignmentDto.elements.length > 0) {
-          const elements = updateAssignmentDto.elements.map((elementDto) =>
+    const siblingIds = activeSiblings.map((s) => s.id);
+
+    // Un singur UPDATE pentru toți frații (aceeași valoare comună), în loc de câte unul per frate.
+    if (Object.keys(scalarPatch).length > 0) {
+      await this.assignmentRepository.update({ id: In(siblingIds) }, scalarPatch);
+    }
+
+    // Un singur DELETE + un singur SAVE batch pentru elementele tuturor fraților.
+    if (updateAssignmentDto.elements !== undefined) {
+      await this.elementRepository.delete({ task_assignment_id: In(siblingIds) });
+      if (updateAssignmentDto.elements.length > 0) {
+        const elements = siblingIds.flatMap((siblingId) =>
+          updateAssignmentDto.elements!.map((elementDto) =>
             this.elementRepository.create({
               ...elementDto,
-              task_assignment_id: sibling.id,
+              task_assignment_id: siblingId,
             }),
-          );
-          await this.elementRepository.save(elements);
-        }
+          ),
+        );
+        await this.elementRepository.save(elements);
       }
-      const refreshed = await this.assignmentRepository.findOne({
-        where: { id: sibling.id },
-      });
-      if (refreshed) {
-        this.taskGateway.notifyTaskUpdate(refreshed);
-      }
+    }
+
+    // Un singur re-fetch batch pentru notificări, în loc de câte unul per frate.
+    const refreshedSiblings = await this.assignmentRepository.find({
+      where: { id: In(siblingIds) },
+    });
+    for (const refreshed of refreshedSiblings) {
+      this.taskGateway.notifyTaskUpdate(refreshed);
     }
   }
 
@@ -2036,9 +2049,12 @@ export class AssignmentService {
       });
 
       // Șterge task-urile copil (elementele lor vor fi șterse în cascada DB / TypeORM)
-      for (const childTask of childTasks) {
-        this.taskGateway.notifyTaskDeleted(childTask.id);
-        await this.assignmentRepository.remove(childTask);
+      // Un singur apel remove() cu tot array-ul, în loc de câte unul per task copil.
+      if (childTasks.length > 0) {
+        for (const childTask of childTasks) {
+          this.taskGateway.notifyTaskDeleted(childTask.id);
+        }
+        await this.assignmentRepository.remove(childTasks);
       }
     }
 
@@ -2806,13 +2822,19 @@ export class AssignmentService {
               department_id?: number;
             }>
           >();
-          for (const locId of locationIds) {
-            const shifts = await this.getShiftsForUserAtLocationInRange(
-              user.sub,
+          // Concurent în loc de secvențial — apelurile către attendance-ms sunt independente per locație.
+          const shiftsPerLocation = await Promise.all(
+            locationIds.map(async (locId) => ({
               locId,
-              rangeStart,
-              rangeEnd,
-            );
+              shifts: await this.getShiftsForUserAtLocationInRange(
+                user.sub,
+                locId,
+                rangeStart,
+                rangeEnd,
+              ),
+            })),
+          );
+          for (const { locId, shifts } of shiftsPerLocation) {
             shiftsByLocation.set(locId, shifts);
           }
           finalFiltered = filteredResult.filter((r) => {

@@ -228,7 +228,7 @@ export class EmployeeHttpController {
   @ApiOperation({
     summary: "Obține mai mulți angajați după ID-uri (batch)",
     description:
-      "Returnează informații de bază (id, first_name, last_name, email) pentru o listă de ID-uri de angajați.",
+      "Returnează informații de bază (id, first_name, last_name, email, is_active, work_location_default_id) pentru o listă de ID-uri de angajați.",
   })
   @ApiQuery({
     name: "ids",
@@ -252,21 +252,13 @@ export class EmployeeHttpController {
         | "first_name"
         | "last_name"
         | "email"
-        | "work_location_default_id"
         | "is_active"
+        | "work_location_default_id"
       >
     >
   > {
     if (!ids) {
       return [];
-    }
-    // DEBUG LOGS (temporary) - afișează headerele și user-ul decodat pentru debugging permisiuni
-    try {
-      console.log(`[EMPLOYEES][BATCH] ids=${ids}`);
-      console.log("[EMPLOYEES][BATCH] req.headers =", req?.headers);
-      console.log("[EMPLOYEES][BATCH] req.user =", req?.user);
-    } catch (e) {
-      // ignore logging errors
     }
 
     // Permite apelul dacă este un apel intern (InternalServiceGuard) sau dacă user-ul are
@@ -506,6 +498,8 @@ export class EmployeeHttpController {
   }
 
   @Get("phone/:phone")
+  @UseGuards(InternalServiceGuard) // Allow internal service calls
+  @Permissions("employees.read")
   @ApiOperation({
     summary: "Găsește angajat după telefon",
     description:

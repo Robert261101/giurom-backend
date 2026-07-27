@@ -56,6 +56,15 @@ export class StockHttpController {
 
     return await this.service.findAllProducts();
   }
+  @Get("products/names")
+  @Permissions("products.read")
+  async getProductNames(@Query("ids") ids?: string) {
+    const parsedIds = (ids || "")
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return await this.service.findProductNamesByIds(parsedIds);
+  }
   @Get("products/:id") @Permissions("products.read") async getProduct(
     @Param("id") id: string,
   ) {

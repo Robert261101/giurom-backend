@@ -358,8 +358,11 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Punctul de inflexiune nu a fost găsit',
   })
-  async findPresenceInflexionById(@Param('id', ParseIntPipe) id: number): Promise<PresenceInflexion> {
-    return await this.attendanceService.findPresenceInflexionById(id);
+  async findPresenceInflexionById(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<PresenceInflexion> {
+    return await this.attendanceService.findPresenceInflexionById(id, req?.user);
   }
 
   @Patch('presence-inflexions/:id')
@@ -381,8 +384,9 @@ export class AttendanceController {
   async updatePresenceInflexion(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInflexionDto: UpdatePresenceInflexionDto,
+    @Request() req: any,
   ): Promise<PresenceInflexion> {
-    return await this.attendanceService.updatePresenceInflexion(id, updateInflexionDto);
+    return await this.attendanceService.updatePresenceInflexion(id, updateInflexionDto, req?.user);
   }
 
   @Delete('presence-inflexions/:id')
@@ -400,8 +404,11 @@ export class AttendanceController {
     status: HttpStatus.NOT_FOUND,
     description: 'Punctul de inflexiune nu a fost găsit',
   })
-  async deletePresenceInflexion(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return await this.attendanceService.deletePresenceInflexion(id);
+  async deletePresenceInflexion(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<void> {
+    return await this.attendanceService.deletePresenceInflexion(id, req?.user);
   }
 
   // MY ACTIVE SHIFT - verifică dacă angajatul curent are tură activă

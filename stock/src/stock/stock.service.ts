@@ -147,7 +147,7 @@ export class StockService {
 
     if (creatorIds.length > 0 && this.httpService) {
       let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
         const port = portMatch ? portMatch[1] : '3012';
         employeesServiceUrl = `http://localhost:${port}`;
@@ -209,7 +209,7 @@ export class StockService {
       try {
         let recipesUrl = this.configService?.get<string>('RECIPES_HTTP_URL') || 'http://localhost:3003';
         // convert external to internal if necessary 
-        if (recipesUrl.includes('bitap.ro') || recipesUrl.includes('89.46.6.45')) {
+        if (recipesUrl.includes('bitap.ro') || recipesUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
           const portMatch = recipesUrl.match(/:(\d+)/);
           const port = portMatch ? portMatch[1] : '3003';
           recipesUrl = `http://localhost:${port}`;
@@ -416,6 +416,19 @@ export class StockService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /** Doar id+name pentru un set de produse — pentru afișare/etichetare în servicii externe (evită N cereri individuale). */
+  async findProductNamesByIds(
+    ids: number[],
+  ): Promise<Array<{ id: number; name: string }>> {
+    if (ids.length === 0) return [];
+    return this.productRepo
+      .createQueryBuilder('product')
+      .select('product.id', 'id')
+      .addSelect('product.name', 'name')
+      .where('product.id IN (:...ids)', { ids })
+      .getRawMany();
   }
 
   async findAllProducts(): Promise<Product[]> {
@@ -1195,29 +1208,76 @@ export class StockService {
       product_name?: string;
     }> = [];
 
+    const hasLocation = (item: { location_id?: number }) =>
+      item.location_id != null && Number.isFinite(Number(item.location_id));
+
+    // Un singur query per grup (locație-specifică / globală) în loc de un query per produs.
+    const withLocation = products.filter(hasLocation);
+    const withoutLocation = products.filter((p) => !hasLocation(p));
+
+    const availableByKey = new Map<string, number>();
+    if (withLocation.length > 0) {
+      const productIds = [...new Set(withLocation.map((p) => p.product_id))];
+      const locationKeys = [
+        ...new Set(withLocation.map((p) => this.locationKey(p.location_id))),
+      ];
+      const rows = await this.stockRepo.find({
+        where: { product_id: In(productIds), location_key: In(locationKeys) },
+      });
+      for (const row of rows) {
+        availableByKey.set(
+          `${row.product_id}:${row.location_key}`,
+          Number(row.quantity) || 0,
+        );
+      }
+    }
+
+    const availableGlobalByProduct = new Map<number, number>();
+    if (withoutLocation.length > 0) {
+      const productIds = [...new Set(withoutLocation.map((p) => p.product_id))];
+      const rows = await this.stockRepo
+        .createQueryBuilder("stock")
+        .select("stock.product_id", "product_id")
+        .addSelect("COALESCE(SUM(stock.quantity), 0)", "total")
+        .where("stock.product_id IN (:...productIds)", { productIds })
+        .groupBy("stock.product_id")
+        .getRawMany();
+      for (const row of rows) {
+        availableGlobalByProduct.set(
+          Number(row.product_id),
+          parseFloat(row.total || "0"),
+        );
+      }
+    }
+
     for (const item of products) {
-      const totalAvailable = await this.getAvailableQuantity(
-        item.product_id,
-        item.location_id,
-      );
+      const totalAvailable = hasLocation(item)
+        ? availableByKey.get(
+            `${item.product_id}:${this.locationKey(item.location_id)}`,
+          ) || 0
+        : availableGlobalByProduct.get(item.product_id) || 0;
 
       if (totalAvailable < item.quantity) {
-        let productName: string | undefined;
-        try {
-          const product = await this.productRepo.findOne({
-            where: { id: item.product_id },
-          });
-          productName = product?.name;
-        } catch {
-          // ignore
-        }
-
         missing.push({
           product_id: item.product_id,
           needed: item.quantity,
           available: totalAvailable,
-          product_name: productName,
         });
+      }
+    }
+
+    if (missing.length > 0) {
+      const missingIds = [...new Set(missing.map((m) => m.product_id))];
+      try {
+        const foundProducts = await this.productRepo.find({
+          where: { id: In(missingIds) },
+        });
+        const nameById = new Map(foundProducts.map((p) => [p.id, p.name]));
+        for (const m of missing) {
+          m.product_name = nameById.get(m.product_id);
+        }
+      } catch {
+        // ignore — product_name e informativ, nu blocant
       }
     }
 
@@ -2044,7 +2104,7 @@ export class StockService {
       // Dacă EMPLOYEES_HTTP_URL conține "bitap.ro" sau IP extern, folosim localhost pentru comunicare internă
       if (
         employeesServiceUrl.includes("bitap.ro") ||
-        employeesServiceUrl.includes("89.46.6.45")
+        employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || "89.46.6.45")
       ) {
         // Pentru comunicare internă, înlocuim URL-ul extern cu localhost
         // Folosim portul 3012 (employees service) sau portul din URL dacă e specificat

@@ -1,5 +1,13 @@
 import { Injectable, ExecutionContext } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { timingSafeEqual } from 'crypto';
+
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 /**
  * Guard JWT + bypass pentru apeluri interne (alte microservicii).
@@ -15,7 +23,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     const serviceSecret = request.headers['x-service-secret'];
     const expectedSecret = process.env.SERVICE_SECRET;
 
-    if (internalService && serviceSecret && expectedSecret && serviceSecret === expectedSecret) {
+    if (internalService && serviceSecret && expectedSecret && secretsMatch(serviceSecret, expectedSecret)) {
       request.internalService = internalService;
       request.user = {
         sub: 'internal',

@@ -21,7 +21,7 @@ export class RecipesLabelsService {
     private readonly configService: ConfigService,
   ) {
     let employeesServiceUrl = this.configService.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-    if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes('89.46.6.45')) {
+    if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
       const portMatch = employeesServiceUrl.match(/:(\d+)/);
       const port = portMatch ? portMatch[1] : '3012';
       employeesServiceUrl = `http://localhost:${port}`;

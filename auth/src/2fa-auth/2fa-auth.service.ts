@@ -111,7 +111,7 @@ export class TwoFactorAuthService {
         throw new UnauthorizedException('OTP invalid sau expirat. Completați din nou pasul 1.');
       }
 
-      if (otpRecord.otp !== otp) {
+      if (!this.otpMatches(otpRecord.otp, otp)) {
         throw new UnauthorizedException('OTP incorect');
       }
 
@@ -246,6 +246,16 @@ export class TwoFactorAuthService {
 
   private generateOtp(): string {
     return crypto.randomInt(100000, 999999).toString();
+  }
+
+  /** Comparație constant-time — evită scurgerea codului OTP printr-un side-channel de timing. */
+  private otpMatches(expected: string, provided: string): boolean {
+    const expectedBuf = Buffer.from(expected);
+    const providedBuf = Buffer.from(provided ?? '');
+    if (expectedBuf.length !== providedBuf.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(expectedBuf, providedBuf);
   }
 
   private isValidEmail(email: string): boolean {
