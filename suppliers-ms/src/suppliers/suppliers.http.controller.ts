@@ -106,9 +106,41 @@ export class SuppliersHttpController {
 
   @Get("for-orders")
   @Permissions("order.read")
+  @ApiOperation({
+    summary:
+      "Catalog global furnizori activi pentru dropdown comenzi (fără filtru supplier_locations)",
+  })
   getSuppliersForOrders(@Query("location_id") location_id?: string) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     return this.service.findForOrders(locationId);
+  }
+
+  @Get("catalog")
+  @PermissionsAny("suppliers.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Catalog global al furnizorilor din platformă (fără filtru pe supplier_locations)",
+  })
+  @ApiQuery({ name: "search", required: false, description: "Căutare după nume sau CUI" })
+  @ApiQuery({
+    name: "is_active",
+    required: false,
+    description: "Filtru activ/inactiv (omit = toți)",
+  })
+  getSuppliersCatalog(
+    @Query("search") search?: string,
+    @Query("is_active") is_active?: string,
+  ) {
+    let isActive: boolean | undefined;
+    if (is_active === "true" || is_active === "1") {
+      isActive = true;
+    } else if (is_active === "false" || is_active === "0") {
+      isActive = false;
+    }
+    return this.service.findCatalog({
+      search: search?.trim() || undefined,
+      is_active: isActive,
+    });
   }
 
   @Get("internal/employees/:employeeId/supplier-ids")
@@ -383,10 +415,24 @@ export class SuppliersHttpController {
   assignSupplierToLocation(
     @Param("supplierId") supplierId: string,
     @Param("locationId") locationId: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
   ) {
-    return this.service.assignSupplierToLocation(
+    return this.service.assignSupplierToLocationForRequester(
       Number(supplierId),
       Number(locationId),
+      {
+        company_id: req?.user?.company_id,
+        company_type: req?.user?.company_type,
+        isAdmin: req?.user?.isAdmin,
+        isSuperAdmin: req?.user?.isSuperAdmin,
+      },
     );
   }
 
@@ -544,21 +590,37 @@ export class SuppliersHttpController {
   findOne(
     @Param("id") id: string,
     @Query("location_id") location_id?: string,
-    @Request() req?: any,
   ) {
     this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
-    // Obține location_id din query sau din user context
-    const user = req?.user;
-    let locationId: number | undefined;
-    const maybeLid = location_id ? parseInt(location_id, 10) : undefined;
-    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
-      locationId = maybeLid as number;
-    } else {
-      locationId = user?.work_location_id || user?.work_location_default_id;
-    }
-    // location_id folosit doar pentru mesajul de eroare / filtrare; accesul real e verificat independent mai jos.
-    return this.service.findOne(Number(id), locationId, buildSupplierAccessRequester(user));
-  }
+@Get(":id")
+@Permissions("suppliers.read")
+findOne(
+  @Param("id") id: string,
+  @Query("location_id") location_id?: string,
+  @Request() req?: any,
+) {
+  this.logger.log(
+    `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
+  );
+
+  // Verificarea pe supplier_locations se aplică doar dacă
+  // location_id este trimis explicit.
+  const maybeLid = location_id
+    ? parseInt(location_id, 10)
+    : undefined;
+
+  const locationId =
+    Number.isFinite(maybeLid as number) &&
+    (maybeLid as number) > 0
+      ? (maybeLid as number)
+      : undefined;
+
+  return this.service.findOne(
+    Number(id),
+    locationId,
+    buildSupplierAccessRequester(req?.user),
+  );
+}
 
   @Patch(":id")
   @Permissions("suppliers.update")

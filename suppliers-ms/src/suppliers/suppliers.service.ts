@@ -1892,25 +1892,107 @@ export class SuppliersService {
     }
   }
 
-  async findForOrders(locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
-    if (locationId !== undefined) {
-      const suppliers = await this.supplierRepo
-        .createQueryBuilder('supplier')
-        .select(['supplier.id', 'supplier.supplier_name'])
-        .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
-        .where('sl.id_location = :locationId', { locationId })
-        .orderBy('supplier.supplier_name', 'ASC')
-        .getMany();
-      
-      return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
-    }
-    
+  /**
+   * Catalog global pentru dropdown comenzi: toți furnizorii activi din `suppliers`,
+   * fără filtru pe `supplier_locations` (fără duplicate).
+   * Parametrul locationId este ignorat (păstrat pentru compatibilitate API).
+   */
+  async findForOrders(_locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
     const suppliers = await this.supplierRepo.find({
       select: ['id', 'supplier_name'],
-      order: { supplier_name: 'ASC' }
+      where: { is_active: true },
+      order: { supplier_name: 'ASC' },
     });
-    
-    return suppliers.map(s => ({ id: s.id, supplier_name: s.supplier_name }));
+
+    return suppliers.map((s) => ({ id: s.id, supplier_name: s.supplier_name }));
+  }
+
+  /**
+   * Catalog global pentru pagina /furnizori (client/admin).
+   * Citește direct din `suppliers` — fără join pe `supplier_locations`, deci fără duplicate.
+   */
+  async findCatalog(options?: {
+    search?: string;
+    is_active?: boolean;
+  }): Promise<
+    Array<{
+      id: number;
+      supplier_name: string;
+      registration_number: string;
+      vat_number: string;
+      address: string;
+      city: string;
+      region: string;
+      country: string;
+      postal_code: string;
+      phone: string;
+      email: string;
+      contact_person: string;
+      is_active: boolean;
+      created_at: Date;
+      updated_at: Date;
+    }>
+  > {
+    const qb = this.supplierRepo
+      .createQueryBuilder('supplier')
+      .select([
+        'supplier.id',
+        'supplier.supplier_name',
+        'supplier.registration_number',
+        'supplier.vat_number',
+        'supplier.address',
+        'supplier.city',
+        'supplier.region',
+        'supplier.country',
+        'supplier.postal_code',
+        'supplier.phone',
+        'supplier.email',
+        'supplier.contact_person',
+        'supplier.is_active',
+        'supplier.created_at',
+        'supplier.updated_at',
+      ]);
+
+    if (options?.is_active !== undefined) {
+      qb.andWhere('supplier.is_active = :isActive', {
+        isActive: options.is_active,
+      });
+    }
+
+    const trimmed = (options?.search || '').trim();
+    if (trimmed.length > 0) {
+      const cuiDigits = normalizeSupplierCuiDigits(trimmed);
+      const escaped = trimmed.replace(/[%_]/g, '');
+      const likePattern = `%${escaped}%`;
+
+      if (cuiDigits) {
+        qb.andWhere(
+          `(
+            REPLACE(UPPER(supplier.vat_number), 'RO', '') LIKE :cuiDigits
+            OR UPPER(supplier.vat_number) LIKE :cuiWithRo
+            OR UPPER(supplier.supplier_name) LIKE :nameLike
+            OR UPPER(supplier.registration_number) LIKE :nameLike
+          )`,
+          {
+            cuiDigits: `%${cuiDigits}%`,
+            cuiWithRo: `%RO${cuiDigits}%`,
+            nameLike: likePattern.toUpperCase(),
+          },
+        );
+      } else {
+        qb.andWhere(
+          `(
+            UPPER(supplier.supplier_name) LIKE :nameLike
+            OR UPPER(supplier.vat_number) LIKE :nameLike
+            OR UPPER(supplier.registration_number) LIKE :nameLike
+          )`,
+          { nameLike: likePattern.toUpperCase() },
+        );
+      }
+    }
+
+    qb.orderBy('supplier.supplier_name', 'ASC');
+    return qb.getMany();
   }
 
   /**
@@ -3005,7 +3087,27 @@ export class SuppliersService {
       companyType,
     );
     const locationId = await this.resolveSupplierStockLocationId(summary.id);
-    return this.stockHttpService.listProductsByLocation(locationId);
+    try {
+      return await this.stockHttpService.listProductsByLocation(locationId);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const code = error?.code || error?.cause?.code;
+      if (
+        !status &&
+        (code === 'ECONNREFUSED' ||
+          code === 'ENOTFOUND' ||
+          /ECONNREFUSED|connect/i.test(String(error?.message || '')))
+      ) {
+        throw new BadRequestException(
+          'Serviciul de stoc (stock-ms) nu este disponibil. Porniți microserviciul pe portul 3006 și reîncercați.',
+        );
+      }
+      const message =
+        error?.response?.data?.message ??
+        error?.message ??
+        'Eroare la încărcarea nomenclatorului';
+      throw new BadRequestException(message);
+    }
   }
 
   async createMySupplierNomenclatorProduct(
@@ -3041,7 +3143,18 @@ export class SuppliersService {
       const message =
         error?.response?.data?.message ?? error?.message ?? 'Eroare la crearea produsului';
       const status = error?.response?.status;
-      if (status === 409 || message.includes('există deja')) {
+      const code = error?.code || error?.cause?.code;
+      if (
+        !status &&
+        (code === 'ECONNREFUSED' ||
+          code === 'ENOTFOUND' ||
+          /ECONNREFUSED|connect/i.test(String(message)))
+      ) {
+        throw new BadRequestException(
+          'Serviciul de stoc (stock-ms) nu este disponibil. Porniți microserviciul pe portul 3006 și reîncercați.',
+        );
+      }
+      if (status === 409 || String(message).includes('există deja')) {
         throw new ConflictException(message);
       }
       throw new BadRequestException(message);
@@ -5076,6 +5189,105 @@ export class SuppliersService {
     });
   }
 
+  /**
+   * Rezolvă user_id (auth) → nume afișat (first + last din employees).
+   * 1) HTTP /employees/by-user/:userId (sursă de adevăr)
+   * 2) Fallback cross-DB: AUTH_DB.users.id_employee → EMPLOYEES_DB.employees
+   */
+  private async resolveAuthUserDisplayNames(
+    userIds: number[],
+  ): Promise<Map<number, string>> {
+    const usersMap = new Map<number, string>();
+    const uniqueIds = Array.from(
+      new Set(
+        userIds.filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    );
+    if (uniqueIds.length === 0) {
+      return usersMap;
+    }
+
+    const employeesServiceUrl = this.getEmployeesServiceUrl();
+    const headers = this.internalServiceHeaders();
+    const missingAfterHttp: number[] = [];
+
+    await Promise.all(
+      uniqueIds.map(async (userId) => {
+        try {
+          const resp: any = await firstValueFrom(
+            this.httpService.get(
+              `${employeesServiceUrl}/employees/by-user/${userId}`,
+              { headers, timeout: 4000 },
+            ),
+          );
+          const data = resp?.data?.data || resp?.data || resp;
+          const firstName = data?.first_name || data?.firstName || '';
+          const lastName = data?.last_name || data?.lastName || '';
+          const fullName =
+            data?.full_name ||
+            `${firstName} ${lastName}`.trim() ||
+            data?.email ||
+            data?.name ||
+            '';
+          if (fullName) {
+            usersMap.set(userId, String(fullName).trim());
+            return;
+          }
+        } catch {
+          /* fallback SQL mai jos */
+        }
+        missingAfterHttp.push(userId);
+      }),
+    );
+
+    if (missingAfterHttp.length === 0) {
+      return usersMap;
+    }
+
+    const authDbName = process.env.AUTH_DB_NAME || 'giurombitap_auth';
+    const employeesDbName =
+      process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+
+    for (const userId of missingAfterHttp) {
+      try {
+        const userResult = await this.connection.query(
+          `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
+          [userId],
+        );
+        if (
+          !userResult?.length ||
+          userResult[0].id_employee == null
+        ) {
+          usersMap.set(userId, `User #${userId}`);
+          continue;
+        }
+        const employeeId = Number(userResult[0].id_employee);
+        const employeeResult = await this.connection.query(
+          `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
+          [employeeId],
+        );
+        if (employeeResult?.length) {
+          const firstName = employeeResult[0].first_name || null;
+          const lastName = employeeResult[0].last_name || null;
+          const fullName =
+            [firstName, lastName].filter(Boolean).join(' ').trim() ||
+            `User #${userId}`;
+          usersMap.set(userId, fullName);
+        } else {
+          usersMap.set(userId, `User #${userId}`);
+        }
+      } catch (error: any) {
+        this.logger.error(
+          `❌ [SUPPLIERS SERVICE] Error resolving display name for user ${userId}:`,
+          error?.message || error,
+        );
+        usersMap.set(userId, `User #${userId}`);
+      }
+    }
+
+    return usersMap;
+  }
+
   async getOrderReceptions(orderId: number): Promise<Array<SupplierOrderItemReception & { user_name?: string }>> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions for order ${orderId}`);
     
@@ -5084,53 +5296,14 @@ export class SuppliersService {
       order: { created_at: 'DESC' },
     });
 
-    // Obține numele utilizatorilor pentru recepții
     const userIds = Array.from(new Set(
       receptions
         .map(r => r.user_id)
         .filter((id): id is number => id !== undefined && id !== null)
     ));
 
-    const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const usersMap = await this.resolveAuthUserDisplayNames(userIds);
 
-    for (const userId of userIds) {
-      try {
-        // Obține id_employee din users
-        const userResult = await this.connection.query(
-          `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
-          [userId]
-        );
-
-        if (userResult && userResult.length > 0 && userResult[0].id_employee) {
-          const employeeId = Number(userResult[0].id_employee);
-
-          // Obține first_name și last_name din employees
-          const employeeResult = await this.connection.query(
-            `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
-            [employeeId]
-          );
-
-          if (employeeResult && employeeResult.length > 0) {
-            const firstName = employeeResult[0].first_name || null;
-            const lastName = employeeResult[0].last_name || null;
-            const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || `User #${userId}`;
-            usersMap.set(userId, fullName);
-            this.logger.log(`✅ [SUPPLIERS SERVICE] Fetched employee name for user ${userId} (employee ${employeeId}): ${fullName}`);
-          } else {
-            usersMap.set(userId, `User #${userId}`);
-          }
-        } else {
-          usersMap.set(userId, `User #${userId}`);
-        }
-      } catch (error: any) {
-        this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data for user ${userId}:`, error.message);
-        usersMap.set(userId, `User #${userId}`);
-      }
-    }
-
-    // Adaugă numele utilizatorilor la recepții
     return receptions.map(reception => ({
       ...reception,
       user_name: reception.user_id ? usersMap.get(reception.user_id) : undefined,
@@ -5145,7 +5318,6 @@ export class SuppliersService {
     const uniqueOrderIds = Array.from(new Set(orderIds));
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Fetching receptions batch for ${uniqueOrderIds.length} orders`);
 
-    // Obține toate recepțiile pentru comenzile specificate într-un singur query
     const receptions = await this.orderItemReceptionRepo.find({
       where: { supplier_order_id: In(uniqueOrderIds) },
       order: { created_at: 'DESC' },
@@ -5153,83 +5325,14 @@ export class SuppliersService {
 
     this.logger.log(`📦 [SUPPLIERS SERVICE] Found ${receptions.length} receptions for ${uniqueOrderIds.length} orders`);
 
-    // Obține toate user IDs unice
     const userIds = Array.from(new Set(
       receptions
         .map(r => r.user_id)
         .filter((id): id is number => id !== undefined && id !== null)
     ));
 
-    const usersMap = new Map<number, string>();
-    const authDbName = process.env.AUTH_DB_NAME || 'restosoft_auth';
-    const employeesDbName = process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
+    const usersMap = await this.resolveAuthUserDisplayNames(userIds);
 
-    if (userIds.length > 0) {
-      try {
-        // Obține toate id_employee pentru user IDs într-un singur query
-        const userIdsPlaceholder = userIds.map(() => '?').join(',');
-        const userResult = await this.connection.query(
-          `SELECT id, id_employee FROM ${authDbName}.users WHERE id IN (${userIdsPlaceholder})`,
-          userIds
-        );
-
-        // Creează un map de user_id -> employee_id
-        const userToEmployeeMap = new Map<number, number>();
-        if (userResult && userResult.length > 0) {
-          for (const row of userResult) {
-            if (row.id && row.id_employee) {
-              userToEmployeeMap.set(Number(row.id), Number(row.id_employee));
-            }
-          }
-        }
-
-        // Obține toate employee IDs
-        const employeeIds = Array.from(userToEmployeeMap.values());
-        if (employeeIds.length > 0) {
-          const employeeIdsPlaceholder = employeeIds.map(() => '?').join(',');
-          const employeeResult = await this.connection.query(
-            `SELECT id, first_name, last_name FROM ${employeesDbName}.employees WHERE id IN (${employeeIdsPlaceholder})`,
-            employeeIds
-          );
-
-          // Creează un map de employee_id -> full_name
-          const employeeToNameMap = new Map<number, string>();
-          if (employeeResult && employeeResult.length > 0) {
-            for (const row of employeeResult) {
-              const firstName = row.first_name || null;
-              const lastName = row.last_name || null;
-              const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || `Employee #${row.id}`;
-              employeeToNameMap.set(Number(row.id), fullName);
-            }
-          }
-
-          // Creează map-ul final user_id -> user_name
-          for (const [userId, employeeId] of userToEmployeeMap.entries()) {
-            const fullName = employeeToNameMap.get(employeeId);
-            if (fullName) {
-              usersMap.set(userId, fullName);
-            } else {
-              usersMap.set(userId, `User #${userId}`);
-            }
-          }
-        }
-
-        // Pentru user IDs care nu au employee asociat
-        for (const userId of userIds) {
-          if (!usersMap.has(userId)) {
-            usersMap.set(userId, `User #${userId}`);
-          }
-        }
-      } catch (error: any) {
-        this.logger.error(`❌ [SUPPLIERS SERVICE] Error fetching employee data batch:`, error.message);
-        // Setează default pentru toți userii în caz de eroare
-        for (const userId of userIds) {
-          usersMap.set(userId, `User #${userId}`);
-        }
-      }
-    }
-
-    // Adaugă numele utilizatorilor la recepții
     return receptions.map(reception => ({
       ...reception,
       user_name: reception.user_id ? usersMap.get(reception.user_id) : undefined,
@@ -7225,6 +7328,45 @@ export class SuppliersService {
   }
 
   // === SUPPLIER LOCATIONS METHODS ===
+
+  /**
+   * Assign generic (ex. AssignSupplierModal) — verifică ownership locație pentru non-admin.
+   * Nu blochează conturile furnizor pe acest path (folosit intern / admin).
+   */
+  async assignSupplierToLocationForRequester(
+    supplierId: number,
+    locationId: number,
+    userContext: {
+      company_id?: number | null;
+      company_type?: string | null;
+      isAdmin?: boolean;
+      isSuperAdmin?: boolean;
+    },
+  ): Promise<SupplierLocations> {
+    const isPrivileged =
+      userContext.isAdmin === true || userContext.isSuperAdmin === true;
+    if (!isPrivileged) {
+      const location = await this.fetchLocation(Number(locationId));
+      if (!location) {
+        throw new NotFoundException(`Locația ${locationId} nu a fost găsită`);
+      }
+      const locationCompanyId = Number(
+        location.company_id ?? location.companyId,
+      );
+      const userCompanyId = Number(userContext.company_id);
+      if (
+        !Number.isFinite(userCompanyId) ||
+        userCompanyId <= 0 ||
+        userCompanyId !== locationCompanyId
+      ) {
+        throw new ForbiddenException(
+          'Locația selectată nu aparține companiei dumneavoastră',
+        );
+      }
+    }
+    return this.assignSupplierToLocation(supplierId, locationId);
+  }
+
   async assignSupplierToLocation(supplierId: number, locationId: number): Promise<SupplierLocations> {
     // Verify supplier exists (fără verificare location_id pentru că încă nu este asignat)
     const supplier = await this.findOne(supplierId, undefined);
@@ -7233,13 +7375,13 @@ export class SuppliersService {
       throw new NotFoundException(`Furnizorul cu ID ${supplierId} nu a fost găsit`);
     }
     
-    // Check if assignment already exists
+    // Check if assignment already exists (idempotent)
     const existingAssignment = await this.supplierLocationsRepo.findOne({
       where: { supplier_id: supplierId, id_location: locationId }
     });
     
     if (existingAssignment) {
-      throw new BadRequestException('Furnizorul este deja atribuit la această locație');
+      return existingAssignment;
     }
     
     const assignment = this.supplierLocationsRepo.create({
@@ -7448,4 +7590,18 @@ export class SuppliersService {
   
 }
 
-
+/** Normalizează CUI: acceptă RO/spații/cratime; returnează doar cifrele sau null. */
+function normalizeSupplierCuiDigits(
+  raw: string | null | undefined,
+): string | null {
+  if (raw == null) return null;
+  const cleaned = String(raw)
+    .trim()
+    .toUpperCase()
+    .replace(/^RO/, '')
+    .replace(/[\s.\-_/]/g, '');
+  if (!/^\d{2,10}$/.test(cleaned)) {
+    return null;
+  }
+  return cleaned;
+}
