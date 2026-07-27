@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
 import {
   Repository,
@@ -2892,14 +2892,24 @@ export class SuppliersService {
     const rows = await this.supplierLocationsRepo.find({
       where: { supplier_id: supplierId },
     });
+    let hadFetchFailure = false;
     for (const row of rows) {
-      const location = await this.fetchLocation(row.id_location);
+      const { location, failed } = await this.fetchLocationOrFail(row.id_location);
+      if (failed) {
+        hadFetchFailure = true;
+        continue;
+      }
       const locCompanyId = Number(
         location?.company_id ?? location?.companyId ?? 0,
       );
       if (locCompanyId === clientCompanyId) {
         return;
       }
+    }
+    if (hadFetchFailure) {
+      throw new ServiceUnavailableException(
+        'Nu am putut verifica asocierea furnizorului (serviciul de locații nu a răspuns). Reîncearcă.',
+      );
     }
     throw new ForbiddenException(
       'Furnizorul nu este asociat companiei client autentificate',
@@ -2914,7 +2924,12 @@ export class SuppliersService {
     let locationIdsToCheck: number[] = [];
 
     if (locationId != null && Number.isFinite(locationId) && locationId > 0) {
-      const location = await this.fetchLocation(locationId);
+      const { location, failed } = await this.fetchLocationOrFail(locationId);
+      if (failed) {
+        throw new ServiceUnavailableException(
+          'Nu am putut verifica locația selectată (serviciul de locații nu a răspuns). Reîncearcă.',
+        );
+      }
       if (!location) {
         throw new BadRequestException('Locația selectată nu a fost găsită');
       }
@@ -7669,6 +7684,32 @@ export class SuppliersService {
       relations: ['supplier'],
     });
     return await this.enrichWithLocations(rows);
+  }
+
+  /**
+   * Ca fetchLocation, dar distinge o locație inexistentă (404 → { location: null, failed: false })
+   * de un eșec de rețea/auth către locations-ms (→ { location: null, failed: true }), astfel încât
+   * apelanții care fac verificări de autorizare pe baza company_id să nu confunde „nu am putut verifica"
+   * cu „nu este asociat".
+   */
+  private async fetchLocationOrFail(
+    locationId: number,
+  ): Promise<{ location: any | null; failed: boolean }> {
+    try {
+      const resp = await firstValueFrom(this.httpService.get(`${this.locationsServiceUrl}/locations/${locationId}`, {
+        headers: this.internalServiceHeaders(),
+        timeout: 5000,
+      }));
+      return { location: resp.data, failed: false };
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        return { location: null, failed: false };
+      }
+      this.logger.error(
+        `❌ [fetchLocationOrFail] Nu am putut contacta locations-ms pentru locația ${locationId}: ${error?.message || error}`,
+      );
+      return { location: null, failed: true };
+    }
   }
 
   private async fetchLocation(locationId: number): Promise<any | null> {
