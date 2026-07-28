@@ -4585,7 +4585,7 @@ export class SuppliersService {
   ): Promise<SupplierOrder> {
     const order = await this.orderRepo.findOne({
       where: { id: orderId },
-      relations: ['items'],
+      relations: ['items', 'supplier'],
     });
     if (!order) {
       throw new NotFoundException('Comanda nu a fost găsită');
@@ -4593,7 +4593,7 @@ export class SuppliersService {
     const ctx: SupplierProductUserContext | undefined = user
       ? buildSupplierProductUserContext(user)
       : undefined;
-    assertOrderCompanyAccess(order, ctx);
+    assertOrderCompanyAccess(order, ctx, order.supplier?.owner_company_id);
     return order;
   }
 
@@ -4622,7 +4622,7 @@ export class SuppliersService {
     }
     const orders = await this.orderRepo.find({
       where: { id: In(orderIds) },
-      select: ['id', 'company_id'],
+      relations: ['supplier'],
     });
     return filterOrdersByRequesterCompany(orders, user).map((o) => o.id);
   }
