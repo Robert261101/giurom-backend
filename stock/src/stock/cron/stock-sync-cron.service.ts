@@ -187,9 +187,11 @@ export class StockSyncCronService {
         const data = res?.data;
         const companyId = data?.company_id;
         if (companyId != null) {
+          const rawName =
+            data?.location_name ?? data?.locationName ?? data?.name ?? null;
           const locationName =
-            typeof data?.location_name === 'string' && data.location_name.trim()
-              ? data.location_name.trim()
+            typeof rawName === 'string' && rawName.trim()
+              ? rawName.trim()
               : null;
           map.set(locationId, {
             companyId: Number(companyId),
