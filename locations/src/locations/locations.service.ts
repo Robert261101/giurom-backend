@@ -30,6 +30,7 @@ import { WorkLocationManagerConfig } from "./entity/work-location-manager-config
 import { WorkLocationFiles } from "./entity/work-location-files.entity";
 import { WorkLocationFolder } from "./entity/work-location-folder.entity";
 import { CreateWorkLocationFileDto } from "./dto/create-work-location-file.dto";
+import { encodeRestosoftLinkCode } from "./restosoft-link-code";
 
 @Injectable()
 export class LocationsService {
@@ -926,6 +927,33 @@ export class LocationsService {
     }
 
     return locationWithCompany;
+  }
+
+  /** Cod semnat pentru legătura locație → RestoSoft (giurom 2.0). */
+  async getRestosoftLinkCode(
+    id: number,
+    user?: any,
+  ): Promise<{ code: string; company_id: number; location_id: number }> {
+    const workLocation = await this.findWorkLocationById(id, user);
+    const secret = (process.env.GIUROM2_STOCK_SYNC_API_KEY || '').trim();
+    if (!secret) {
+      throw new BadRequestException(
+        'GIUROM2_STOCK_SYNC_API_KEY nu e configurat pe locations-ms',
+      );
+    }
+    const code = encodeRestosoftLinkCode(
+      {
+        v: 1,
+        company_id: Number(workLocation.company_id),
+        location_id: Number(workLocation.id),
+      },
+      secret,
+    );
+    return {
+      code,
+      company_id: Number(workLocation.company_id),
+      location_id: Number(workLocation.id),
+    };
   }
 
   async findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]> {

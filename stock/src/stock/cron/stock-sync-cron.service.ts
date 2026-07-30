@@ -72,7 +72,7 @@ export class StockSyncCronService {
     this.lastManualSyncAt = now;
 
     this.logger.log('🔧 [StockSync] Running manual stock sync...');
-    const result = await this.runSync();
+    const result = await this.runSync('manual');
     this.logSummary(result);
     return result;
   }
@@ -85,7 +85,7 @@ export class StockSyncCronService {
     );
   }
 
-  private async runSync(): Promise<StockSyncResult> {
+  private async runSync(source: 'cron' | 'manual' = 'cron'): Promise<StockSyncResult> {
     const rows = await this.stockRepository.find({ relations: ['product'] });
     const rowsWithLocation = rows.filter((r) => r.location_id != null);
 
@@ -145,6 +145,7 @@ export class StockSyncCronService {
           headers: {
             'Content-Type': 'application/json',
             'X-Stock-Sync-Key': apiKey || '',
+            'X-Stock-Sync-Source': source,
           },
         },
       ),

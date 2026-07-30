@@ -159,6 +159,13 @@ export class LocationsHttpController {
 		return dept;
 	}
 
+	@Get(':id/restosoft-link-code')
+	@Permissions('locations.read')
+	getRestosoftLinkCode(@Param('id') id: string, @Request() req?: any) {
+		const user = req?.user;
+		return this.service.getRestosoftLinkCode(parseInt(id, 10), user);
+	}
+
 	@Get(':id')
 	@Permissions('locations.read')
 	findOne(@Param('id') id: string, @Request() req?: any) { 
