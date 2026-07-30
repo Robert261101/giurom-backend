@@ -40,6 +40,13 @@ export interface StockResponse {
   entry_transaction_id?: number;
 }
 
+export interface StockProductInfo {
+  id: number;
+  name: string;
+  unit?: string | null;
+  sku?: string | null;
+}
+
 @Injectable()
 export class StockHttpService {
   private readonly logger = new Logger(StockHttpService.name);
@@ -521,6 +528,56 @@ export class StockHttpService {
       }),
     );
     return photoMap;
+  }
+
+  /**
+   * Returnează metadate produs (name/unit/sku) pentru un set de product_id.
+   * Folosește endpoint-ul existent GET /stock/products/:id pentru compatibilitate
+   * cu versiunea curentă de stock-ms.
+   */
+  async getProductsByIds(
+    productIds: number[],
+  ): Promise<Map<number, StockProductInfo>> {
+    const uniqueIds = [
+      ...new Set(
+        productIds.filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    const productMap = new Map<number, StockProductInfo>();
+    await Promise.all(
+      uniqueIds.map(async (productId) => {
+        const url = `${this.stockServiceUrl}/stock/products/${productId}`;
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(url, { headers: this.internalHeaders() }),
+          );
+          const raw = response.data as {
+            id?: number;
+            name?: string;
+            unit?: string | null;
+            sku?: string | null;
+          };
+          const name =
+            raw?.name && String(raw.name).trim() !== ''
+              ? String(raw.name).trim()
+              : `Produs ${productId}`;
+          productMap.set(productId, {
+            id: Number(raw?.id ?? productId),
+            name,
+            unit: raw?.unit != null ? String(raw.unit) : null,
+            sku: raw?.sku != null ? String(raw.sku) : null,
+          });
+        } catch {
+          productMap.set(productId, {
+            id: productId,
+            name: `Produs ${productId}`,
+            unit: null,
+            sku: null,
+          });
+        }
+      }),
+    );
+    return productMap;
   }
 
   /**

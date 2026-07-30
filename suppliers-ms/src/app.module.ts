@@ -20,6 +20,7 @@ import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-ord
 import { SupplierOrderWarehouseReview } from "./suppliers/entities/supplier-order-warehouse-review.entity";
 import { SupplierOrderItemChange } from "./suppliers/entities/supplier-order-item-change.entity";
 import { SuppliersService } from "./suppliers/suppliers.service";
+import { SuppliersExportService } from "./suppliers/suppliers-export.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
 import { SuppliersHttpController } from "./suppliers/suppliers.http.controller";
@@ -119,6 +120,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
   controllers: [SuppliersMicroController, SuppliersHttpController],
   providers: [
     SuppliersService,
+    SuppliersExportService,
     StockHttpService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },

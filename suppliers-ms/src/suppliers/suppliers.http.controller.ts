@@ -25,6 +25,7 @@ import {
   ApiQuery,
 } from "@nestjs/swagger";
 import { SuppliersService } from "./suppliers.service";
+import { SuppliersExportService } from "./suppliers-export.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { CreateSupplierWithDocumentsDto } from "./dto/create-supplier-with-documents.dto";
 import { CreateSupplierProductDto } from "./dto/create-supplier-product.dto";
@@ -61,7 +62,20 @@ import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 export class SuppliersHttpController {
   private readonly logger = new Logger(SuppliersHttpController.name);
 
-  constructor(private readonly service: SuppliersService) {}
+  constructor(
+    private readonly service: SuppliersService,
+    private readonly suppliersExportService: SuppliersExportService,
+  ) {}
+
+  /**
+   * Export manual, one-shot, al comenzilor recente/active către giurom 2.0.
+   * Nu rulează automat pe cron.
+   */
+  @Post("export/run-manual")
+  @Permissions("suppliers.create")
+  async runManualExport() {
+    return this.suppliersExportService.runManualExport();
+  }
 
   @Get()
   @Permissions("suppliers.read")
