@@ -288,6 +288,7 @@ Object.keys(microservices).forEach((path) => {
         'x-service-secret', 
         'x-work-location-id',
         'x-company-id',
+        'x-stock-sync-key',
         'content-type',
         'accept',
         'user-agent'
