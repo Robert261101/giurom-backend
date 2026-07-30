@@ -933,7 +933,12 @@ export class LocationsService {
   async getRestosoftLinkCode(
     id: number,
     user?: any,
-  ): Promise<{ code: string; company_id: number; location_id: number }> {
+  ): Promise<{
+    code: string;
+    company_id: number;
+    location_id: number;
+    location_name: string | null;
+  }> {
     const workLocation = await this.findWorkLocationById(id, user);
     const secret = (process.env.GIUROM2_STOCK_SYNC_API_KEY || '').trim();
     if (!secret) {
@@ -941,11 +946,13 @@ export class LocationsService {
         'GIUROM2_STOCK_SYNC_API_KEY nu e configurat pe locations-ms',
       );
     }
+    const locationName = (workLocation.location_name || '').trim() || undefined;
     const code = encodeRestosoftLinkCode(
       {
         v: 1,
         company_id: Number(workLocation.company_id),
         location_id: Number(workLocation.id),
+        ...(locationName ? { location_name: locationName } : {}),
       },
       secret,
     );
@@ -953,6 +960,7 @@ export class LocationsService {
       code,
       company_id: Number(workLocation.company_id),
       location_id: Number(workLocation.id),
+      location_name: locationName ?? null,
     };
   }
 

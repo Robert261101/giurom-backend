@@ -10,11 +10,17 @@ import { Stock } from '../entities/stock.entity';
 interface StockSyncItem {
   company_id: number;
   location_id: number;
+  location_name: string | null;
   product_id: number;
   product_name: string;
   sku: string | null;
   unit: string;
   quantity: number;
+}
+
+interface LocationMeta {
+  companyId: number;
+  locationName: string | null;
 }
 
 export interface StockSyncResult {
@@ -97,22 +103,23 @@ export class StockSyncCronService {
     const distinctLocationIds = [
       ...new Set(rowsWithLocation.map((r) => r.location_id as number)),
     ];
-    const companyIdByLocation =
-      await this.resolveCompanyIds(distinctLocationIds);
+    const metaByLocation =
+      await this.resolveLocationMeta(distinctLocationIds);
 
     const items: StockSyncItem[] = [];
     for (const row of rowsWithLocation) {
       const locationId = row.location_id as number;
-      const companyId = companyIdByLocation.get(locationId);
-      if (companyId == null) {
+      const meta = metaByLocation.get(locationId);
+      if (meta == null) {
         this.logger.warn(
           `⚠️ [StockSync] Skipping stock row ${row.id} — could not resolve company_id for location ${locationId}`,
         );
         continue;
       }
       items.push({
-        company_id: companyId,
+        company_id: meta.companyId,
         location_id: locationId,
+        location_name: meta.locationName,
         product_id: row.product_id,
         product_name: row.product?.name || `Produs ${row.product_id}`,
         sku: row.product?.sku ?? null,
@@ -155,10 +162,10 @@ export class StockSyncCronService {
     return { sent: items.length, ...result };
   }
 
-  /** Rezolvă company_id pentru fiecare location_id, apelând microserviciul `locations`. */
-  private async resolveCompanyIds(
+  /** Rezolvă company_id + nume locație pentru fiecare location_id. */
+  private async resolveLocationMeta(
     locationIds: number[],
-  ): Promise<Map<number, number>> {
+  ): Promise<Map<number, LocationMeta>> {
     const locationsBaseUrl =
       this.configService.get<string>('LOCATIONS_HTTP_URL') ||
       'http://localhost:3004';
@@ -169,7 +176,7 @@ export class StockSyncCronService {
       'x-service-secret': serviceSecret,
     };
 
-    const map = new Map<number, number>();
+    const map = new Map<number, LocationMeta>();
     for (const locationId of locationIds) {
       try {
         const res: any = await firstValueFrom(
@@ -177,9 +184,17 @@ export class StockSyncCronService {
             headers,
           }),
         );
-        const companyId = res?.data?.company_id;
+        const data = res?.data;
+        const companyId = data?.company_id;
         if (companyId != null) {
-          map.set(locationId, companyId);
+          const locationName =
+            typeof data?.location_name === 'string' && data.location_name.trim()
+              ? data.location_name.trim()
+              : null;
+          map.set(locationId, {
+            companyId: Number(companyId),
+            locationName,
+          });
         } else {
           this.logger.warn(
             `⚠️ [StockSync] location ${locationId} response has no company_id`,
@@ -187,7 +202,7 @@ export class StockSyncCronService {
         }
       } catch (err: any) {
         this.logger.warn(
-          `⚠️ [StockSync] Could not resolve company_id for location ${locationId}: ${err?.message}`,
+          `⚠️ [StockSync] Could not resolve location ${locationId}: ${err?.message}`,
         );
       }
     }

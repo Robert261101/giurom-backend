@@ -4,9 +4,14 @@ export interface RestosoftLinkPayload {
   v: 1;
   company_id: number;
   location_id: number;
+  /** Nume locație — informativ, nu face parte din semnătură. */
+  location_name?: string;
 }
 
-export function canonicalLinkPayload(payload: RestosoftLinkPayload): string {
+/** Payload semnat (doar ID-uri) — același pe App1 și App2. */
+export function canonicalLinkPayload(
+  payload: Pick<RestosoftLinkPayload, 'v' | 'company_id' | 'location_id'>,
+): string {
   return JSON.stringify({
     v: 1,
     company_id: payload.company_id,
@@ -37,9 +42,16 @@ export function encodeRestosoftLinkCode(
   payload: RestosoftLinkPayload,
   secret: string,
 ): string {
-  const canonical = canonicalLinkPayload(payload);
-  const body = base64UrlEncode(canonical);
-  const sig = signPayload(canonical, secret);
+  const bodyObj: RestosoftLinkPayload = {
+    v: 1,
+    company_id: payload.company_id,
+    location_id: payload.location_id,
+  };
+  const name = payload.location_name?.trim();
+  if (name) bodyObj.location_name = name;
+
+  const body = base64UrlEncode(JSON.stringify(bodyObj));
+  const sig = signPayload(canonicalLinkPayload(payload), secret);
   return `rs2.${body}.${sig}`;
 }
 
@@ -56,21 +68,15 @@ export function decodeRestosoftLinkCode(
   if (!body || !sig || !/^[0-9a-f]{32}$/i.test(sig)) {
     throw new Error('Format cod invalid');
   }
-  let canonical: string;
+  let raw: string;
   try {
-    canonical = base64UrlDecode(body).toString('utf8');
+    raw = base64UrlDecode(body).toString('utf8');
   } catch {
     throw new Error('Format cod invalid');
   }
-  const expected = signPayload(canonical, secret);
-  const a = Buffer.from(expected, 'utf8');
-  const b = Buffer.from(sig.toLowerCase(), 'utf8');
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    throw new Error('Semnătură cod invalidă');
-  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(canonical);
+    parsed = JSON.parse(raw);
   } catch {
     throw new Error('Payload cod invalid');
   }
@@ -84,9 +90,30 @@ export function decodeRestosoftLinkCode(
   ) {
     throw new Error('Payload cod invalid');
   }
+
+  const expected = signPayload(
+    canonicalLinkPayload({
+      v: 1,
+      company_id: obj.company_id,
+      location_id: obj.location_id,
+    }),
+    secret,
+  );
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(sig.toLowerCase(), 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw new Error('Semnătură cod invalidă');
+  }
+
+  const locationName =
+    typeof obj.location_name === 'string' && obj.location_name.trim()
+      ? obj.location_name.trim()
+      : undefined;
+
   return {
     v: 1,
     company_id: obj.company_id,
     location_id: obj.location_id,
+    ...(locationName ? { location_name: locationName } : {}),
   };
 }
