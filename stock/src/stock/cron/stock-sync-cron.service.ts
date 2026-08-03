@@ -43,7 +43,9 @@ export class StockSyncCronService {
     private readonly configService: ConfigService,
   ) {}
 
-  @Cron('0 */15 * * * *') // la fiecare 15 minute
+  // La fiecare minut. giurom 2.0 afișează stocul de aici ca oglindă, iar mișcările făcute
+  // acolo se întorc prin outbox — la 15 minute, ecranul lor ar fi vizibil în urmă.
+  @Cron('0 * * * * *')
   async handleStockSync() {
     this.logger.log(
       '📦 [StockSync] Starting scheduled stock sync to giurom 2.0...',

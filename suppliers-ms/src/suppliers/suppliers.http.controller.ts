@@ -26,6 +26,7 @@ import {
 } from "@nestjs/swagger";
 import { SuppliersService } from "./suppliers.service";
 import { SuppliersExportService } from "./suppliers-export.service";
+import { EntryDocumentsExportService } from "./entry-documents-export.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { CreateSupplierWithDocumentsDto } from "./dto/create-supplier-with-documents.dto";
 import { CreateSupplierProductDto } from "./dto/create-supplier-product.dto";
@@ -65,6 +66,7 @@ export class SuppliersHttpController {
   constructor(
     private readonly service: SuppliersService,
     private readonly suppliersExportService: SuppliersExportService,
+    private readonly entryDocumentsExportService: EntryDocumentsExportService,
   ) {}
 
   /**
@@ -75,6 +77,16 @@ export class SuppliersHttpController {
   @Permissions("suppliers.create")
   async runManualExport() {
     return this.suppliersExportService.runManualExport();
+  }
+
+  /**
+   * Retrimite manual documentele de intrare (recepții aprobate) către giurom 2.0.
+   * În mod normal pleacă singure la aprobarea recepției; asta e pentru recuperare.
+   */
+  @Post("export/entry-documents/run-manual")
+  @Permissions("suppliers.create")
+  async runManualEntryDocumentsExport() {
+    return this.entryDocumentsExportService.runManualExport();
   }
 
   @Get()

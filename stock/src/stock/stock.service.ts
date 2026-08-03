@@ -1449,7 +1449,12 @@ export class StockService {
       // marcată cu `supplier-order-confirm:*` (flux nou) sau `supplier-order-create:*`
       // (flux vechi). Verificăm AMBELE variante ca să nu re-scădem o comandă deja
       // scăzută sub fluxul vechi atunci când e confirmată acum.
-      if (target?.startsWith("supplier-order-")) {
+      //
+      // Aceeași protecție se aplică prefixului `app2:`: consumul venit din giurom 2.0
+      // pleacă dintr-un outbox cu retry, deci aceeași operație poate sosi de mai multe
+      // ori dacă răspunsul s-a pierdut pe drum. Fără verificare, fiecare retrimitere ar
+      // scădea stocul din nou.
+      if (target?.startsWith("supplier-order-") || target?.startsWith("app2:")) {
         const candidateTargets = new Set<string>([target]);
         if (target.startsWith("supplier-order-confirm:")) {
           candidateTargets.add(

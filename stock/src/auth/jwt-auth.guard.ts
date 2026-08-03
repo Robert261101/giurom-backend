@@ -14,23 +14,32 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
-    // giurom 2.0 → POST /stock/sync/trigger-remote cu X-Stock-Sync-Key
+    // Căile pe care giurom 2.0 le poate apela cu X-Stock-Sync-Key.
+    //
+    // Deliberat o listă explicită de căi, nu SERVICE_SECRET-ul intern: cheia de sync dă
+    // acces exact la aceste operații, nu la tot microserviciul de stoc. giurom 2.0 e o
+    // aplicație SaaS multi-tenant, deci o compromitere acolo nu trebuie să deschidă
+    // întregul stoc de aici.
     const syncKeyHeader = request.headers['x-stock-sync-key'];
     const syncKey =
       typeof syncKeyHeader === 'string' ? syncKeyHeader.trim() : '';
     const expected = (process.env.GIUROM2_STOCK_SYNC_API_KEY || '').trim();
     const path = String(request.originalUrl || request.url || '');
+    const allowedSyncKeyPaths = [
+      '/stock/sync/trigger-remote',
+      // Mișcările de stoc făcute în giurom 2.0, împinse înapoi aici ca sursa de adevăr
+      // să rămână una singură. Vezi app2-movement.controller.ts.
+      '/stock/integrations/app2-movement',
+    ];
     if (
       syncKey &&
       expected &&
       syncKey === expected &&
       request.method === 'POST' &&
-      path.includes('/stock/sync/trigger-remote')
+      allowedSyncKeyPaths.some((allowed) => path.includes(allowed))
     ) {
       request.bypassAuth = true;
-      this.logger.log(
-        '[JwtAuthGuard] Bypassing JWT for stock sync trigger-remote (API key)',
-      );
+      this.logger.log(`[JwtAuthGuard] Bypassing JWT for sync-key path ${path}`);
       return true;
     }
     

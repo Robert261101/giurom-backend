@@ -15,6 +15,8 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
+import { randomUUID } from 'crypto';
+import { EntryDocumentsExportService } from './entry-documents-export.service';
 import { Supplier } from './entities/supplier.entity';
 import { SupplierFolder } from './entities/supplier-folder.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
@@ -157,6 +159,7 @@ export class SuppliersService {
     private readonly stockHttpService: StockHttpService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly entryDocumentsExportService: EntryDocumentsExportService,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {
     this.locationsServiceUrl =
@@ -3871,6 +3874,11 @@ export class SuppliersService {
     const stockItems: CreateStockItemDto[] = [];
     let hasReturnedItems = false;
 
+    // Un singur lot pentru toate rândurile recepționate în acest apel: e cheia pe care
+    // exportul grupează liniile într-un document de intrare. `occurred_at` nu poate servi,
+    // fiind calculat per rând mai jos.
+    const receptionBatchId = randomUUID();
+
     // Process each item in the reception DTO
     for (const receptionItem of dto.items) {
       const orderItem = order.items?.find(item => item.id === receptionItem.itemId);
@@ -3962,6 +3970,7 @@ export class SuppliersService {
           occurred_at: occurredAt,
           stock_item_id: undefined,
           status: ReceptionStatus.PENDING, // Status pending pentru aprobare
+          reception_batch_id: receptionBatchId,
         });
         this.logger.log(`📝 [SUPPLIERS SERVICE] Created PENDING reception for item ${orderItem.id} with quantity ${newlyReceivedQty}`);
       }
@@ -3978,6 +3987,7 @@ export class SuppliersService {
           occurred_at: occurredAt,
           stock_item_id: undefined,
           status: ReceptionStatus.PENDING, // Status pending pentru aprobare
+          reception_batch_id: receptionBatchId,
         });
         hasReturnedItems = true;
         this.logger.log(`📝 [SUPPLIERS SERVICE] Created PENDING return for item ${orderItem.id} with quantity ${newlyReturnedQty}`);
@@ -5123,6 +5133,10 @@ export class SuppliersService {
     const updatedItemQuantities = new Map<number, { received: number; returned: number }>();
     const cancelledPayload: Array<{ itemId: number; returnedQuantity: number; returnReason?: string }> = [];
 
+    // Un singur moment de aprobare pentru tot lotul: rândurile aprobate împreună formează
+    // un document de intrare, iar exportul le grupează pe (reception_batch_id, approved_at).
+    const approvedAt = new Date();
+
     // Procesează fiecare recepție aprobată
     for (const reception of receptions) {
       const orderItem = orderItemsMap.get(reception.supplier_order_item_id);
@@ -5135,12 +5149,14 @@ export class SuppliersService {
       if (itemAvailability === 'unavailable') {
         this.logger.log(`⏭️ [SUPPLIERS SERVICE] Skipping stock creation for unavailable item ${orderItem.id}`);
         reception.status = ReceptionStatus.APPROVED;
+        reception.approved_at = approvedAt;
         await this.orderItemReceptionRepo.save(reception);
         continue;
       }
 
       // Actualizează statusul recepției la APPROVED
       reception.status = ReceptionStatus.APPROVED;
+      reception.approved_at = approvedAt;
       await this.orderItemReceptionRepo.save(reception);
 
       // Calculează cantitățile cumulate pentru order item
@@ -5187,6 +5203,11 @@ export class SuppliersService {
             err
           );
         }
+
+        // Persistăm cantitatea netă pe recepție: documentul de intrare exportat către
+        // giurom 2.0 trebuie să arate exact ce a intrat în stoc, nu cantitatea brută.
+        reception.net_quantity = netQuantity;
+        await this.orderItemReceptionRepo.update(reception.id, { net_quantity: netQuantity });
 
         const locationId = reception.location_id ?? order.supplier_location_id ?? undefined;
         const stockItemDto: CreateStockItemDto = {
@@ -5313,6 +5334,10 @@ export class SuppliersService {
         '/comenzi'
       );
     }
+
+    // Documentul de intrare pleacă spre giurom 2.0 imediat ce recepția e aprobată.
+    // Metoda nu aruncă niciodată — dacă App2 e indisponibil, plasa de siguranță îl reia.
+    void this.entryDocumentsExportService.pushForOrderSafe(orderId);
 
     return {
       approved: receptions.length,
