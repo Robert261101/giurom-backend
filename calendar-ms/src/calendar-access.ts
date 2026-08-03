@@ -60,12 +60,14 @@ export function getJwtCompanyId(user?: CalendarJwtUser): number | null {
 export function isSupplierManagementAccount(
   permissions: string[],
   roles: string[],
+  companyType?: string | null,
 ): boolean {
-  return (
-    permissions.includes('suppliers.create') &&
-    !roles.includes('magazioner') &&
-    !roles.includes('sofer')
-  );
+  if (roles.includes('magazioner') || roles.includes('sofer')) return false;
+  const type = typeof companyType === 'string' ? companyType.toLowerCase().trim() : '';
+  if (type === 'client') return false;
+  const isFurnizorTenant = type === 'furnizor' || roles.includes('furnizor');
+  if (!isFurnizorTenant) return false;
+  return permissions.includes('suppliers.create') || roles.includes('furnizor');
 }
 
 export function isOperationalStaffUser(user?: CalendarJwtUser): boolean {
@@ -80,7 +82,7 @@ export function isOperationalStaffUser(user?: CalendarJwtUser): boolean {
   const positionId = Number(user?.position_default_id);
   const hasPosition =
     positionId === POSITION_MAGAZIONER || positionId === POSITION_SOFER;
-  if (isSupplierManagementAccount(permissions, roles)) {
+  if (isSupplierManagementAccount(permissions, roles, user?.company_type)) {
     return false;
   }
   return (
@@ -103,7 +105,7 @@ export function isCalendarAdminUser(user?: CalendarJwtUser): boolean {
 export function isFurnizorSupplierAdmin(user?: CalendarJwtUser): boolean {
   const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
   const roles = normalizeRoles(user?.roles);
-  return isSupplierManagementAccount(permissions, roles);
+  return isSupplierManagementAccount(permissions, roles, user?.company_type);
 }
 
 export function assertNoArbitraryCompanyFilter(

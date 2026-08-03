@@ -128,12 +128,14 @@ export function resolveShiftsEmployeeFilter(
 export function isSupplierManagementAccount(
   permissions: string[],
   roles: string[],
+  companyType?: string | null,
 ): boolean {
-  return (
-    permissions.includes('suppliers.create') &&
-    !roles.includes('magazioner') &&
-    !roles.includes('sofer')
-  );
+  if (roles.includes('magazioner') || roles.includes('sofer')) return false;
+  const type = typeof companyType === 'string' ? companyType.toLowerCase().trim() : '';
+  if (type === 'client') return false;
+  const isFurnizorTenant = type === 'furnizor' || roles.includes('furnizor');
+  if (!isFurnizorTenant) return false;
+  return permissions.includes('suppliers.create') || roles.includes('furnizor');
 }
 
 /** Magazioner sau șofer operațional (nu cont furnizor admin, nu admin). */
@@ -142,6 +144,7 @@ export function isOperationalStaffUser(user?: {
   roles?: string[];
   permissions?: string[];
   position_default_id?: number | null;
+  company_type?: string | null;
 }): boolean {
   const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
   if (
@@ -156,7 +159,7 @@ export function isOperationalStaffUser(user?: {
   const hasPosition =
     positionId === POSITION_MAGAZIONER || positionId === POSITION_SOFER;
 
-  if (isSupplierManagementAccount(permissions, roles)) {
+  if (isSupplierManagementAccount(permissions, roles, user?.company_type)) {
     return false;
   }
 
