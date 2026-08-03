@@ -31,7 +31,7 @@ export class Stock {
   @Column({ type: 'int' })
   location_key: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 12, scale: 3, default: 0 })
   quantity: number;
 
   @Column({ type: 'enum', enum: StockStatus, default: StockStatus.VALID })
