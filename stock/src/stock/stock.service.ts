@@ -528,20 +528,31 @@ export class StockService {
       const productRepo = queryRunner.manager.getRepository(Product);
       const stockRepo = queryRunner.manager.getRepository(Stock);
 
-      const existingByName = await productRepo.findOne({
-        where: { name: dto.name },
-      });
-      if (existingByName) {
-        throw new ConflictException("Produsul există deja");
+      const locationKey = this.locationKey(locationId);
+
+      // Unicitate pe nomenclatorul locației (produs deja legat prin stock), nu global pe products.
+      const existingByNameAtLocation = await productRepo
+        .createQueryBuilder("product")
+        .innerJoin("product.stocks", "stock")
+        .where("stock.location_key = :locationKey", { locationKey })
+        .andWhere("product.name = :name", { name: dto.name })
+        .getOne();
+      if (existingByNameAtLocation) {
+        throw new ConflictException(
+          "Produsul există deja la această locație",
+        );
       }
 
       const skuTrimmed = dto.sku?.trim();
       if (skuTrimmed) {
-        const existingBySku = await productRepo.findOne({
-          where: { sku: skuTrimmed },
-        });
-        if (existingBySku) {
-          throw new ConflictException("SKU-ul există deja");
+        const existingBySkuAtLocation = await productRepo
+          .createQueryBuilder("product")
+          .innerJoin("product.stocks", "stock")
+          .where("stock.location_key = :locationKey", { locationKey })
+          .andWhere("product.sku = :sku", { sku: skuTrimmed })
+          .getOne();
+        if (existingBySkuAtLocation) {
+          throw new ConflictException("SKU-ul există deja la această locație");
         }
       }
 
