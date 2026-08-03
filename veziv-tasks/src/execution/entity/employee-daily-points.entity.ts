@@ -1,7 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, Index } from 'typeorm';
 import { EmployeeDailyTaskPoints } from './employee-daily-task-points.entity';
 
 @Entity('Employee_Daily_Points')
+@Index('uq_employee_daily_points_emp_date_loc', ['employee_id', 'work_date', 'location_id'], { unique: true })
 export class EmployeeDailyPoints {
   @PrimaryGeneratedColumn()
   id: number;

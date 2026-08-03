@@ -13,6 +13,7 @@ import { EmployeeDailyPoints } from '../execution/entity/employee-daily-points.e
 import { EmployeeDailyTaskPoints } from '../execution/entity/employee-daily-task-points.entity';
 import { ManagerDailyPayout } from '../execution/entity/manager-daily-payout.entity';
 import { ExecutionService } from '../execution/execution.service';
+import { EmployeeDailyPointsService } from '../execution/employee-daily-points.service';
 import { AssignmentService } from '../assignment/assignment.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom, defaultIfEmpty } from 'rxjs';
@@ -36,6 +37,7 @@ export class CronService {
     @InjectRepository(ManagerDailyPayout)
     private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private executionService: ExecutionService,
+    private employeeDailyPointsService: EmployeeDailyPointsService,
     private httpService: HttpService,
     @Inject('NOTIFICATIONS_RMQ')
     private readonly notificationsClient: ClientProxy,
@@ -288,6 +290,7 @@ export class CronService {
               assignment.assigned_to_id,
               maxPoints,
               today,
+              Number((assignment as any).location_id),
             );
 
             totalPointsDeducted -= maxPoints; // Scădem din totalul scăzut (deci adăugăm)
@@ -320,6 +323,7 @@ export class CronService {
               assignment.assigned_to_id,
               maxPoints,
               today,
+              Number((assignment as any).location_id),
               { executionId: savedExecution.id },
             );
 
@@ -667,28 +671,23 @@ export class CronService {
     employeeId: number,
     pointsToDeduct: number,
     date: Date,
+    locationId: number,
     options?: { executionId?: number },
   ): Promise<void> {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const dateStr = `${y}-${m}-${d}`;
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-    let dailyPoints = await this.employeeDailyPointsRepository.findOne({
-      where: {
-        employee_id: employeeId,
-        work_date: Raw((alias) => `DATE(${alias}) = :dateStr`, { dateStr }),
-      },
-    });
-
-    if (!dailyPoints) {
-      dailyPoints = this.employeeDailyPointsRepository.create({
-        employee_id: employeeId,
-        work_date: new Date(dateStr + 'T12:00:00.000Z'),
-        total_points: 0,
-      });
-      dailyPoints = await this.employeeDailyPointsRepository.save(dailyPoints);
+    if (!Number.isFinite(locationId)) {
+      this.logger.warn(
+        `⚠️ deductDailyPoints: location_id lipsă pentru angajat ${employeeId} – skip`,
+      );
+      return;
     }
+
+    const dailyPoints = await this.employeeDailyPointsService.findOrCreate(
+      employeeId,
+      dateStr,
+      locationId,
+    );
 
     if (options?.executionId != null) {
       const existingLink = await this.employeeDailyTaskPointsRepository.findOne(
@@ -727,31 +726,22 @@ export class CronService {
     employeeId: number,
     pointsToAdd: number,
     date: Date,
+    locationId: number,
   ): Promise<void> {
-    const workDate = new Date(date);
-    workDate.setHours(0, 0, 0, 0);
-
-    // Verifică dacă există deja punctaj zilnic pentru această zi
-    let dailyPoints = await this.employeeDailyPointsRepository.findOne({
-      where: {
-        employee_id: employeeId,
-        work_date: workDate,
-      },
-    });
-
-    if (dailyPoints) {
-      // Adaugă punctele la punctajul existent
-      dailyPoints.total_points += pointsToAdd;
-    } else {
-      // Creează un punctaj zilnic nou cu punctele pozitive
-      dailyPoints = this.employeeDailyPointsRepository.create({
-        employee_id: employeeId,
-        work_date: workDate,
-        total_points: pointsToAdd,
-      });
+    if (!Number.isFinite(locationId)) {
+      this.logger.warn(
+        `⚠️ addDailyPoints: location_id lipsă pentru angajat ${employeeId} – skip`,
+      );
+      return;
     }
 
-    await this.employeeDailyPointsRepository.save(dailyPoints);
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    await this.employeeDailyPointsService.addDelta(
+      employeeId,
+      dateStr,
+      locationId,
+      pointsToAdd,
+    );
   }
 
   /**
@@ -829,6 +819,7 @@ export class CronService {
           assignment.assigned_to_id,
           maxPoints,
           today,
+          Number((assignment as any).location_id),
           { executionId: savedExecution.id },
         );
         totalPointsDeducted += maxPoints;

@@ -33,6 +33,8 @@ import {
   getCanonicalEmployeeId,
   isFurnizorSupplierAdmin,
 } from '../employee-access/employee-access';
+import { EmployeeDailyPointsService } from './employee-daily-points.service';
+import { normalizeWorkDate } from './daily-points.util';
 
 @Injectable()
 export class ExecutionService {
@@ -59,6 +61,7 @@ export class ExecutionService {
     private managerDailyPayoutRepository: Repository<ManagerDailyPayout>,
     private httpService: HttpService,
     private employeeAccessService: EmployeeAccessService,
+    private employeeDailyPointsService: EmployeeDailyPointsService,
     @Inject('NOTIFICATIONS_RMQ')
     private readonly notificationsClient: ClientProxy,
   ) {}
@@ -1416,49 +1419,24 @@ export class ExecutionService {
   async createEmployeeDailyPoints(
     createDto: CreateEmployeeDailyPointsDto,
   ): Promise<EmployeeDailyPoints> {
-    // Verifică dacă există deja un punctaj pentru această zi și angajat.
-    // Pentru surse externe (ex. punctualitate din attendance), comportamentul trebuie să fie aditiv:
-    // dacă rândul există, adăugăm punctele primite peste totalul existent.
-    const existingPoints = await this.employeeDailyPointsRepository.findOne({
-      where: {
-        employee_id: createDto.employee_id,
-        work_date: new Date(createDto.work_date),
-      },
-    });
-
-    if (existingPoints) {
-      const before = Number(existingPoints.total_points || 0);
-      const delta = Number(createDto.total_points || 0);
-      existingPoints.total_points =
-        before + delta;
-      if ((existingPoints as any).location_id == null && createDto.location_id != null) {
-        (existingPoints as any).location_id = createDto.location_id as any;
-      }
-      const saved = await this.employeeDailyPointsRepository.save(existingPoints);
-      console.log('✅ [daily-points] update aditiv:', {
-        employee_id: createDto.employee_id,
-        work_date: createDto.work_date,
-        location_id: (saved as any).location_id,
-        before,
-        delta,
-        after: Number(saved.total_points || 0),
-      });
-      return saved;
+    if (createDto.location_id == null || !Number.isFinite(Number(createDto.location_id))) {
+      throw new BadRequestException(
+        'location_id este obligatoriu pentru punctajul zilnic',
+      );
     }
 
-    const dailyPoints = this.employeeDailyPointsRepository.create({
-      employee_id: createDto.employee_id,
-      work_date: new Date(createDto.work_date),
-      total_points: createDto.total_points || 0,
-      location_id: createDto.location_id,
-    });
+    const saved = await this.employeeDailyPointsService.addDelta(
+      createDto.employee_id,
+      createDto.work_date,
+      Number(createDto.location_id),
+      Number(createDto.total_points || 0),
+    );
 
-    const saved = await this.employeeDailyPointsRepository.save(dailyPoints);
-    console.log('✅ [daily-points] creat nou:', {
+    console.log('✅ [daily-points] update aditiv:', {
       employee_id: createDto.employee_id,
-      work_date: createDto.work_date,
-      location_id: (saved as any).location_id,
-      total_points: Number(saved.total_points || 0),
+      work_date: normalizeWorkDate(createDto.work_date),
+      location_id: createDto.location_id,
+      after: Number(saved.total_points || 0),
     });
     return saved;
   }
@@ -1474,24 +1452,55 @@ export class ExecutionService {
       employeeId,
       authorization,
     );
-    const dailyPoints = await this.employeeDailyPointsRepository.findOne({
-      where: {
-        employee_id: employeeId,
-        work_date: new Date(workDate),
-      },
-      relations: ['task_points', 'task_points.task_execution'],
-    });
+    const workDateStr = normalizeWorkDate(workDate);
+    const rows = await this.employeeDailyPointsRepository
+      .createQueryBuilder('dailyPoints')
+      .leftJoinAndSelect('dailyPoints.task_points', 'taskPoints')
+      .leftJoinAndSelect('taskPoints.task_execution', 'taskExecution')
+      .where('dailyPoints.employee_id = :employeeId', { employeeId })
+      .andWhere('DATE(dailyPoints.work_date) = :workDate', { workDate: workDateStr })
+      .getMany();
 
-    if (!dailyPoints) {
+    if (rows.length === 0) {
       throw new NotFoundException(
         `Nu există punctaj pentru angajatul ${employeeId} în data ${workDate}`,
       );
     }
 
-    // NU resincronizăm total_points doar din task_points – valoarea stocată
-    // poate include puncte din surse non-task (ex: inceperea turei mai devreme) care nu
-    // au intrări în employee_daily_task_points.
-    return dailyPoints;
+    const byLocation = new Map<number, EmployeeDailyPoints[]>();
+    for (const row of rows) {
+      const locId = Number(row.location_id);
+      if (!byLocation.has(locId)) byLocation.set(locId, []);
+      byLocation.get(locId)!.push(row);
+    }
+
+    let best: EmployeeDailyPoints | null = null;
+    for (const [locId] of byLocation) {
+      const merged = await this.employeeDailyPointsService.mergeDuplicatesIfNeeded(
+        employeeId,
+        workDateStr,
+        locId,
+      );
+      if (!merged) continue;
+      const loaded = await this.employeeDailyPointsRepository.findOne({
+        where: { id: merged.id },
+        relations: ['task_points', 'task_points.task_execution'],
+      });
+      if (
+        loaded &&
+        (!best || Number(loaded.total_points) > Number(best.total_points))
+      ) {
+        best = loaded;
+      }
+    }
+
+    if (!best) {
+      throw new NotFoundException(
+        `Nu există punctaj pentru angajatul ${employeeId} în data ${workDate}`,
+      );
+    }
+
+    return best;
   }
 
   async addTaskPointsToDailyPoints(
@@ -1719,10 +1728,20 @@ export class ExecutionService {
       .orderBy('dailyPoints.work_date', 'ASC')
       .getMany();
 
-    // NU recalculăm total_points – valoarea stocată include și puncte din surse non-task
-    // (ex: puncte de pontaj pentru începerea turei cu mai devreme), care nu au intrări
-    // în employee_daily_task_points.
-    return list;
+    // Agregare defensivă: un rând per (zi, locație) – MAX(total_points) când există duplicate legacy
+    const bestByDayLoc = new Map<string, EmployeeDailyPoints>();
+    for (const row of list) {
+      const key = `${normalizeWorkDate(row.work_date)}_${row.location_id}`;
+      const existing = bestByDayLoc.get(key);
+      if (!existing || Number(row.total_points) > Number(existing.total_points)) {
+        bestByDayLoc.set(key, row);
+      }
+    }
+
+    return Array.from(bestByDayLoc.values()).sort(
+      (a, b) =>
+        new Date(a.work_date).getTime() - new Date(b.work_date).getTime(),
+    );
   }
 
   async calculateTotalPointsForEmployee(
@@ -1782,17 +1801,7 @@ export class ExecutionService {
         assignment,
       );
 
-      // Obține data de lucru (ziua din completed_at)
-      const workDate = new Date(execution.completed_at);
-      workDate.setHours(0, 0, 0, 0); // Setează la începutul zilei
-
-      // Verifică dacă există deja punctaj zilnic pentru această zi
-      let dailyPoints = await this.employeeDailyPointsRepository.findOne({
-        where: {
-          employee_id: execution.employee_id,
-          work_date: workDate,
-        },
-      });
+      const workDate = normalizeWorkDate(execution.completed_at);
 
       const locationId = (execution as any).location_id ?? (assignment as any)?.location_id;
       if (locationId == null) {
@@ -1809,20 +1818,11 @@ export class ExecutionService {
         } as any);
       }
 
-      // Dacă nu există, creează unul nou (cu location_id obligatoriu)
-      if (!dailyPoints) {
-        dailyPoints = this.employeeDailyPointsRepository.create({
-          employee_id: execution.employee_id,
-          work_date: workDate,
-          total_points: 0,
-          location_id: locationId,
-        });
-        dailyPoints =
-          await this.employeeDailyPointsRepository.save(dailyPoints);
-      } else if ((dailyPoints as any).location_id == null) {
-        (dailyPoints as any).location_id = locationId;
-        await this.employeeDailyPointsRepository.save(dailyPoints);
-      }
+      const dailyPoints = await this.employeeDailyPointsService.findOrCreate(
+        execution.employee_id,
+        workDate,
+        Number(locationId),
+      );
 
       // Verifică dacă există deja punctaj pentru această execuție
       const existingTaskPoints =
@@ -1970,31 +1970,15 @@ export class ExecutionService {
         return totalPointsDeducted;
       }
 
-      // Ziua de lucru: normalizare la începutul zilei pentru potrivire cu coloana date
-      const workDate = new Date(targetDate);
-      workDate.setHours(0, 0, 0, 0);
+      const workDate = normalizeWorkDate(targetDate);
 
-      let dailyPoints = await this.employeeDailyPointsRepository.findOne({
-        where: {
-          employee_id: assignment.assigned_to_id,
-          work_date: workDate,
-        },
-      });
+      let dailyPoints = await this.employeeDailyPointsService.findOrCreate(
+        assignment.assigned_to_id,
+        workDate,
+        Number(locationId),
+      );
 
-      if (!dailyPoints) {
-        dailyPoints = this.employeeDailyPointsRepository.create({
-          employee_id: assignment.assigned_to_id,
-          work_date: workDate,
-          total_points: -totalPointsDeducted,
-          location_id: locationId,
-        });
-      } else {
-        dailyPoints.total_points = Number(dailyPoints.total_points) - totalPointsDeducted;
-        if ((dailyPoints as any).location_id == null) {
-          (dailyPoints as any).location_id = locationId;
-        }
-      }
-
+      dailyPoints.total_points = Number(dailyPoints.total_points) - totalPointsDeducted;
       dailyPoints = await this.employeeDailyPointsRepository.save(dailyPoints);
 
       // Înregistrare în EmployeeDailyTaskPoints pentru audit și rapoarte (fără execuție – reatribuire)
@@ -2234,9 +2218,11 @@ export class ExecutionService {
     const qb = this.employeeDailyPointsRepository
       .createQueryBuilder('edp')
       .select('edp.employee_id', 'employee_id')
-      .addSelect('COALESCE(SUM(edp.total_points), 0)', 'total_points')
+      .addSelect('DATE(edp.work_date)', 'work_date')
+      .addSelect('MAX(edp.total_points)', 'day_points')
       .where('edp.location_id = :locId', { locId: locationId })
-      .groupBy('edp.employee_id');
+      .groupBy('edp.employee_id')
+      .addGroupBy('DATE(edp.work_date)');
 
     if (startDate && endDate) {
       const sd = startDate.replace(/T.*/, '');
@@ -2244,29 +2230,46 @@ export class ExecutionService {
       qb.andWhere('DATE(edp.work_date) >= :sd', { sd }).andWhere('DATE(edp.work_date) <= :ed', { ed });
     }
 
-    let rows = await qb.getRawMany<{ employee_id: string; total_points: string }>();
+    let dailyRows = await qb.getRawMany<{
+      employee_id: string;
+      work_date: string;
+      day_points: string;
+    }>();
+
     // Fallback: dacă niciun rând cu location_id, folosim agregarea din task_points + execution
-    if (rows.length === 0 && startDate && endDate) {
+    if (dailyRows.length === 0 && startDate && endDate) {
       const fallbackQb = this.employeeDailyTaskPointsRepository
         .createQueryBuilder('taskPoints')
         .innerJoin('taskPoints.task_execution', 'exec')
         .select('exec.employee_id', 'employee_id')
-        .addSelect('COALESCE(SUM(taskPoints.points_awarded), 0)', 'total_points')
+        .addSelect('DATE(exec.completed_at)', 'work_date')
+        .addSelect('COALESCE(SUM(taskPoints.points_awarded), 0)', 'day_points')
         .where('exec.location_id = :locId', { locId: locationId })
         .andWhere('exec.completed_at IS NOT NULL')
-        .groupBy('exec.employee_id');
+        .groupBy('exec.employee_id')
+        .addGroupBy('DATE(exec.completed_at)');
       const sd = new Date(new Date(startDate).setHours(0, 0, 0, 0));
       const ed = new Date(new Date(endDate).setHours(23, 59, 59, 999));
       fallbackQb.andWhere('exec.completed_at BETWEEN :sd AND :ed', { sd, ed });
-      rows = await fallbackQb.getRawMany<{ employee_id: string; total_points: string }>();
+      dailyRows = await fallbackQb.getRawMany<{
+        employee_id: string;
+        work_date: string;
+        day_points: string;
+      }>();
     }
-    return rows.map((r) => {
-      const totalPoints = parseFloat(r.total_points || '0');
-      return {
-        employee_id: Number(r.employee_id),
-        total_points: Number.isFinite(totalPoints) ? totalPoints : 0,
-      };
-    });
+
+    const byEmployee = new Map<number, number>();
+    for (const row of dailyRows) {
+      const employeeId = Number(row.employee_id);
+      const dayPoints = parseFloat(row.day_points || '0') || 0;
+      if (!Number.isFinite(employeeId) || employeeId <= 0) continue;
+      byEmployee.set(employeeId, (byEmployee.get(employeeId) ?? 0) + dayPoints);
+    }
+
+    return Array.from(byEmployee.entries()).map(([employee_id, total_points]) => ({
+      employee_id,
+      total_points,
+    }));
   }
   // Puncte manager: sursă unică manager_daily_payout (populat la încasare/cron), nu la fiecare task.
 
