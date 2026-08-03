@@ -4,6 +4,7 @@
   BadRequestException,
   Inject,
   OnModuleInit,
+  forwardRef,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
@@ -14,6 +15,8 @@ import { firstValueFrom, lastValueFrom } from "rxjs";
 import { RecipePreparation } from "./entities/recipe-preparation.entity";
 import { Recipe } from "./entities/recipe.entity";
 import { RecipeLocation } from "./entities/recipe-location.entity";
+import { RecipeService } from "./recipes.service";
+import { RecipeAccessRequester, isRecipeAdminUser } from "./recipe-access";
 
 @Injectable()
 export class RecipePreparationsService implements OnModuleInit {
@@ -28,7 +31,9 @@ export class RecipePreparationsService implements OnModuleInit {
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => RecipeService))
+    private readonly recipesService: RecipeService,
   ) {
     this.stockServiceUrl =
       this.configService.get<string>("STOCK_HTTP_URL") ||
@@ -142,12 +147,13 @@ export class RecipePreparationsService implements OnModuleInit {
     return rows;
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, requester?: RecipeAccessRequester) {
     const p = await this.prepRepo.findOne({
       where: { id },
       relations: ["recipe", "recipe.category", "labels"],
     });
     if (!p) throw new NotFoundException("Preparation not found");
+    await this.assertPreparationAccess(p, requester);
     await this.enrichWithProducedByName(p);
     return p;
   }
@@ -194,26 +200,58 @@ export class RecipePreparationsService implements OnModuleInit {
     }
   }
 
-  async findMany(ids: number[]) {
+  private async assertPreparationAccess(
+    prep: RecipePreparation,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    await this.recipesService.assertPreparationRecipeAccess(
+      prep.recipe_id,
+      prep.location_id,
+      requester,
+    );
+  }
+
+  async findMany(ids: number[], requester?: RecipeAccessRequester) {
     const unique = Array.from(
       new Set(
         (ids || []).map(Number).filter((n) => Number.isFinite(n) && n > 0)
       )
     );
     if (unique.length === 0) return [];
-    return await this.prepRepo.find({
+    const rows = await this.prepRepo.find({
       where: { id: In(unique) } as any,
       relations: ["recipe", "recipe.category", "labels"],
     });
+    if (!requester || isRecipeAdminUser(requester.permissions || [])) {
+      return rows;
+    }
+    const allowed: RecipePreparation[] = [];
+    for (const row of rows) {
+      try {
+        await this.assertPreparationAccess(row, requester);
+        allowed.push(row);
+      } catch {
+        // omit inaccessible preparations
+      }
+    }
+    return allowed;
   }
 
-  async create(dto: {
+  async create(
+    dto: {
     recipe_id: number;
     employee_id?: number;
     location_id?: number;
     quantity: number;
     produced_at?: string;
-  }) {
+  },
+    requester?: RecipeAccessRequester,
+  ) {
+    await this.recipesService.assertPreparationRecipeAccess(
+      dto.recipe_id,
+      dto.location_id,
+      requester,
+    );
     const recipe = await this.recipeRepo.findOne({
       where: { id: dto.recipe_id },
     });
@@ -549,26 +587,33 @@ export class RecipePreparationsService implements OnModuleInit {
     }
   }
 
-  async update(id: number, dto: Partial<RecipePreparation>) {
-    const p = await this.findOne(id);
+  async update(
+    id: number,
+    dto: Partial<RecipePreparation>,
+    requester?: RecipeAccessRequester,
+  ) {
+    const p = await this.findOne(id, requester);
     Object.assign(p, dto);
     return this.prepRepo.save(p);
   }
 
-  async remove(id: number) {
-    const p = await this.findOne(id);
+  async remove(id: number, requester?: RecipeAccessRequester) {
+    const p = await this.findOne(id, requester);
     await this.prepRepo.remove(p);
   }
 
   // Composite: create preparation and return mock stock transactions
-  async prepareWithStock(dto: {
+  async prepareWithStock(
+    dto: {
     recipe_id: number;
     quantity: number;
     employee_id?: number;
     location_id?: number;
     produced_at?: string;
-  }) {
-    const preparation = await this.create(dto);
+  },
+    requester?: RecipeAccessRequester,
+  ) {
+    const preparation = await this.create(dto, requester);
     // mock stock transactions result for UI (stock integration can be added later)
     const stockTransactions = [
       {

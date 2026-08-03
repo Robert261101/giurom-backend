@@ -3,7 +3,7 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const path = require("path");
-const net = require("net");
+const { tenantHeadersMiddleware } = require("./tenant-headers");
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -131,6 +131,9 @@ app.use((req, res, next) => {
   // Continuă la următorul middleware
   next();
 });
+
+// Validează header-ele tenant (x-work-location-id, x-company-id) față de JWT
+app.use(tenantHeadersMiddleware);
 
 // Proxy configuration for microservices
 const microservices = {
@@ -285,6 +288,7 @@ Object.keys(microservices).forEach((path) => {
         'x-service-secret', 
         'x-work-location-id',
         'x-company-id',
+        'x-stock-sync-key',
         'content-type',
         'accept',
         'user-agent'

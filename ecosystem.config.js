@@ -90,7 +90,7 @@ module.exports = {
       name: 'suppliers-ms',
       cwd: `${REPO_ROOT}/giurom-backend/suppliers-ms`,
       script: 'dist/main.js',
-      env: { ...nestjsEnv, REPO_ROOT },
+      env: { ...nestjsEnv, REPO_ROOT, LOCATIONS_HTTP_URL: 'http://127.0.0.1:3004' },
     },
     {
       name: 'waste-records-ms',

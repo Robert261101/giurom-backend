@@ -5,6 +5,7 @@ import { HttpModule } from '@nestjs/axios';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ExecutionService } from './execution.service';
 import { ExecutionController } from './execution.controller';
+import { EmployeeDailyPointsService } from './employee-daily-points.service';
 import { TaskExecution } from './entity/task-execution.entity';
 import { TaskExecutionAnswer } from './entity/task-execution-answer.entity';
 import { EmployeeDailyPoints } from './entity/employee-daily-points.entity';
@@ -38,9 +39,10 @@ import { EmployeeAccessModule } from '../employee-access/employee-access.module'
   controllers: [ExecutionController],
   providers: [
     ExecutionService,
+    EmployeeDailyPointsService,
     AssignmentExistsValidator,
     ElementsExistInTemplateValidator
   ],
-  exports: [ExecutionService],
+  exports: [ExecutionService, EmployeeDailyPointsService],
 })
 export class ExecutionModule {} 

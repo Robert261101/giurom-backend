@@ -137,6 +137,13 @@ export class LocationsHttpController {
 		return dept;
 	}
 
+	@Get(':id/restosoft-link-code')
+	@Permissions('locations.read')
+	getRestosoftLinkCode(@Param('id') id: string, @Request() req?: any) {
+		const user = req?.user;
+		return this.service.getRestosoftLinkCode(parseInt(id, 10), user);
+	}
+
 	@Get(':id')
 	@Permissions('locations.read')
 	findOne(@Param('id') id: string, @Request() req?: any) { 
@@ -156,11 +163,15 @@ export class LocationsHttpController {
 
 	@Patch(':id')
 	@Permissions('locations.update')
-	update(@Param('id') id: string, @Body() dto: UpdateWorkLocationDto) { return this.service.updateWorkLocation(parseInt(id, 10), dto); }
+	update(@Param('id') id: string, @Body() dto: UpdateWorkLocationDto, @Request() req: any) {
+		return this.service.updateWorkLocation(parseInt(id, 10), dto, req.user);
+	}
 
 	@Delete(':id')
 	@Permissions('locations.delete')
-	remove(@Param('id') id: string) { return this.service.removeWorkLocation(parseInt(id, 10)); }
+	remove(@Param('id') id: string, @Request() req: any) {
+		return this.service.removeWorkLocation(parseInt(id, 10), req.user);
+	}
 
 	// Assignments
 	@Post('assignments')

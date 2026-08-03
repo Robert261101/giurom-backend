@@ -175,8 +175,13 @@ export class ExecutionController {
   }
 
   @Get(':id')
-  // @UseGuards(JwtAuthGuard, PermissionsGuard)
-  // @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    'execution.read_own',
+    'execution.read_location',
+    'execution.read_company',
+    'execution.read_all',
+  )
   @ApiOperation({ summary: 'Obține o execuție specifică' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
   @ApiResponse({ 
@@ -187,8 +192,15 @@ export class ExecutionController {
   @ApiResponse({ status: 404, description: 'Execuția nu a fost găsită' })
   @ApiResponse({ status: 401, description: 'Neautorizat' })
   @ApiResponse({ status: 403, description: 'Fără permisiuni' })
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<TaskExecution> {
-    return this.executionService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<TaskExecution> {
+    return this.executionService.findOne(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   @Patch(':id')

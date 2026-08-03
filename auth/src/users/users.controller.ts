@@ -29,7 +29,12 @@ import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { AuthGuard, RolesGuard, Permissions } from '../guards';
+import { AuthGuard, RolesGuard, Permissions, InternalServiceGuard } from '../guards';
+
+type AuthedRequest = Request & {
+  user?: Record<string, unknown>;
+  bypassAuth?: boolean;
+};
 
 // Pipe custom care nu validează nimic - doar returnează valoarea
 @Injectable()
@@ -48,7 +53,7 @@ export class UsersController {
   ) {}
 
   @Post()
-  @UseGuards(AuthGuard, RolesGuard)
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
   @Permissions('users.create')
   @ApiOperation({ summary: 'Creează un utilizator nou' })
   @ApiBody({
@@ -76,20 +81,20 @@ export class UsersController {
   @ApiResponse({ status: 201, description: 'Utilizatorul a fost creat cu succes', type: User })
   @ApiResponse({ status: 409, description: 'Utilizatorul cu acest id_employee există deja' })
   async create(
-    @Req() req: Request & { user?: any },
+    @Req() req: AuthedRequest,
     @Body() createUserDto: CreateUserDto,
   ): Promise<User> {
     return this.usersService.createForRequester(req.user || {}, createUserDto);
   }
 
   @Get()
-  @UseGuards(AuthGuard, RolesGuard)
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
   @Permissions('users.read')
   @ApiOperation({ summary: 'Returnează utilizatorii (opțional inclusiv dezactivați)' })
   @ApiQuery({ name: 'includeInactive', required: false, description: 'Dacă este "true", returnează toți utilizatorii, inclusiv cei dezactivați' })
   @ApiResponse({ status: 200, description: 'Lista utilizatorilor', type: [User] })
   async findAll(
-    @Req() req: Request & { user?: any },
+    @Req() req: AuthedRequest,
     @Query('includeInactive') includeInactive?: string,
   ): Promise<User[]> {
     return this.usersService.findAllForRequester(
@@ -99,19 +104,25 @@ export class UsersController {
   }
 
   @Get('employee/:id_employee')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Găsește un utilizator după id_employee' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiResponse({ status: 200, description: 'Utilizatorul găsit', type: User })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
-  async findByEmployeeId(@Param('id_employee', ParseIntPipe) id_employee: number): Promise<User> {
-    const user = await this.usersService.findByEmployeeId(id_employee);
-    if (!user) {
-      throw new NotFoundException(`Utilizatorul cu id_employee ${id_employee} nu a fost găsit`);
-    }
-    return user;
+  async findByEmployeeId(
+    @Req() req: AuthedRequest,
+    @Param('id_employee', ParseIntPipe) id_employee: number,
+  ): Promise<User> {
+    return this.usersService.findByEmployeeIdForRequester(
+      req.user,
+      id_employee,
+      this.usersService.isInternalRequest(req),
+    );
   }
 
   @Patch('employee/:id_employee')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('users.create')
   @ApiOperation({ summary: 'Actualizează un utilizator' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiBody({
@@ -136,13 +147,20 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Utilizatorul a fost actualizat cu succes', type: User })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
   async update(
+    @Req() req: AuthedRequest,
     @Param('id_employee', ParseIntPipe) id_employee: number,
     @Body() updateData: UpdateUserDto,
   ): Promise<User> {
-    return this.usersService.updateProfile(id_employee, updateData);
+    return this.usersService.updateProfileForRequester(
+      req.user,
+      id_employee,
+      updateData,
+      this.usersService.isInternalRequest(req),
+    );
   }
 
   @Patch('employee/:id_employee/profile')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Actualizează profilul unui utilizator' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiBody({
@@ -160,13 +178,21 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Profilul a fost actualizat cu succes', type: User })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
   async updateProfile(
+    @Req() req: AuthedRequest,
     @Param('id_employee', ParseIntPipe) id_employee: number,
     @Body() updateData: UpdateUserDto,
   ): Promise<User> {
-    return this.usersService.updateProfile(id_employee, updateData);
+    return this.usersService.updateProfileForRequester(
+      req.user,
+      id_employee,
+      updateData,
+      this.usersService.isInternalRequest(req),
+      true,
+    );
   }
 
   @Patch('employee/:id_employee/profile-image')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Actualizează imaginea de profil a unui utilizator' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiBody({
@@ -183,34 +209,61 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Imaginea de profil a fost actualizată cu succes', type: User })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
   async updateProfileImage(
+    @Req() req: AuthedRequest,
     @Param('id_employee', ParseIntPipe) id_employee: number,
     @Body() updateData: { profile_image: string },
   ): Promise<User> {
-    return this.usersService.updateProfile(id_employee, updateData);
+    return this.usersService.updateProfileForRequester(
+      req.user,
+      id_employee,
+      updateData,
+      this.usersService.isInternalRequest(req),
+      true,
+    );
   }
 
   @Delete('employee/:id_employee')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('users.create')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge un utilizator după id_employee' })
   @ApiParam({ name: 'id_employee', description: 'ID-ul angajatului' })
   @ApiResponse({ status: 204, description: 'Utilizatorul a fost șters cu succes' })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
-  async remove(@Param('id_employee', ParseIntPipe) id_employee: number): Promise<void> {
-    return this.usersService.remove(id_employee);
+  async remove(
+    @Req() req: AuthedRequest,
+    @Param('id_employee', ParseIntPipe) id_employee: number,
+  ): Promise<void> {
+    return this.usersService.removeForRequester(
+      req.user,
+      id_employee,
+      this.usersService.isInternalRequest(req),
+    );
   }
 
   @Delete(':id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('users.create')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge un utilizator după user id (users.id)' })
   @ApiParam({ name: 'id', description: 'ID-ul utilizatorului (users.id)' })
   @ApiResponse({ status: 204, description: 'Utilizatorul a fost șters cu succes' })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
-  async removeByUserId(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.usersService.removeByUserId(id);
+  async removeByUserId(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    return this.usersService.removeByUserIdForRequester(
+      req.user,
+      id,
+      this.usersService.isInternalRequest(req),
+    );
   }
 
   // ===== PERMISSIONS ENDPOINTS =====
   @Post('permissions')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Creează o permisiune nouă' })
   @ApiBody({
     description: 'Datele pentru crearea unei permisiuni noi',
@@ -232,19 +285,36 @@ export class UsersController {
     }
   })
   @ApiResponse({ status: 201, description: 'Permisiunea a fost creată cu succes', type: Permission })
-  async createPermission(@Body() createPermissionDto: { name: string; group?: string; description?: string }): Promise<Permission> {
+  async createPermission(
+    @Req() req: AuthedRequest,
+    @Body() createPermissionDto: { name: string; group?: string; description?: string },
+  ): Promise<Permission> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.createPermission(createPermissionDto);
   }
 
   @Get('permissions')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Returnează toate permisiunile' })
   @ApiResponse({ status: 200, description: 'Lista permisiunilor', type: [Permission] })
-  async getAllPermissions(): Promise<Permission[]> {
+  async getAllPermissions(
+    @Req() req: AuthedRequest,
+  ): Promise<Permission[]> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getAllPermissions();
   }
 
   // ===== ROLES CRUD ENDPOINTS =====
   @Post('roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Creează un rol nou' })
   @ApiBody({
     description: 'Datele pentru crearea unui rol nou',
@@ -265,27 +335,51 @@ export class UsersController {
     }
   })
   @ApiResponse({ status: 201, description: 'Rolul a fost creat cu succes', type: Role })
-  async createRole(@Body() createRoleDto: { name: string; description?: string }): Promise<Role> {
+  async createRole(
+    @Req() req: AuthedRequest,
+    @Body() createRoleDto: { name: string; description?: string },
+  ): Promise<Role> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.createRole(createRoleDto);
   }
 
   @Get('roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Returnează toate rolurile' })
   @ApiResponse({ status: 200, description: 'Lista rolurilor', type: [Role] })
-  async getAllRoles(): Promise<Role[]> {
+  async getAllRoles(@Req() req: AuthedRequest): Promise<Role[]> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getAllRoles();
   }
 
   @Get('roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Găsește un rol după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul rolului' })
   @ApiResponse({ status: 200, description: 'Rolul găsit', type: Role })
   @ApiResponse({ status: 404, description: 'Rolul nu a fost găsit' })
-  async getRoleById(@Param('id', ParseIntPipe) id: number): Promise<Role> {
+  async getRoleById(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<Role> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getRoleById(id);
   }
 
   @Patch('roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Actualizează un rol' })
   @ApiParam({ name: 'id', description: 'ID-ul rolului' })
   @ApiBody({
@@ -309,24 +403,40 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Rolul a fost actualizat cu succes', type: Role })
   @ApiResponse({ status: 404, description: 'Rolul nu a fost găsit' })
   async updateRole(
+    @Req() req: AuthedRequest,
     @Param('id', ParseIntPipe) id: number,
-    @Body() updateRoleDto: { name?: string; description?: string }
+    @Body() updateRoleDto: { name?: string; description?: string },
   ): Promise<Role> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.updateRole(id, updateRoleDto);
   }
 
   @Delete('roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge un rol' })
   @ApiParam({ name: 'id', description: 'ID-ul rolului' })
   @ApiResponse({ status: 204, description: 'Rolul a fost șters cu succes' })
   @ApiResponse({ status: 404, description: 'Rolul nu a fost găsit' })
-  async deleteRole(@Param('id', ParseIntPipe) id: number): Promise<void> {
+  async deleteRole(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.deleteRole(id);
   }
 
   // ===== ROLE_PERMISSIONS CRUD ENDPOINTS =====
   @Post('role-permissions')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Creează o asociere rol-permisiune' })
   @ApiBody({
     description: 'Datele pentru crearea unei asocieri rol-permisiune',
@@ -341,15 +451,31 @@ export class UsersController {
     }
   })
   @ApiResponse({ status: 201, description: 'Asocierea a fost creată cu succes', type: RolePermission })
-  async createRolePermission(@Body() createRolePermissionDto: { roleId: number; permissionId: number }): Promise<RolePermission> {
+  async createRolePermission(
+    @Req() req: AuthedRequest,
+    @Body() createRolePermissionDto: { roleId: number; permissionId: number },
+  ): Promise<RolePermission> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.createRolePermission(createRolePermissionDto);
   }
 
   @Get('role-permissions')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Returnează toate asocierile rol-permisiune sau filtrate după roleId' })
   @ApiQuery({ name: 'roleId', required: false, type: Number, description: 'ID-ul rolului pentru filtrare' })
   @ApiResponse({ status: 200, description: 'Lista asocierilor', type: [RolePermission] })
-  async getAllRolePermissions(@Query('roleId') roleId?: string): Promise<RolePermission[]> {
+  async getAllRolePermissions(
+    @Req() req: AuthedRequest,
+    @Query('roleId') roleId?: string,
+  ): Promise<RolePermission[]> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     if (roleId) {
       const roleIdNum = parseInt(roleId, 10);
       if (!isNaN(roleIdNum)) {
@@ -360,15 +486,26 @@ export class UsersController {
   }
 
   @Get('role-permissions/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Găsește o asociere rol-permisiune după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiResponse({ status: 200, description: 'Asocierea găsită', type: RolePermission })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
-  async getRolePermissionById(@Param('id', ParseIntPipe) id: number): Promise<RolePermission> {
+  async getRolePermissionById(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<RolePermission> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getRolePermissionById(id);
   }
 
   @Patch('role-permissions/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Actualizează o asociere rol-permisiune' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiBody({
@@ -392,23 +529,39 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Asocierea a fost actualizată cu succes', type: RolePermission })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
   async updateRolePermission(
+    @Req() req: AuthedRequest,
     @Param('id', ParseIntPipe) id: number,
-    @Body() updateRolePermissionDto: { roleId?: number; permissionId?: number }
+    @Body() updateRolePermissionDto: { roleId?: number; permissionId?: number },
   ): Promise<RolePermission> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.updateRolePermission(id, updateRolePermissionDto);
   }
 
   @Delete('role-permissions/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge o asociere rol-permisiune' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiResponse({ status: 204, description: 'Asocierea a fost ștearsă cu succes' })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
-  async deleteRolePermission(@Param('id', ParseIntPipe) id: number): Promise<void> {
+  async deleteRolePermission(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.deleteRolePermission(id);
   }
 
   @Post('role-permissions/bulk')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Creează multiple asocieri rol-permisiune într-un singur request (bulk insert)' })
   @ApiBody({
     description: 'Datele pentru crearea în bulk a asocierilor rol-permisiune',
@@ -433,11 +586,23 @@ export class UsersController {
       }
     }
   })
-  async createRolePermissionsBulk(@Body() bulkDto: { roleId: number; permissionIds: number[] }): Promise<{ created: number; rolePermissions: RolePermission[] }> {
-    return this.usersService.createRolePermissionsBulk(bulkDto.roleId, bulkDto.permissionIds);
+  async createRolePermissionsBulk(
+    @Req() req: AuthedRequest,
+    @Body() bulkDto: { roleId: number; permissionIds: number[] },
+  ): Promise<{ created: number; rolePermissions: RolePermission[] }> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
+    return this.usersService.createRolePermissionsBulk(
+      bulkDto.roleId,
+      bulkDto.permissionIds,
+    );
   }
 
   @Delete('role-permissions/bulk/:roleId')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Șterge toate permisiunile pentru un rol într-un singur request (bulk delete)' })
   @ApiParam({ name: 'roleId', required: true, type: Number, description: 'ID-ul rolului pentru care se șterg permisiunile' })
@@ -451,12 +616,21 @@ export class UsersController {
       }
     }
   })
-  async deleteRolePermissionsBulk(@Param('roleId', ParseIntPipe) roleId: number): Promise<{ deleted: number }> {
+  async deleteRolePermissionsBulk(
+    @Req() req: AuthedRequest,
+    @Param('roleId', ParseIntPipe) roleId: number,
+  ): Promise<{ deleted: number }> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.deleteRolePermissionsBulk(roleId);
   }
 
   // ===== USER_ROLES CRUD ENDPOINTS =====
   @Post('user-roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Creează o asociere utilizator-rol' })
   @ApiBody({
     description: 'Datele pentru crearea unei asocieri utilizator-rol',
@@ -471,27 +645,58 @@ export class UsersController {
     }
   })
   @ApiResponse({ status: 201, description: 'Asocierea a fost creată cu succes', type: UserRole })
-  async createUserRole(@Body() createUserRoleDto: { userId: number; roleId: number }): Promise<UserRole> {
+  async createUserRole(
+    @Req() req: AuthedRequest,
+    @Body() createUserRoleDto: { userId: number; roleId: number },
+  ): Promise<UserRole> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
+    if (!this.usersService.isInternalRequest(req)) {
+      await this.usersService.assertCanManageUserAccount(
+        req.user,
+        createUserRoleDto.userId,
+        false,
+      );
+    }
     return this.usersService.createUserRole(createUserRoleDto);
   }
 
   @Get('user-roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Returnează toate asocierile utilizator-rol' })
   @ApiResponse({ status: 200, description: 'Lista asocierilor', type: [UserRole] })
-  async getAllUserRoles(): Promise<UserRole[]> {
+  async getAllUserRoles(@Req() req: AuthedRequest): Promise<UserRole[]> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getAllUserRoles();
   }
 
   @Get('user-roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Găsește o asociere utilizator-rol după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiResponse({ status: 200, description: 'Asocierea găsită', type: UserRole })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
-  async getUserRoleById(@Param('id', ParseIntPipe) id: number): Promise<UserRole> {
+  async getUserRoleById(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<UserRole> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
     return this.usersService.getUserRoleById(id);
   }
 
   @Patch('user-roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @ApiOperation({ summary: 'Actualizează o asociere utilizator-rol' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiBody({
@@ -515,33 +720,75 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Asocierea a fost actualizată cu succes', type: UserRole })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
   async updateUserRole(
+    @Req() req: AuthedRequest,
     @Param('id', ParseIntPipe) id: number,
-    @Body() updateUserRoleDto: { userId?: number; roleId?: number }
+    @Body() updateUserRoleDto: { userId?: number; roleId?: number },
   ): Promise<UserRole> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
+    if (!this.usersService.isInternalRequest(req) && updateUserRoleDto.userId) {
+      await this.usersService.assertCanManageUserAccount(
+        req.user,
+        updateUserRoleDto.userId,
+        false,
+      );
+    }
     return this.usersService.updateUserRole(id, updateUserRoleDto);
   }
 
   @Delete('user-roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge toate rolurile pentru un utilizator' })
   @ApiQuery({ name: 'userId', description: 'ID-ul utilizatorului', required: true, type: Number })
   @ApiResponse({ status: 204, description: 'Rolurile au fost șterse cu succes' })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit sau nu are roluri' })
-  async deleteUserRolesByUserId(@Query('userId', ParseIntPipe) userId: number): Promise<void> {
+  async deleteUserRolesByUserId(
+    @Req() req: AuthedRequest,
+    @Query('userId', ParseIntPipe) userId: number,
+  ): Promise<void> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
+    if (!this.usersService.isInternalRequest(req)) {
+      await this.usersService.assertCanManageUserAccount(req.user, userId, false);
+    }
     return this.usersService.deleteUserRolesByUserId(userId);
   }
 
   @Delete('user-roles/:id')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge o asociere utilizator-rol' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiResponse({ status: 204, description: 'Asocierea a fost ștearsă cu succes' })
   @ApiResponse({ status: 404, description: 'Asocierea nu a fost găsită' })
-  async deleteUserRole(@Param('id', ParseIntPipe) id: number): Promise<void> {
+  async deleteUserRole(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    await this.usersService.assertCanManageRoles(
+      req.user,
+      this.usersService.isInternalRequest(req),
+    );
+    if (!this.usersService.isInternalRequest(req)) {
+      const userRole = await this.usersService.getUserRoleById(id);
+      await this.usersService.assertCanManageUserAccount(
+        req.user,
+        userRole.userId,
+        false,
+      );
+    }
     return this.usersService.deleteUserRole(id);
   }
 
   @Get('batch')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Obține informații de bază pentru o listă de utilizatori' })
   @ApiQuery({
     name: 'ids',
@@ -554,6 +801,7 @@ export class UsersController {
     type: [User],
   })
   async findUsersBatch(
+    @Req() req: AuthedRequest,
     @Query('ids') ids: string,
   ): Promise<Array<Pick<User, 'id' | 'id_employee'>>> {
     if (!ids) {
@@ -569,20 +817,28 @@ export class UsersController {
       return [];
     }
 
-    return this.usersService.findUsersByIdsBasic(idList);
+    return this.usersService.findUsersByIdsBasicForRequester(
+      req.user,
+      idList,
+      this.usersService.isInternalRequest(req),
+    );
   }
 
   @Get(':id')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Găsește un utilizator după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul utilizatorului' })
   @ApiResponse({ status: 200, description: 'Utilizatorul găsit', type: User })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<any> {
-    const user = await this.usersService.findOne(id);
-    if (!user) {
-      throw new NotFoundException(`Utilizatorul cu ID ${id} nu a fost găsit`);
-    }
-    
+  async findOne(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<any> {
+    const user = await this.usersService.findOneForRequester(
+      req.user,
+      id,
+      this.usersService.isInternalRequest(req),
+    );
     // Handle profile image URL properly
     let profileImageUrl = user.profile_image;
     if (profileImageUrl && profileImageUrl.startsWith('/files/')) {
@@ -625,20 +881,23 @@ export class UsersController {
   }
 
   @Get('employee/:employeeId/profile-image')
+  @UseGuards(InternalServiceGuard, AuthGuard)
   @ApiOperation({ summary: 'Obține imaginea de profil pentru un angajat' })
   @ApiParam({ name: 'employeeId', description: 'ID-ul angajatului' })
   @ApiResponse({ status: 200, description: 'Imaginea de profil a utilizatorului' })
   @ApiResponse({ status: 404, description: 'Utilizatorul nu a fost găsit' })
-  async getProfileImage(@Param('employeeId', ParseIntPipe) employeeId: number): Promise<any> {
+  async getProfileImage(
+    @Req() req: AuthedRequest,
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+  ): Promise<any> {
     console.log(`📥 Request for profile image for employee ${employeeId}`);
-    
+
     try {
-      // Get user by employee ID
-      const user = await this.usersService.findByEmployeeId(employeeId);
-      if (!user) {
-        throw new NotFoundException(`Utilizatorul cu ID angajat ${employeeId} nu a fost găsit`);
-      }
-      
+      const user = await this.usersService.findByEmployeeIdForRequester(
+        req.user,
+        employeeId,
+        this.usersService.isInternalRequest(req),
+      );
       console.log(`✅ Found user ${user.id} for employee ${employeeId}`);
       
       // Handle profile image URL properly

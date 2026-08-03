@@ -3,13 +3,14 @@
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   Logger,
 } from "@nestjs/common";
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, EntityManager, In } from "typeorm";
+import { Repository, EntityManager, In, QueryFailedError } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { firstValueFrom, defaultIfEmpty } from "rxjs";
@@ -47,6 +48,13 @@ import { OrderList } from "./entities/order-list.entity";
 import { CreateOrderListDto } from "./dto/create-order-list.dto";
 import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 import {
+  StockJwtUser,
+  getJwtCompanyId,
+  getJwtWorkLocationId,
+  isGlobalStockAdmin,
+  assertLocationAllowed,
+} from './stock-access';
+import {
   PaginatedStockResponse,
   StockListQueryFilters,
   StockLocationSummary,
@@ -55,6 +63,83 @@ import {
 @Injectable()
 export class StockService {
   private readonly logger = new Logger(StockService.name);
+  private locationIdsByCompanyCache = new Map<
+    number,
+    { ids: number[]; timestamp: number }
+  >();
+  private readonly LOCATION_CACHE_TTL_MS = 60_000;
+
+  private internalHeaders(): Record<string, string> {
+    return {
+      'x-internal-service': 'stock-ms',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
+    };
+  }
+
+  async resolvePermittedLocationIds(user?: StockJwtUser): Promise<number[]> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return [];
+    }
+    const companyId = getJwtCompanyId(user);
+    if (companyId != null) {
+      const cached = this.locationIdsByCompanyCache.get(companyId);
+      if (
+        cached &&
+        Date.now() - cached.timestamp < this.LOCATION_CACHE_TTL_MS
+      ) {
+        return cached.ids;
+      }
+      const locationsUrl =
+        process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      try {
+        const response = await firstValueFrom(
+          this.httpService!.get(
+            `${locationsUrl}/locations/company/${companyId}`,
+            { headers: this.internalHeaders(), timeout: 8000 },
+          ),
+        );
+        const payload = response.data as { data?: unknown } | unknown[];
+        const data =
+          payload &&
+          typeof payload === 'object' &&
+          !Array.isArray(payload) &&
+          'data' in payload
+            ? (payload as { data?: unknown }).data
+            : payload;
+        const list = Array.isArray(data) ? data : [];
+        const ids = list
+          .map((row: { id?: number }) => Number(row?.id))
+          .filter((id: number) => Number.isFinite(id) && id > 0);
+        this.locationIdsByCompanyCache.set(companyId, {
+          ids,
+          timestamp: Date.now(),
+        });
+        if (ids.length > 0) {
+          return ids;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    const workLocationId = getJwtWorkLocationId(user);
+    return workLocationId != null ? [workLocationId] : [];
+  }
+
+  private async assertStockLocationAllowed(
+    user: StockJwtUser | undefined,
+    locationId: number | null | undefined,
+  ): Promise<void> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return;
+    }
+    const permitted = await this.resolvePermittedLocationIds(user);
+    if (permitted.length === 0) {
+      throw new ForbiddenException(
+        'Locația/compania nu este determinată pentru utilizator',
+      );
+    }
+    assertLocationAllowed(user, locationId, permitted);
+  }
 
   constructor(
     @InjectRepository(Product)
@@ -132,49 +217,126 @@ export class StockService {
     return saved;
   }
 
-  async getWasteRequests(filters?: { status?: string; location_id?: number }): Promise<(WasteRequest & { created_by_name?: string })[]> {
-    const qb = this.wasteRequestRepo.createQueryBuilder('wr').leftJoinAndSelect('wr.product', 'product').orderBy('wr.created_at', 'DESC');
+  async getWasteRequests(filters?: {
+    status?: string;
+    location_id?: number;
+    page?: number;
+    limit?: number;
+  }): Promise<
+    | (WasteRequest & { created_by_name?: string })[]
+    | {
+        data: (WasteRequest & { created_by_name?: string })[];
+        pagination: {
+          page: number;
+          limit: number;
+          total: number;
+          totalPages: number;
+          hasNextPage: boolean;
+          hasPreviousPage: boolean;
+        };
+      }
+  > {
+    const usePagination =
+      filters?.page != null || filters?.limit != null;
+    const page = Math.max(1, Number(filters?.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(filters?.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.wasteRequestRepo
+      .createQueryBuilder("wr")
+      .leftJoinAndSelect("wr.product", "product")
+      .orderBy("wr.created_at", "DESC");
     if (filters?.status) {
-      qb.andWhere('wr.status = :status', { status: filters.status });
+      qb.andWhere("wr.status = :status", { status: filters.status });
     }
     if (filters?.location_id) {
-      qb.andWhere('wr.location_id = :lid', { lid: filters.location_id });
+      qb.andWhere("wr.location_id = :lid", { lid: filters.location_id });
+    }
+
+    const total = usePagination
+      ? await qb.clone().getCount()
+      : 0;
+    if (usePagination) {
+      qb.skip(skip).take(limit);
     }
     const list = await qb.getMany();
 
-    const creatorIds = [...new Set(list.map((r) => r.created_by).filter((id): id is number => id != null))];
+    const creatorIds = [
+      ...new Set(
+        list
+          .map((r) => r.created_by)
+          .filter((id): id is number => id != null),
+      ),
+    ];
     const employeesMap = new Map<number, any>();
 
     if (creatorIds.length > 0 && this.httpService) {
-      let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
+      let employeesServiceUrl =
+        this.configService?.get<string>("EMPLOYEES_HTTP_URL") ||
+        "http://localhost:3012";
+      if (
+        employeesServiceUrl.includes("bitap.ro") ||
+        employeesServiceUrl.includes(
+          process.env.PUBLIC_SERVER_IP || "89.46.6.45",
+        )
+      ) {
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
-        const port = portMatch ? portMatch[1] : '3012';
+        const port = portMatch ? portMatch[1] : "3012";
         employeesServiceUrl = `http://localhost:${port}`;
       }
-      const serviceSecret = process.env.SERVICE_SECRET || '';
-      const headers = { 'Content-Type': 'application/json', 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
+      const serviceSecret = process.env.SERVICE_SECRET || "";
+      const headers = {
+        "Content-Type": "application/json",
+        "x-internal-service": "stock",
+        "x-service-secret": serviceSecret,
+      };
       try {
-        const idsParam = creatorIds.join(',');
+        const idsParam = creatorIds.join(",");
         const employeeResponse: any = await firstValueFrom(
-          this.httpService.get(`${employeesServiceUrl}/employees/batch`, { headers, params: { ids: idsParam } })
+          this.httpService.get(`${employeesServiceUrl}/employees/batch`, {
+            headers,
+            params: { ids: idsParam },
+          }),
         );
         const employees = employeeResponse?.data || [];
         for (const emp of employees) {
-          if (emp && typeof emp.id === 'number') employeesMap.set(emp.id, emp);
+          if (emp && typeof emp.id === "number") employeesMap.set(emp.id, emp);
         }
       } catch (err: any) {
-        this.logger?.warn(`Could not fetch employees batch for waste requests: ${err?.message}`);
+        this.logger?.warn(
+          `Could not fetch employees batch for waste requests: ${err?.message}`,
+        );
       }
     }
 
-    return list.map((req) => {
+    const data = list.map((req) => {
       const employee = employeesMap.get(req.created_by!);
       const created_by_name = employee
-        ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.email || `Angajat #${req.created_by}`
-        : req.created_by ? `Angajat #${req.created_by}` : undefined;
+        ? `${employee.first_name || ""} ${employee.last_name || ""}`.trim() ||
+          employee.email ||
+          `Angajat #${req.created_by}`
+        : req.created_by
+          ? `Angajat #${req.created_by}`
+          : undefined;
       return { ...req, created_by_name };
     });
+
+    if (!usePagination) {
+      return data;
+    }
+
+    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   async approveWasteRequest(id: number, approverId?: number): Promise<void> {
@@ -639,14 +801,32 @@ export class StockService {
     return this.normalizeProductPhoto(merged);
   }
 
-  async findProduct(id: number): Promise<Product> {
+  async findProduct(id: number, user?: StockJwtUser): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException("Produsul nu a fost găsit");
+    if (user && !isGlobalStockAdmin(user)) {
+      const stocks = await this.stockRepo.find({ where: { product_id: id } });
+      const permitted = await this.resolvePermittedLocationIds(user);
+      if (permitted.length > 0 && stocks.length > 0) {
+        const hasAccess = stocks.some((s) =>
+          permitted.includes(Number(s.location_id)),
+        );
+        if (!hasAccess) {
+          throw new ForbiddenException(
+            'Produsul nu este disponibil în locațiile companiei dumneavoastră',
+          );
+        }
+      }
+    }
     return this.normalizeProductPhoto(product);
   }
 
-  async updateProduct(id: number, dto: UpdateProductDto): Promise<Product> {
-    const product = await this.findProduct(id);
+  async updateProduct(
+    id: number,
+    dto: UpdateProductDto,
+    user?: StockJwtUser,
+  ): Promise<Product> {
+    const product = await this.findProduct(id, user);
     this.logger.log(
       `🔄 [updateProduct] Product ID ${id} - Current photo: ${product.photo || "no photo"}, New photo: ${dto.photo || "no change"}`
     );
@@ -715,8 +895,8 @@ export class StockService {
     return updated;
   }
 
-  async deleteProduct(id: number): Promise<void> {
-    const product = await this.findProduct(id);
+  async deleteProduct(id: number, user?: StockJwtUser): Promise<void> {
+    const product = await this.findProduct(id, user);
     const stockCount = await this.stockRepo.count({
       where: { product_id: id },
     });
@@ -732,6 +912,10 @@ export class StockService {
       : -1;
   }
 
+  /**
+   * Un singur agregat per (product_id, location_key).
+   * La race pe insert (UNIQUE), refacem lookup pe id minim.
+   */
   private async findOrCreateAggregate(
     productId: number,
     locationId: number | null | undefined,
@@ -739,20 +923,54 @@ export class StockService {
   ): Promise<Stock> {
     const repo = manager ? manager.getRepository(Stock) : this.stockRepo;
     const location_key = this.locationKey(locationId);
-    let row = await repo.findOne({
-      where: { product_id: productId, location_key },
-    });
-    if (!row) {
-      row = repo.create({
-        product_id: productId,
-        location_id: locationId ?? null,
-        location_key,
-        quantity: 0,
-        status: StockStatus.VALID,
+
+    const findCanonical = () =>
+      repo.findOne({
+        where: { product_id: productId, location_key },
+        order: { id: "ASC" },
       });
-      row = await repo.save(row);
+
+    let row = await findCanonical();
+    if (row) return row;
+
+    try {
+      row = await repo.save(
+        repo.create({
+          product_id: productId,
+          location_id: locationId ?? null,
+          location_key,
+          quantity: 0,
+          status: StockStatus.VALID,
+        }),
+      );
+      return row;
+    } catch (error) {
+      if (!this.isDuplicateKeyError(error)) throw error;
+      row = await findCanonical();
+      if (!row) throw error;
+      return row;
     }
-    return row;
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) return false;
+    const driver = (error as QueryFailedError & {
+      driverError?: { code?: string; errno?: number };
+    }).driverError;
+    return driver?.code === "ER_DUP_ENTRY" || driver?.errno === 1062;
+  }
+
+  /** Doar rândul canonic (MIN id) per produs+locație — apărare dacă DB încă are duplicate. */
+  private applyCanonicalStockOnly(
+    qb: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+  ): void {
+    qb.andWhere(
+      `stock.id = (
+        SELECT MIN(s2.id) FROM stock s2
+        WHERE s2.product_id = stock.product_id
+          AND s2.location_key = stock.location_key
+      )`,
+    );
   }
 
   private applyAggregateStatus(stock: Stock, product?: Product | null): void {
@@ -1001,6 +1219,7 @@ export class StockService {
       queryBuilder.where(conditions.join(" AND "), params);
     }
 
+    this.applyCanonicalStockOnly(queryBuilder);
     queryBuilder.orderBy("product.name", "ASC").addOrderBy("stock.id", "ASC");
 
     return queryBuilder.getMany();
@@ -1043,6 +1262,7 @@ export class StockService {
     if (conditions.length > 0) {
       queryBuilder.where(conditions.join(" AND "), params);
     }
+    this.applyCanonicalStockOnly(queryBuilder);
   }
 
   private applyStockListSort(
@@ -1150,17 +1370,23 @@ export class StockService {
 
   async findStock(
     id: number,
+    user?: StockJwtUser,
   ): Promise<Stock & { transactions?: StockTransaction[] }> {
     const s = await this.stockRepo.findOne({
       where: { id },
       relations: ["product", "transactions"],
     });
     if (!s) throw new NotFoundException("Stocul nu a fost găsit");
+    await this.assertStockLocationAllowed(user, s.location_id ?? null);
     return s;
   }
 
-  async updateStock(id: number, dto: UpdateStockDto): Promise<Stock> {
-    const stock = await this.findStock(id);
+  async updateStock(
+    id: number,
+    dto: UpdateStockDto,
+    user?: StockJwtUser,
+  ): Promise<Stock> {
+    const stock = await this.findStock(id, user);
     if (dto.quantity !== undefined) {
       stock.quantity = Number(dto.quantity);
     }
@@ -1176,8 +1402,8 @@ export class StockService {
     return await this.stockRepo.save(stock);
   }
 
-  async deleteStock(id: number): Promise<void> {
-    const stock = await this.findStock(id);
+  async deleteStock(id: number, user?: StockJwtUser): Promise<void> {
+    const stock = await this.findStock(id, user);
     if (Number(stock.quantity) > 0) {
       throw new BadRequestException(
         "Nu se poate șterge stocul agregat cât timp cantitatea este mai mare decât 0",
@@ -1340,7 +1566,12 @@ export class StockService {
       // marcată cu `supplier-order-confirm:*` (flux nou) sau `supplier-order-create:*`
       // (flux vechi). Verificăm AMBELE variante ca să nu re-scădem o comandă deja
       // scăzută sub fluxul vechi atunci când e confirmată acum.
-      if (target?.startsWith("supplier-order-")) {
+      //
+      // Aceeași protecție se aplică prefixului `app2:`: consumul venit din giurom 2.0
+      // pleacă dintr-un outbox cu retry, deci aceeași operație poate sosi de mai multe
+      // ori dacă răspunsul s-a pierdut pe drum. Fără verificare, fiecare retrimitere ar
+      // scădea stocul din nou.
+      if (target?.startsWith("supplier-order-") || target?.startsWith("app2:")) {
         const candidateTargets = new Set<string>([target]);
         if (target.startsWith("supplier-order-confirm:")) {
           candidateTargets.add(
@@ -1407,6 +1638,7 @@ export class StockService {
       const totalFefoOpen = openEntries.reduce((sum, row) => sum + row.open, 0);
 
       const touchedLocationKeys = new Set<number>();
+      const aggregateByKey = new Map<number, Stock>();
 
       for (const { entry, open } of openEntries) {
         if (remaining <= 0) break;
@@ -1421,8 +1653,19 @@ export class StockService {
           resolvedLocationId !== undefined
             ? this.locationKey(resolvedLocationId)
             : entry.location_key;
+
+        let aggregateForExit = aggregateByKey.get(exitLocationKey);
+        if (!aggregateForExit) {
+          aggregateForExit = await this.findOrCreateAggregate(
+            productId,
+            exitLocationId,
+            queryRunner.manager,
+          );
+          aggregateByKey.set(exitLocationKey, aggregateForExit);
+        }
+
         const exitTx = txRepo.create({
-          stock_id: entry.stock_id,
+          stock_id: aggregateForExit.id,
           product_id: productId,
           location_id: exitLocationId,
           location_key: exitLocationKey,
@@ -1670,27 +1913,40 @@ export class StockService {
 
   // === WASTE RECORDS ===
 
-  async findAllWasteRecords(): Promise<WasteRecord[]> {
+  async findAllWasteRecords(user?: StockJwtUser): Promise<WasteRecord[]> {
+    if (!user || isGlobalStockAdmin(user)) {
+      return await this.wasteRecordRepo.find({
+        relations: ["product"],
+        order: { created_at: "DESC" },
+      });
+    }
+    const permitted = await this.resolvePermittedLocationIds(user);
+    if (permitted.length === 0) {
+      return [];
+    }
     return await this.wasteRecordRepo.find({
+      where: { location_id: In(permitted) },
       relations: ["product"],
       order: { created_at: "DESC" },
     });
   }
 
-  async findWasteRecord(id: number): Promise<WasteRecord> {
+  async findWasteRecord(id: number, user?: StockJwtUser): Promise<WasteRecord> {
     const wasteRecord = await this.wasteRecordRepo.findOne({
       where: { id },
       relations: ["product"],
     });
     if (!wasteRecord) throw new NotFoundException("Waste record not found");
+    await this.assertStockLocationAllowed(user, wasteRecord.location_id ?? null);
     return wasteRecord;
   }
 
   async updateWasteRecord(
     id: number,
-    dto: UpdateWasteRecordDto
+    dto: UpdateWasteRecordDto,
+    user?: StockJwtUser,
   ): Promise<WasteRecord> {
-    const wasteRecord = await this.findWasteRecord(id);
+    const wasteRecord = await this.findWasteRecord(id, user);
 
     // Validate that either product_id or recipe_preparation_id is provided
     const finalProductId =
@@ -1727,8 +1983,8 @@ export class StockService {
     return await this.wasteRecordRepo.save(wasteRecord);
   }
 
-  async deleteWasteRecord(id: number): Promise<void> {
-    const wasteRecord = await this.findWasteRecord(id);
+  async deleteWasteRecord(id: number, user?: StockJwtUser): Promise<void> {
+    const wasteRecord = await this.findWasteRecord(id, user);
     await this.wasteRecordRepo.remove(wasteRecord);
   }
 

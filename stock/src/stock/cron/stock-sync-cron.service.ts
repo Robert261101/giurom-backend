@@ -10,11 +10,17 @@ import { Stock } from '../entities/stock.entity';
 interface StockSyncItem {
   company_id: number;
   location_id: number;
+  location_name: string | null;
   product_id: number;
   product_name: string;
   sku: string | null;
   unit: string;
   quantity: number;
+}
+
+interface LocationMeta {
+  companyId: number;
+  locationName: string | null;
 }
 
 export interface StockSyncResult {
@@ -37,7 +43,9 @@ export class StockSyncCronService {
     private readonly configService: ConfigService,
   ) {}
 
-  @Cron('0 */15 * * * *') // la fiecare 15 minute
+  // La fiecare minut. giurom 2.0 afișează stocul de aici ca oglindă, iar mișcările făcute
+  // acolo se întorc prin outbox — la 15 minute, ecranul lor ar fi vizibil în urmă.
+  @Cron('0 * * * * *')
   async handleStockSync() {
     this.logger.log(
       '📦 [StockSync] Starting scheduled stock sync to giurom 2.0...',
@@ -72,7 +80,7 @@ export class StockSyncCronService {
     this.lastManualSyncAt = now;
 
     this.logger.log('🔧 [StockSync] Running manual stock sync...');
-    const result = await this.runSync();
+    const result = await this.runSync('manual');
     this.logSummary(result);
     return result;
   }
@@ -85,7 +93,7 @@ export class StockSyncCronService {
     );
   }
 
-  private async runSync(): Promise<StockSyncResult> {
+  private async runSync(source: 'cron' | 'manual' = 'cron'): Promise<StockSyncResult> {
     const rows = await this.stockRepository.find({ relations: ['product'] });
     const rowsWithLocation = rows.filter((r) => r.location_id != null);
 
@@ -97,22 +105,37 @@ export class StockSyncCronService {
     const distinctLocationIds = [
       ...new Set(rowsWithLocation.map((r) => r.location_id as number)),
     ];
-    const companyIdByLocation =
-      await this.resolveCompanyIds(distinctLocationIds);
+    const metaByLocation =
+      await this.resolveLocationMeta(distinctLocationIds);
+
+    // Un singur item per (product_id, location_id). În DB pot exista duplicate pe
+    // același agregat (date vechi / migrări); sync-ul le trimitea pe toate și
+    // giurom 2.0 rescria inventory cu ultimul rând (ex. 10 în loc de 1.94).
+    // findOrCreateAggregate folosește findOne → de regulă rândul cu id minim;
+    // păstrăm același semnal aici.
+    const canonicalByKey = new Map<string, (typeof rowsWithLocation)[number]>();
+    for (const row of rowsWithLocation) {
+      const key = `${row.product_id}:${row.location_id}`;
+      const existing = canonicalByKey.get(key);
+      if (!existing || row.id < existing.id) {
+        canonicalByKey.set(key, row);
+      }
+    }
 
     const items: StockSyncItem[] = [];
-    for (const row of rowsWithLocation) {
+    for (const row of canonicalByKey.values()) {
       const locationId = row.location_id as number;
-      const companyId = companyIdByLocation.get(locationId);
-      if (companyId == null) {
+      const meta = metaByLocation.get(locationId);
+      if (meta == null) {
         this.logger.warn(
           `⚠️ [StockSync] Skipping stock row ${row.id} — could not resolve company_id for location ${locationId}`,
         );
         continue;
       }
       items.push({
-        company_id: companyId,
+        company_id: meta.companyId,
         location_id: locationId,
+        location_name: meta.locationName,
         product_id: row.product_id,
         product_name: row.product?.name || `Produs ${row.product_id}`,
         sku: row.product?.sku ?? null,
@@ -145,6 +168,7 @@ export class StockSyncCronService {
           headers: {
             'Content-Type': 'application/json',
             'X-Stock-Sync-Key': apiKey || '',
+            'X-Stock-Sync-Source': source,
           },
         },
       ),
@@ -154,10 +178,10 @@ export class StockSyncCronService {
     return { sent: items.length, ...result };
   }
 
-  /** Rezolvă company_id pentru fiecare location_id, apelând microserviciul `locations`. */
-  private async resolveCompanyIds(
+  /** Rezolvă company_id + nume locație pentru fiecare location_id. */
+  private async resolveLocationMeta(
     locationIds: number[],
-  ): Promise<Map<number, number>> {
+  ): Promise<Map<number, LocationMeta>> {
     const locationsBaseUrl =
       this.configService.get<string>('LOCATIONS_HTTP_URL') ||
       'http://localhost:3004';
@@ -168,7 +192,7 @@ export class StockSyncCronService {
       'x-service-secret': serviceSecret,
     };
 
-    const map = new Map<number, number>();
+    const map = new Map<number, LocationMeta>();
     for (const locationId of locationIds) {
       try {
         const res: any = await firstValueFrom(
@@ -176,9 +200,19 @@ export class StockSyncCronService {
             headers,
           }),
         );
-        const companyId = res?.data?.company_id;
+        const data = res?.data;
+        const companyId = data?.company_id;
         if (companyId != null) {
-          map.set(locationId, companyId);
+          const rawName =
+            data?.location_name ?? data?.locationName ?? data?.name ?? null;
+          const locationName =
+            typeof rawName === 'string' && rawName.trim()
+              ? rawName.trim()
+              : null;
+          map.set(locationId, {
+            companyId: Number(companyId),
+            locationName,
+          });
         } else {
           this.logger.warn(
             `⚠️ [StockSync] location ${locationId} response has no company_id`,
@@ -186,7 +220,7 @@ export class StockSyncCronService {
         }
       } catch (err: any) {
         this.logger.warn(
-          `⚠️ [StockSync] Could not resolve company_id for location ${locationId}: ${err?.message}`,
+          `⚠️ [StockSync] Could not resolve location ${locationId}: ${err?.message}`,
         );
       }
     }

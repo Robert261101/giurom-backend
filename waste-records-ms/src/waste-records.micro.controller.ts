@@ -1,6 +1,14 @@
-import { Controller, Get, Post, Param, Patch, Body } from '@nestjs/common';
+import { Controller, Get, Post, Param, Patch, Body, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
-import { WasteRecordsService, CreateWasteRecordDto, UpdateWasteRecordDto } from './waste-records/waste-records.service';
+import {
+  WasteRecordsService,
+  CreateWasteRecordDto,
+  UpdateWasteRecordDto,
+} from './waste-records/waste-records.service';
+import type { WasteRecordsJwtUser } from './waste-records-access';
+
+type AuthedRequest = Request & { user?: WasteRecordsJwtUser };
 
 @Controller('waste-records')
 export class WasteRecordsMicroController {
@@ -8,23 +16,35 @@ export class WasteRecordsMicroController {
 
   @Post()
   @Permissions('waste-records.create')
-  create(@Body() dto: CreateWasteRecordDto) { return this.service.create(dto); }
+  create(@Req() req: AuthedRequest, @Body() dto: CreateWasteRecordDto) {
+    return this.service.create(dto, req.user);
+  }
 
   @Get()
   @Permissions('waste-records.read')
-  findAll() { return this.service.findAll(); }
+  findAll(@Req() req: AuthedRequest) {
+    return this.service.findAll(req.user);
+  }
 
   @Get(':id')
   @Permissions('waste-records.read')
-  findOne(@Param('id') id: string) { return this.service.findOne(Number(id)); }
+  findOne(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.service.findOne(Number(id), req.user);
+  }
 
   @Patch(':id')
   @Permissions('waste-records.update')
-  update(@Param('id') id: string, @Body() dto: UpdateWasteRecordDto) { return this.service.update(Number(id), dto); }
+  update(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateWasteRecordDto,
+  ) {
+    return this.service.update(Number(id), dto, req.user);
+  }
 
   @Patch(':id/delete')
   @Permissions('waste-records.delete')
-  remove(@Param('id') id: string) { return this.service.remove(Number(id)); }
+  remove(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.service.remove(Number(id), req.user);
+  }
 }
-
-

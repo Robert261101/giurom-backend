@@ -225,8 +225,15 @@ export class AssignmentController {
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului' })
   @ApiResponse({ status: 200, description: 'Assignment șters cu succes' })
   @ApiResponse({ status: 404, description: 'Assignment nu a fost găsit' })
-  remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.assignmentService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+  ): Promise<void> {
+    return this.assignmentService.remove(
+      id,
+      req.user,
+      req.headers?.authorization,
+    );
   }
 
   // Endpoint-uri pentru sarcinile programate

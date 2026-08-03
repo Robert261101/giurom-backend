@@ -492,16 +492,38 @@ export class RecipeService {
 
   // ==================== RECIPE PRODUCTS METHODS ====================
 
-  async addProductToRecipe(createRecipeProductDto: CreateRecipeProductDto): Promise<RecipeProduct> {
-    // Verify recipe exists
-    const recipe = await this.recipesRepository.findOne({
-      where: { id: createRecipeProductDto.recipe_id }
-    });
-    
-    if (!recipe) {
-      throw new NotFoundException(`Recipe with ID ${createRecipeProductDto.recipe_id} not found`);
+  async ensureRecipeAccess(
+    recipeId: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    await this.findOne(recipeId, undefined, requester);
+  }
+
+  /** Verifică acces la preparat via rețetă + locație producție. */
+  async assertPreparationRecipeAccess(
+    recipeId: number,
+    locationId: number | null | undefined,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
+    await this.ensureRecipeAccess(recipeId, requester);
+    if (!requester || isRecipeAdminUser(requester.permissions || [])) {
+      return;
     }
-    
+    const normalizedLocationId = Number(locationId);
+    if (!Number.isFinite(normalizedLocationId) || normalizedLocationId <= 0) {
+      throw new NotFoundException('Preparation not found');
+    }
+    const locIds = await this.getEmployeeLocationIds(requester);
+    if (!locIds.includes(normalizedLocationId)) {
+      throw new NotFoundException('Preparation not found');
+    }
+  }
+
+  async addProductToRecipe(
+    createRecipeProductDto: CreateRecipeProductDto,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeProduct> {
+    await this.ensureRecipeAccess(createRecipeProductDto.recipe_id, requester);
     // Verify product exists via HTTP call
     try {
       const productUrl = `${this.stockServiceUrl}/stock/products/${createRecipeProductDto.product_id}`;
@@ -529,16 +551,11 @@ export class RecipeService {
     return await this.recipeProductsRepository.save(recipeProduct);
   }
 
-  async findRecipeProducts(recipe_id: number): Promise<RecipeProduct[]> {
-    // Verify recipe exists
-    const recipe = await this.recipesRepository.findOne({
-      where: { id: recipe_id }
-    });
-    
-    if (!recipe) {
-      throw new NotFoundException(`Recipe with ID ${recipe_id} not found`);
-    }
-    
+  async findRecipeProducts(
+    recipe_id: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeProduct[]> {
+    await this.ensureRecipeAccess(recipe_id, requester);
     const recipeProducts = await this.recipeProductsRepository.find({
       where: { recipe_id },
       relations: ['recipe'],
@@ -567,7 +584,11 @@ export class RecipeService {
     return recipeProducts;
   }
 
-  async updateRecipeProduct(id: number, updateRecipeProductDto: UpdateRecipeProductDto): Promise<RecipeProduct> {
+  async updateRecipeProduct(
+    id: number,
+    updateRecipeProductDto: UpdateRecipeProductDto,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeProduct> {
     const recipeProduct = await this.recipeProductsRepository.findOne({
       where: { id },
       relations: ['recipe'],
@@ -576,7 +597,8 @@ export class RecipeService {
     if (!recipeProduct) {
       throw new NotFoundException(`Recipe product with ID ${id} not found`);
     }
-    
+
+    await this.ensureRecipeAccess(recipeProduct.recipe_id, requester);
     // If product_id is being updated, verify the new product exists
     if (updateRecipeProductDto.product_id && updateRecipeProductDto.product_id !== recipeProduct.product_id) {
       try {
@@ -597,7 +619,10 @@ export class RecipeService {
     return await this.recipeProductsRepository.save(recipeProduct);
   }
 
-  async removeRecipeProduct(id: number): Promise<void> {
+  async removeRecipeProduct(
+    id: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
     const recipeProduct = await this.recipeProductsRepository.findOne({
       where: { id },
     });
@@ -605,22 +630,22 @@ export class RecipeService {
     if (!recipeProduct) {
       throw new NotFoundException(`Recipe product with ID ${id} not found`);
     }
+
+    await this.ensureRecipeAccess(recipeProduct.recipe_id, requester);
     
     await this.recipeProductsRepository.remove(recipeProduct);
   }
 
   // ==================== RECIPE RECIPES METHODS (Rețete ca ingrediente) ====================
 
-  async addRecipeToRecipe(recipeId: number, ingredientRecipeId: number, quantity: number, notes?: string): Promise<RecipeRecipe> {
-    // Verifică dacă rețeta există
-    const recipe = await this.recipesRepository.findOne({
-      where: { id: recipeId }
-    });
-    
-    if (!recipe) {
-      throw new NotFoundException(`Recipe with ID ${recipeId} not found`);
-    }
-
+  async addRecipeToRecipe(
+    recipeId: number,
+    ingredientRecipeId: number,
+    quantity: number,
+    notes?: string,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeRecipe> {
+    await this.ensureRecipeAccess(recipeId, requester);
     // Verifică dacă rețeta-ingredient există
     const ingredientRecipe = await this.recipesRepository.findOne({
       where: { id: ingredientRecipeId }
@@ -654,7 +679,11 @@ export class RecipeService {
     return await this.recipeRecipesRepository.save(recipeRecipe);
   }
 
-  async getRecipeRecipes(recipeId: number): Promise<RecipeRecipe[]> {
+  async getRecipeRecipes(
+    recipeId: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeRecipe[]> {
+    await this.ensureRecipeAccess(recipeId, requester);
     const recipeRecipes = await this.recipeRecipesRepository.find({
       where: { recipe_id: recipeId },
       relations: ['ingredient_recipe', 'ingredient_recipe.category'],
@@ -664,7 +693,12 @@ export class RecipeService {
     return recipeRecipes;
   }
 
-  async updateRecipeRecipe(id: number, quantity: number, notes?: string): Promise<RecipeRecipe> {
+  async updateRecipeRecipe(
+    id: number,
+    quantity: number,
+    notes?: string,
+    requester?: RecipeAccessRequester,
+  ): Promise<RecipeRecipe> {
     const recipeRecipe = await this.recipeRecipesRepository.findOne({
       where: { id },
       relations: ['recipe', 'ingredient_recipe']
@@ -673,7 +707,8 @@ export class RecipeService {
     if (!recipeRecipe) {
       throw new NotFoundException(`Recipe recipe with ID ${id} not found`);
     }
-    
+
+    await this.ensureRecipeAccess(recipeRecipe.recipe_id, requester);
     recipeRecipe.quantity = quantity;
     if (notes !== undefined) {
       recipeRecipe.notes = notes;
@@ -682,7 +717,10 @@ export class RecipeService {
     return await this.recipeRecipesRepository.save(recipeRecipe);
   }
 
-  async removeRecipeRecipe(id: number): Promise<void> {
+  async removeRecipeRecipe(
+    id: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<void> {
     const recipeRecipe = await this.recipeRecipesRepository.findOne({
       where: { id },
     });
@@ -690,7 +728,8 @@ export class RecipeService {
     if (!recipeRecipe) {
       throw new NotFoundException(`Recipe recipe with ID ${id} not found`);
     }
-    
+
+    await this.ensureRecipeAccess(recipeRecipe.recipe_id, requester);
     await this.recipeRecipesRepository.remove(recipeRecipe);
   }
 
@@ -719,7 +758,11 @@ export class RecipeService {
    * Calculează ingredientele scalate pentru o rețetă și verifică stocul disponibil
    * Folosește comunicare internă cu stock service (fără să necesite stock.read de la user)
    */
-  async getScaledIngredientsWithStock(recipeId: number, quantity: number): Promise<Array<{
+  async getScaledIngredientsWithStock(
+    recipeId: number,
+    quantity: number,
+    requester?: RecipeAccessRequester,
+  ): Promise<Array<{
     product_id: number;
     product_name: string;
     unit: string;
@@ -727,6 +770,7 @@ export class RecipeService {
     available_quantity: number;
     sufficient: boolean;
   }>> {
+    await this.ensureRecipeAccess(recipeId, requester);
     // Obține rețeta cu ingredientele (fără product pentru că nu e relație TypeORM)
     const recipe = await this.recipesRepository.findOne({
       where: { id: recipeId },

@@ -37,7 +37,8 @@ CALL sp_add_index_if_missing('stock_transactions', 'idx_st_supplier_order_item',
 CALL sp_add_index_if_missing('stock_transactions', 'idx_st_stock_id', 'stock_id');
 
 -- stock — lookup agregat per (product_id, location_key), fan-out per product_id, filtrare per location_id.
-CALL sp_add_index_if_missing('stock', 'uq_stock_product_location', 'product_id, location_key');
+-- NOTĂ: uq_stock_product_location trebuie să fie UNIQUE (vezi 007-stock-unique-aggregate.sql).
+-- Nu mai creăm aici un INDEX normal cu același nume — ar bloca UNIQUE-ul ulterior.
 CALL sp_add_index_if_missing('stock', 'idx_stock_location_id', 'location_id');
 
 DROP PROCEDURE IF EXISTS sp_add_index_if_missing;

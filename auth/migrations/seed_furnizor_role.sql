@@ -13,6 +13,7 @@ SELECT v.name, v.grp, v.descr FROM (
   UNION ALL SELECT 'users.create', 'users', 'Creare conturi de autentificare'
   UNION ALL SELECT 'products.read', 'products', 'Vizualizare produse stoc'
   UNION ALL SELECT 'preparation.read', 'recipes', 'Vizualizare preparate rețete'
+  UNION ALL SELECT 'suppliers.read', 'suppliers', 'Vizualizare furnizori'
 ) v
 WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.name = v.name);
 
@@ -31,7 +32,7 @@ FROM roles r
 JOIN permissions p ON p.name IN (
   'locations.update', 'users.read', 'users.create',
   'companies.read_own', 'locations.read',
-  'products.read', 'stock.read', 'preparation.read'
+  'products.read', 'stock.read', 'preparation.read', 'suppliers.read'
 )
 WHERE r.name = 'furnizor'
   AND NOT EXISTS (

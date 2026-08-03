@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { WasteRecord } from './waste-records/entities/waste-record.entity';
 import { WasteRecordsService } from './waste-records/waste-records.service';
 import { AuthModule } from './auth/auth.module';
@@ -14,6 +15,7 @@ import { WasteRecordsMicroController } from './waste-records.micro.controller';
 @Module({
   imports: [
     AuthModule,
+    HttpModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [join(__dirname, '..', '.env')] }),
     ClientsModule.register([
       {

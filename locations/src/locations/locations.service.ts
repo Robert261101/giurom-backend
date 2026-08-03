@@ -30,6 +30,7 @@ import { WorkLocationManagerConfig } from "./entity/work-location-manager-config
 import { WorkLocationFiles } from "./entity/work-location-files.entity";
 import { WorkLocationFolder } from "./entity/work-location-folder.entity";
 import { CreateWorkLocationFileDto } from "./dto/create-work-location-file.dto";
+import { encodeRestosoftLinkCode } from "./restosoft-link-code";
 
 @Injectable()
 export class LocationsService {
@@ -775,6 +776,23 @@ export class LocationsService {
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
 
+    if (user && !user.bypassAuth) {
+      const perms = (user.permissions as string[]) || [];
+      const isGlobalAdmin = perms.includes('assignment.read_all');
+      if (!isGlobalAdmin) {
+        const jwtCompanyId = Number(user.company_id);
+        if (
+          Number.isFinite(jwtCompanyId) &&
+          jwtCompanyId > 0 &&
+          Number(workLocation.company_id) !== jwtCompanyId
+        ) {
+          throw new ForbiddenException(
+            'Locația nu aparține companiei dumneavoastră',
+          );
+        }
+      }
+    }
+
     // Încearcă să obții numele companiei pentru a-l include în răspuns
     let companyName: string | undefined;
     if (workLocation.company_id) {
@@ -911,6 +929,41 @@ export class LocationsService {
     return locationWithCompany;
   }
 
+  /** Cod semnat pentru legătura locație → RestoSoft (giurom 2.0). */
+  async getRestosoftLinkCode(
+    id: number,
+    user?: any,
+  ): Promise<{
+    code: string;
+    company_id: number;
+    location_id: number;
+    location_name: string | null;
+  }> {
+    const workLocation = await this.findWorkLocationById(id, user);
+    const secret = (process.env.GIUROM2_STOCK_SYNC_API_KEY || '').trim();
+    if (!secret) {
+      throw new BadRequestException(
+        'GIUROM2_STOCK_SYNC_API_KEY nu e configurat pe locations-ms',
+      );
+    }
+    const locationName = (workLocation.location_name || '').trim() || undefined;
+    const code = encodeRestosoftLinkCode(
+      {
+        v: 1,
+        company_id: Number(workLocation.company_id),
+        location_id: Number(workLocation.id),
+        ...(locationName ? { location_name: locationName } : {}),
+      },
+      secret,
+    );
+    return {
+      code,
+      company_id: Number(workLocation.company_id),
+      location_id: Number(workLocation.id),
+      location_name: locationName ?? null,
+    };
+  }
+
   async findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]> {
     return await this.workLocationRepository.find({
       where: { company_id: companyId },
@@ -958,8 +1011,9 @@ export class LocationsService {
   async updateWorkLocation(
     id: number,
     dto: UpdateWorkLocationDto,
+    user?: any,
   ): Promise<WorkLocation> {
-    const workLocation = await this.findWorkLocationById(id);
+    const workLocation = await this.findWorkLocationById(id, user);
     const oldName = workLocation.location_name;
     Object.assign(workLocation, dto);
     const updatedLocation = await this.workLocationRepository.save(
@@ -983,8 +1037,8 @@ export class LocationsService {
     return updatedLocation;
   }
 
-  async removeWorkLocation(id: number): Promise<void> {
-    const workLocation = await this.findWorkLocationById(id);
+  async removeWorkLocation(id: number, user?: any): Promise<void> {
+    const workLocation = await this.findWorkLocationById(id, user);
     const locationName = workLocation.location_name;
 
     // Get related departments count

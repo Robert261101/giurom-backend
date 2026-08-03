@@ -859,6 +859,192 @@ export class UsersService {
     return perms.includes('assignment.read_all');
   }
 
+  /** id_employee din payload JWT (câmp `id` sau `sub`). */
+  getRequesterEmployeeId(requester?: RequesterAuthContext | null): number | null {
+    if (!requester) return null;
+    const raw = requester.id ?? requester.sub;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  /** Apel intern (microserviciu) — fără restricții tenant. */
+  isInternalRequest(req: { bypassAuth?: boolean }): boolean {
+    return req?.bypassAuth === true;
+  }
+
+  private async assertSameCompany(
+    requester: RequesterAuthContext,
+    targetEmployeeId: number,
+  ): Promise<void> {
+    const companyId = Number(requester.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new ForbiddenException(
+        'Compania utilizatorului nu este determinată',
+      );
+    }
+    const targetContext = await this.resolveCompanyContext(targetEmployeeId);
+    if (
+      targetContext.company_id == null ||
+      Number(targetContext.company_id) !== companyId
+    ) {
+      throw new ForbiddenException('Acces interzis la resurse din altă companie');
+    }
+  }
+
+  async assertCanReadEmployee(
+    requester: RequesterAuthContext | null | undefined,
+    employeeId: number,
+    isInternal: boolean,
+  ): Promise<void> {
+    if (isInternal || this.isGlobalUsersAdmin(requester)) return;
+
+    const requesterEmpId = this.getRequesterEmployeeId(requester);
+    if (requesterEmpId === employeeId) return;
+
+    const perms = requester?.permissions || [];
+    if (perms.includes('users.read') || perms.includes('users.create')) {
+      await this.assertSameCompany(requester!, employeeId);
+      return;
+    }
+
+    throw new ForbiddenException('Permisiuni insuficiente pentru vizualizare');
+  }
+
+  async assertCanWriteEmployee(
+    requester: RequesterAuthContext | null | undefined,
+    employeeId: number,
+    isInternal: boolean,
+    allowSelfProfile = false,
+  ): Promise<void> {
+    if (isInternal || this.isGlobalUsersAdmin(requester)) return;
+
+    const requesterEmpId = this.getRequesterEmployeeId(requester);
+    if (allowSelfProfile && requesterEmpId === employeeId) return;
+
+    const perms = requester?.permissions || [];
+    if (perms.includes('users.create')) {
+      await this.assertSameCompany(requester!, employeeId);
+      return;
+    }
+
+    throw new ForbiddenException('Permisiuni insuficiente pentru modificare');
+  }
+
+  async assertCanManageRoles(
+    requester: RequesterAuthContext | null | undefined,
+    isInternal: boolean,
+  ): Promise<void> {
+    if (isInternal || this.isGlobalUsersAdmin(requester)) return;
+    const perms = requester?.permissions || [];
+    if (perms.includes('permissions.read')) return;
+    throw new ForbiddenException(
+      'Permisiuni insuficiente pentru gestionarea rolurilor',
+    );
+  }
+
+  async assertCanManageUserAccount(
+    requester: RequesterAuthContext | null | undefined,
+    userId: number,
+    isInternal: boolean,
+  ): Promise<void> {
+    if (isInternal || this.isGlobalUsersAdmin(requester)) return;
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu id ${userId} nu a fost găsit`);
+    }
+    await this.assertCanWriteEmployee(requester, user.id_employee, false);
+  }
+
+  async findByEmployeeIdForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    idEmployee: number,
+    isInternal: boolean,
+  ): Promise<User> {
+    await this.assertCanReadEmployee(requester, idEmployee, isInternal);
+    const user = await this.findByEmployeeId(idEmployee);
+    if (!user) {
+      throw new NotFoundException(
+        `Utilizatorul cu id_employee ${idEmployee} nu a fost găsit`,
+      );
+    }
+    return user;
+  }
+
+  async findOneForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    id: number,
+    isInternal: boolean,
+  ): Promise<User> {
+    const user = await this.findOne(id);
+    if (!user) {
+      throw new NotFoundException(`Utilizatorul cu ID ${id} nu a fost găsit`);
+    }
+    await this.assertCanReadEmployee(requester, user.id_employee, isInternal);
+    return user;
+  }
+
+  async findUsersByIdsBasicForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    ids: number[],
+    isInternal: boolean,
+  ): Promise<Array<Pick<User, 'id' | 'id_employee'>>> {
+    const results = await this.findUsersByIdsBasic(ids);
+    if (isInternal || this.isGlobalUsersAdmin(requester)) {
+      return results;
+    }
+    const companyId = Number(requester?.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      return [];
+    }
+    const employeeIds = await this.findEmployeeIdsByCompany(companyId);
+    const allowed = new Set(employeeIds);
+    const requesterEmpId = this.getRequesterEmployeeId(requester);
+    const filtered: Array<Pick<User, 'id' | 'id_employee'>> = [];
+    for (const row of results) {
+      if (
+        allowed.has(row.id_employee) ||
+        (requesterEmpId != null && row.id_employee === requesterEmpId)
+      ) {
+        filtered.push(row);
+      }
+    }
+    return filtered;
+  }
+
+  async updateProfileForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    idEmployee: number,
+    updateData: UpdateUserDto,
+    isInternal: boolean,
+    allowSelfProfile = false,
+  ): Promise<User> {
+    await this.assertCanWriteEmployee(
+      requester,
+      idEmployee,
+      isInternal,
+      allowSelfProfile,
+    );
+    return this.updateProfile(idEmployee, updateData);
+  }
+
+  async removeForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    idEmployee: number,
+    isInternal: boolean,
+  ): Promise<void> {
+    await this.assertCanWriteEmployee(requester, idEmployee, isInternal);
+    return this.remove(idEmployee);
+  }
+
+  async removeByUserIdForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    userId: number,
+    isInternal: boolean,
+  ): Promise<void> {
+    await this.assertCanManageUserAccount(requester, userId, isInternal);
+    return this.removeByUserId(userId);
+  }
+
   /**
    * ID-uri angajați din compania dată (via microserviciul employees, apel intern).
    */

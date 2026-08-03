@@ -66,6 +66,27 @@ export class SupplierOrderItemReception {
   @Index()
   status: ReceptionStatus;
 
+  /**
+   * Comun tuturor rândurilor create în același apel de recepție — grupează liniile
+   * într-un document de intrare. `occurred_at` nu poate servi la asta: se calculează
+   * per rând, deci diferă în milisecunde. NULL pe rândurile istorice.
+   */
+  @Index()
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  reception_batch_id?: string | null;
+
+  /** Comun rândurilor aprobate în același apel `approveReceptions`. */
+  @Column({ type: 'datetime', nullable: true })
+  approved_at?: Date | null;
+
+  /**
+   * Cantitatea intrată efectiv în stoc, după conversia gross→net aplicată la aprobare.
+   * Salvată aici ca documentul de intrare exportat să arate exact ce a intrat, fără ca
+   * exportul să reia (și eventual să divergă de) logica de conversie.
+   */
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  net_quantity?: number | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 }
