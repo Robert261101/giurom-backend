@@ -592,11 +592,11 @@ export class EmployeeHttpController {
 
   @Get(":id")
   @UseGuards(InternalServiceGuard) // Allow internal service calls
-  @Permissions("employees.read")
+  @Permissions("employees.read", "employees.read_own")
   @ApiOperation({
     summary: "Găsește angajat după ID",
     description:
-      "Returnează detaliile angajatului cu ID-ul specificat, incluzând toate relațiile.",
+      "Returnează detaliile angajatului. Cu employees.read — orice angajat; altfel doar propriul profil.",
   })
   @ApiParam({ name: "id", description: "ID-ul angajatului" })
   @ApiResponse({
@@ -604,11 +604,39 @@ export class EmployeeHttpController {
     description: "Angajatul a fost găsit",
     type: Employee,
   })
-  async findOne(@Param("id") id: string): Promise<Employee> {
+  async findOne(
+    @Param("id") id: string,
+    @Request() req?: any,
+  ): Promise<Employee> {
     const numericId = Number(id);
     if (!Number.isFinite(numericId) || numericId <= 0) {
       throw new ForbiddenException("ID angajat invalid");
     }
+
+    if (!req?.bypassAuth) {
+      const user = req?.user;
+      const perms = (user?.permissions as string[]) || [];
+      const roles = ((user?.roles as string[]) || []).map((r: string) =>
+        String(r).toLowerCase().trim(),
+      );
+      const hasFullRead =
+        perms.includes("employees.read") ||
+        perms.includes("assignment.read_all") ||
+        roles.includes("admin") ||
+        roles.includes("super-admin") ||
+        roles.includes("superadmin") ||
+        (user?.company_type === "furnizor" && perms.includes("suppliers.create"));
+
+      if (!hasFullRead) {
+        const selfId = Number(
+          user?.id_employee ?? user?.id ?? user?.userId ?? user?.sub,
+        );
+        if (!Number.isFinite(selfId) || selfId !== numericId) {
+          throw new ForbiddenException("Permisiuni insuficiente");
+        }
+      }
+    }
+
     return this.employeeService.findOne(numericId);
   }
 

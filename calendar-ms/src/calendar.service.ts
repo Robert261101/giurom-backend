@@ -152,9 +152,10 @@ export class CalendarService {
     if (employeeId == null) {
       throw new ForbiddenException('Angajatul autentificat nu a fost identificat');
     }
-    qb.andWhere('event.created_by_employee_id = :scopeEmployeeId', {
-      scopeEmployeeId: employeeId,
-    });
+    qb.andWhere(
+      '(event.created_by_employee_id = :scopeEmployeeId OR (event.event_type = :meetingType AND EXISTS (SELECT 1 FROM calendar_event_participant cep WHERE cep.event_id = event.id AND cep.employee_id = :scopeEmployeeId)))',
+      { scopeEmployeeId: employeeId, meetingType: 'meeting' },
+    );
   }
 
   private async assertCanReadEvent(
@@ -231,6 +232,13 @@ export class CalendarService {
     }
 
     const employeeId = getCanonicalEmployeeId(user);
+    if (employeeId != null && event.event_type === 'meeting') {
+      const participant = await this.participantRepo.findOne({
+        where: { event_id: event.id, employee_id: employeeId },
+      });
+      if (participant) return;
+    }
+
     if (employeeId == null || event.created_by_employee_id !== employeeId) {
       throw new ForbiddenException('Nu ai permisiunea să vezi acest eveniment');
     }

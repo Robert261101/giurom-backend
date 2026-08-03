@@ -2696,9 +2696,22 @@ export class AssignmentService {
           const taskDate = r.scheduled_datetime
             ? new Date(r.scheduled_datetime)
             : new Date(r.assigned_at);
-          const taskDateStr = `${taskDate.getFullYear()}-${String(taskDate.getMonth() + 1).padStart(2, '0')}-${String(taskDate.getDate()).padStart(2, '0')}`;
-          const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
-          const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+          // Folosește calendarul Europe/Bucharest (nu timezone-ul procesului Node)
+          const toRoYmd = (d: Date): string => {
+            const parts = new Intl.DateTimeFormat('en-GB', {
+              timeZone: 'Europe/Bucharest',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).formatToParts(d);
+            const y = parts.find((p) => p.type === 'year')?.value ?? '';
+            const m = parts.find((p) => p.type === 'month')?.value ?? '';
+            const day = parts.find((p) => p.type === 'day')?.value ?? '';
+            return `${y}-${m}-${day}`;
+          };
+          const taskDateStr = toRoYmd(taskDate);
+          const sdStr = toRoYmd(startDate);
+          const edStr = toRoYmd(endDate);
 
           if (taskDateStr < sdStr || taskDateStr > edStr) {
             return false; // Exclude sarcini care nu sunt în intervalul de date
@@ -2707,9 +2720,9 @@ export class AssignmentService {
 
         // Task-ul este vizibil DOAR dacă:
         // 1. assigned_to_id === userId (pentru TOATE modurile)
-        if (assignedToId !== null && assignedToId !== undefined) {
-          // Task atribuit - trebuie să fie atribuit user-ului
-          if (assignedToId !== user.sub) {
+          if (assignedToId !== null && assignedToId !== undefined) {
+          // Task atribuit - trebuie să fie atribuit user-ului (comparare numerică)
+          if (Number(assignedToId) !== Number(user.sub)) {
             return false; // Exclude task cu assigned_to_id diferit de userId
           }
           return true; // Task atribuit user-ului - OK

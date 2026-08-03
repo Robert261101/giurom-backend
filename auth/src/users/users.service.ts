@@ -3,9 +3,10 @@
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, QueryFailedError } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
@@ -26,6 +27,34 @@ export type RequesterAuthContext = {
   roles?: string[];
   permissions?: string[];
 };
+
+/** Nume posibile pentru rolul default de angajat (DB poate avea casing diferit). */
+const DEFAULT_EMPLOYEE_ROLE_NAMES = ['angajat', 'employee'] as const;
+
+/**
+ * Permisiuni minime în JWT pentru dashboard / flow-uri proprii ale angajatului.
+ * Se aplică când user_roles lipsește sau rolul angajat e incomplet.
+ */
+const PLAIN_EMPLOYEE_BASELINE_PERMISSIONS = [
+  'assignment.read_own',
+  'execution.read_own',
+  'execution.create',
+  'execution.read',
+  'companies.read_own',
+  'employees.read_own',
+  'leave-requests.read',
+  'leave-requests.create',
+  'attendance.read',
+  'attendance.create',
+  'attendance.update',
+  'calendar.read',
+  'cashing.create',
+  'leaves.read',
+  // Comenzi client: listă + detalii + recepție parțială (+ lookup produse)
+  'order.read',
+  'order.reception',
+  'products.read',
+] as const;
 
 @Injectable()
 export class UsersService {
@@ -241,7 +270,10 @@ export class UsersService {
       is_2fa: createUserDto.is_2fa ?? false,
     });
 
-    return await this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    // Conturile din Setări → Conturi nu primesc rol în UI; fără rol JWT-ul e gol → 403 pe dashboard.
+    await this.assignDefaultEmployeeRoleIfNeeded(saved.id);
+    return saved;
   }
 
   /**
@@ -649,6 +681,113 @@ export class UsersService {
     return out;
   }
 
+  private mergeUniquePermissions(
+    permissions: string[],
+    extras: readonly string[],
+  ): string[] {
+    const out = [...permissions];
+    for (const perm of extras) {
+      if (!out.includes(perm)) {
+        out.push(perm);
+      }
+    }
+    return out;
+  }
+
+  private isElevatedAuthRole(roles: string[]): boolean {
+    const normalized = roles.map((r) => String(r).toLowerCase().trim());
+    return (
+      normalized.includes('admin') ||
+      normalized.includes('super-admin') ||
+      normalized.includes('superadmin') ||
+      normalized.includes('furnizor') ||
+      normalized.includes('manager')
+    );
+  }
+
+  private async findDefaultEmployeeRole(): Promise<Role | null> {
+    for (const name of DEFAULT_EMPLOYEE_ROLE_NAMES) {
+      const exact = await this.roleRepository.findOne({ where: { name } });
+      if (exact) {
+        return exact;
+      }
+    }
+    const allRoles = await this.roleRepository.find();
+    const candidates = new Set<string>(DEFAULT_EMPLOYEE_ROLE_NAMES);
+    return (
+      allRoles.find((role) =>
+        candidates.has(String(role.name).toLowerCase().trim()),
+      ) ?? null
+    );
+  }
+
+  private async resolveDefaultEmployeeRolesAndPermissions(): Promise<{
+    roles: string[];
+    permissions: string[];
+  }> {
+    const role = await this.findDefaultEmployeeRole();
+    if (role) {
+      const resolved = await this.getRolesAndPermissionsByRoleName(role.name);
+      return {
+        roles: resolved.roles.length > 0 ? resolved.roles : [role.name],
+        permissions: this.mergeUniquePermissions(
+          resolved.permissions,
+          PLAIN_EMPLOYEE_BASELINE_PERMISSIONS,
+        ),
+      };
+    }
+    return {
+      roles: ['angajat'],
+      permissions: [...PLAIN_EMPLOYEE_BASELINE_PERMISSIONS],
+    };
+  }
+
+  /**
+   * Conturi create din Setări fără rol: asociază rolul default „angajat” dacă există în DB.
+   */
+  private async assignDefaultEmployeeRoleIfNeeded(
+    userId: number,
+  ): Promise<void> {
+    const existing = await this.userRoleRepository.find({
+      where: { userId },
+    });
+    if (existing.length > 0) {
+      return;
+    }
+    const role = await this.findDefaultEmployeeRole();
+    if (!role) {
+      return;
+    }
+    await this.userRoleRepository.save(
+      this.userRoleRepository.create({ userId, roleId: role.id }),
+    );
+  }
+
+  /**
+   * Angajat plain: asigură permisiunile de dashboard / comenzi proprii în JWT.
+   * Mereu face merge (nu early-return pe subset) ca noile baseline să ajungă și la conturile deja „parțial” populate.
+   */
+  private ensurePlainEmployeeBaselinePermissions(
+    roles: string[],
+    permissions: string[],
+  ): string[] {
+    if (this.isElevatedAuthRole(roles)) {
+      return permissions;
+    }
+    // Conturi cu drepturi de administrare — nu diluăm / nu adăugăm baseline de angajat.
+    if (
+      permissions.includes('suppliers.create') ||
+      permissions.includes('assignment.read_all') ||
+      permissions.includes('employees.read')
+    ) {
+      return permissions;
+    }
+    return this.mergeUniquePermissions(
+      permissions,
+      PLAIN_EMPLOYEE_BASELINE_PERMISSIONS,
+    );
+  }
+
   private isOperationalStaffForToken(
     roles: string[],
     positionDefaultId?: number | null,
@@ -796,7 +935,8 @@ export class UsersService {
   }
 
   /**
-   * user_roles are prioritate; dacă lipsesc, derivăm din position_default_id (5=magazioner, 4=șofer).
+   * user_roles are prioritate; dacă lipsesc, derivăm din position_default_id (5=magazioner, 4=șofer),
+   * altfel rol/permisiuni baseline de angajat (evită JWT gol → 403 pe dashboard).
    */
   private async resolveTokenRolesAndPermissions(
     usersTableId: number,
@@ -804,12 +944,16 @@ export class UsersService {
   ): Promise<{ roles: string[]; permissions: string[] }> {
     const fromUser = await this.getUserRolesAndPermissions(usersTableId);
     if (fromUser.roles.length > 0 || fromUser.permissions.length > 0) {
+      const withOperational = this.ensureCompaniesReadOwnForOperationalStaff(
+        fromUser.roles,
+        fromUser.permissions,
+        positionDefaultId,
+      );
       return {
         roles: fromUser.roles,
-        permissions: this.ensureCompaniesReadOwnForOperationalStaff(
+        permissions: this.ensurePlainEmployeeBaselinePermissions(
           fromUser.roles,
-          fromUser.permissions,
-          positionDefaultId,
+          withOperational,
         ),
       };
     }
@@ -837,7 +981,7 @@ export class UsersService {
       };
     }
 
-    return fromUser;
+    return this.resolveDefaultEmployeeRolesAndPermissions();
   }
 
   /**
@@ -1097,15 +1241,73 @@ export class UsersService {
     await this.roleRepository.remove(role);
   }
 
+  /** Detectează erori MySQL de duplicate-key / lipsă FK pentru role_permissions. */
+  private mapRolePermissionQueryError(err: unknown): void {
+    if (!(err instanceof QueryFailedError)) {
+      return;
+    }
+    const driverError: { code?: string; errno?: number } =
+      (err as { driverError?: { code?: string; errno?: number } }).driverError ??
+      (err as { code?: string; errno?: number });
+    const code = driverError?.code;
+    const errno = driverError?.errno;
+    if (code === 'ER_DUP_ENTRY' || errno === 1062) {
+      throw new ConflictException('Asocierea rol-permisiune există deja');
+    }
+    if (
+      code === 'ER_NO_REFERENCED_ROW' ||
+      code === 'ER_NO_REFERENCED_ROW_2' ||
+      errno === 1452
+    ) {
+      throw new BadRequestException('roleId sau permissionId nu există');
+    }
+  }
+
   // ===== ROLE_PERMISSIONS CRUD METHODS =====
   async createRolePermission(createRolePermissionDto: {
     roleId: number;
     permissionId: number;
   }): Promise<RolePermission> {
-    const rolePermission = this.rolePermissionRepository.create(
-      createRolePermissionDto,
-    );
-    return await this.rolePermissionRepository.save(rolePermission);
+    const roleId = Number(createRolePermissionDto?.roleId);
+    const permissionId = Number(createRolePermissionDto?.permissionId);
+
+    if (!Number.isFinite(roleId) || roleId <= 0) {
+      throw new BadRequestException('roleId trebuie să fie un număr pozitiv');
+    }
+    if (!Number.isFinite(permissionId) || permissionId <= 0) {
+      throw new BadRequestException(
+        'permissionId trebuie să fie un număr pozitiv',
+      );
+    }
+
+    // Aruncă NotFoundException dacă rolul/permisiunea nu există.
+    await this.getRoleById(roleId);
+    const permission = await this.permissionRepository.findOne({
+      where: { id: permissionId },
+    });
+    if (!permission) {
+      throw new NotFoundException(
+        `Permisiunea cu ID ${permissionId} nu a fost găsită`,
+      );
+    }
+
+    const existing = await this.rolePermissionRepository.findOne({
+      where: { roleId, permissionId },
+    });
+    if (existing) {
+      throw new ConflictException('Asocierea rol-permisiune există deja');
+    }
+
+    const rolePermission = this.rolePermissionRepository.create({
+      roleId,
+      permissionId,
+    });
+    try {
+      return await this.rolePermissionRepository.save(rolePermission);
+    } catch (err) {
+      this.mapRolePermissionQueryError(err);
+      throw err;
+    }
   }
 
   async getAllRolePermissions(): Promise<RolePermission[]> {
@@ -1163,15 +1365,46 @@ export class UsersService {
     roleId: number,
     permissionIds: number[],
   ): Promise<{ created: number; rolePermissions: RolePermission[] }> {
+    const normalizedRoleId = Number(roleId);
+    if (!Number.isFinite(normalizedRoleId) || normalizedRoleId <= 0) {
+      throw new BadRequestException('roleId trebuie să fie un număr pozitiv');
+    }
     if (!permissionIds || permissionIds.length === 0) {
       return { created: 0, rolePermissions: [] };
+    }
+
+    const normalizedPermissionIds = Array.from(
+      new Set(
+        permissionIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    );
+    if (normalizedPermissionIds.length !== permissionIds.length) {
+      throw new BadRequestException(
+        'permissionIds conține valori invalide (numere pozitive necesare)',
+      );
+    }
+
+    // Aruncă NotFoundException dacă rolul nu există.
+    await this.getRoleById(normalizedRoleId);
+
+    const existingPermissions = await this.permissionRepository.find({
+      where: { id: In(normalizedPermissionIds) },
+    });
+    if (existingPermissions.length !== normalizedPermissionIds.length) {
+      const foundIds = new Set(existingPermissions.map((p) => p.id));
+      const missing = normalizedPermissionIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundException(
+        `Permisiunile cu ID-urile [${missing.join(', ')}] nu au fost găsite`,
+      );
     }
 
     // Verifică dacă permisiunile există deja pentru acest rol
     const existingRolePermissions = await this.rolePermissionRepository.find({
       where: {
-        roleId,
-        permissionId: In(permissionIds),
+        roleId: normalizedRoleId,
+        permissionId: In(normalizedPermissionIds),
       },
     });
 
@@ -1180,7 +1413,7 @@ export class UsersService {
     );
 
     // Filtrează doar permisiunile care nu există deja
-    const newPermissionIds = permissionIds.filter(
+    const newPermissionIds = normalizedPermissionIds.filter(
       (permissionId) => !existingPermissionIds.has(permissionId),
     );
 
@@ -1190,12 +1423,21 @@ export class UsersService {
 
     // Creează toate asocierile într-un singur bulk insert
     const rolePermissionsToCreate = newPermissionIds.map((permissionId) =>
-      this.rolePermissionRepository.create({ roleId, permissionId }),
+      this.rolePermissionRepository.create({
+        roleId: normalizedRoleId,
+        permissionId,
+      }),
     );
 
-    const savedRolePermissions = await this.rolePermissionRepository.save(
-      rolePermissionsToCreate,
-    );
+    let savedRolePermissions: RolePermission[];
+    try {
+      savedRolePermissions = await this.rolePermissionRepository.save(
+        rolePermissionsToCreate,
+      );
+    } catch (err) {
+      this.mapRolePermissionQueryError(err);
+      throw err;
+    }
 
     return {
       created: savedRolePermissions.length,

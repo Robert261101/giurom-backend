@@ -1064,6 +1064,9 @@ export class SuppliersService {
       if (!order) {
         throw new NotFoundException('Comanda nu a fost găsită');
       }
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new ConflictException('Comanda este anulată');
+      }
 
       const assignment = manager.create(SupplierOrderAssignment, {
         supplier_order_id: supplierOrderId,
@@ -3676,7 +3679,11 @@ export class SuppliersService {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order not found: ${dto.orderId}`);
       throw new NotFoundException('Comanda nu a fost găsită');
     }
-    
+
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new ConflictException('Comanda este anulată');
+    }
+
     if (order.status === OrderStatus.DELIVERED) {
       const itemsIncomplete = (order.items || []).some((item) => {
         const itemAvail = (item as any).availability_status || 'available';
@@ -4441,6 +4448,10 @@ export class SuppliersService {
 
     const previousStatus = order.status;
     const newStatus = status as OrderStatus;
+
+    if (previousStatus === OrderStatus.CANCELLED && newStatus !== OrderStatus.CANCELLED) {
+      throw new ConflictException('Comanda este anulată');
+    }
 
     this.logger.log(
       `🧪 [DEBUG cancel] updateOrderStatus CALLED orderId=${orderId} previousStatus=${previousStatus} newStatus=${newStatus} rawStatusArg=${status}`,
@@ -5340,6 +5351,17 @@ export class SuppliersService {
   }
 
   async getReceptionReport(startDate: string, endDate: string, locationId?: number): Promise<any[]> {
+    try {
+      return await this.getReceptionReportInternal(startDate, endDate, locationId);
+    } catch (error: any) {
+      this.logger.error(
+        `❌ [SUPPLIERS SERVICE] getReceptionReport failed for ${startDate}..${endDate}${locationId != null ? `, location_id=${locationId}` : ''}: ${error?.message || error}`,
+      );
+      return [];
+    }
+  }
+
+  private async getReceptionReportInternal(startDate: string, endDate: string, locationId?: number): Promise<any[]> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Generating reception report from ${startDate} to ${endDate}${locationId != null ? `, location_id=${locationId}` : ''}`);
     
     const stockServiceUrl = this.configService.get<string>('STOCK_HTTP_URL') || 'http://localhost:3006';

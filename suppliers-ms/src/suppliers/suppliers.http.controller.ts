@@ -590,37 +590,30 @@ export class SuppliersHttpController {
   findOne(
     @Param("id") id: string,
     @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ) {
-    this.logger.log(`[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`);
-@Get(":id")
-@Permissions("suppliers.read")
-findOne(
-  @Param("id") id: string,
-  @Query("location_id") location_id?: string,
-  @Request() req?: any,
-) {
-  this.logger.log(
-    `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
-  );
+    this.logger.log(
+      `[DOCUMENTE] GET /suppliers/${id} ?location_id=${location_id}`,
+    );
 
-  // Verificarea pe supplier_locations se aplică doar dacă
-  // location_id este trimis explicit.
-  const maybeLid = location_id
-    ? parseInt(location_id, 10)
-    : undefined;
-
-  const locationId =
-    Number.isFinite(maybeLid as number) &&
-    (maybeLid as number) > 0
-      ? (maybeLid as number)
+    // Verificarea pe supplier_locations se aplică doar dacă
+    // location_id este trimis explicit.
+    const maybeLid = location_id
+      ? parseInt(location_id, 10)
       : undefined;
 
-  return this.service.findOne(
-    Number(id),
-    locationId,
-    buildSupplierAccessRequester(req?.user),
-  );
-}
+    const locationId =
+      Number.isFinite(maybeLid as number) &&
+      (maybeLid as number) > 0
+        ? (maybeLid as number)
+        : undefined;
+
+    return this.service.findOne(
+      Number(id),
+      locationId,
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
 
   @Patch(":id")
   @Permissions("suppliers.update")
@@ -1121,6 +1114,34 @@ findOne(
     return this.service.updateOrderDeliveryDate(Number(orderId), dto);
   }
 
+  /**
+   * Rezolvă un interval de date implicit (ultimele 365 de zile → azi) când nu sunt
+   * furnizate explicit, dar există alt filtru (location_id, order_id etc.) care
+   * restrânge suficient rezultatul. Fără dates ȘI fără alt filtru → BadRequestException.
+   */
+  private resolveReceptionDateRange(
+    startDate?: string,
+    endDate?: string,
+    hasOtherFilter?: boolean,
+  ): { startDate: string; endDate: string } {
+    if (startDate && endDate) {
+      return { startDate, endDate };
+    }
+    if (!hasOtherFilter) {
+      throw new BadRequestException(
+        "start_date și end_date sunt obligatorii (sau furnizați location_id / alt filtru)",
+      );
+    }
+    const today = new Date();
+    const past = new Date(today);
+    past.setDate(past.getDate() - 365);
+    const toDateOnly = (d: Date) => d.toISOString().slice(0, 10);
+    return {
+      startDate: startDate || toDateOnly(past),
+      endDate: endDate || toDateOnly(today),
+    };
+  }
+
   @Get("orders/reception-report")
   @Permissions("order.read")
   @ApiOperation({ summary: "Raport recepții și returnări pe perioadă" })
@@ -1129,11 +1150,17 @@ findOne(
     @Query("end_date") endDate: string,
     @Query("location_id") locationId?: string,
   ) {
-    if (!startDate || !endDate) {
-      throw new Error("start_date și end_date sunt obligatorii");
-    }
     const locId = locationId ? parseInt(locationId, 10) : undefined;
-    return this.service.getReceptionReport(startDate, endDate, locId);
+    const range = this.resolveReceptionDateRange(
+      startDate,
+      endDate,
+      locId != null,
+    );
+    return this.service.getReceptionReport(
+      range.startDate,
+      range.endDate,
+      locId,
+    );
   }
 
   @Get("orders/reception-report/events")
@@ -1150,12 +1177,16 @@ findOne(
     @Query("product_id") productId?: string,
     @Query("user_id") userId?: string,
   ) {
-    if (!startDate || !endDate) {
-      throw new Error("start_date și end_date sunt obligatorii");
-    }
-    return this.service.getReceptionEvents(
+    const hasOtherFilter =
+      !!orderId || !!orderItemId || !!productId || !!userId;
+    const range = this.resolveReceptionDateRange(
       startDate,
       endDate,
+      hasOtherFilter,
+    );
+    return this.service.getReceptionEvents(
+      range.startDate,
+      range.endDate,
       orderId ? Number(orderId) : undefined,
       orderItemId ? Number(orderItemId) : undefined,
       productId ? Number(productId) : undefined,

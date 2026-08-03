@@ -1284,6 +1284,7 @@ export class LocationsService {
     status?: RevenueStatus,
     imageUrl?: string,
     userId?: number | null,
+    requester?: any,
   ) {
     // Always insert a new revenue row (allow multiple entries per day)
     await this.findWorkLocationById(workLocationId);
@@ -1291,7 +1292,25 @@ export class LocationsService {
     // Validare STRICTĂ: employee_id este OBLIGATORIU și trebuie să fie un număr valid
     if (!userId || userId === 0 || isNaN(Number(userId))) {
       console.error("❌ [recordRevenue Service] Invalid employee_id:", userId);
-      throw new Error("Employee ID is required and must be a valid number");
+      throw new BadRequestException(
+        "Employee ID is required and must be a valid number",
+      );
+    }
+
+    // SECURITATE: dacă apelantul nu este admin (locations.read), trebuie să fie efectiv
+    // repartizat la locația respectivă — altfel un angajat ar putea înregistra încasări
+    // pentru locații la care nu are acces.
+    const isAdmin =
+      Array.isArray(requester?.permissions) &&
+      requester.permissions.includes("locations.read");
+    if (requester && !isAdmin) {
+      const allowedLocationIds =
+        await this.getEmployeeLocationIdsForAccess(requester);
+      if (!allowedLocationIds.includes(Number(workLocationId))) {
+        throw new ForbiddenException(
+          "Nu aveți acces la această locație pentru înregistrarea încasării",
+        );
+      }
     }
 
     const employeeId = Number(userId);
@@ -1309,7 +1328,7 @@ export class LocationsService {
       ? revenueDate.toString().trim().split(" ")[0].split("T")[0]
       : null;
     if (!normalizedDate || !/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-      throw new Error(
+      throw new BadRequestException(
         "revenue_date trebuie să fie în format YYYY-MM-DD sau YYYY-MM-DD HH:mm:ss",
       );
     }

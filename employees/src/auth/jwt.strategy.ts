@@ -14,8 +14,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: any) {
     return {
       userId: payload.sub,
-      id: payload.id || payload.sub, // ID-ul angajatului (id_employee din JWT)
+      id: payload.id || payload.id_employee || payload.sub, // id_employee din JWT
+      id_employee: payload.id_employee || payload.id || payload.sub,
       username: payload.username,
+      roles: Array.isArray(payload.roles) ? payload.roles : [],
       permissions: payload.permissions || [],
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,

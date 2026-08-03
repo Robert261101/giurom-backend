@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
@@ -27,48 +27,25 @@ export class LocationsHttpController {
 	) {
 		const user = req?.user;
 		if (!user) {
-			throw new Error('User not authenticated');
+			throw new ForbiddenException('Utilizator neautentificat');
 		}
-		
-		// IMPORTANT: employee_id este OBLIGATORIU
+
+		// SECURITATE: preferăm STRICT identitatea din JWT (sub/id/employee_id/userId) — nu avem
+		// încredere în body.employee_id atunci când JWT identifică deja angajatul, pentru a preveni
+		// înregistrarea unei încasări în numele altui angajat.
 		// În JWT, sub = id_employee (vezi auth.service.ts: sub: user.id_employee)
-		// Extragem ID-ul angajatului din: 
-		// 1. JWT token (user.id, user.employee_id, user.userId, user.sub)
-		// 2. Body (body.employee_id) - fallback dacă nu există în JWT
-		const userIdFromJWT: number | undefined = user?.id || user?.employee_id || user?.userId || user?.sub;
-		const userIdFromBody: number | undefined = body?.employee_id;
-		const userId: number = userIdFromJWT || userIdFromBody;
-		
-		// Log pentru debugging
-		console.log('🔍 [recordRevenue Controller] Extracting employee ID:', {
-			hasUser: !!user,
-			userId: userId,
-			userIdFromJWT: userIdFromJWT,
-			userIdFromBody: userIdFromBody,
-			user_id: user?.id,
-			user_employee_id: user?.employee_id,
-			user_userId: user?.userId,
-			user_sub: user?.sub,
-			body_employee_id: body?.employee_id,
-			allUserKeys: Object.keys(user)
-		});
-		
+		const userIdFromJWT: number | undefined =
+			user?.sub || user?.id || user?.employee_id || user?.userId;
+		const isAdmin = Array.isArray(user?.permissions) && user.permissions.includes('locations.read');
+		// body.employee_id este acceptat DOAR ca fallback pentru conturi admin, atunci când JWT-ul
+		// nu conține identitatea angajatului (ex. înregistrare în numele altcuiva de către admin).
+		const userId: number | undefined =
+			userIdFromJWT || (isAdmin ? body?.employee_id : undefined);
+
 		if (!userId || userId === 0 || isNaN(Number(userId))) {
-			console.error('❌ [recordRevenue Controller] Invalid employee ID!', {
-				userId,
-				userIdFromJWT,
-				userIdFromBody,
-				user_id: user?.id,
-				user_employee_id: user?.employee_id,
-				user_userId: user?.userId,
-				user_sub: user?.sub,
-				body_employee_id: body?.employee_id
-			});
-			throw new Error('Employee ID is required and must be a valid number');
+			throw new BadRequestException('Employee ID is required and must be a valid number');
 		}
-		
-		console.log('✅ [recordRevenue Controller] Using employee_id:', userId);
-		
+
 		return this.service.recordRevenue(
 			parseInt(id, 10), 
 			body.revenue_date, 
@@ -78,7 +55,8 @@ export class LocationsHttpController {
 			body.total_amount, 
 			body.status, 
 			body.image_url, 
-			userId
+			userId,
+			user,
 		);
 	}
 
