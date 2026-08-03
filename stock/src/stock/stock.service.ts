@@ -10,7 +10,7 @@
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, EntityManager, In } from "typeorm";
+import { Repository, EntityManager, In, QueryFailedError } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { firstValueFrom, defaultIfEmpty } from "rxjs";
@@ -835,6 +835,10 @@ export class StockService {
       : -1;
   }
 
+  /**
+   * Un singur agregat per (product_id, location_key).
+   * La race pe insert (UNIQUE), refacem lookup pe id minim.
+   */
   private async findOrCreateAggregate(
     productId: number,
     locationId: number | null | undefined,
@@ -842,20 +846,54 @@ export class StockService {
   ): Promise<Stock> {
     const repo = manager ? manager.getRepository(Stock) : this.stockRepo;
     const location_key = this.locationKey(locationId);
-    let row = await repo.findOne({
-      where: { product_id: productId, location_key },
-    });
-    if (!row) {
-      row = repo.create({
-        product_id: productId,
-        location_id: locationId ?? null,
-        location_key,
-        quantity: 0,
-        status: StockStatus.VALID,
+
+    const findCanonical = () =>
+      repo.findOne({
+        where: { product_id: productId, location_key },
+        order: { id: "ASC" },
       });
-      row = await repo.save(row);
+
+    let row = await findCanonical();
+    if (row) return row;
+
+    try {
+      row = await repo.save(
+        repo.create({
+          product_id: productId,
+          location_id: locationId ?? null,
+          location_key,
+          quantity: 0,
+          status: StockStatus.VALID,
+        }),
+      );
+      return row;
+    } catch (error) {
+      if (!this.isDuplicateKeyError(error)) throw error;
+      row = await findCanonical();
+      if (!row) throw error;
+      return row;
     }
-    return row;
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) return false;
+    const driver = (error as QueryFailedError & {
+      driverError?: { code?: string; errno?: number };
+    }).driverError;
+    return driver?.code === "ER_DUP_ENTRY" || driver?.errno === 1062;
+  }
+
+  /** Doar rândul canonic (MIN id) per produs+locație — apărare dacă DB încă are duplicate. */
+  private applyCanonicalStockOnly(
+    qb: ReturnType<Repository<Stock>["createQueryBuilder"]>,
+  ): void {
+    qb.andWhere(
+      `stock.id = (
+        SELECT MIN(s2.id) FROM stock s2
+        WHERE s2.product_id = stock.product_id
+          AND s2.location_key = stock.location_key
+      )`,
+    );
   }
 
   private applyAggregateStatus(stock: Stock, product?: Product | null): void {
@@ -1104,6 +1142,7 @@ export class StockService {
       queryBuilder.where(conditions.join(" AND "), params);
     }
 
+    this.applyCanonicalStockOnly(queryBuilder);
     queryBuilder.orderBy("product.name", "ASC").addOrderBy("stock.id", "ASC");
 
     return queryBuilder.getMany();
@@ -1146,6 +1185,7 @@ export class StockService {
     if (conditions.length > 0) {
       queryBuilder.where(conditions.join(" AND "), params);
     }
+    this.applyCanonicalStockOnly(queryBuilder);
   }
 
   private applyStockListSort(
@@ -1521,6 +1561,7 @@ export class StockService {
       const totalFefoOpen = openEntries.reduce((sum, row) => sum + row.open, 0);
 
       const touchedLocationKeys = new Set<number>();
+      const aggregateByKey = new Map<number, Stock>();
 
       for (const { entry, open } of openEntries) {
         if (remaining <= 0) break;
@@ -1535,8 +1576,19 @@ export class StockService {
           resolvedLocationId !== undefined
             ? this.locationKey(resolvedLocationId)
             : entry.location_key;
+
+        let aggregateForExit = aggregateByKey.get(exitLocationKey);
+        if (!aggregateForExit) {
+          aggregateForExit = await this.findOrCreateAggregate(
+            productId,
+            exitLocationId,
+            queryRunner.manager,
+          );
+          aggregateByKey.set(exitLocationKey, aggregateForExit);
+        }
+
         const exitTx = txRepo.create({
-          stock_id: entry.stock_id,
+          stock_id: aggregateForExit.id,
           product_id: productId,
           location_id: exitLocationId,
           location_key: exitLocationKey,

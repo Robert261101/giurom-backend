@@ -7,6 +7,7 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Unique,
 } from 'typeorm';
 import { Product } from './product.entity';
 import { StockTransaction } from './stock-transaction.entity';
@@ -15,6 +16,7 @@ import { StockStatus } from './stock.enums';
 export { StockStatus, StockSource, StockLotStatus } from './stock.enums';
 
 @Entity('stock')
+@Unique('uq_stock_product_location', ['product_id', 'location_key'])
 export class Stock {
   @PrimaryGeneratedColumn()
   id: number;
