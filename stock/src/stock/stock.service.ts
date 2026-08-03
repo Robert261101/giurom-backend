@@ -217,49 +217,126 @@ export class StockService {
     return saved;
   }
 
-  async getWasteRequests(filters?: { status?: string; location_id?: number }): Promise<(WasteRequest & { created_by_name?: string })[]> {
-    const qb = this.wasteRequestRepo.createQueryBuilder('wr').leftJoinAndSelect('wr.product', 'product').orderBy('wr.created_at', 'DESC');
+  async getWasteRequests(filters?: {
+    status?: string;
+    location_id?: number;
+    page?: number;
+    limit?: number;
+  }): Promise<
+    | (WasteRequest & { created_by_name?: string })[]
+    | {
+        data: (WasteRequest & { created_by_name?: string })[];
+        pagination: {
+          page: number;
+          limit: number;
+          total: number;
+          totalPages: number;
+          hasNextPage: boolean;
+          hasPreviousPage: boolean;
+        };
+      }
+  > {
+    const usePagination =
+      filters?.page != null || filters?.limit != null;
+    const page = Math.max(1, Number(filters?.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(filters?.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.wasteRequestRepo
+      .createQueryBuilder("wr")
+      .leftJoinAndSelect("wr.product", "product")
+      .orderBy("wr.created_at", "DESC");
     if (filters?.status) {
-      qb.andWhere('wr.status = :status', { status: filters.status });
+      qb.andWhere("wr.status = :status", { status: filters.status });
     }
     if (filters?.location_id) {
-      qb.andWhere('wr.location_id = :lid', { lid: filters.location_id });
+      qb.andWhere("wr.location_id = :lid", { lid: filters.location_id });
+    }
+
+    const total = usePagination
+      ? await qb.clone().getCount()
+      : 0;
+    if (usePagination) {
+      qb.skip(skip).take(limit);
     }
     const list = await qb.getMany();
 
-    const creatorIds = [...new Set(list.map((r) => r.created_by).filter((id): id is number => id != null))];
+    const creatorIds = [
+      ...new Set(
+        list
+          .map((r) => r.created_by)
+          .filter((id): id is number => id != null),
+      ),
+    ];
     const employeesMap = new Map<number, any>();
 
     if (creatorIds.length > 0 && this.httpService) {
-      let employeesServiceUrl = this.configService?.get<string>('EMPLOYEES_HTTP_URL') || 'http://localhost:3012';
-      if (employeesServiceUrl.includes('bitap.ro') || employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || '89.46.6.45')) {
+      let employeesServiceUrl =
+        this.configService?.get<string>("EMPLOYEES_HTTP_URL") ||
+        "http://localhost:3012";
+      if (
+        employeesServiceUrl.includes("bitap.ro") ||
+        employeesServiceUrl.includes(
+          process.env.PUBLIC_SERVER_IP || "89.46.6.45",
+        )
+      ) {
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
-        const port = portMatch ? portMatch[1] : '3012';
+        const port = portMatch ? portMatch[1] : "3012";
         employeesServiceUrl = `http://localhost:${port}`;
       }
-      const serviceSecret = process.env.SERVICE_SECRET || '';
-      const headers = { 'Content-Type': 'application/json', 'x-internal-service': 'stock', 'x-service-secret': serviceSecret };
+      const serviceSecret = process.env.SERVICE_SECRET || "";
+      const headers = {
+        "Content-Type": "application/json",
+        "x-internal-service": "stock",
+        "x-service-secret": serviceSecret,
+      };
       try {
-        const idsParam = creatorIds.join(',');
+        const idsParam = creatorIds.join(",");
         const employeeResponse: any = await firstValueFrom(
-          this.httpService.get(`${employeesServiceUrl}/employees/batch`, { headers, params: { ids: idsParam } })
+          this.httpService.get(`${employeesServiceUrl}/employees/batch`, {
+            headers,
+            params: { ids: idsParam },
+          }),
         );
         const employees = employeeResponse?.data || [];
         for (const emp of employees) {
-          if (emp && typeof emp.id === 'number') employeesMap.set(emp.id, emp);
+          if (emp && typeof emp.id === "number") employeesMap.set(emp.id, emp);
         }
       } catch (err: any) {
-        this.logger?.warn(`Could not fetch employees batch for waste requests: ${err?.message}`);
+        this.logger?.warn(
+          `Could not fetch employees batch for waste requests: ${err?.message}`,
+        );
       }
     }
 
-    return list.map((req) => {
+    const data = list.map((req) => {
       const employee = employeesMap.get(req.created_by!);
       const created_by_name = employee
-        ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || employee.email || `Angajat #${req.created_by}`
-        : req.created_by ? `Angajat #${req.created_by}` : undefined;
+        ? `${employee.first_name || ""} ${employee.last_name || ""}`.trim() ||
+          employee.email ||
+          `Angajat #${req.created_by}`
+        : req.created_by
+          ? `Angajat #${req.created_by}`
+          : undefined;
       return { ...req, created_by_name };
     });
+
+    if (!usePagination) {
+      return data;
+    }
+
+    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   async approveWasteRequest(id: number, approverId?: number): Promise<void> {

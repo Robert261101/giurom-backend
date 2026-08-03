@@ -359,10 +359,19 @@ export class StockHttpController {
   async listWasteRequests(
     @Query("status") status?: string,
     @Query("location_id") locationId?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
   ) {
-    const filters: any = {};
+    const filters: {
+      status?: string;
+      location_id?: number;
+      page?: number;
+      limit?: number;
+    } = {};
     if (status) filters.status = status;
     if (locationId) filters.location_id = Number(locationId);
+    if (page != null && page !== "") filters.page = Number(page);
+    if (limit != null && limit !== "") filters.limit = Number(limit);
     return await this.service.getWasteRequests(
       Object.keys(filters).length > 0 ? filters : undefined,
     );
