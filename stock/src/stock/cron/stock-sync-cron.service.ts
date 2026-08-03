@@ -108,8 +108,22 @@ export class StockSyncCronService {
     const metaByLocation =
       await this.resolveLocationMeta(distinctLocationIds);
 
-    const items: StockSyncItem[] = [];
+    // Un singur item per (product_id, location_id). În DB pot exista duplicate pe
+    // același agregat (date vechi / migrări); sync-ul le trimitea pe toate și
+    // giurom 2.0 rescria inventory cu ultimul rând (ex. 10 în loc de 1.94).
+    // findOrCreateAggregate folosește findOne → de regulă rândul cu id minim;
+    // păstrăm același semnal aici.
+    const canonicalByKey = new Map<string, (typeof rowsWithLocation)[number]>();
     for (const row of rowsWithLocation) {
+      const key = `${row.product_id}:${row.location_id}`;
+      const existing = canonicalByKey.get(key);
+      if (!existing || row.id < existing.id) {
+        canonicalByKey.set(key, row);
+      }
+    }
+
+    const items: StockSyncItem[] = [];
+    for (const row of canonicalByKey.values()) {
       const locationId = row.location_id as number;
       const meta = metaByLocation.get(locationId);
       if (meta == null) {
