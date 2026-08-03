@@ -16,6 +16,7 @@ import {
 } from './entities/supplier-order-item-reception.entity';
 import { SupplierOrder } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
+import { SupplierProduct } from './entities/supplier-product.entity';
 import { StockHttpService } from './stock-http.service';
 
 interface EntryDocumentItem {
@@ -26,6 +27,8 @@ interface EntryDocumentItem {
   unit: string | null;
   quantity: number;
   unit_price: number;
+  /** Cotă TVA (%) din nomenclatorul / linia de comandă App1 — ex. 21. */
+  vat_rate: number;
 }
 
 interface EntryDocumentRow {
@@ -76,6 +79,8 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
     private readonly orderRepo: Repository<SupplierOrder>,
     @InjectRepository(SupplierOrderItem)
     private readonly orderItemRepo: Repository<SupplierOrderItem>,
+    @InjectRepository(SupplierProduct)
+    private readonly supplierProductRepo: Repository<SupplierProduct>,
     private readonly stockHttpService: StockHttpService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -245,6 +250,20 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
       : [];
     const orderItemById = new Map(orderItems.map((i) => [Number(i.id), i]));
 
+    const supplierProductIds = [
+      ...new Set(
+        orderItems
+          .map((i) => i.supplier_product_id)
+          .filter((id): id is number => id != null && Number.isFinite(Number(id))),
+      ),
+    ];
+    const supplierProducts = supplierProductIds.length
+      ? await this.supplierProductRepo.find({ where: { id: In(supplierProductIds) } })
+      : [];
+    const supplierProductById = new Map(
+      supplierProducts.map((p) => [Number(p.id), p]),
+    );
+
     const productIds = [...new Set(entries.map((r) => Number(r.product_id)))];
     const productMap = await this.stockHttpService.getProductsByIds(productIds);
 
@@ -273,6 +292,10 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
       const items: EntryDocumentItem[] = group.map((reception) => {
         const productInfo = productMap.get(Number(reception.product_id));
         const orderItem = orderItemById.get(Number(reception.supplier_order_item_id));
+        const supplierProduct =
+          orderItem?.supplier_product_id != null
+            ? supplierProductById.get(Number(orderItem.supplier_product_id))
+            : undefined;
         totalItems += 1;
         return {
           source_reception_id: Number(reception.id),
@@ -287,6 +310,7 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
               ? Number(reception.net_quantity)
               : Number(reception.received_delta) || 0,
           unit_price: Number(orderItem?.price_per_unit) || 0,
+          vat_rate: this.resolveVatRate(orderItem, supplierProduct),
         };
       });
 
@@ -305,6 +329,27 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
     }
 
     return { rows, totalItems, skippedWithoutMappingFields };
+  }
+
+  /**
+   * Cotă TVA din nomenclatorul furnizorului; fallback din total/subtotal pe linia comenzii.
+   */
+  private resolveVatRate(
+    orderItem?: SupplierOrderItem,
+    supplierProduct?: SupplierProduct,
+  ): number {
+    if (supplierProduct?.vat != null) {
+      const fromProduct = Number(supplierProduct.vat);
+      if (Number.isFinite(fromProduct) && fromProduct >= 0) {
+        return Number(fromProduct.toFixed(2));
+      }
+    }
+    const subtotal = Number(orderItem?.subtotal) || 0;
+    const total = Number(orderItem?.total);
+    if (subtotal > 0 && Number.isFinite(total) && total >= subtotal) {
+      return Number((((total / subtotal) - 1) * 100).toFixed(2));
+    }
+    return 0;
   }
 
   /**
