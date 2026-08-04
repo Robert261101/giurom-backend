@@ -36,6 +36,10 @@ import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
+import {
+  IncrementStockBatchDto,
+  IncrementStockBatchResponse,
+} from "./dto/increment-stock-batch.dto";
 import { CreateStockTransactionDto } from "./dto/create-stock-transaction.dto";
 import { UpdateStockTransactionDto } from "./dto/update-stock-transaction.dto";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
@@ -483,20 +487,10 @@ export class StockService {
   }
 
   async createProduct(dto: CreateProductDto): Promise<Product> {
-    const existing = await this.productRepo.findOne({
-      where: { name: dto.name },
-    });
-    if (existing) throw new ConflictException("Produsul există deja");
-
+    // Name/SKU nu mai sunt unice global — nomenclatoarele sunt pe locație
+    // (vezi createProductAtLocation). createProduct rămâne pentru fluxuri fără
+    // location_id (ex. /stoc/add); duplicatele de nume între companii sunt OK.
     const skuTrimmed = dto.sku?.trim();
-    if (skuTrimmed) {
-      const existingBySku = await this.productRepo.findOne({
-        where: { sku: skuTrimmed },
-      });
-      if (existingBySku) {
-        throw new ConflictException("SKU-ul există deja");
-      }
-    }
 
     const product = this.productRepo.create({
       ...dto,
@@ -510,6 +504,70 @@ export class StockService {
       `✅ [createProduct] Saved product ID ${saved.id} with photo: ${saved.photo || "no photo"}`
     );
     return this.normalizeProductPhoto(saved);
+  }
+
+  /**
+   * Unicitate name/SKU doar în nomenclatorul locației (inclusiv override-uri),
+   * nu pe tot tabelul products (altfel „Sare” la un furnizor e blocat de un client).
+   */
+  private async assertNoNameOrSkuConflictAtLocation(
+    manager: EntityManager,
+    locationId: number,
+    opts: {
+      name?: string | null;
+      sku?: string | null;
+      excludeProductId?: number;
+    },
+  ): Promise<void> {
+    const locationKey = this.locationKey(locationId);
+    const nameTrimmed = opts.name?.trim();
+    const skuTrimmed = opts.sku?.trim();
+    if (!nameTrimmed && !skuTrimmed) {
+      return;
+    }
+
+    const productsAtLocation = await manager
+      .getRepository(Product)
+      .createQueryBuilder("product")
+      .innerJoin("product.stocks", "stock")
+      .where("stock.location_key = :locationKey", { locationKey })
+      .getMany();
+
+    if (productsAtLocation.length === 0) {
+      return;
+    }
+
+    const overrides = await manager.getRepository(ProductLocationOverride).find({
+      where: { location_key: locationKey },
+    });
+    const overrideByProductId = new Map(
+      overrides.map((row) => [row.product_id, row]),
+    );
+
+    for (const product of productsAtLocation) {
+      if (
+        opts.excludeProductId != null &&
+        product.id === opts.excludeProductId
+      ) {
+        continue;
+      }
+      const override = overrideByProductId.get(product.id);
+      const displayName =
+        override?.name != null && String(override.name).trim() !== ""
+          ? String(override.name).trim()
+          : product.name;
+      const displaySku =
+        override != null && override.sku !== undefined
+          ? override.sku?.trim() || null
+          : product.sku?.trim() || null;
+
+      if (nameTrimmed && displayName === nameTrimmed) {
+        throw new ConflictException("Produsul există deja");
+      }
+      if (skuTrimmed && displaySku && displaySku === skuTrimmed) {
+        throw new ConflictException("SKU-ul există deja");
+      }
+    }
   }
 
   async createProductAtLocation(
@@ -527,34 +585,16 @@ export class StockService {
     try {
       const productRepo = queryRunner.manager.getRepository(Product);
       const stockRepo = queryRunner.manager.getRepository(Stock);
+const skuTrimmed = dto.sku?.trim();
 
-      const locationKey = this.locationKey(locationId);
-
-      // Unicitate pe nomenclatorul locației (produs deja legat prin stock), nu global pe products.
-      const existingByNameAtLocation = await productRepo
-        .createQueryBuilder("product")
-        .innerJoin("product.stocks", "stock")
-        .where("stock.location_key = :locationKey", { locationKey })
-        .andWhere("product.name = :name", { name: dto.name })
-        .getOne();
-      if (existingByNameAtLocation) {
-        throw new ConflictException(
-          "Produsul există deja la această locație",
-        );
-      }
-
-      const skuTrimmed = dto.sku?.trim();
-      if (skuTrimmed) {
-        const existingBySkuAtLocation = await productRepo
-          .createQueryBuilder("product")
-          .innerJoin("product.stocks", "stock")
-          .where("stock.location_key = :locationKey", { locationKey })
-          .andWhere("product.sku = :sku", { sku: skuTrimmed })
-          .getOne();
-        if (existingBySkuAtLocation) {
-          throw new ConflictException("SKU-ul există deja la această locație");
-        }
-      }
+await this.assertNoNameOrSkuConflictAtLocation(
+  queryRunner.manager,
+  locationId,
+  {
+    name: dto.name,
+    sku: skuTrimmed,
+  },
+);
 
       const product = productRepo.create({
         name: dto.name,
@@ -751,6 +791,18 @@ export class StockService {
       );
     }
 
+    if (dto.name !== undefined || dto.sku !== undefined) {
+      await this.assertNoNameOrSkuConflictAtLocation(
+        this.productRepo.manager,
+        locationId,
+        {
+          name: dto.name,
+          sku: dto.sku,
+          excludeProductId: productId,
+        },
+      );
+    }
+
     const locationCount =
       await this.countDistinctLocationKeysForProduct(productId);
     if (locationCount <= 1) {
@@ -886,14 +938,6 @@ export class StockService {
 
     if (dto.sku !== undefined) {
       const skuTrimmed = dto.sku?.trim() || null;
-      if (skuTrimmed) {
-        const existingBySku = await this.productRepo.findOne({
-          where: { sku: skuTrimmed },
-        });
-        if (existingBySku && existingBySku.id !== id) {
-          throw new ConflictException("SKU-ul există deja");
-        }
-      }
       product.sku = skuTrimmed;
     }
 
@@ -1197,6 +1241,268 @@ export class StockService {
       );
 
       return Object.assign(savedStock, { entry_transaction_id: savedTx.id });
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private locationsBaseUrl(): string {
+    return (
+      this.configService?.get<string>("LOCATIONS_HTTP_URL") ||
+      process.env.LOCATIONS_HTTP_URL ||
+      "http://localhost:3004"
+    );
+  }
+
+  private internalServiceHeaders(): Record<string, string> {
+    return {
+      "x-internal-service": "stock",
+      "x-service-secret":
+        this.configService?.get<string>("SERVICE_SECRET") ||
+        process.env.SERVICE_SECRET ||
+        "",
+      "Content-Type": "application/json",
+    };
+  }
+
+  /** Compania unei locații — folosit pentru tenant isolation pe increment-batch. */
+  async getLocationCompanyId(locationId: number): Promise<number | null> {
+    if (!this.httpService) {
+      this.logger.warn(
+        "[getLocationCompanyId] HttpService unavailable — cannot validate location ownership",
+      );
+      return null;
+    }
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(`${this.locationsBaseUrl()}/locations/${locationId}`, {
+          headers: this.internalServiceHeaders(),
+          timeout: 8000,
+        }),
+      );
+      const cid = resp.data?.company_id ?? resp.data?.companyId;
+      const n = Number(cid);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch (error: any) {
+      this.logger.warn(
+        `[getLocationCompanyId] failed for location ${locationId}: ${error?.message ?? error}`,
+      );
+      return null;
+    }
+  }
+
+  async assertLocationInCompany(
+    locationId: number,
+    companyId: number | null | undefined,
+  ): Promise<void> {
+    if (
+      companyId == null ||
+      !Number.isFinite(Number(companyId)) ||
+      Number(companyId) <= 0
+    ) {
+      throw new ForbiddenException(
+        "Nu s-a putut determina compania utilizatorului autentificat",
+      );
+    }
+    const locCompanyId = await this.getLocationCompanyId(locationId);
+    if (locCompanyId == null) {
+      throw new ForbiddenException("Locația nu a putut fi validată");
+    }
+    if (locCompanyId !== Number(companyId)) {
+      throw new ForbiddenException(
+        "Locația nu aparține companiei utilizatorului autentificat",
+      );
+    }
+  }
+
+  private assertValidIncrementQuantity(raw: unknown, productId: number): number {
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      throw new BadRequestException(
+        `Cantitate invalidă pentru produsul ${productId}`,
+      );
+    }
+    if (raw <= 0) {
+      throw new BadRequestException(
+        `Cantitatea trebuie să fie mai mare decât 0 (produs ${productId})`,
+      );
+    }
+    if (raw > 99999999.99) {
+      throw new BadRequestException(
+        `Cantitatea depășește limita maximă permisă (produs ${productId})`,
+      );
+    }
+    const scaled = Math.round(raw * 100);
+    if (Math.abs(raw * 100 - scaled) > 1e-8) {
+      throw new BadRequestException(
+        `Cantitatea poate avea maximum 2 zecimale (produs ${productId})`,
+      );
+    }
+    return Number((scaled / 100).toFixed(2));
+  }
+
+  /**
+   * Incrementare batch atomică: cantitate_nouă = existentă + introdusă.
+   * Validează catalogul locației, creează ENTRY în jurnal, previne lost-update via SQL UPDATE.
+   */
+  async incrementStockBatch(
+    dto: IncrementStockBatchDto,
+    options?: {
+      companyId?: number | null;
+      employeeId?: number | null;
+      bypassLocationOwnership?: boolean;
+      callerService?: string | null;
+    },
+  ): Promise<IncrementStockBatchResponse> {
+    const locationId = Number(dto.location_id);
+    if (!Number.isFinite(locationId) || locationId <= 0) {
+      throw new BadRequestException("location_id invalid");
+    }
+
+    const items = Array.isArray(dto.items) ? dto.items : [];
+    if (items.length === 0) {
+      throw new BadRequestException("Selectează cel puțin un produs");
+    }
+    if (items.length > 100) {
+      throw new BadRequestException("Maximum 100 de produse per request");
+    }
+
+    const seen = new Set<number>();
+    for (const item of items) {
+      const pid = Number(item.product_id);
+      if (!Number.isFinite(pid) || pid <= 0 || !Number.isInteger(pid)) {
+        throw new BadRequestException("product_id invalid");
+      }
+      if (seen.has(pid)) {
+        throw new BadRequestException(
+          `Produsul ${pid} apare de mai multe ori în request`,
+        );
+      }
+      seen.add(pid);
+      this.assertValidIncrementQuantity(Number(item.quantity), pid);
+    }
+
+    if (!options?.bypassLocationOwnership) {
+      await this.assertLocationInCompany(locationId, options?.companyId);
+    }
+
+    const locationKey = this.locationKey(locationId);
+    const productIds = [...seen];
+    const catalogIds = await this.getProductIdsAtLocation(locationId);
+    const catalogSet = new Set(catalogIds);
+    for (const pid of productIds) {
+      if (!catalogSet.has(pid)) {
+        throw new BadRequestException(
+          `Produsul ${pid} nu este disponibil în locația selectată`,
+        );
+      }
+    }
+
+    const products = await this.productRepo.find({
+      where: { id: In(productIds) },
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+    for (const pid of productIds) {
+      if (!productById.has(pid)) {
+        throw new BadRequestException(`Produsul ${pid} nu există`);
+      }
+    }
+
+    const queryRunner = this.stockRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    const updated: IncrementStockBatchResponse["updated"] = [];
+    const now = new Date();
+    const employeeId =
+      options?.employeeId != null && Number.isFinite(Number(options.employeeId))
+        ? Number(options.employeeId)
+        : null;
+
+    try {
+      const stockRepo = queryRunner.manager.getRepository(Stock);
+      const txRepo = queryRunner.manager.getRepository(StockTransaction);
+
+      for (const item of items) {
+        const productId = Number(item.product_id);
+        const qty = this.assertValidIncrementQuantity(
+          Number(item.quantity),
+          productId,
+        );
+        const product = productById.get(productId)!;
+
+        let aggregate = await stockRepo.findOne({
+          where: { product_id: productId, location_key: locationKey },
+          lock: { mode: "pessimistic_write" },
+        });
+
+        if (!aggregate) {
+          // Catalog verified above; recreate shell if row vanished (race).
+          aggregate = await this.findOrCreateAggregate(
+            productId,
+            locationId,
+            queryRunner.manager,
+          );
+          aggregate = await stockRepo.findOne({
+            where: { id: aggregate.id },
+            lock: { mode: "pessimistic_write" },
+          });
+          if (!aggregate) {
+            throw new BadRequestException(
+              `Nu s-a putut crea înregistrarea de stoc pentru produsul ${productId}`,
+            );
+          }
+        }
+
+        await queryRunner.manager.query(
+          `UPDATE stock SET quantity = quantity + ? WHERE id = ?`,
+          [qty, aggregate.id],
+        );
+
+        const refreshed = await stockRepo.findOne({
+          where: { id: aggregate.id },
+        });
+        if (!refreshed) {
+          throw new BadRequestException(
+            `Stocul pentru produsul ${productId} nu a putut fi actualizat`,
+          );
+        }
+
+        this.applyAggregateStatus(refreshed, product);
+        await stockRepo.save(refreshed);
+
+        const entryTx = txRepo.create({
+          stock_id: refreshed.id,
+          product_id: productId,
+          location_id: locationId,
+          location_key: locationKey,
+          type: TransactionType.ENTRY,
+          quantity: qty,
+          price: 0,
+          entry_date: now,
+          source: StockSource.MANUAL,
+          status: StockLotStatus.VALID,
+          location: String(locationId),
+          target: `manual_increment:${employeeId ?? "unknown"}:${productId}:${now.getTime()}`,
+          reference_type: "manual_entry",
+          reference_id: employeeId,
+        });
+        await txRepo.save(entryTx);
+
+        updated.push({
+          product_id: productId,
+          quantity_added: qty,
+          new_quantity: Number(Number(refreshed.quantity).toFixed(2)),
+        });
+      }
+
+      await queryRunner.commitTransaction();
+      this.logger.log(
+        `✅ [incrementStockBatch] location=${locationId} items=${updated.length} caller=${options?.callerService ?? "user"} employee=${employeeId ?? "n/a"}`,
+      );
+      return { success: true, updated };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

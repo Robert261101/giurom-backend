@@ -3383,6 +3383,115 @@ export class SuppliersService {
     return { summary, locationId };
   }
 
+  /**
+   * Incrementare manuală stoc depozit furnizor (proxy atomic către stock-ms).
+   * Locația se rezolvă exclusiv din JWT / tenant — nu din body.
+   */
+  async incrementMySupplierStock(
+    items: Array<{ product_id: number; quantity: number }>,
+    userContext?: SupplierProductUserContext,
+  ): Promise<{
+    success: true;
+    updated: Array<{
+      product_id: number;
+      quantity_added: number;
+      new_quantity: number;
+    }>;
+  }> {
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    assertFurnizorProductManager(userContext);
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('Selectează cel puțin un produs');
+    }
+    if (items.length > 100) {
+      throw new BadRequestException('Maximum 100 de produse per request');
+    }
+
+    const seen = new Set<number>();
+    for (const item of items) {
+      const pid = Number(item.product_id);
+      const qty = Number(item.quantity);
+      if (!Number.isFinite(pid) || pid <= 0 || !Number.isInteger(pid)) {
+        throw new BadRequestException('product_id invalid');
+      }
+      if (seen.has(pid)) {
+        throw new BadRequestException(
+          `Produsul ${pid} apare de mai multe ori în request`,
+        );
+      }
+      seen.add(pid);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new BadRequestException(
+          `Cantitatea trebuie să fie mai mare decât 0 (produs ${pid})`,
+        );
+      }
+    }
+
+    const summary = await this.findMySupplierForFurnizorTenant(
+      userContext.companyId,
+      userContext.companyType,
+    );
+    const locationId = await this.resolveSupplierStockLocationId(summary.id);
+
+    const catalog = await this.stockHttpService.listProductsByLocation(locationId);
+    const catalogSet = new Set(
+      catalog
+        .map((p) => Number(p.id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    );
+
+    for (const pid of seen) {
+      if (!catalogSet.has(pid)) {
+        throw new BadRequestException(
+          `Produsul ${pid} nu aparține nomenclatorului depozitului furnizorului`,
+        );
+      }
+    }
+
+    try {
+      return await this.stockHttpService.incrementStockBatch(
+        locationId,
+        items.map((item) => ({
+          product_id: Number(item.product_id),
+          quantity: Number(item.quantity),
+        })),
+      );
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const message =
+        error?.response?.data?.message ??
+        error?.message ??
+        'Nu s-au putut adăuga cantitățile în stoc';
+      const code = error?.code || error?.cause?.code;
+      if (
+        !status &&
+        (code === 'ECONNREFUSED' ||
+          code === 'ENOTFOUND' ||
+          /ECONNREFUSED|connect/i.test(String(message)))
+      ) {
+        throw new BadRequestException(
+          'Serviciul de stoc (stock-ms) nu este disponibil. Porniți microserviciul pe portul 3006 și reîncercați.',
+        );
+      }
+      if (status === 403) {
+        throw new ForbiddenException(
+          Array.isArray(message) ? message.join(', ') : message,
+        );
+      }
+      if (status === 404) {
+        throw new NotFoundException(
+          Array.isArray(message) ? message.join(', ') : message,
+        );
+      }
+      throw new BadRequestException(
+        Array.isArray(message) ? message.join(', ') : message,
+      );
+    }
+  }
+
   async getSupplierProducts(
     supplierId: number,
     includeInactive = true,
