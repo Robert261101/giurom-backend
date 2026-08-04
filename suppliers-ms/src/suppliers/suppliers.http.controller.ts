@@ -16,6 +16,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  UsePipes,
+  ValidationPipe,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -50,6 +52,7 @@ import { Permissions, PermissionsAny } from "../permissions/permissions.decorato
 import { PermissionsGuard } from "../permissions/permissions.guard";
 import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomenclator-product.dto";
 import { UpdateSupplierNomenclatorProductDto } from "./dto/update-supplier-nomenclator-product.dto";
+import { SupplierIncrementStockDto } from "./dto/supplier-increment-stock.dto";
 import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
 import {
   buildSupplierProductUserContext,
@@ -327,6 +330,36 @@ export class SuppliersHttpController {
         sort_by: sortBy,
         sort_direction: sortDirection,
       },
+    );
+  }
+
+  @Post("my-supplier/stock/increment")
+  @PermissionsAny("order.read", "suppliers.create")
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      "Incrementare manuală cantități în stocul depozitului furnizorului (batch atomic)",
+  })
+  incrementMySupplierStock(
+    @Body() dto: SupplierIncrementStockDto,
+    @Request()
+    req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+      };
+    },
+  ) {
+    return this.service.incrementMySupplierStock(
+      dto.items,
+      buildSupplierProductUserContext(req?.user),
     );
   }
 

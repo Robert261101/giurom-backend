@@ -407,6 +407,49 @@ export class StockHttpService {
     }
   }
 
+  /**
+   * Batch increment stock quantities at a location (single atomic request to stock-ms).
+   */
+  async incrementStockBatch(
+    locationId: number,
+    items: Array<{ product_id: number; quantity: number }>,
+  ): Promise<{
+    success: true;
+    updated: Array<{
+      product_id: number;
+      quantity_added: number;
+      new_quantity: number;
+    }>;
+  }> {
+    const url = `${this.stockServiceUrl}/stock/items/increment-batch`;
+    try {
+      this.logger.log(
+        `📦 [StockHttpService] POST ${url} location_id=${locationId} items=${items.length}`,
+      );
+      const response = await firstValueFrom(
+        this.httpService.post(
+          url,
+          { location_id: locationId, items },
+          { headers: this.internalHeaders() },
+        ),
+      );
+      return response.data as {
+        success: true;
+        updated: Array<{
+          product_id: number;
+          quantity_added: number;
+          new_quantity: number;
+        }>;
+      };
+    } catch (error: any) {
+      const status = error?.response?.status;
+      this.logger.error(
+        `❌ [StockHttpService] Failed increment-batch (location_id=${locationId}): status=${status ?? 'N/A'}, message=${error?.message ?? error}`,
+      );
+      throw error;
+    }
+  }
+
   async createProductAtLocation(payload: {
     name: string;
     unit: string;

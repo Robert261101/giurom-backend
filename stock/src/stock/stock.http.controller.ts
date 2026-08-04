@@ -10,6 +10,8 @@ import {
   Res,
   Request,
   BadRequestException,
+  UsePipes,
+  ValidationPipe,
 } from "@nestjs/common";
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
@@ -19,6 +21,7 @@ import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { CreateStockDto } from "./dto/create-stock.dto";
 import { UpdateStockDto } from "./dto/update-stock.dto";
+import { IncrementStockBatchDto } from "./dto/increment-stock-batch.dto";
 import { CreateStockTransactionDto } from "./dto/create-stock-transaction.dto";
 import { TransactionType } from "./entities/stock-transaction.entity";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
@@ -108,6 +111,38 @@ export class StockHttpController {
   ) {
     return await this.service.createStock(dto);
   }
+
+  /** Incrementare atomică batch: stoc_nou = stoc_existent + cantitate (cu jurnal ENTRY). */
+  @Post("items/increment-batch")
+  @Permissions("stock.create")
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async incrementStockBatch(
+    @Body() dto: IncrementStockBatchDto,
+    @Request()
+    req?: {
+      bypassAuth?: boolean;
+      user?: {
+        company_id?: number | null;
+        employee_id?: number;
+        id?: number;
+      };
+      internalService?: string;
+    },
+  ) {
+    return await this.service.incrementStockBatch(dto, {
+      companyId: req?.user?.company_id ?? null,
+      employeeId: req?.user?.employee_id ?? req?.user?.id ?? null,
+      bypassLocationOwnership: !!req?.bypassAuth,
+      callerService: req?.internalService ?? null,
+    });
+  }
+
   @Get("items") @Permissions("stock.read") async getStocks(
     @Query("location_id") locationId?: string,
     @Query("product_id") productId?: string,

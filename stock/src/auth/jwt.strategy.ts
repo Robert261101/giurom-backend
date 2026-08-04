@@ -22,12 +22,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: sub,
       employee_id: sub,
       username: payload.username,
+      roles: Array.isArray(payload.roles) ? payload.roles : [],
       permissions: payload.permissions || [],
       roles: payload.roles || [],
       company_id: payload.company_id ?? undefined,
       company_type: payload.company_type ?? undefined,
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,
+      company_type:
+        typeof payload.company_type === 'string' ? payload.company_type : null,
+      company_id:
+        payload.company_id != null && Number.isFinite(Number(payload.company_id))
+          ? Number(payload.company_id)
+          : null,
     };
   }
 }
