@@ -38,7 +38,7 @@ export class StockTransaction {
   @Column({ type: 'enum', enum: TransactionType })
   type: TransactionType;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 3 })
   quantity: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })

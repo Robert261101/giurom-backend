@@ -585,13 +585,16 @@ export class StockService {
     try {
       const productRepo = queryRunner.manager.getRepository(Product);
       const stockRepo = queryRunner.manager.getRepository(Stock);
-      const skuTrimmed = dto.sku?.trim();
+const skuTrimmed = dto.sku?.trim();
 
-      await this.assertNoNameOrSkuConflictAtLocation(
-        queryRunner.manager,
-        locationId,
-        { name: dto.name, sku: skuTrimmed },
-      );
+await this.assertNoNameOrSkuConflictAtLocation(
+  queryRunner.manager,
+  locationId,
+  {
+    name: dto.name,
+    sku: skuTrimmed,
+  },
+);
 
       const product = productRepo.create({
         name: dto.name,
