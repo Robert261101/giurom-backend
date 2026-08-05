@@ -514,13 +514,41 @@ export class SuppliersHttpController {
     return this.service.getSupplierStockLocationId(Number(supplierId));
   }
 
+  @Get(":supplierId/stock-availability")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc disponibil la depozitul furnizorului (aceeași locație ca la confirmare / GIU-08). Nu modifică stocul.",
+  })
+  @ApiQuery({
+    name: "supplier_product_ids",
+    required: false,
+    description: "IDs supplier_products separate prin virgulă",
+  })
+  getSupplierStockAvailability(
+    @Param("supplierId") supplierId: string,
+    @Query("supplier_product_ids") supplierProductIdsRaw?: string,
+  ) {
+    const ids =
+      supplierProductIdsRaw != null && String(supplierProductIdsRaw).trim() !== ""
+        ? String(supplierProductIdsRaw)
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        : undefined;
+    return this.service.getSupplierStockAvailabilityForOrdering(
+      Number(supplierId),
+      ids,
+    );
+  }
+
   @Get(":supplierId/products")
   @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
   getProducts(
     @Param("supplierId") supplierId: string,
     @Query("include_inactive") includeInactive?: string,
     @Query("location_id") locationId?: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[]; roles?: string[]; isAdmin?: boolean; isSuperAdmin?: boolean } },
   ) {
     const includeInactiveBool = includeInactive === undefined
       ? true
@@ -534,6 +562,7 @@ export class SuppliersHttpController {
       includeInactiveBool,
       buildSupplierProductUserContext(req?.user),
       parsedLocationId,
+      req?.user?.roles,
     );
   }
 
@@ -1141,6 +1170,19 @@ export class SuppliersHttpController {
     return this.service.completeDriverAssignment(Number(assignmentId), req?.user);
   }
 
+  @Patch("driver-assignments/:assignmentId/arrived")
+  /** Doar șoferul atribuit (verificat în service) confirmă sosirea la client. */
+  @PermissionsAny("order.approve", "order.read")
+  @ApiOperation({
+    summary: "GIU-10: șoferul confirmă „Ajuns în locație” (deblochează recepție/anulare client)",
+  })
+  markDriverAssignmentArrived(
+    @Param("assignmentId") assignmentId: string,
+    @Request() req: any,
+  ) {
+    return this.service.markDriverAssignmentArrived(Number(assignmentId), req?.user);
+  }
+
   @Get("storekeepers/:employeeId/orders/paginated")
   @Permissions("order.read")
   @ApiOperation({ summary: "Comenzi magazioner paginate (dashboard magazioner)" })
@@ -1300,6 +1342,16 @@ export class SuppliersHttpController {
     }
 
     return this.service.getOrderReceptionsBatch(orderIds, req?.user);
+  }
+
+  @Get("orders/:orderId/remaining-stock")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc curent (depozit furnizor) pentru produsele din comandă — doar furnizor/magazioner",
+  })
+  getOrderRemainingStock(@Param("orderId") orderId: string, @Request() req: any) {
+    return this.service.getOrderRemainingStock(Number(orderId), req?.user);
   }
 
   @Get("orders/:orderId/receptions")

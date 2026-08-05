@@ -33,6 +33,13 @@ export class SupplierOrderItem {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   price_per_unit: number;
 
+  /** Snapshot bază preț la creare. NULL pe comenzi vechi = 1. */
+  @Column({ type: 'decimal', precision: 10, scale: 4, nullable: true })
+  price_base_quantity?: number | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  price_base_unit?: string | null;
+
   @Column({ type: 'decimal', precision: 12, scale: 2 })
   subtotal: number;
 
