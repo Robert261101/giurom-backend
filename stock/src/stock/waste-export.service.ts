@@ -375,7 +375,7 @@ export class WasteExportService implements OnModuleInit, OnModuleDestroy {
           `skipped_no_zone=${data.skipped_no_zone ?? '?'}, ` +
           `unmapped=${Array.isArray(data.unmapped_locations) ? data.unmapped_locations.length : 0}`,
       );
-      return { sent: rows.length, ...data, diagnostics: baseDiag };
+      return { ...data, sent: rows.length, diagnostics: baseDiag };
     } catch (err: any) {
       const status = err?.response?.status;
       const body = err?.response?.data;
