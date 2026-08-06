@@ -4,6 +4,7 @@ import {
   Controller,
   Logger,
   Post,
+  Req,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -75,9 +76,29 @@ export class App2WasteController {
     return { applied: true, status: 'rejected' as const, already_decided: false };
   }
 
-  /** Butonul „Reîmprospătează" din giurom 2.0 — retrimite cererile recente acum. */
+  /** Butonul „Reîmprospătează" din giurom 2.0 — retrimite cererile pending acum. */
   @Post('app2-waste-refresh')
-  async refresh() {
-    return this.wasteExportService.runManualExport();
+  async refresh(@Req() req: { headers?: Record<string, unknown>; ip?: string }) {
+    const hasKey = Boolean(
+      typeof req.headers?.['x-stock-sync-key'] === 'string' &&
+        String(req.headers['x-stock-sync-key']).trim(),
+    );
+    this.logger.log(
+      `🔔 [App2Waste] HIT app2-waste-refresh ip=${req.ip ?? '?'} syncKey=${hasKey ? 'da' : 'NU'}`,
+    );
+    try {
+      const result = await this.wasteExportService.runManualExport();
+      this.logger.log(
+        `🔔 [App2Waste] refresh DONE sent=${result.sent} ` +
+          `diag=${JSON.stringify(result.diagnostics ?? {})}`,
+      );
+      return result;
+    } catch (e) {
+      this.logger.error(
+        `❌ [App2Waste] refresh FAILED: ${(e as Error).message}`,
+        (e as Error).stack,
+      );
+      throw e;
+    }
   }
 }
