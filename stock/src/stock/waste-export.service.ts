@@ -105,14 +105,10 @@ export class WasteExportService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Retrimite cererile recente; le reia și pe cele pierdute la un push eșuat. */
+  /** Retrimite pending-urile (orice vechime) + cererile recente pe toate stările. */
   async handleSafetyNetExport(): Promise<void> {
     try {
-      const since = new Date();
-      since.setDate(since.getDate() - WasteExportService.SAFETY_NET_LOOKBACK_DAYS);
-      const requests = await this.wasteRequestRepo.find({
-        where: { created_at: MoreThanOrEqual(since) },
-      });
+      const requests = await this.loadExportCandidates();
       const result = await this.exportRequests(requests);
       if (result.sent > 0) {
         this.logger.log(
@@ -137,17 +133,36 @@ export class WasteExportService implements OnModuleInit, OnModuleDestroy {
     }
     this.lastManualExportAt = now;
 
-    const since = new Date();
-    since.setDate(since.getDate() - WasteExportService.SAFETY_NET_LOOKBACK_DAYS);
-    const requests = await this.wasteRequestRepo.find({
-      where: { created_at: MoreThanOrEqual(since) },
-    });
+    const requests = await this.loadExportCandidates();
     const result = await this.exportRequests(requests);
     this.logger.log(
       `✅ [WasteExport] Export manual: ${result.sent} trimise — noi: ${result.imported ?? '?'}, ` +
         `actualizate: ${result.updated ?? '?'}, locații nemapate: ${result.unmapped_locations?.length ?? 0}`,
     );
     return result;
+  }
+
+  /**
+   * Pending-urile pot sta luni în așteptare — fereastra de 14 zile le sărea pe toate
+   * (ex. 260 cereri din iunie, refresh în august → sent=0). Le includem mereu.
+   * Pentru istoric (approved/rejected) rămâne lookback-ul scurt.
+   */
+  private async loadExportCandidates(): Promise<WasteRequest[]> {
+    const pending = await this.wasteRequestRepo.find({
+      where: { status: 'pending' },
+    });
+
+    const since = new Date();
+    since.setDate(since.getDate() - WasteExportService.SAFETY_NET_LOOKBACK_DAYS);
+    const recent = await this.wasteRequestRepo.find({
+      where: { created_at: MoreThanOrEqual(since) },
+    });
+
+    const byId = new Map<number, WasteRequest>();
+    for (const row of [...pending, ...recent]) {
+      byId.set(Number(row.id), row);
+    }
+    return [...byId.values()];
   }
 
   private async exportRequests(requests: WasteRequest[]): Promise<WasteExportResult> {
