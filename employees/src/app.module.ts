@@ -6,7 +6,9 @@ import { join } from 'path';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { EmployeeMicroController } from './employee.micro.controller';
 import { EmployeeHttpController } from './employee.http.controller';
+import { EmployeesExportController } from './employees-export.controller';
 import { EmployeeService } from './employee.service';
+import { EmployeesExportService } from './employees-export.service';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -56,9 +58,14 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       EmployeeFolder,
     ]),
   ],
-  controllers: [EmployeeMicroController, EmployeeHttpController],
+  controllers: [
+    EmployeeMicroController,
+    EmployeeHttpController,
+    EmployeesExportController,
+  ],
   providers: [
     EmployeeService,
+    EmployeesExportService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

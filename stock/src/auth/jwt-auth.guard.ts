@@ -30,6 +30,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       // Mișcările de stoc făcute în giurom 2.0, împinse înapoi aici ca sursa de adevăr
       // să rămână una singură. Vezi app2-movement.controller.ts.
       '/stock/integrations/app2-movement',
+      // Aprobarea/respingerea cererilor de aruncare, decisă în giurom 2.0. Consumul de
+      // stoc se execută tot aici. Vezi app2-waste.controller.ts.
+      '/stock/integrations/app2-waste-decision',
+      '/stock/integrations/app2-waste-refresh',
     ];
     if (
       syncKey &&

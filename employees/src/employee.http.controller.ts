@@ -26,6 +26,7 @@ import {
   ApiBearerAuth,
 } from "@nestjs/swagger";
 import { EmployeeService } from "./employee.service";
+import { EmployeesExportService } from "./employees-export.service";
 import { CreateEmployeeDto } from "./dto/create-employee.dto";
 import { UpdateEmployeeDto } from "./dto/update-employee.dto";
 import { Employee } from "./entities/employee.entity";
@@ -42,7 +43,10 @@ import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 @Controller("employees")
 @ApiBearerAuth()
 export class EmployeeHttpController {
-  constructor(private readonly employeeService: EmployeeService) {}
+  constructor(
+    private readonly employeeService: EmployeeService,
+    private readonly employeesExportService: EmployeesExportService,
+  ) {}
 
   @Post()
   @Permissions("employees.create")
@@ -66,7 +70,10 @@ export class EmployeeHttpController {
   ): Promise<Employee> {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.employeeService.create(createEmployeeDto, selectedWorkLocationId);
+    const created = await this.employeeService.create(createEmployeeDto, selectedWorkLocationId);
+    // Fire-and-forget: crearea angajatului nu trebuie să eșueze fiindcă giurom 2.0 e picat.
+    void this.employeesExportService.pushEmployeeSafe(created.id);
+    return created;
   }
 
   @Get()
@@ -665,7 +672,9 @@ export class EmployeeHttpController {
   ): Promise<Employee> {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    return this.employeeService.update(+id, updateEmployeeDto, selectedWorkLocationId, req?.user);
+    const updated = await this.employeeService.update(+id, updateEmployeeDto, selectedWorkLocationId, req?.user);
+    void this.employeesExportService.pushEmployeeSafe(+id);
+    return updated;
   }
 
   @Patch(":id/toggle-active")
@@ -681,7 +690,10 @@ export class EmployeeHttpController {
     type: Employee,
   })
   async toggleActive(@Param("id") id: string, @Request() req?: any): Promise<Employee> {
-    return this.employeeService.toggleActive(+id, req?.user);
+    const employee = await this.employeeService.toggleActive(+id, req?.user);
+    // Dezactivarea trebuie să ajungă repede în giurom 2.0: acolo blochează login-ul.
+    void this.employeesExportService.pushEmployeeSafe(+id);
+    return employee;
   }
 
   @Delete(":id")
