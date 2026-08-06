@@ -2,12 +2,17 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Logger,
+  NotFoundException,
+  Param,
   Post,
   Req,
+  Res,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { Response } from 'express';
 import { StockService } from './stock.service';
 import { WasteRequest } from './entities/waste-request.entity';
 import { WasteExportService } from './waste-export.service';
@@ -99,6 +104,32 @@ export class App2WasteController {
         (e as Error).stack,
       );
       throw e;
+    }
+  }
+
+  /**
+   * Poză dovadă — giurom 2.0 o cere cu X-Stock-Sync-Key.
+   * Pe restosoft.eu/api/images/... e 401 fără cookie, deci App2 nu poate afișa direct.
+   */
+  @Get('app2-waste-image/:fileName')
+  async serveImage(@Param('fileName') fileName: string, @Res() res: Response) {
+    const safe = String(fileName || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .pop()
+      ?.trim();
+    if (!safe || !/^[\w.\-]+$/i.test(safe) || safe.includes('..')) {
+      throw new BadRequestException('Nume fișier invalid');
+    }
+    try {
+      const { buffer, mimeType } = await this.service.serveWasteImage(safe);
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (e) {
+      if (e instanceof NotFoundException) throw e;
+      this.logger.warn(`[App2Waste] Image ${safe} missing: ${(e as Error).message}`);
+      throw new NotFoundException(`Imaginea ${safe} nu a fost găsită`);
     }
   }
 }
