@@ -1,5 +1,4 @@
-import {
-  Controller,
+import { Controller,
   Get,
   Post,
   Body,
@@ -14,8 +13,7 @@ import {
   ParseIntPipe,
   Request,
   ForbiddenException,
-  BadRequestException,
-} from "@nestjs/common";
+  BadRequestException, Logger } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -28,6 +26,7 @@ import {
 import { EmployeeService } from "./employee.service";
 import { EmployeesExportService } from "./employees-export.service";
 import { CreateEmployeeDto } from "./dto/create-employee.dto";
+import { CreateSupplierRegistrationEmployeeDto } from "./dto/create-supplier-registration-employee.dto";
 import { UpdateEmployeeDto } from "./dto/update-employee.dto";
 import { Employee } from "./entities/employee.entity";
 import { EmployeeLocation } from "./entities/employee-location.entity";
@@ -43,6 +42,8 @@ import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 @Controller("employees")
 @ApiBearerAuth()
 export class EmployeeHttpController {
+  private readonly logger = new Logger(EmployeeHttpController.name);
+
   constructor(
     private readonly employeeService: EmployeeService,
     private readonly employeesExportService: EmployeesExportService,
@@ -74,6 +75,52 @@ export class EmployeeHttpController {
     // Fire-and-forget: crearea angajatului nu trebuie să eșueze fiindcă giurom 2.0 e picat.
     void this.employeesExportService.pushEmployeeSafe(created.id);
     return created;
+  }
+
+  /**
+   * Creare employee din înregistrarea furnizorului (apel intern auth → employees).
+   * Nu expune relaxarea hire_date/contract_type pe POST /employees public.
+   */
+  @Post("internal/supplier-registration")
+  @UseGuards(InternalServiceGuard)
+  @ApiOperation({
+    summary: "Creează employee pentru înregistrare furnizor (intern)",
+    description:
+      "Endpoint intern: fără hire_date/contract_type. Doar apeluri cu x-internal-service + x-service-secret.",
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: "Angajatul asociat furnizorului a fost creat",
+    type: Employee,
+  })
+  @ApiHeader({
+    name: "x-work-location-id",
+    required: false,
+    description: "Locația sediului creat la înregistrare",
+  })
+  @ApiQuery({
+    name: "location_id",
+    required: false,
+    description: "Alternativ: locația sediului",
+  })
+  async createFromSupplierRegistration(
+    @Body() dto: CreateSupplierRegistrationEmployeeDto,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Query("location_id") location_id?: string,
+    @Request() req?: { bypassAuth?: boolean },
+  ): Promise<Employee> {
+    if (!req?.bypassAuth) {
+      throw new ForbiddenException(
+        "Endpoint disponibil doar pentru servicii interne",
+      );
+    }
+    const selectedWorkLocationId = parseSelectedWorkLocationId(
+      xWorkLocationId ?? location_id,
+    );
+    return this.employeeService.createFromSupplierRegistration(
+      dto,
+      selectedWorkLocationId,
+    );
   }
 
   @Get()
@@ -820,7 +867,7 @@ export class EmployeeHttpController {
     @Body()
     body: Omit<CreateEmployeeFileDto, "employee_id"> & { employee_id?: number },
   ) {
-    console.log("📥 Received addEmployeeFile request:", { employeeId, body });
+    this.logger.log("📥 Received addEmployeeFile request:", { employeeId, body });
 
     const dto: CreateEmployeeFileDto = {
       employee_id: employeeId,
@@ -831,7 +878,7 @@ export class EmployeeHttpController {
       note: body.note,
     } as CreateEmployeeFileDto;
 
-    console.log("📤 Sending to employee service from addEmployeeFile:", {
+    this.logger.log("📤 Sending to employee service from addEmployeeFile:", {
       dto,
     });
     return this.employeeService.createFile(dto);
@@ -857,7 +904,7 @@ export class EmployeeHttpController {
       folder_id?: number;
     },
   ) {
-    console.log("📥 Received document upload request:", { employeeId, body });
+    this.logger.log("📥 Received document upload request:", { employeeId, body });
 
     if (!body?.documents || body.documents.length === 0) {
       return { message: "No documents provided" };
@@ -883,7 +930,7 @@ export class EmployeeHttpController {
       ...(body.folder_id != null && { folder_id: body.folder_id }),
     };
 
-    console.log("📤 Sending to employee service:", { createFileDto });
+    this.logger.log("📤 Sending to employee service:", { createFileDto });
 
     return this.employeeService.createFile(
       createFileDto as CreateEmployeeFileDto,
@@ -974,12 +1021,10 @@ export class EmployeeHttpController {
       return list.map((e) => ({ employee: e })) as any;
     }
 
-    console.log(
-      "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
-      locationId,
-    );
+    this.logger.log("🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
+      locationId,);
     const result = await this.employeeService.findLocationEmployees(locationId);
-    console.log("🔍 [EMPLOYEES CONTROLLER] Angajați returnați:", result.length);
+    this.logger.log("🔍 [EMPLOYEES CONTROLLER] Angajați returnați:", result.length);
     return result;
   }
 
@@ -1013,10 +1058,8 @@ export class EmployeeHttpController {
       return { employees };
     }
 
-    console.log(
-      "🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
-      locationId,
-    );
+    this.logger.log("🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
+      locationId,);
     const employees = await this.employeeService.findAll(
       1,
       1000,
@@ -1026,10 +1069,8 @@ export class EmployeeHttpController {
       undefined,
       locationId,
     );
-    console.log(
-      "🔍 [EMPLOYEES CONTROLLER] Angajați returnați:",
-      employees.employees.length,
-    );
+    this.logger.log("🔍 [EMPLOYEES CONTROLLER] Angajați returnați:",
+      employees.employees.length,);
     return { employees: employees.employees };
   }
 
@@ -1110,9 +1151,7 @@ export class EmployeeHttpController {
     description: "Lista fișierelor care expiră la data specificată",
   })
   async getExpiringFiles(@Param("targetDate") targetDate: string) {
-    console.log(
-      `[EMPLOYEES CONTROLLER] Getting files expiring on ${targetDate}`,
-    );
+    this.logger.log(`[EMPLOYEES CONTROLLER] Getting files expiring on ${targetDate}`,);
     return this.employeeService.findExpiringFiles(targetDate);
   }
 
@@ -1127,7 +1166,7 @@ export class EmployeeHttpController {
     description: "Lista fișierelor care au expirat deja",
   })
   async getExpiredFiles() {
-    console.log(`[EMPLOYEES CONTROLLER] Getting expired files`);
+    this.logger.log(`[EMPLOYEES CONTROLLER] Getting expired files`);
     return this.employeeService.findExpiredFiles();
   }
 }

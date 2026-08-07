@@ -54,10 +54,13 @@ import { CreateSupplierNomenclatorProductDto } from "./dto/create-supplier-nomen
 import { UpdateSupplierNomenclatorProductDto } from "./dto/update-supplier-nomenclator-product.dto";
 import { SupplierIncrementStockDto } from "./dto/supplier-increment-stock.dto";
 import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
+import { UpsertSupplierProductClientPriceDto } from "./dto/upsert-supplier-product-client-price.dto";
+import { SetClientProductVisibilityDto } from "./dto/set-client-product-visibility.dto";
 import {
   buildSupplierProductUserContext,
   buildSupplierAccessRequester,
 } from "./supplier-product-access";
+import { resolveOrderActorUserId } from "./order-access";
 import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
 
 @ApiTags("suppliers")
@@ -280,6 +283,122 @@ export class SuppliersHttpController {
       user?.company_id,
       user?.company_type,
       Number(companyId),
+    );
+  }
+
+  @Get("my-supplier/clients/:companyId/product-prices")
+  @Permissions("suppliers.create")
+  @ApiOperation({
+    summary: "Prețurile preferențiale curente pentru un client al furnizorului",
+  })
+  getMySupplierClientProductPrices(
+    @Param("companyId") companyId: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierClientProductPrices(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
+      page,
+      limit,
+    );
+  }
+
+  @Put("my-supplier/clients/:companyId/products/:supplierProductId/preferred-price")
+  @Permissions("suppliers.create")
+  @ApiOperation({
+    summary: "Setează sau actualizează prețul preferențial pentru un client și produs",
+  })
+  setMySupplierClientProductPrice(
+    @Param("companyId") companyId: string,
+    @Param("supplierProductId") supplierProductId: string,
+    @Body() dto: UpsertSupplierProductClientPriceDto,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        sub?: number;
+        userId?: number;
+        first_name?: string;
+        last_name?: string;
+        full_name?: string;
+      };
+    },
+  ) {
+    const user = req?.user;
+    const jwtName =
+      String(user?.full_name ?? "").trim() ||
+      [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() ||
+      null;
+    return this.service.upsertMySupplierClientProductPrice(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
+      Number(supplierProductId),
+      dto,
+      resolveOrderActorUserId(user),
+      jwtName,
+    );
+  }
+
+  @Delete("my-supplier/clients/:companyId/products/:supplierProductId/preferred-price")
+  @Permissions("suppliers.create")
+  @ApiOperation({
+    summary: "Elimină prețul preferențial și revine la prețul standard",
+  })
+  resetMySupplierClientProductPrice(
+    @Param("companyId") companyId: string,
+    @Param("supplierProductId") supplierProductId: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        sub?: number;
+        userId?: number;
+        first_name?: string;
+        last_name?: string;
+        full_name?: string;
+      };
+    },
+  ) {
+    const user = req?.user;
+    const jwtName =
+      String(user?.full_name ?? "").trim() ||
+      [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() ||
+      null;
+    return this.service.removeMySupplierClientProductPrice(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
+      Number(supplierProductId),
+      resolveOrderActorUserId(user),
+      jwtName,
+    );
+  }
+
+  @Get("my-supplier/clients/:companyId/product-price-history")
+  @Permissions("suppliers.create")
+  @ApiOperation({
+    summary: "Istoric prețuri preferențiale pentru un client al furnizorului",
+  })
+  getMySupplierClientProductPriceHistory(
+    @Param("companyId") companyId: string,
+    @Query("supplier_product_id") supplierProductId?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierClientProductPriceHistory(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
+      supplierProductId != null ? Number(supplierProductId) : undefined,
+      page,
+      limit,
     );
   }
 
@@ -514,13 +633,44 @@ export class SuppliersHttpController {
     return this.service.getSupplierStockLocationId(Number(supplierId));
   }
 
+  @Get(":supplierId/stock-availability")
+  @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc disponibil la depozitul furnizorului (aceeași locație ca la confirmare / GIU-08). Nu modifică stocul.",
+  })
+  @ApiQuery({
+    name: "supplier_product_ids",
+    required: false,
+    description: "IDs supplier_products separate prin virgulă",
+  })
+  getSupplierStockAvailability(
+    @Param("supplierId") supplierId: string,
+    @Query("supplier_product_ids") supplierProductIdsRaw?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[]; isAdmin?: boolean; isSuperAdmin?: boolean } },
+  ) {
+    const ids =
+      supplierProductIdsRaw != null && String(supplierProductIdsRaw).trim() !== ""
+        ? String(supplierProductIdsRaw)
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        : undefined;
+    return this.service.getSupplierStockAvailabilityForOrdering(
+      Number(supplierId),
+      ids,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
   @Get(":supplierId/products")
   @PermissionsAny("suppliers.read", "order.read", "suppliers.create")
   getProducts(
     @Param("supplierId") supplierId: string,
     @Query("include_inactive") includeInactive?: string,
     @Query("location_id") locationId?: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Query("apply_client_visibility") applyClientVisibility?: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[]; roles?: string[]; isAdmin?: boolean; isSuperAdmin?: boolean } },
   ) {
     const includeInactiveBool = includeInactive === undefined
       ? true
@@ -529,11 +679,16 @@ export class SuppliersHttpController {
       locationId != null && Number.isFinite(Number(locationId)) && Number(locationId) > 0
         ? Number(locationId)
         : undefined;
+    const applyClientVisibilityBool =
+      applyClientVisibility != null &&
+      ["1", "true", "yes"].includes(String(applyClientVisibility).toLowerCase());
     return this.service.getSupplierProducts(
       Number(supplierId),
       includeInactiveBool,
       buildSupplierProductUserContext(req?.user),
       parsedLocationId,
+      req?.user?.roles,
+      applyClientVisibilityBool,
     );
   }
 
@@ -586,6 +741,56 @@ export class SuppliersHttpController {
       dto,
       buildSupplierProductUserContext(req?.user),
       selectedWorkLocationId,
+    );
+  }
+
+  @Get(":supplierId/client-product-visibility")
+  @PermissionsAny("assignment.read_all", "assignment.read_company")
+  @ApiOperation({
+    summary:
+      "Produse ascunse de client pentru un furnizor (GIU-12). Lipsă configurare = toate vizibile.",
+  })
+  getClientProductVisibility(
+    @Param("supplierId") supplierId: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
+  ) {
+    return this.service.getClientProductVisibilityForSupplier(
+      Number(supplierId),
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
+  @Put(":supplierId/client-product-visibility")
+  @PermissionsAny("assignment.read_all", "assignment.read_company")
+  @ApiOperation({
+    summary:
+      "Salvează produsele ascunse de client pentru un furnizor (GIU-12). Doar admin companie client.",
+  })
+  setClientProductVisibility(
+    @Param("supplierId") supplierId: string,
+    @Body() dto: SetClientProductVisibilityDto,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
+  ) {
+    return this.service.setClientProductVisibilityForSupplier(
+      Number(supplierId),
+      dto,
+      buildSupplierProductUserContext(req?.user),
     );
   }
 
@@ -1141,6 +1346,19 @@ export class SuppliersHttpController {
     return this.service.completeDriverAssignment(Number(assignmentId), req?.user);
   }
 
+  @Patch("driver-assignments/:assignmentId/arrived")
+  /** Doar șoferul atribuit (verificat în service) confirmă sosirea la client. */
+  @PermissionsAny("order.approve", "order.read")
+  @ApiOperation({
+    summary: "GIU-10: șoferul confirmă „Ajuns în locație” (deblochează recepție/anulare client)",
+  })
+  markDriverAssignmentArrived(
+    @Param("assignmentId") assignmentId: string,
+    @Request() req: any,
+  ) {
+    return this.service.markDriverAssignmentArrived(Number(assignmentId), req?.user);
+  }
+
   @Get("storekeepers/:employeeId/orders/paginated")
   @Permissions("order.read")
   @ApiOperation({ summary: "Comenzi magazioner paginate (dashboard magazioner)" })
@@ -1300,6 +1518,16 @@ export class SuppliersHttpController {
     }
 
     return this.service.getOrderReceptionsBatch(orderIds, req?.user);
+  }
+
+  @Get("orders/:orderId/remaining-stock")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Stoc curent (depozit furnizor) pentru produsele din comandă — doar furnizor/magazioner",
+  })
+  getOrderRemainingStock(@Param("orderId") orderId: string, @Request() req: any) {
+    return this.service.getOrderRemainingStock(Number(orderId), req?.user);
   }
 
   @Get("orders/:orderId/receptions")

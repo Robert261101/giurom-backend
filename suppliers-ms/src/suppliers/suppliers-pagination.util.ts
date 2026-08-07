@@ -1,5 +1,9 @@
 export const DEFAULT_ORDERS_PAGE_LIMIT = 15;
 export const MAX_ORDERS_PAGE_LIMIT = 20;
+/** Temporary test default for preferential-price product list (not orders). */
+export const DEFAULT_CLIENT_PRICES_PAGE_LIMIT = 10;
+/** Temporary test default for preferential-price history modal. */
+export const DEFAULT_CLIENT_PRICE_HISTORY_PAGE_LIMIT = 3;
 
 export type OrdersPaginationMeta = {
   page: number;

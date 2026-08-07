@@ -154,13 +154,11 @@ export class AuthService {
 
     // Verifică dacă utilizatorul are 2FA activat
     if (user.is_2fa) {
-      this.logger.log(`Utilizatorul ${identifier} are 2FA activat. Se trimite OTP automat.`);
       
       try {
         // Trimite OTP-ul automat folosind serviciul injectat
         const result = await this.twoFactorAuthService.step1Login(identifier, pass);
         
-        this.logger.log(`OTP trimis cu succes pentru ${identifier}`);
         
         return {
           requires_2fa: true,
@@ -210,7 +208,6 @@ export class AuthService {
       // Revocă toate token-urile pentru utilizatorul respectiv
       await this.tokenService.revokeAllUserTokens(payload.sub);
       
-      this.logger.log(`Logout complet pentru utilizatorul ID ${payload.sub} - toate token-urile revocate`);
       
       return { 
         message: 'Logout realizat cu succes - toate sesiunile au fost închise' 
@@ -241,7 +238,6 @@ export class AuthService {
       }
       
       // Preia datele complete din microserviciul employees folosind id_employee direct
-      this.logger.log(`🔍 Refresh token payload:`, payload);
       // Folosim user.id_employee direct pentru a obține datele employee-ului
       const employeeData: any = await this.usersService.findEmployeeById(user.id_employee);
       
@@ -723,8 +719,19 @@ export class AuthService {
         );
       }
 
+      const emp = dto.employee;
       const employeePayload = {
-        ...dto.employee,
+        first_name: emp.first_name.trim(),
+        last_name: emp.last_name.trim(),
+        email: emp.email.trim(),
+        phone: emp.phone.trim(),
+        personal_number: emp.personal_number.trim(),
+        birth_date: emp.birth_date,
+        gender: emp.gender,
+        nationality: emp.nationality.trim(),
+        address: emp.address.trim(),
+        // hire_date / contract_type: nu fac parte din fluxul de înregistrare furnizor
+        // (coloanele DB sunt nullable; UI-ul de angajat le cere în continuare)
         work_location_default_id: locationId,
         is_active: true,
       };
@@ -733,7 +740,7 @@ export class AuthService {
       try {
         employeeResponse = await firstValueFrom(
           this.httpService.post(
-            `${this.employeesUrl()}/employees?location_id=${locationId}`,
+            `${this.employeesUrl()}/employees/internal/supplier-registration?location_id=${locationId}`,
             employeePayload,
             {
               headers: {

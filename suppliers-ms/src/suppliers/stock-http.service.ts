@@ -134,9 +134,6 @@ export class StockHttpService {
       recipe_preparation_id: dto.recipe_preparation_id,
     };
     try {
-      this.logger.log(
-        `📤 [StockHttpService] POST ${url} consume payload=${JSON.stringify(payload)}`,
-      );
       await firstValueFrom(
         this.httpService.post(url, payload, { headers: this.internalHeaders() }),
       );
@@ -386,6 +383,123 @@ export class StockHttpService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Cantități curente pentru product_ids la o locație.
+   * Preferă endpoint-ul batch; dacă lipsește (stock-ms vechi), fallback pe
+   * GET /stock/items?location_id=&product_id= (paralel, fără N+1 serial).
+   */
+  async getQuantitiesForProductsAtLocation(
+    locationId: number,
+    productIds: number[],
+  ): Promise<
+    Array<{ product_id: number; quantity: number; unit: string | null }>
+  > {
+    const uniqueIds = [
+      ...new Set(
+        productIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    if (!Number.isFinite(locationId) || locationId <= 0 || uniqueIds.length === 0) {
+      return [];
+    }
+
+    const params = new URLSearchParams({
+      product_ids: uniqueIds.join(','),
+    });
+    const batchUrl = `${this.stockServiceUrl}/stock/items/location/${locationId}/quantities?${params.toString()}`;
+    try {
+      this.logger.log(`📦 [StockHttpService] GET ${batchUrl}`);
+      const response = await firstValueFrom(
+        this.httpService.get(batchUrl, { headers: this.internalHeaders() }),
+      );
+      if (!Array.isArray(response.data)) {
+        return [];
+      }
+      return response.data.map((row: Record<string, unknown>) => ({
+        product_id: Number(row.product_id),
+        quantity: Number(row.quantity) || 0,
+        unit:
+          row.unit != null && String(row.unit).trim() !== ''
+            ? String(row.unit)
+            : null,
+      }));
+    } catch (error: any) {
+      const status = error?.response?.status;
+      if (status !== 404) {
+        this.logger.warn(
+          `⚠️ [StockHttpService] Batch quantities failed (location_id=${locationId}): status=${status ?? 'N/A'}; falling back to per-product items`,
+        );
+      } else {
+        this.logger.log(
+          `📦 [StockHttpService] Batch quantities unavailable (404); falling back to per-product items for location ${locationId}`,
+        );
+      }
+      return this.getQuantitiesForProductsAtLocationViaItems(
+        locationId,
+        uniqueIds,
+      );
+    }
+  }
+
+  private async getQuantitiesForProductsAtLocationViaItems(
+    locationId: number,
+    productIds: number[],
+  ): Promise<
+    Array<{ product_id: number; quantity: number; unit: string | null }>
+  > {
+    const results = await Promise.all(
+      productIds.map(async (productId) => {
+        const params = new URLSearchParams({
+          location_id: String(locationId),
+          product_id: String(productId),
+          page: '1',
+          limit: '9',
+        });
+        const url = `${this.stockServiceUrl}/stock/items?${params.toString()}`;
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(url, { headers: this.internalHeaders() }),
+          );
+          const body = response.data;
+          const rows: Array<Record<string, unknown>> = Array.isArray(body?.data)
+            ? body.data
+            : Array.isArray(body)
+              ? body
+              : [];
+          const row = rows.find(
+            (r) => Number(r.product_id) === productId,
+          );
+          if (!row) {
+            return null;
+          }
+          const product = row.product as
+            | { unit?: string | null }
+            | undefined;
+          return {
+            product_id: productId,
+            quantity: Number(row.quantity) || 0,
+            unit:
+              product?.unit != null && String(product.unit).trim() !== ''
+                ? String(product.unit)
+                : null,
+          };
+        } catch (error: any) {
+          this.logger.error(
+            `❌ [StockHttpService] Fallback items failed product_id=${productId} location_id=${locationId}: ${error?.message ?? error}`,
+          );
+          throw error;
+        }
+      }),
+    );
+
+    return results.filter(
+      (row): row is { product_id: number; quantity: number; unit: string | null } =>
+        row != null,
+    );
   }
 
   async listProductsByLocation(

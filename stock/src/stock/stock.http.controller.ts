@@ -1,5 +1,4 @@
-import {
-  Controller,
+import { Controller,
   Get,
   Post,
   Patch,
@@ -11,8 +10,7 @@ import {
   Request,
   BadRequestException,
   UsePipes,
-  ValidationPipe,
-} from "@nestjs/common";
+  ValidationPipe, Logger } from '@nestjs/common';
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
 import { StockService } from "./stock.service";
@@ -36,6 +34,8 @@ import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 
 @Controller("stock")
 export class StockHttpController {
+  private readonly logger = new Logger(StockHttpController.name);
+
   constructor(
     private readonly service: StockService,
     private readonly wasteExportService: WasteExportService,
@@ -187,6 +187,23 @@ export class StockHttpController {
   ) {
     return await this.service.getProductIdsAtLocation(Number(locationId));
   }
+
+  @Get("items/location/:locationId/quantities")
+  @Permissions("stock.read")
+  async getQuantitiesAtLocation(
+    @Param("locationId") locationId: string,
+    @Query("product_ids") productIdsRaw?: string,
+  ) {
+    const productIds = (productIdsRaw ?? "")
+      .split(",")
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    return await this.service.getQuantitiesForProductsAtLocation(
+      Number(locationId),
+      productIds,
+    );
+  }
+
   @Get("items/:id") @Permissions("stock.read") async getStock(
     @Param("id") id: string,
     @Request() req?: any,
@@ -242,9 +259,7 @@ export class StockHttpController {
   async checkAvailability(
     @Body() dto: { products: Array<{ product_id: number; quantity: number }> },
   ) {
-    console.log(
-      `📡 [StockHttpController] Checking availability for ${dto.products?.length || 0} products`,
-    );
+    this.logger.log(`📡 [StockHttpController] Checking availability for ${dto.products?.length || 0} products`,);
     return await this.service.checkStockAvailability(dto.products || []);
   }
 
@@ -266,9 +281,7 @@ export class StockHttpController {
       dto.location_id != null && Number.isFinite(Number(dto.location_id))
         ? Number(dto.location_id)
         : undefined;
-    console.log(
-      `📡 [StockHttpController] Received consume request: product_id=${dto.product_id}, quantity=${dto.quantity}, location_id=${locationId ?? 'null'}, target=${dto.target ?? 'null'}`,
-    );
+        this.logger.log(`📡 [StockHttpController] Received consume request: product_id=${dto.product_id}, quantity=${dto.quantity}, location_id=${locationId ?? 'null'}, target=${dto.target ?? 'null'}`,);
     const result = await this.service.consumeProduct(
       Number(dto.product_id),
       Number(dto.quantity),
@@ -277,9 +290,7 @@ export class StockHttpController {
       locationId,
       dto.recipe_preparation_id,
     );
-    console.log(
-      `📡 [StockHttpController] Completed consume request for product ${dto.product_id}`,
-    );
+    this.logger.log(`📡 [StockHttpController] Completed consume request for product ${dto.product_id}`,);
     return result;
   }
 
@@ -298,10 +309,8 @@ export class StockHttpController {
       recipe_preparation_id?: number;
     },
   ) {
-    console.log(
-      `📡 [StockHttpController] Received employee consume request:`,
-      dto,
-    );
+    this.logger.log(`📡 [StockHttpController] Received employee consume request:`,
+      dto,);
     const result = await this.service.consumeProduct(
       Number(dto.product_id),
       Number(dto.quantity),
@@ -310,9 +319,7 @@ export class StockHttpController {
       dto.location_id,
       dto.recipe_preparation_id,
     );
-    console.log(
-      `📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`,
-    );
+    this.logger.log(`📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`,);
     return result;
   }
 
@@ -326,9 +333,7 @@ export class StockHttpController {
       req?.user?.work_location_default_id;
     const dtoWithLocation =
       locationId != null ? { ...dto, location_id: locationId } : dto;
-    console.log(
-      `📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,
-    );
+      this.logger.log(`📡 [WasteRecord] POST /employee/waste - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,);
     const result = await this.service.createWasteRecord(dtoWithLocation);
 
     // Also consume the stock when creating waste record (only if product_id is provided)
@@ -364,9 +369,7 @@ export class StockHttpController {
       req?.user?.work_location_default_id;
     const dtoWithLocation =
       locationId != null ? { ...dto, location_id: locationId } : dto;
-    console.log(
-      `📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,
-    );
+      this.logger.log(`📡 [WasteRecord] POST /waste-records - product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}, location_id=${locationId ?? "n/a"}`,);
     try {
       const result = await this.service.createWasteRecord(dtoWithLocation);
       return result;
@@ -390,7 +393,13 @@ export class StockHttpController {
       req?.user?.work_location_default_id;
     const dtoWithLocation =
       locationId != null ? { ...dto, location_id: locationId } : dto;
-    const created = await this.service.createWasteRequest(dtoWithLocation, createdBy);
+    const permissions: string[] = Array.isArray(req?.user?.permissions)
+      ? req.user.permissions
+      : [];
+    const autoApprove = permissions.includes("stock.waste_approve");
+    const created = await this.service.createWasteRequest(dtoWithLocation, createdBy, {
+      autoApprove,
+    });
     // Fire-and-forget: cererea trebuie sa apara repede in giurom 2.0, dar crearea ei nu
     // are voie sa esueze daca App2 e indisponibil.
     void this.wasteExportService.pushRequestSafe(created.id);

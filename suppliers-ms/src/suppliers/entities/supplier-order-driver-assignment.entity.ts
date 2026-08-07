@@ -11,6 +11,8 @@ import { SupplierOrder } from "./supplier-order.entity";
 
 export enum SupplierOrderDriverAssignmentStatus {
   ASSIGNED = "assigned",
+  /** Șoferul a confirmat sosirea la client (GIU-10). Deblochează recepție/anulare client. */
+  ARRIVED = "arrived",
   DONE = "done",
 }
 

@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -170,12 +170,18 @@ export class StockService {
   ) {}
 
   // === WASTE REQUESTS ===
-  async createWasteRequest(dto: any, createdBy?: number): Promise<WasteRequest> {
+  async createWasteRequest(
+    dto: any,
+    createdBy?: number,
+    options?: { autoApprove?: boolean },
+  ): Promise<WasteRequest> {
     if (!dto.product_id && !dto.recipe_preparation_id) {
       throw new BadRequestException(
         'Either product_id or recipe_preparation_id must be provided'
       );
     }
+
+    const autoApprove = Boolean(options?.autoApprove);
 
     const entity = this.wasteRequestRepo.create({
       ...dto,
@@ -185,8 +191,40 @@ export class StockService {
 
     const result = await this.wasteRequestRepo.save(entity);
     const saved = Array.isArray(result) ? result[0] : result;
-    this.logger.log(`✅ [WasteRequest] Created ID=${saved.id} by ${createdBy || 'unknown'}`);
-    // Trimite notificare pentru cererea de aruncare
+    this.logger.log(
+      `✅ [WasteRequest] Created ID=${saved.id} by ${createdBy || 'unknown'}` +
+        (autoApprove ? ' (auto-approve pending)' : ''),
+    );
+
+    if (autoApprove) {
+      try {
+        // Reuse the exact approve path (single consume + waste_records + status).
+        await this.approveWasteRequest(saved.id, createdBy);
+      } catch (err) {
+        // Do not leave an orphan pending request after a failed auto-approve.
+        try {
+          await this.wasteRequestRepo.delete(saved.id);
+        } catch (cleanupErr) {
+          this.logger.warn(
+            `Failed to cleanup waste request ${saved.id} after auto-approve error: ${
+              (cleanupErr as Error)?.message || cleanupErr
+            }`,
+          );
+        }
+        throw err;
+      }
+
+      const approved = await this.wasteRequestRepo.findOne({
+        where: { id: saved.id },
+        relations: ['product'],
+      });
+      this.logger.log(
+        `✅ [WasteRequest] Auto-approved ID=${saved.id} by ${createdBy || 'unknown'}`,
+      );
+      return approved ?? Object.assign(saved, { status: 'approved' as const });
+    }
+
+    // Pending path only: notify approvers (skip for auto-approve to avoid noise).
     const workLocationId = dto.location_id ?? (dto as any).work_location_id;
     try {
       await firstValueFrom(
@@ -269,7 +307,9 @@ export class StockService {
       ...new Set(
         list
           .map((r) => r.created_by)
-          .filter((id): id is number => id != null),
+          .filter((id): id is number => id != null)
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
       ),
     ];
     const employeesMap = new Map<number, any>();
@@ -277,7 +317,7 @@ export class StockService {
     if (creatorIds.length > 0 && this.httpService) {
       let employeesServiceUrl =
         this.configService?.get<string>("EMPLOYEES_HTTP_URL") ||
-        "http://localhost:3012";
+        "http://localhost:3011";
       if (
         employeesServiceUrl.includes("bitap.ro") ||
         employeesServiceUrl.includes(
@@ -285,7 +325,7 @@ export class StockService {
         )
       ) {
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
-        const port = portMatch ? portMatch[1] : "3012";
+        const port = portMatch ? portMatch[1] : "3011";
         employeesServiceUrl = `http://localhost:${port}`;
       }
       const serviceSecret = process.env.SERVICE_SECRET || "";
@@ -302,27 +342,51 @@ export class StockService {
             params: { ids: idsParam },
           }),
         );
-        const employees = employeeResponse?.data || [];
+        // Axios body: array direct SAU { data: [...] }
+        const body = employeeResponse?.data;
+        const employees = Array.isArray(body)
+          ? body
+          : Array.isArray(body?.data)
+            ? body.data
+            : [];
         for (const emp of employees) {
-          if (emp && typeof emp.id === "number") employeesMap.set(emp.id, emp);
+          const empId = Number(emp?.id);
+          if (Number.isFinite(empId) && empId > 0) {
+            employeesMap.set(empId, emp);
+          }
+        }
+        if (employeesMap.size === 0 && creatorIds.length > 0) {
+          this.logger?.warn(
+            `Waste requests employee batch returned 0 matches for ids=[${idsParam}] from ${employeesServiceUrl}`,
+          );
         }
       } catch (err: any) {
         this.logger?.warn(
-          `Could not fetch employees batch for waste requests: ${err?.message}`,
+          `Could not fetch employees batch for waste requests from ${employeesServiceUrl}: ${err?.message}`,
         );
       }
     }
 
     const data = list.map((req) => {
-      const employee = employeesMap.get(req.created_by!);
-      const created_by_name = employee
+      const createdById =
+        req.created_by != null ? Number(req.created_by) : null;
+      const employee =
+        createdById != null ? employeesMap.get(createdById) : undefined;
+      const resolvedName = employee
         ? `${employee.first_name || ""} ${employee.last_name || ""}`.trim() ||
           employee.email ||
-          `Angajat #${req.created_by}`
-        : req.created_by
-          ? `Angajat #${req.created_by}`
-          : undefined;
-      return { ...req, created_by_name };
+          null
+        : null;
+      const fallbackName =
+        createdById != null ? `Angajat #${createdById}` : undefined;
+      // created_by = employees.id (JWT.sub). Numele pentru UI admin.
+      const requested_by_name = resolvedName || fallbackName;
+      return {
+        ...req,
+        created_by_name: requested_by_name,
+        requested_by_name,
+        employee_name: requested_by_name,
+      };
     });
 
     if (!usePagination) {
@@ -1643,6 +1707,52 @@ await this.assertNoNameOrSkuConflictAtLocation(
       .filter((id) => Number.isFinite(id) && id > 0);
   }
 
+  /**
+   * Cantități curente pentru un set de produse la o locație (un singur query).
+   * Produsele fără rând de stoc nu apar în rezultat (caller tratează ca 0).
+   */
+  async getQuantitiesForProductsAtLocation(
+    locationId: number,
+    productIds: number[],
+  ): Promise<
+    Array<{ product_id: number; quantity: number; unit: string | null }>
+  > {
+    const uniqueIds = [
+      ...new Set(
+        productIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    if (
+      !Number.isFinite(locationId) ||
+      locationId <= 0 ||
+      uniqueIds.length === 0
+    ) {
+      return [];
+    }
+
+    const rows = await this.stockRepo
+      .createQueryBuilder("stock")
+      .leftJoinAndSelect("stock.product", "product")
+      .where("stock.location_key = :locationKey", {
+        locationKey: this.locationKey(locationId),
+      })
+      .andWhere("stock.product_id IN (:...productIds)", {
+        productIds: uniqueIds,
+      })
+      .getMany();
+
+    return rows.map((row) => ({
+      product_id: Number(row.product_id),
+      quantity: Number(row.quantity) || 0,
+      unit:
+        row.product?.unit != null && String(row.product.unit).trim() !== ""
+          ? String(row.product.unit)
+          : null,
+    }));
+  }
+
   async findAllStocksPaginated(
     page = 1,
     limit = 9,
@@ -2463,13 +2573,13 @@ await this.assertNoNameOrSkuConflictAtLocation(
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleExpiringProductsCheck() {
-    console.log("Checking for expiring products...");
+    this.logger.log("Checking for expiring products...");
     await this.checkExpiringProducts();
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async handleLowStockCheck() {
-    console.log("Checking for low stock products...");
+    this.logger.log("Checking for low stock products...");
     await this.checkLowStockProducts();
   }
 
@@ -2492,9 +2602,7 @@ await this.assertNoNameOrSkuConflictAtLocation(
       product: product ?? undefined,
     });
     const savedWasteRecord = await this.wasteRecordRepo.save(wasteRecord);
-    console.log(
-      `✅ [WasteRecord] Created: ID=${savedWasteRecord.id}, product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}`
-    );
+    this.logger.log(`✅ [WasteRecord] Created: ID=${savedWasteRecord.id}, product_id=${dto.product_id || "null"}, recipe_preparation_id=${dto.recipe_preparation_id || "null"}, quantity=${dto.quantity}`);
 
     const entityName = dto.recipe_preparation_id
       ? `Preparatul (ID: ${dto.recipe_preparation_id})`
@@ -2673,16 +2781,16 @@ await this.assertNoNameOrSkuConflictAtLocation(
     if (employeeIds.length > 0 && this.httpService) {
       let employeesServiceUrl =
         this.configService?.get<string>("EMPLOYEES_HTTP_URL") ||
-        "http://localhost:3012";
+        "http://localhost:3011";
       // Dacă EMPLOYEES_HTTP_URL conține "bitap.ro" sau IP extern, folosim localhost pentru comunicare internă
       if (
         employeesServiceUrl.includes("bitap.ro") ||
         employeesServiceUrl.includes(process.env.PUBLIC_SERVER_IP || "89.46.6.45")
       ) {
         // Pentru comunicare internă, înlocuim URL-ul extern cu localhost
-        // Folosim portul 3012 (employees service) sau portul din URL dacă e specificat
+        // Folosim portul 3011 (employees service) sau portul din URL dacă e specificat
         const portMatch = employeesServiceUrl.match(/:(\d+)/);
-        const port = portMatch ? portMatch[1] : "3012";
+        const port = portMatch ? portMatch[1] : "3011";
         employeesServiceUrl = `http://localhost:${port}`;
         this.logger?.log(
           `🔧 [STOCK SERVICE] Converted external URL to internal: ${employeesServiceUrl}`
@@ -2706,10 +2814,16 @@ await this.assertNoNameOrSkuConflictAtLocation(
           })
         );
 
-        const employees = employeeResponse?.data || [];
+        const body = employeeResponse?.data;
+        const employees = Array.isArray(body)
+          ? body
+          : Array.isArray(body?.data)
+            ? body.data
+            : [];
         for (const employee of employees) {
-          if (employee && typeof employee.id === "number") {
-            employeesMap.set(employee.id, employee);
+          const empId = Number(employee?.id);
+          if (Number.isFinite(empId) && empId > 0) {
+            employeesMap.set(empId, employee);
           }
         }
       } catch (error: any) {
@@ -2933,13 +3047,13 @@ await this.assertNoNameOrSkuConflictAtLocation(
       const buffer = Buffer.from(base64Data, "base64");
 
       // ========== DEBUGGING: SALVARE IMAGINE ==========
-      console.log("\n🟢 ========== SALVARE IMAGINE ==========");
-      console.log("📂 Repo root:", repoRoot);
-      console.log("📂 Images dir:", imagesDir);
-      console.log("📂 Products dir:", productsDir);
-      console.log("💾 File path complet:", filePath);
-      console.log("📝 Nume fișier:", uniqueFileName);
-      console.log("🟢 ========================================\n");
+      this.logger.log("\n🟢 ========== SALVARE IMAGINE ==========");
+      this.logger.log("📂 Repo root:", repoRoot);
+      this.logger.log("📂 Images dir:", imagesDir);
+      this.logger.log("📂 Products dir:", productsDir);
+      this.logger.log("💾 File path complet:", filePath);
+      this.logger.log("📝 Nume fișier:", uniqueFileName);
+      this.logger.log("🟢 ========================================\n");
 
       fs.writeFileSync(filePath, buffer);
       this.logger.log(
@@ -2948,9 +3062,9 @@ await this.assertNoNameOrSkuConflictAtLocation(
 
       // Return the URL path with /api prefix for API Gateway static files endpoint
       const returnPath = `/api/images/products/${uniqueFileName}`;
-      console.log("\n🔵 ========== URL RETURNAT ==========");
-      console.log("🔗 Path returnat către frontend:", returnPath);
-      console.log("🔵 ====================================\n");
+      this.logger.log("\n🔵 ========== URL RETURNAT ==========");
+      this.logger.log("🔗 Path returnat către frontend:", returnPath);
+      this.logger.log("🔵 ====================================\n");
       this.logger.log(`🔗 [uploadProductImage] Returning path: ${returnPath}`);
       this.logger.log(
         `📁 [uploadProductImage] Physical file location: ${filePath}`

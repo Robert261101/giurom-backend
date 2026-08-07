@@ -40,6 +40,14 @@ export class SupplierProduct {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   price_per_unit: number;
 
+  /** Cantitatea pentru care se aplică price_per_unit (ex. 100). NULL = 1. */
+  @Column({ type: 'decimal', precision: 10, scale: 4, nullable: true })
+  price_base_quantity: number | null;
+
+  /** Unitatea bazei de preț (ex. gr). NULL = unit_of_measure. */
+  @Column({ type: 'varchar', length: 50, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  price_base_unit: string | null;
+
   @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, default: 0 })
   vat: number;
 
@@ -57,6 +65,16 @@ export class SupplierProduct {
 
   @Column({ type: 'varchar', length: 500, nullable: true })
   image_url: string;
+
+  /** Locație fizică în depozit (ex. Raft A3). Informativ — GIU-09. */
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci',
+  })
+  storage_location: string | null;
 
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
