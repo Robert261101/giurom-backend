@@ -23,6 +23,10 @@ interface EmployeeSyncItem {
   phone: string | null;
   hire_date: string | null;
   is_active: boolean;
+  /** Sumă puncte sarcini pe luna curentă (per locație), din veziv-tasks. */
+  month_points?: number | null;
+  /** Eficiență sarcini 0–100 pe luna curentă; null dacă tasks e indisponibil. */
+  kpi_efficiency?: number | null;
 }
 
 interface LocationMeta {
@@ -174,6 +178,20 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
 
     const distinctLocationIds = [...new Set(pairs.map((p) => p.locationId))];
     const metaByLocation = await this.resolveLocationMeta(distinctLocationIds);
+    const { startDate, endDate } = this.currentMonthRange();
+    const pointsByLocation = await this.fetchMonthPointsByLocation(
+      distinctLocationIds,
+      startDate,
+      endDate,
+    );
+    const distinctEmployeeIds = [
+      ...new Set(pairs.map((p) => Number(p.employee.id)).filter((id) => id > 0)),
+    ];
+    const efficiencyByEmployee = await this.fetchEfficiencyByEmployee(
+      distinctEmployeeIds,
+      startDate,
+      endDate,
+    );
 
     const items: EmployeeSyncItem[] = [];
     for (const { employee, locationId } of pairs) {
@@ -182,11 +200,14 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         // Fără company_id, App2 nu poate rezolva tenantul — linia n-ar avea unde ateriza.
         continue;
       }
+      const employeeId = Number(employee.id);
+      const locationPoints = pointsByLocation.get(locationId);
+      const monthPoints = locationPoints?.get(employeeId);
       items.push({
         company_id: meta.companyId,
         location_id: locationId,
         location_name: meta.locationName,
-        source_employee_id: Number(employee.id),
+        source_employee_id: employeeId,
         first_name: (employee.first_name || '').trim(),
         last_name: (employee.last_name || '').trim(),
         email: this.orNull(employee.email),
@@ -195,6 +216,8 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         // Un angajat cu dată de încetare în trecut e inactiv, chiar dacă flagul a rămas pe
         // true — altfel contul din App2 ar rămâne deschis după plecarea omului.
         is_active: this.isActive(employee),
+        month_points: monthPoints ?? 0,
+        kpi_efficiency: efficiencyByEmployee.get(employeeId) ?? null,
       });
     }
 
@@ -299,5 +322,129 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return map;
+  }
+
+  private currentMonthRange(): { startDate: string; endDate: string } {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const startDate = `${y}-${pad(m + 1)}-01`;
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    const endDate = `${y}-${pad(m + 1)}-${pad(lastDay)}`;
+    return { startDate, endDate };
+  }
+
+  private tasksBaseUrl(): string {
+    return (
+      this.configService.get<string>('TASKS_HTTP_URL') ||
+      this.configService.get<string>('TASKS_API_BASE') ||
+      process.env.TASKS_HTTP_URL ||
+      process.env.TASKS_API_BASE ||
+      'http://localhost:3008'
+    );
+  }
+
+  private internalHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'x-internal-service': 'employees',
+      'x-service-secret': process.env.SERVICE_SECRET || '',
+    };
+  }
+
+  /**
+   * Puncte pe angajat per locație (luna curentă). Fail-soft: locație eșuată → map gol.
+   * Env: TASKS_HTTP_URL (sau TASKS_API_BASE) către veziv-tasks, ex. http://localhost:3008
+   */
+  private async fetchMonthPointsByLocation(
+    locationIds: number[],
+    startDate: string,
+    endDate: string,
+  ): Promise<Map<number, Map<number, number>>> {
+    const result = new Map<number, Map<number, number>>();
+    const base = this.tasksBaseUrl();
+    const headers = this.internalHeaders();
+
+    await Promise.all(
+      locationIds.map(async (locationId) => {
+        const byEmployee = new Map<number, number>();
+        try {
+          const res: any = await firstValueFrom(
+            this.httpService.get(`${base}/executions/location-employee-points`, {
+              headers,
+              params: {
+                location_id: locationId,
+                startDate,
+                endDate,
+              },
+            }),
+          );
+          const rows = Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.data?.data)
+              ? res.data.data
+              : [];
+          for (const row of rows) {
+            const employeeId = Number(row.employee_id);
+            const points = Number(row.total_points ?? 0);
+            if (Number.isFinite(employeeId) && employeeId > 0) {
+              byEmployee.set(employeeId, Number.isFinite(points) ? points : 0);
+            }
+          }
+        } catch (err: any) {
+          this.logger.warn(
+            `⚠️ [EmployeesExport] Puncte locație ${locationId} indisponibile: ${err?.message}`,
+          );
+        }
+        result.set(locationId, byEmployee);
+      }),
+    );
+
+    return result;
+  }
+
+  /** Eficiență per angajat (luna curentă), cu concurență limitată. Fail-soft → lipsește din map. */
+  private async fetchEfficiencyByEmployee(
+    employeeIds: number[],
+    startDate: string,
+    endDate: string,
+  ): Promise<Map<number, number>> {
+    const result = new Map<number, number>();
+    if (employeeIds.length === 0) return result;
+
+    const base = this.tasksBaseUrl();
+    const headers = this.internalHeaders();
+    const concurrency = 8;
+    let index = 0;
+
+    const workers = Array.from({ length: Math.min(concurrency, employeeIds.length) }, async () => {
+      while (index < employeeIds.length) {
+        const employeeId = employeeIds[index++];
+        try {
+          const res: any = await firstValueFrom(
+            this.httpService.get(`${base}/assignments/stats/efficiency`, {
+              headers,
+              params: {
+                employee_id: employeeId,
+                startDate,
+                endDate,
+              },
+            }),
+          );
+          const pct = Number(res?.data?.percentage);
+          if (Number.isFinite(pct)) {
+            result.set(employeeId, Math.max(0, Math.min(100, pct)));
+          }
+        } catch (err: any) {
+          this.logger.warn(
+            `⚠️ [EmployeesExport] KPI angajat ${employeeId} indisponibil: ${err?.message}`,
+          );
+        }
+      }
+    });
+
+    await Promise.all(workers);
+    return result;
   }
 }
