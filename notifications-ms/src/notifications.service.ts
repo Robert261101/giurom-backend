@@ -789,33 +789,33 @@ export class NotificationsService {
 
   private async getUsersWithRoles(roleNames: string[]): Promise<Array<{id: number, email: string, roles: string[]}>> {
     try {
-      console.log(`🔍 [NOTIFICATIONS SERVICE] Fetching users with roles: ${roleNames.join(', ')}`);
+      this.logger.log(`🔍 [NOTIFICATIONS SERVICE] Fetching users with roles: ${roleNames.join(', ')}`);
       
       const apiGatewayUrl = process.env.API_GATEWAY_URL || 'http://localhost:3002';
-      console.log(`📡 [NOTIFICATIONS SERVICE] Using API Gateway URL: ${apiGatewayUrl}`);
+      this.logger.log(`📡 [NOTIFICATIONS SERVICE] Using API Gateway URL: ${apiGatewayUrl}`);
       
       // Get all roles (cu cache)
       let rolesData: any[];
       const now = Date.now();
       
       if (this.rolesCache && (now - this.rolesCache.timestamp) < this.CACHE_TTL) {
-        console.log(`💾 [NOTIFICATIONS SERVICE] Using cached roles data`);
+        this.logger.log(`💾 [NOTIFICATIONS SERVICE] Using cached roles data`);
         rolesData = this.rolesCache.data;
       } else {
-        console.log(`📥 [NOTIFICATIONS SERVICE] Fetching all roles from ${apiGatewayUrl}/users/roles`);
+        this.logger.log(`📥 [NOTIFICATIONS SERVICE] Fetching all roles from ${apiGatewayUrl}/users/roles`);
         const rolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/roles`);
         rolesData = Array.isArray(rolesResponse) ? rolesResponse : rolesResponse.data || [];
         this.rolesCache = { data: rolesData, timestamp: now };
-        console.log(`✅ [NOTIFICATIONS SERVICE] Roles response received and cached`);
+        this.logger.log(`✅ [NOTIFICATIONS SERVICE] Roles response received and cached`);
       }
       
       const targetRoles = rolesData.filter((role: any) => 
         roleNames.includes(role.name)
       );
-      console.log(`🎯 [NOTIFICATIONS SERVICE] Target roles found:`, JSON.stringify(targetRoles, null, 2));
+      this.logger.log(`🎯 [NOTIFICATIONS SERVICE] Target roles found:`, JSON.stringify(targetRoles, null, 2));
       
       if (targetRoles.length === 0) {
-        console.log(`⚠️ [NOTIFICATIONS SERVICE] No target roles found`);
+        this.logger.log(`⚠️ [NOTIFICATIONS SERVICE] No target roles found`);
         return [];
       }
       
@@ -823,14 +823,14 @@ export class NotificationsService {
       let userRolesData: any[];
       
       if (this.userRolesCache && (now - this.userRolesCache.timestamp) < this.CACHE_TTL) {
-        console.log(`💾 [NOTIFICATIONS SERVICE] Using cached user-roles data`);
+        this.logger.log(`💾 [NOTIFICATIONS SERVICE] Using cached user-roles data`);
         userRolesData = this.userRolesCache.data;
       } else {
-        console.log(`📥 [NOTIFICATIONS SERVICE] Fetching user roles from ${apiGatewayUrl}/users/user-roles`);
+        this.logger.log(`📥 [NOTIFICATIONS SERVICE] Fetching user roles from ${apiGatewayUrl}/users/user-roles`);
         const userRolesResponse = await this.httpRequestWithRetry<any>(`${apiGatewayUrl}/users/user-roles`);
         userRolesData = Array.isArray(userRolesResponse) ? userRolesResponse : userRolesResponse.data || [];
         this.userRolesCache = { data: userRolesData, timestamp: now };
-        console.log(`✅ [NOTIFICATIONS SERVICE] User roles response received and cached`);
+        this.logger.log(`✅ [NOTIFICATIONS SERVICE] User roles response received and cached`);
       }
       
       // Find user IDs that have the target roles
@@ -841,10 +841,10 @@ export class NotificationsService {
       
       // Get unique user IDs
       const uniqueUserIds = [...new Set(targetUserIds)];
-      console.log(`🔢 [NOTIFICATIONS SERVICE] Unique user IDs: ${uniqueUserIds.length}`);
+      this.logger.log(`🔢 [NOTIFICATIONS SERVICE] Unique user IDs: ${uniqueUserIds.length}`);
       
       if (uniqueUserIds.length === 0) {
-        console.log(`⚠️ [NOTIFICATIONS SERVICE] No users found with target roles`);
+        this.logger.log(`⚠️ [NOTIFICATIONS SERVICE] No users found with target roles`);
         return [];
       }
       
@@ -2108,7 +2108,7 @@ export class NotificationsService {
     priority: 'low' | 'medium' | 'high';
     target_url?: string; // Add target_url parameter
   }) {
-    // console.log(`📥 [NOTIFICATIONS SERVICE] Received company notification:`, JSON.stringify(event, null, 2));
+    // undefined;
     
     const workLocationId = event.metadata?.work_location_id ?? null;
     const managerAndAdminUsers =

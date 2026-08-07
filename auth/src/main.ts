@@ -3,10 +3,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ResponseInterceptor } from './common/response.interceptor';
 import { timingSafeEqual } from 'crypto';
+
+const logger = new Logger('Bootstrap');
 
 /**
  * Bypass-ul de rate limit pentru apeluri interne trebuie să valideze secretul,
@@ -123,6 +125,6 @@ async function bootstrap() {
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
-  console.log(`Auth2 Microservice rulează pe portul ${port}`);
+  logger.log(`Auth2 Microservice rulează pe portul ${port}`);
 }
 bootstrap();

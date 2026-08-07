@@ -7,7 +7,10 @@ export class CreateSupplierOrderDriverAssignmentDto {
   @IsNumber()
   driver_id: number;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Delivery day as ISO datetime. Clock time is ignored for route order; prefer YYYY-MM-DDT00:00:00.000Z.',
+  })
   @IsString()
   scheduled_at: string;
 

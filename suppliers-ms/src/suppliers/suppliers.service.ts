@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, Logger, Inject, NotImplementedException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, Logger, Inject, NotImplementedException } from '@nestjs/common';
 import { InjectRepository, InjectConnection } from '@nestjs/typeorm';
 import {
   Repository,
@@ -37,12 +37,23 @@ import { SupplierOrderCancelledItem } from './entities/supplier-order-cancelled-
 import { SupplierDocument, DocumentType } from './entities/supplier-document.entity';
 import { SupplierLocations } from './entities/supplier-locations.entity';
 import { SupplierProductClientMapping } from './entities/supplier-product-client-mapping.entity';
+import { SupplierProductClientPrice } from './entities/supplier-product-client-price.entity';
+import {
+  SupplierProductClientPriceHistory,
+  SupplierProductClientPriceHistoryAction,
+  SupplierProductClientPriceEditSource,
+} from './entities/supplier-product-client-price-history.entity';
+import { SupplierProductClientVisibility } from './entities/supplier-product-client-visibility.entity';
 import { buildSupplierProductImageFields } from './supplier-product-image.helper';
 import {
   computeLineSubtotal,
   compareQuantityToStock,
   normalizePriceBaseQuantity,
+  priceNetFromGross,
+  priceWithVatFromNet,
   resolvePriceBaseUnit,
+  resolveProductVatRate,
+  roundMoney,
 } from './units.util';
 import {
   buildSupplierProductUserContext,
@@ -76,6 +87,8 @@ import {
 } from './dto/create-supplier-order.dto';
 import { WarehouseReviewDto } from './dto/warehouse-review.dto';
 import { UpsertSupplierProductClientConfigDto } from './dto/upsert-supplier-product-client-config.dto';
+import { UpsertSupplierProductClientPriceDto } from './dto/upsert-supplier-product-client-price.dto';
+import { SetClientProductVisibilityDto } from './dto/set-client-product-visibility.dto';
 import { CreateSupplierOrderAssignmentDto } from './dto/create-supplier-order-assignment.dto';
 import { CreateSupplierOrderDriverAssignmentDto } from './dto/create-supplier-order-driver-assignment.dto';
 import { UpdateOrderDeliveryDateDto } from './dto/update-order-delivery-date.dto';
@@ -99,6 +112,8 @@ import {
   buildOrdersPaginatedResponse,
   normalizeOrdersPagination,
   PaginatedOrdersResponse,
+  DEFAULT_CLIENT_PRICES_PAGE_LIMIT,
+  DEFAULT_CLIENT_PRICE_HISTORY_PAGE_LIMIT,
 } from './suppliers-pagination.util';
 
 @Injectable()
@@ -158,6 +173,12 @@ export class SuppliersService {
     @InjectRepository(SupplierLocations) private readonly supplierLocationsRepo: Repository<SupplierLocations>,
     @InjectRepository(SupplierProductClientMapping)
     private readonly supplierProductClientMappingRepo: Repository<SupplierProductClientMapping>,
+    @InjectRepository(SupplierProductClientPrice)
+    private readonly supplierProductClientPriceRepo: Repository<SupplierProductClientPrice>,
+    @InjectRepository(SupplierProductClientPriceHistory)
+    private readonly supplierProductClientPriceHistoryRepo: Repository<SupplierProductClientPriceHistory>,
+    @InjectRepository(SupplierProductClientVisibility)
+    private readonly supplierProductClientVisibilityRepo: Repository<SupplierProductClientVisibility>,
     @InjectRepository(EmployeeSupplier) private readonly employeeSupplierRepo: Repository<EmployeeSupplier>,
     @InjectRepository(SupplierOrderAssignment)
     private readonly orderAssignmentRepo: Repository<SupplierOrderAssignment>,
@@ -1160,7 +1181,7 @@ export class SuppliersService {
 
       const scheduledAt = new Date(dto.scheduled_at);
       if (Number.isNaN(scheduledAt.getTime())) {
-        throw new BadRequestException('Data/ora programării nu este validă');
+        throw new BadRequestException('Data programării nu este validă');
       }
 
       const deliveryPriority = Number(dto.delivery_priority);
@@ -1168,7 +1189,11 @@ export class SuppliersService {
         throw new BadRequestException('Prioritatea de livrare trebuie să fie un număr întreg pozitiv');
       }
 
-      const deliveryDate = this.deriveDeliveryDateFromScheduledAt(scheduledAt);
+      // Calendar day for priority uniqueness / sort — not the clock time on scheduled_at.
+      const deliveryDate = this.deriveDeliveryDateFromScheduledAt(
+        scheduledAt,
+        dto.scheduled_at,
+      );
 
       const priorityConflict = await manager.findOne(SupplierOrderDriverAssignment, {
         where: {
@@ -1353,7 +1378,8 @@ export class SuppliersService {
         .createQueryBuilder('da')
         .innerJoinAndSelect('da.order', 'order')
         .leftJoinAndSelect('order.supplier', 'supplier')
-        .leftJoinAndSelect('order.items', 'items'),
+        .leftJoinAndSelect('order.items', 'items')
+        .leftJoinAndSelect('order.driverAssignments', 'driverAssignments'),
     )
       .andWhere('da.id IN (:...assignmentIds)', { assignmentIds })
       .getMany();
@@ -1376,7 +1402,14 @@ export class SuppliersService {
     return { rows, total };
   }
 
-  private deriveDeliveryDateFromScheduledAt(scheduledAt: Date): string {
+  private deriveDeliveryDateFromScheduledAt(
+    scheduledAt: Date,
+    rawScheduledAt?: string,
+  ): string {
+    const raw = String(rawScheduledAt ?? '').trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+      return raw.slice(0, 10);
+    }
     return scheduledAt.toISOString().slice(0, 10);
   }
 
@@ -1662,7 +1695,8 @@ export class SuppliersService {
         .createQueryBuilder('assignment')
         .innerJoinAndSelect('assignment.order', 'order')
         .leftJoinAndSelect('order.supplier', 'supplier')
-        .leftJoinAndSelect('order.items', 'items'),
+        .leftJoinAndSelect('order.items', 'items')
+        .leftJoinAndSelect('order.driverAssignments', 'driverAssignments'),
     )
       .andWhere('assignment.id IN (:...assignmentIds)', { assignmentIds })
       .getMany();
@@ -2039,14 +2073,20 @@ export class SuppliersService {
    * fără filtru pe `supplier_locations` (fără duplicate).
    * Parametrul locationId este ignorat (păstrat pentru compatibilitate API).
    */
-  async findForOrders(_locationId?: number): Promise<{ id: number; supplier_name: string }[]> {
+  async findForOrders(
+    _locationId?: number,
+  ): Promise<{ id: number; supplier_name: string; phone: string | null }[]> {
     const suppliers = await this.supplierRepo.find({
-      select: ['id', 'supplier_name'],
+      select: ['id', 'supplier_name', 'phone'],
       where: { is_active: true },
       order: { supplier_name: 'ASC' },
     });
 
-    return suppliers.map((s) => ({ id: s.id, supplier_name: s.supplier_name }));
+    return suppliers.map((s) => ({
+      id: s.id,
+      supplier_name: s.supplier_name,
+      phone: s.phone ?? null,
+    }));
   }
 
   /**
@@ -2967,6 +3007,7 @@ export class SuppliersService {
   async getSupplierStockAvailabilityForOrdering(
     supplierId: number,
     supplierProductIds?: number[],
+    userContext?: SupplierProductUserContext,
   ): Promise<{
     location_id: number;
     items: Array<{
@@ -2996,9 +3037,22 @@ export class SuppliersService {
     }
 
     const products = await this.supplierProductRepo.find({ where });
+    let visibleProducts = products;
+    if (
+      userContext &&
+      userContext.companyType !== 'furnizor' &&
+      userContext.companyId != null &&
+      userContext.companyId > 0
+    ) {
+      visibleProducts = await this.filterProductsByClientVisibility(
+        products,
+        Number(userContext.companyId),
+        supplierId,
+      );
+    }
     const stockProductIds = [
       ...new Set(
-        products
+        visibleProducts
           .map((p) => Number(p.product_id))
           .filter((id) => Number.isFinite(id) && id > 0),
       ),
@@ -3016,7 +3070,7 @@ export class SuppliersService {
 
     return {
       location_id: locationId,
-      items: products.map((sp) => {
+      items: visibleProducts.map((sp) => {
         const row = qtyByProductId.get(Number(sp.product_id));
         return {
           supplier_product_id: sp.id,
@@ -3123,6 +3177,788 @@ export class SuppliersService {
       );
     }
     return Number(companyId);
+  }
+
+  /** GIU-12: produse ascunse explicit de client; lipsă rând = vizibil. */
+  private async getHiddenSupplierProductIdsForClientCompany(
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<Set<number>> {
+    const rows = await this.supplierProductClientVisibilityRepo
+      .createQueryBuilder('visibility')
+      .innerJoin(
+        SupplierProduct,
+        'sp',
+        'sp.id = visibility.supplier_product_id',
+      )
+      .where('visibility.client_company_id = :clientCompanyId', {
+        clientCompanyId,
+      })
+      .andWhere('sp.supplier_id = :supplierId', { supplierId })
+      .andWhere('visibility.is_visible = :visible', { visible: false })
+      .select('visibility.supplier_product_id', 'supplier_product_id')
+      .getRawMany<{ supplier_product_id: number }>();
+
+    return new Set(
+      rows
+        .map((row) => Number(row.supplier_product_id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    );
+  }
+
+  private shouldApplyClientProductVisibilityFilter(
+    userContext: SupplierProductUserContext | undefined,
+    applyClientVisibility: boolean,
+  ): boolean {
+    if (!applyClientVisibility) {
+      return false;
+    }
+    if (!userContext || userContext.companyType === 'furnizor') {
+      return false;
+    }
+    return userContext.companyId != null && userContext.companyId > 0;
+  }
+
+  private async filterProductsByClientVisibility(
+    products: SupplierProduct[],
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<SupplierProduct[]> {
+    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+      clientCompanyId,
+      supplierId,
+    );
+    if (!hiddenIds.size) {
+      return products;
+    }
+    return products.filter((product) => !hiddenIds.has(Number(product.id)));
+  }
+
+  private async assertSupplierProductOrderableForClient(
+    clientCompanyId: number,
+    supplierId: number,
+    supplierProduct: SupplierProduct,
+  ): Promise<void> {
+    if (!supplierProduct.is_active) {
+      throw new BadRequestException(
+        `Produsul „${supplierProduct.product_name}” nu este activ`,
+      );
+    }
+    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+      clientCompanyId,
+      supplierId,
+    );
+    if (hiddenIds.has(Number(supplierProduct.id))) {
+      throw new BadRequestException(
+        `Produsul „${supplierProduct.product_name}” nu este disponibil pentru compania dumneavoastră`,
+      );
+    }
+  }
+
+  async getClientProductVisibilityForSupplier(
+    supplierId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<{ hidden_supplier_product_ids: number[] }> {
+    const clientCompanyId = this.resolveClientCompanyIdFromContext(userContext);
+    if (!userContext || !canManageSupplierProductClientMapping(userContext)) {
+      throw new ForbiddenException(
+        'Nu aveți permisiunea de a configura vizibilitatea produselor furnizor',
+      );
+    }
+    await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
+
+    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+      clientCompanyId,
+      supplierId,
+    );
+    return { hidden_supplier_product_ids: [...hiddenIds].sort((a, b) => a - b) };
+  }
+
+  async setClientProductVisibilityForSupplier(
+    supplierId: number,
+    dto: SetClientProductVisibilityDto,
+    userContext?: SupplierProductUserContext,
+  ): Promise<{ hidden_supplier_product_ids: number[] }> {
+    const clientCompanyId = this.resolveClientCompanyIdFromContext(userContext);
+    if (!userContext || !canManageSupplierProductClientMapping(userContext)) {
+      throw new ForbiddenException(
+        'Nu aveți permisiunea de a configura vizibilitatea produselor furnizor',
+      );
+    }
+    await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
+
+    const hiddenIds = [
+      ...new Set(
+        (dto.hidden_supplier_product_ids ?? [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+
+    if (hiddenIds.length > 0) {
+      const products = await this.supplierProductRepo.find({
+        where: { id: In(hiddenIds), supplier_id: supplierId },
+        select: ['id'],
+      });
+      const validIds = new Set(products.map((product) => Number(product.id)));
+      for (const id of hiddenIds) {
+        if (!validIds.has(id)) {
+          throw new BadRequestException(
+            `Produsul furnizor (id=${id}) nu aparține furnizorului selectat`,
+          );
+        }
+      }
+    }
+
+    await this.connection.transaction(async (manager) => {
+      const visibilityRepo = manager.getRepository(
+        SupplierProductClientVisibility,
+      );
+      const existingRows = await visibilityRepo
+        .createQueryBuilder('visibility')
+        .innerJoin(
+          SupplierProduct,
+          'sp',
+          'sp.id = visibility.supplier_product_id',
+        )
+        .where('visibility.client_company_id = :clientCompanyId', {
+          clientCompanyId,
+        })
+        .andWhere('sp.supplier_id = :supplierId', { supplierId })
+        .getMany();
+
+      if (existingRows.length > 0) {
+        await visibilityRepo.delete(existingRows.map((row) => row.id));
+      }
+
+      if (hiddenIds.length > 0) {
+        await visibilityRepo.save(
+          hiddenIds.map((supplierProductId) =>
+            visibilityRepo.create({
+              client_company_id: clientCompanyId,
+              supplier_product_id: supplierProductId,
+              is_visible: false,
+            }),
+          ),
+        );
+      }
+    });
+
+    return { hidden_supplier_product_ids: hiddenIds.sort((a, b) => a - b) };
+  }
+
+  private async getPreferredPriceMapForClientCompany(
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<Map<number, SupplierProductClientPrice>> {
+    const rows = await this.supplierProductClientPriceRepo
+      .createQueryBuilder('price')
+      .innerJoin(
+        SupplierProduct,
+        'sp',
+        'sp.id = price.supplier_product_id',
+      )
+      .where('price.client_company_id = :clientCompanyId', {
+        clientCompanyId,
+      })
+      .andWhere('sp.supplier_id = :supplierId', { supplierId })
+      .getMany();
+
+    return new Map(rows.map((row) => [Number(row.supplier_product_id), row]));
+  }
+
+  private async getPreferredPriceForClientCompany(
+    clientCompanyId: number,
+    supplierId: number,
+    supplierProductId: number,
+  ): Promise<SupplierProductClientPrice | null> {
+    const row = await this.supplierProductClientPriceRepo
+      .createQueryBuilder('price')
+      .innerJoin(
+        SupplierProduct,
+        'sp',
+        'sp.id = price.supplier_product_id',
+      )
+      .where('price.client_company_id = :clientCompanyId', {
+        clientCompanyId,
+      })
+      .andWhere('price.supplier_product_id = :supplierProductId', {
+        supplierProductId,
+      })
+      .andWhere('sp.supplier_id = :supplierId', { supplierId })
+      .getOne();
+    return row ?? null;
+  }
+
+  private async attachEffectivePricesForClientCompany<
+    T extends SupplierProduct & {
+      linked_product_photo: string | null;
+      resolved_image_url: string | null;
+    },
+  >(
+    products: T[],
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<T[]> {
+    const map = await this.getPreferredPriceMapForClientCompany(
+      clientCompanyId,
+      supplierId,
+    );
+    return products.map((product) => {
+      const priceRow = map.get(Number(product.id));
+      const preferredPrice = priceRow ? Number(priceRow.preferred_price) : null;
+      return Object.assign(product, {
+        preferred_price: preferredPrice,
+        effective_price:
+          preferredPrice != null
+            ? preferredPrice
+            : Number(product.price_per_unit) || 0,
+      }) as T;
+    });
+  }
+
+  private async resolveChangedByNameSnapshot(
+    changedByUserId: number | null | undefined,
+    preferredName?: string | null,
+  ): Promise<string | null> {
+    const preferred = String(preferredName ?? '').trim();
+    if (
+      preferred &&
+      !/^User #\d+$/i.test(preferred) &&
+      !/^Utilizator #\d+$/i.test(preferred)
+    ) {
+      return preferred;
+    }
+    if (changedByUserId == null || !Number.isFinite(Number(changedByUserId))) {
+      return null;
+    }
+    const userId = Number(changedByUserId);
+    const names = await this.resolveAuthUserDisplayNames([userId]);
+    const label = names.get(userId);
+    if (!label) {
+      return null;
+    }
+    // Avoid persisting the generic fallback as a "real" snapshot.
+    if (/^User #\d+$/i.test(label) || /^Utilizator #\d+$/i.test(label)) {
+      return null;
+    }
+    return label;
+  }
+
+  private async appendClientPriceHistory(
+    manager: EntityManager,
+    params: {
+      supplierCompanyId: number;
+      clientCompanyId: number;
+      supplierProductId: number;
+      oldPrice: number | null;
+      newPrice: number | null;
+      vatRate: number | null;
+      oldPriceWithVat: number | null;
+      newPriceWithVat: number | null;
+      editSource: SupplierProductClientPriceEditSource | null;
+      action: SupplierProductClientPriceHistoryAction;
+      changedByUserId: number | null;
+      changedByName?: string | null;
+      standardPriceSnapshot?: number | null;
+      standardPriceWithVatSnapshot?: number | null;
+    },
+  ): Promise<void> {
+    const repo = manager.getRepository(SupplierProductClientPriceHistory);
+    await repo.save(
+      repo.create({
+        supplier_company_id: params.supplierCompanyId,
+        client_company_id: params.clientCompanyId,
+        supplier_product_id: params.supplierProductId,
+        old_price: params.oldPrice,
+        new_price: params.newPrice,
+        vat_rate: params.vatRate,
+        old_price_with_vat: params.oldPriceWithVat,
+        new_price_with_vat: params.newPriceWithVat,
+        edit_source: params.editSource,
+        standard_price_snapshot: params.standardPriceSnapshot ?? null,
+        standard_price_with_vat_snapshot:
+          params.standardPriceWithVatSnapshot ?? null,
+        action: params.action,
+        changed_by_user_id: params.changedByUserId,
+        changed_by_name: params.changedByName ?? null,
+        // Explicit UTC instant so TypeORM (+00:00) persists UTC wall-clock, not MariaDB SYSTEM NOW().
+        changed_at: new Date(),
+      }),
+    );
+  }
+
+  private resolvePreferredPriceFromDto(
+    dto: UpsertSupplierProductClientPriceDto,
+    vatRate: number | null,
+  ): {
+    preferredPrice: number;
+    preferredPriceWithVat: number | null;
+    editSource: SupplierProductClientPriceEditSource;
+  } {
+    const editSource =
+      dto.edit_source === 'with_vat'
+        ? SupplierProductClientPriceEditSource.WITH_VAT
+        : SupplierProductClientPriceEditSource.WITHOUT_VAT;
+
+    if (editSource === SupplierProductClientPriceEditSource.WITH_VAT) {
+      const gross = Number(dto.preferred_price_with_vat);
+      if (!Number.isFinite(gross) || gross <= 0) {
+        throw new BadRequestException(
+          'preferred_price_with_vat trebuie să fie strict mai mare decât 0',
+        );
+      }
+      if (vatRate == null) {
+        throw new BadRequestException(
+          'Produsul nu are TVA configurat; nu se poate deriva prețul fără TVA',
+        );
+      }
+      const preferredPrice = priceNetFromGross(gross, vatRate);
+      if (preferredPrice <= 0) {
+        throw new BadRequestException(
+          'Prețul fără TVA rezultat trebuie să fie mai mare decât 0',
+        );
+      }
+      return {
+        preferredPrice,
+        preferredPriceWithVat: roundMoney(gross),
+        editSource,
+      };
+    }
+
+    const net = Number(dto.preferred_price);
+    if (!Number.isFinite(net) || net <= 0) {
+      throw new BadRequestException(
+        'preferred_price trebuie să fie strict mai mare decât 0',
+      );
+    }
+    const preferredPrice = roundMoney(net);
+    return {
+      preferredPrice,
+      preferredPriceWithVat:
+        vatRate != null ? priceWithVatFromNet(preferredPrice, vatRate) : null,
+      editSource,
+    };
+  }
+
+  async getMySupplierClientProductPrices(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+    pageRaw?: string | number,
+    limitRaw?: string | number,
+  ): Promise<
+    PaginatedOrdersResponse<{
+      supplier_product_id: number;
+      product_name: string;
+      standard_price: number;
+      standard_price_with_vat: number | null;
+      effective_price: number;
+      effective_price_with_vat: number | null;
+      preferred_price: number | null;
+      preferred_price_with_vat: number | null;
+      vat_rate: number | null;
+      price_base_quantity: number | null;
+      price_base_unit: string | null;
+      unit_of_measure: string;
+      is_active: boolean;
+      updated_at: Date | null;
+      updated_by_user_id: number | null;
+    }>
+  > {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    await this.findMySupplierClientByIdForFurnizorTenant(
+      companyId,
+      companyType,
+      clientCompanyId,
+    );
+
+    const { page: requestedPage, limit } = normalizeOrdersPagination(
+      pageRaw,
+      limitRaw ?? DEFAULT_CLIENT_PRICES_PAGE_LIMIT,
+    );
+    const total = await this.supplierProductRepo.count({
+      where: { supplier_id: summary.id },
+    });
+    const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+    const page = Math.min(requestedPage, totalPages);
+
+    const products = await this.supplierProductRepo.find({
+      where: { supplier_id: summary.id },
+      select: [
+        'id',
+        'product_name',
+        'price_per_unit',
+        'price_base_quantity',
+        'price_base_unit',
+        'unit_of_measure',
+        'is_active',
+        'vat',
+      ],
+      order: { product_name: 'ASC', id: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const pricesMap = await this.getPreferredPriceMapForClientCompany(
+      clientCompanyId,
+      summary.id,
+    );
+
+    const data = products.map((product) => {
+      const currentPrice = pricesMap.get(Number(product.id)) ?? null;
+      const standardPrice = Number(product.price_per_unit) || 0;
+      const vatRate = resolveProductVatRate(product.vat);
+      const preferredPrice =
+        currentPrice != null ? Number(currentPrice.preferred_price) || 0 : null;
+      const effectivePrice =
+        preferredPrice != null ? preferredPrice : standardPrice;
+      const priceBaseQuantity = normalizePriceBaseQuantity(
+        product.price_base_quantity,
+      );
+      return {
+        supplier_product_id: Number(product.id),
+        product_name: product.product_name,
+        standard_price: standardPrice,
+        standard_price_with_vat:
+          vatRate != null ? priceWithVatFromNet(standardPrice, vatRate) : null,
+        effective_price: effectivePrice,
+        effective_price_with_vat:
+          vatRate != null ? priceWithVatFromNet(effectivePrice, vatRate) : null,
+        preferred_price: preferredPrice,
+        preferred_price_with_vat:
+          preferredPrice != null && vatRate != null
+            ? priceWithVatFromNet(preferredPrice, vatRate)
+            : null,
+        vat_rate: vatRate,
+        price_base_quantity: priceBaseQuantity,
+        price_base_unit:
+          priceBaseQuantity != null
+            ? resolvePriceBaseUnit(
+                product.price_base_unit,
+                product.unit_of_measure,
+              )
+            : null,
+        unit_of_measure: product.unit_of_measure,
+        is_active: Boolean(product.is_active),
+        updated_at: currentPrice?.updated_at ?? null,
+        updated_by_user_id: currentPrice?.updated_by_user_id ?? null,
+      };
+    });
+
+    return buildOrdersPaginatedResponse(data, page, limit, total);
+  }
+
+  async upsertMySupplierClientProductPrice(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+    supplierProductId: number,
+    dto: UpsertSupplierProductClientPriceDto,
+    actorUserId?: number | null,
+    actorDisplayName?: string | null,
+  ): Promise<SupplierProductClientPrice> {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    const supplier = await this.findOne(summary.id, undefined);
+    await this.findMySupplierClientByIdForFurnizorTenant(
+      companyId,
+      companyType,
+      clientCompanyId,
+    );
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: supplierProductId, supplier_id: summary.id },
+    });
+    if (!supplierProduct) {
+      throw new NotFoundException(
+        'Produsul nu aparține furnizorului autentificat',
+      );
+    }
+
+    const vatRate = resolveProductVatRate(supplierProduct.vat);
+    const { preferredPrice, preferredPriceWithVat, editSource } =
+      this.resolvePreferredPriceFromDto(dto, vatRate);
+    const standardPrice = Number(supplierProduct.price_per_unit) || 0;
+    const standardPriceWithVat =
+      vatRate != null ? priceWithVatFromNet(standardPrice, vatRate) : null;
+    const changedByName = await this.resolveChangedByNameSnapshot(
+      actorUserId ?? null,
+      actorDisplayName ?? null,
+    );
+
+    return this.connection.transaction(async (manager) => {
+      const repo = manager.getRepository(SupplierProductClientPrice);
+      const existing = await repo.findOne({
+        where: {
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+        },
+      });
+      const action = existing
+        ? SupplierProductClientPriceHistoryAction.UPDATED
+        : SupplierProductClientPriceHistoryAction.CREATED;
+      const row =
+        existing ??
+        repo.create({
+          supplier_company_id: Number(supplier.owner_company_id),
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+          updated_by_user_id: actorUserId ?? null,
+        });
+      const oldPrice = existing ? Number(existing.preferred_price) || 0 : null;
+      const oldPriceWithVat =
+        oldPrice != null && vatRate != null
+          ? priceWithVatFromNet(oldPrice, vatRate)
+          : null;
+      row.preferred_price = preferredPrice;
+      row.updated_by_user_id = actorUserId ?? null;
+      const saved = await repo.save(row);
+      await this.appendClientPriceHistory(manager, {
+        supplierCompanyId: Number(supplier.owner_company_id),
+        clientCompanyId,
+        supplierProductId,
+        oldPrice,
+        newPrice: preferredPrice,
+        vatRate,
+        oldPriceWithVat,
+        newPriceWithVat: preferredPriceWithVat,
+        editSource,
+        action,
+        changedByUserId: actorUserId ?? null,
+        changedByName,
+        standardPriceSnapshot: standardPrice,
+        standardPriceWithVatSnapshot: standardPriceWithVat,
+      });
+      return saved;
+    });
+  }
+
+  async removeMySupplierClientProductPrice(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+    supplierProductId: number,
+    actorUserId?: number | null,
+    actorDisplayName?: string | null,
+  ): Promise<{ success: true }> {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    const supplier = await this.findOne(summary.id, undefined);
+    await this.findMySupplierClientByIdForFurnizorTenant(
+      companyId,
+      companyType,
+      clientCompanyId,
+    );
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: supplierProductId, supplier_id: summary.id },
+      select: ['id', 'vat', 'price_per_unit'],
+    });
+    if (!supplierProduct) {
+      throw new NotFoundException(
+        'Produsul nu aparține furnizorului autentificat',
+      );
+    }
+
+    const vatRate = resolveProductVatRate(supplierProduct.vat);
+    const standardPrice = Number(supplierProduct.price_per_unit) || 0;
+    const standardPriceWithVat =
+      vatRate != null ? priceWithVatFromNet(standardPrice, vatRate) : null;
+    const changedByName = await this.resolveChangedByNameSnapshot(
+      actorUserId ?? null,
+      actorDisplayName ?? null,
+    );
+
+    await this.connection.transaction(async (manager) => {
+      const repo = manager.getRepository(SupplierProductClientPrice);
+      const existing = await repo.findOne({
+        where: {
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+        },
+      });
+      if (!existing) {
+        return;
+      }
+      const oldPriceRaw = existing.preferred_price;
+      const oldPriceNum =
+        oldPriceRaw == null ? null : Number(oldPriceRaw);
+      const oldPriceSafe =
+        oldPriceNum != null && Number.isFinite(oldPriceNum) ? oldPriceNum : null;
+      await repo.delete(existing.id);
+      await this.appendClientPriceHistory(manager, {
+        supplierCompanyId: Number(supplier.owner_company_id),
+        clientCompanyId,
+        supplierProductId,
+        oldPrice: oldPriceSafe,
+        newPrice: null,
+        vatRate,
+        oldPriceWithVat:
+          oldPriceSafe != null && vatRate != null
+            ? priceWithVatFromNet(oldPriceSafe, vatRate)
+            : null,
+        newPriceWithVat: null,
+        editSource: SupplierProductClientPriceEditSource.WITHOUT_VAT,
+        action: SupplierProductClientPriceHistoryAction.REMOVED,
+        changedByUserId: actorUserId ?? null,
+        changedByName,
+        standardPriceSnapshot: standardPrice,
+        standardPriceWithVatSnapshot: standardPriceWithVat,
+      });
+    });
+
+    return { success: true };
+  }
+
+  async getMySupplierClientProductPriceHistory(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+    supplierProductId?: number,
+    pageRaw?: string | number,
+    limitRaw?: string | number,
+  ): Promise<
+    PaginatedOrdersResponse<
+      SupplierProductClientPriceHistory & {
+        product_name: string | null;
+        changed_by_label: string | null;
+      }
+    >
+  > {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    const supplier = await this.findOne(summary.id, undefined);
+    await this.findMySupplierClientByIdForFurnizorTenant(
+      companyId,
+      companyType,
+      clientCompanyId,
+    );
+
+    const qb = this.supplierProductClientPriceHistoryRepo
+      .createQueryBuilder('history')
+      .innerJoin(
+        SupplierProduct,
+        'sp',
+        'sp.id = history.supplier_product_id',
+      )
+      .where('history.client_company_id = :clientCompanyId', {
+        clientCompanyId,
+      })
+      .andWhere('history.supplier_company_id = :supplierCompanyId', {
+        supplierCompanyId: Number(supplier.owner_company_id),
+      })
+      .andWhere('sp.supplier_id = :supplierId', { supplierId: summary.id });
+
+    if (
+      supplierProductId != null &&
+      Number.isFinite(Number(supplierProductId)) &&
+      Number(supplierProductId) > 0
+    ) {
+      qb.andWhere('history.supplier_product_id = :supplierProductId', {
+        supplierProductId: Number(supplierProductId),
+      });
+    }
+
+    const { page: requestedPage, limit } = normalizeOrdersPagination(
+      pageRaw,
+      limitRaw ?? DEFAULT_CLIENT_PRICE_HISTORY_PAGE_LIMIT,
+    );
+    const total = await qb.clone().getCount();
+    const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+    const page = Math.min(requestedPage, totalPages);
+
+    const rows = await qb
+      .select([
+        'history.id AS id',
+        'history.supplier_company_id AS supplier_company_id',
+        'history.client_company_id AS client_company_id',
+        'history.supplier_product_id AS supplier_product_id',
+        'history.old_price AS old_price',
+        'history.new_price AS new_price',
+        'history.vat_rate AS vat_rate',
+        'history.old_price_with_vat AS old_price_with_vat',
+        'history.new_price_with_vat AS new_price_with_vat',
+        'history.edit_source AS edit_source',
+        'history.standard_price_snapshot AS standard_price_snapshot',
+        'history.standard_price_with_vat_snapshot AS standard_price_with_vat_snapshot',
+        'history.action AS action',
+        'history.changed_by_user_id AS changed_by_user_id',
+        'history.changed_by_name AS changed_by_name',
+        'history.changed_at AS changed_at',
+        'sp.product_name AS product_name',
+      ])
+      .orderBy('history.changed_at', 'DESC')
+      .addOrderBy('history.id', 'DESC')
+      // getRawMany() ignores skip/take in TypeORM — must use offset/limit.
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany<
+        SupplierProductClientPriceHistory & {
+          product_name: string | null;
+        }
+      >();
+
+    const missingNameUserIds = rows
+      .filter((row) => {
+        const snapshot = String(
+          (row as { changed_by_name?: string | null }).changed_by_name ?? '',
+        ).trim();
+        return (
+          !snapshot &&
+          Number.isFinite(Number((row as { changed_by_user_id?: number }).changed_by_user_id)) &&
+          Number((row as { changed_by_user_id?: number }).changed_by_user_id) > 0
+        );
+      })
+      .map((row) =>
+        Number((row as { changed_by_user_id?: number }).changed_by_user_id),
+      );
+    const labels = await this.resolveAuthUserDisplayNames(missingNameUserIds);
+
+    const data = rows.map((row) => {
+      const changedAtRaw = (row as { changed_at?: Date | string }).changed_at;
+      const changedAtIso =
+        changedAtRaw instanceof Date
+          ? changedAtRaw.toISOString()
+          : changedAtRaw != null
+            ? new Date(String(changedAtRaw).replace(' ', 'T') + 'Z').toISOString()
+            : null;
+      const userId = Number(
+        (row as { changed_by_user_id?: number }).changed_by_user_id,
+      );
+      const snapshotName = String(
+        (row as { changed_by_name?: string | null }).changed_by_name ?? '',
+      ).trim();
+      const liveLabel =
+        Number.isFinite(userId) && userId > 0 ? labels.get(userId) : undefined;
+      const changedByLabel =
+        snapshotName ||
+        (liveLabel &&
+        !/^User #\d+$/i.test(liveLabel) &&
+        !/^Utilizator #\d+$/i.test(liveLabel)
+          ? liveLabel
+          : null) ||
+        (Number.isFinite(userId) && userId > 0
+          ? `Utilizator #${userId}`
+          : null);
+      return {
+        ...row,
+        // Always emit UTC ISO so frontend formats once in local timezone.
+        changed_at: (changedAtIso
+          ? new Date(changedAtIso)
+          : row.changed_at) as Date,
+        changed_by_label: changedByLabel,
+      };
+    });
+
+    return buildOrdersPaginatedResponse(data, page, limit, total);
   }
 
   private validateOptionalGrossNetQuantities(
@@ -3762,6 +4598,7 @@ export class SuppliersService {
     userContext?: SupplierProductUserContext,
     locationId?: number,
     requesterRoles?: string[] | null,
+    applyClientVisibility = false,
   ): Promise<Array<SupplierProduct & {
     linked_product_photo: string | null;
     resolved_image_url: string | null;
@@ -3806,6 +4643,20 @@ export class SuppliersService {
       );
     }
 
+    if (
+      this.shouldApplyClientProductVisibilityFilter(
+        userContext,
+        applyClientVisibility,
+      ) &&
+      userContext?.companyId != null
+    ) {
+      filteredProducts = await this.filterProductsByClientVisibility(
+        filteredProducts,
+        Number(userContext.companyId),
+        supplierId,
+      );
+    }
+
     const productIds = [
       ...new Set(
         filteredProducts
@@ -3821,7 +4672,7 @@ export class SuppliersService {
       requesterRoles,
     );
 
-    return filteredProducts.map((sp) => {
+    let rows = filteredProducts.map((sp) => {
       const linkedPhoto = linkedPhotoMap.get(Number(sp.product_id)) ?? null;
       const imageFields = buildSupplierProductImageFields(
         sp.image_url,
@@ -3836,6 +4687,18 @@ export class SuppliersService {
       }
       return row;
     });
+    if (
+      userContext?.companyType !== 'furnizor' &&
+      userContext?.companyId != null &&
+      userContext.companyId > 0
+    ) {
+      rows = await this.attachEffectivePricesForClientCompany(
+        rows,
+        Number(userContext.companyId),
+        supplierId,
+      );
+    }
+    return rows;
   }
 
   /**
@@ -4014,9 +4877,39 @@ export class SuppliersService {
         itemDto,
       );
 
+      const orderClientCompanyId =
+        dto.company_id != null &&
+        Number.isFinite(Number(dto.company_id)) &&
+        Number(dto.company_id) > 0
+          ? Number(dto.company_id)
+          : user
+            ? buildSupplierProductUserContext(user).companyId
+            : null;
+      if (
+        orderClientCompanyId != null &&
+        Number.isFinite(orderClientCompanyId) &&
+        orderClientCompanyId > 0
+      ) {
+        await this.assertSupplierProductOrderableForClient(
+          orderClientCompanyId,
+          dto.supplier_id,
+          supplierProduct,
+        );
+      }
+
+      const preferredPriceRow =
+        orderClientCompanyId != null &&
+        Number.isFinite(orderClientCompanyId) &&
+        orderClientCompanyId > 0
+          ? await this.getPreferredPriceForClientCompany(
+              orderClientCompanyId,
+              dto.supplier_id,
+              supplierProduct.id,
+            )
+          : null;
       const pricePerUnit =
-        Number(itemDto.price_per_unit) > 0
-          ? Number(itemDto.price_per_unit)
+        preferredPriceRow != null
+          ? Number(preferredPriceRow.preferred_price) || 0
           : Number(supplierProduct.price_per_unit) || 0;
       const priceBaseQuantity = normalizePriceBaseQuantity(
         supplierProduct.price_base_quantity,
@@ -6117,9 +7010,12 @@ export class SuppliersService {
   }
 
   /**
-   * Rezolvă user_id (auth) → nume afișat (first + last din employees).
-   * 1) HTTP /employees/by-user/:userId (sursă de adevăr)
-   * 2) Fallback cross-DB: AUTH_DB.users.id_employee → EMPLOYEES_DB.employees
+   * Rezolvă actor id (JWT `sub` = employees.id în acest sistem, uneori users.id)
+   * → nume afișat (first + last din employees).
+   * 1) HTTP /employees/by-user/:userId (când id = auth.users.id)
+   * 2) HTTP /employees/:id/name (când id = employees.id / JWT sub)
+   * 3) Fallback cross-DB: users.id → id_employee → employees
+   * 4) Fallback cross-DB: tratează id-ul direct ca employees.id
    */
   private async resolveAuthUserDisplayNames(
     userIds: number[],
@@ -6139,15 +7035,15 @@ export class SuppliersService {
     const missingAfterHttp: number[] = [];
 
     await Promise.all(
-      uniqueIds.map(async (userId) => {
+      uniqueIds.map(async (actorId) => {
         try {
-          const resp: any = await firstValueFrom(
+          const byUserResp: any = await firstValueFrom(
             this.httpService.get(
-              `${employeesServiceUrl}/employees/by-user/${userId}`,
+              `${employeesServiceUrl}/employees/by-user/${actorId}`,
               { headers, timeout: 4000 },
             ),
           );
-          const data = resp?.data?.data || resp?.data || resp;
+          const data = byUserResp?.data?.data || byUserResp?.data || byUserResp;
           const firstName = data?.first_name || data?.firstName || '';
           const lastName = data?.last_name || data?.lastName || '';
           const fullName =
@@ -6157,13 +7053,33 @@ export class SuppliersService {
             data?.name ||
             '';
           if (fullName) {
-            usersMap.set(userId, String(fullName).trim());
+            usersMap.set(actorId, String(fullName).trim());
+            return;
+          }
+        } catch {
+          /* try employee-id path below */
+        }
+
+        try {
+          const byEmpResp: any = await firstValueFrom(
+            this.httpService.get(
+              `${employeesServiceUrl}/employees/${actorId}/name`,
+              { headers, timeout: 4000 },
+            ),
+          );
+          const data = byEmpResp?.data?.data || byEmpResp?.data || byEmpResp;
+          const firstName = data?.first_name || data?.firstName || '';
+          const lastName = data?.last_name || data?.lastName || '';
+          const fullName =
+            data?.full_name || `${firstName} ${lastName}`.trim() || '';
+          if (fullName) {
+            usersMap.set(actorId, String(fullName).trim());
             return;
           }
         } catch {
           /* fallback SQL mai jos */
         }
-        missingAfterHttp.push(userId);
+        missingAfterHttp.push(actorId);
       }),
     );
 
@@ -6175,20 +7091,31 @@ export class SuppliersService {
     const employeesDbName =
       process.env.EMPLOYEES_DB_NAME || 'giurombitap_employees';
 
-    for (const userId of missingAfterHttp) {
+    for (const actorId of missingAfterHttp) {
       try {
-        const userResult = await this.connection.query(
+        let employeeId: number | null = null;
+
+        const userById = await this.connection.query(
           `SELECT id_employee FROM ${authDbName}.users WHERE id = ?`,
-          [userId],
+          [actorId],
         );
-        if (
-          !userResult?.length ||
-          userResult[0].id_employee == null
-        ) {
-          usersMap.set(userId, `User #${userId}`);
-          continue;
+        if (userById?.length && userById[0].id_employee != null) {
+          employeeId = Number(userById[0].id_employee);
         }
-        const employeeId = Number(userResult[0].id_employee);
+
+        // JWT `sub` is employees.id in this codebase — resolve directly.
+        if (employeeId == null || !Number.isFinite(employeeId)) {
+          const userByEmployee = await this.connection.query(
+            `SELECT id_employee FROM ${authDbName}.users WHERE id_employee = ? LIMIT 1`,
+            [actorId],
+          );
+          if (userByEmployee?.length && userByEmployee[0].id_employee != null) {
+            employeeId = Number(userByEmployee[0].id_employee);
+          } else {
+            employeeId = actorId;
+          }
+        }
+
         const employeeResult = await this.connection.query(
           `SELECT first_name, last_name FROM ${employeesDbName}.employees WHERE id = ?`,
           [employeeId],
@@ -6197,18 +7124,19 @@ export class SuppliersService {
           const firstName = employeeResult[0].first_name || null;
           const lastName = employeeResult[0].last_name || null;
           const fullName =
-            [firstName, lastName].filter(Boolean).join(' ').trim() ||
-            `User #${userId}`;
-          usersMap.set(userId, fullName);
-        } else {
-          usersMap.set(userId, `User #${userId}`);
+            [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+          if (fullName) {
+            usersMap.set(actorId, fullName);
+            continue;
+          }
         }
+        usersMap.set(actorId, `User #${actorId}`);
       } catch (error: any) {
         this.logger.error(
-          `❌ [SUPPLIERS SERVICE] Error resolving display name for user ${userId}:`,
+          `❌ [SUPPLIERS SERVICE] Error resolving display name for actor ${actorId}:`,
           error?.message || error,
         );
-        usersMap.set(userId, `User #${userId}`);
+        usersMap.set(actorId, `User #${actorId}`);
       }
     }
 

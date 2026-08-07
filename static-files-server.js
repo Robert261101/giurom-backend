@@ -52,7 +52,6 @@ app.post('/upload/comenzi', (req, res) => {
     fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
 
     const fileUrl = `${PUBLIC_BASE_URL}/images/comenzi/${uniqueFileName}`;
-    console.log(`📄 PDF uploaded: ${fileUrl}`);
     return res.json({ url: fileUrl, fileName: uniqueFileName });
   } catch (err) {
     console.error('Upload error:', err);
@@ -62,13 +61,11 @@ app.post('/upload/comenzi', (req, res) => {
 
 // Log all requests
 app.use((req, res, next) => {
-  console.log(`📂 ${req.method} ${req.url}`);
   next();
 });
 
 app.listen(PORT, () => {
-  console.log(`📁 Static files server running on http://localhost:${PORT}`);
-  console.log(`📷 Serving images from: ${imagesDir}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`📤 PDF upload: POST http://localhost:${PORT}/upload/comenzi`);
+  console.info(`📁 Static files server running on http://localhost:${PORT}`);
+  console.info(`📊 Health check: http://localhost:${PORT}/health`);
+  console.info(`📤 PDF upload: POST http://localhost:${PORT}/upload/comenzi`);
 });

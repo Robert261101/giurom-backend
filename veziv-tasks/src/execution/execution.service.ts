@@ -1,10 +1,8 @@
-﻿import {
-  Injectable,
+﻿import { Injectable,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
-  Inject,
-} from '@nestjs/common';
+  Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -38,6 +36,8 @@ import { normalizeWorkDate } from './daily-points.util';
 
 @Injectable()
 export class ExecutionService {
+  private readonly logger = new Logger(ExecutionService.name);
+
   private static readonly shiftsByLocationCache = new Map<
     number,
     { shifts: any[]; timestamp: number }
@@ -199,9 +199,7 @@ export class ExecutionService {
     const savedExecution = await this.executionRepository.save(execution);
 
     // Creează answers dacă sunt specificate
-    console.log(
-      `[ExecutionService.create] Creating execution ${savedExecution.id} with ${answers?.length || 0} answers`,
-    );
+    this.logger.log(`[ExecutionService.create] Creating execution ${savedExecution.id} with ${answers?.length || 0} answers`,);
     if (answers && answers.length > 0) {
       // Un singur query batch pentru toate elementele (în loc de câte un findOne per răspuns).
       const elementIds = [...new Set(answers.map((a) => a.task_element_id))];
@@ -278,13 +276,9 @@ export class ExecutionService {
 
       // Un singur INSERT batch pentru toate răspunsurile, în loc de câte unul per răspuns.
       await this.answerRepository.save(answerEntities);
-      console.log(
-        `[ExecutionService.create] Saved ${answers.length} answers for execution ${savedExecution.id}`,
-      );
+      this.logger.log(`[ExecutionService.create] Saved ${answers.length} answers for execution ${savedExecution.id}`,);
     } else {
-      console.log(
-        `[ExecutionService.create] No answers to save for execution ${savedExecution.id}`,
-      );
+      this.logger.log(`[ExecutionService.create] No answers to save for execution ${savedExecution.id}`,);
     }
 
     // Returnează execuția cu relațiile
@@ -411,9 +405,7 @@ export class ExecutionService {
       query.andWhere('execution.task_assignment_id = :assignmentId', {
         assignmentId,
       });
-      console.log(
-        `🔍 [execution.service] Filtering by assignment_id: ${assignmentId}`,
-      );
+      this.logger.log(`🔍 [execution.service] Filtering by assignment_id: ${assignmentId}`,);
     }
 
     // Aplică filtrul după dată dacă este furnizat
@@ -423,7 +415,7 @@ export class ExecutionService {
       // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
       const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
       const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-      console.log('📅 [execution.service] Date filter:', {
+      this.logger.log('📅 [execution.service] Date filter:', {
         startDate: sdStr,
         endDate: edStr,
         startDateObj: startDate.toISOString(),
@@ -476,12 +468,10 @@ export class ExecutionService {
         const thirtyDaysAgo = new Date(today);
         thirtyDaysAgo.setDate(today.getDate() - 30);
         const sdStr = `${thirtyDaysAgo.getFullYear()}-${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(thirtyDaysAgo.getDate()).padStart(2, '0')}`;
-        console.log(
-          '📅 [execution.service] No date filter provided, using default: last 30 days',
+        this.logger.log('📅 [execution.service] No date filter provided, using default: last 30 days',
           {
             startDate: sdStr,
-          },
-        );
+          },);
         // IMPORTANT: Include și sarcinile recurente părinte (sabloane) indiferent de intervalul de date
         query.andWhere(
           `(execution.completed_at IS NOT NULL AND DATE(execution.completed_at) >= :sdStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NOT NULL AND DATE(task_assignment.scheduled_datetime) >= :sdStr) OR (execution.completed_at IS NULL AND task_assignment.scheduled_datetime IS NULL AND DATE(task_assignment.assigned_at) >= :sdStr) OR (JSON_UNQUOTE(JSON_EXTRACT(task_assignment.recurrence_settings, '$.enabled')) = 'true' AND task_assignment.parent_recurrence_id IS NULL)`,
@@ -503,26 +493,18 @@ export class ExecutionService {
     // Extrage employee_id din user - poate fi în sub, employeeId sau employee_id
     const userEmployeeId = user?.employeeId || user?.employee_id || user?.sub;
     
-    console.log('🔍 [execution.findAll] User info:', {
-      sub: user?.sub,
-      employeeId: user?.employeeId,
-      employee_id: user?.employee_id,
-      resolvedEmployeeId: userEmployeeId,
-      permissions: user?.permissions,
-      hasAssignmentCreate: user?.permissions?.includes('assignment.create'),
-    });
 
     // execution.read_location - vede după work_location
     if (user?.permissions?.includes('execution.read_location')) {
       // Verifică dacă este manager (are assignment.create) - vede TOATE executions
       if (user?.permissions?.includes('assignment.create')) {
-        console.log('🔍 [execution.findAll] Manager cu read_location - returnează toate execuțiile');
+        this.logger.log('🔍 [execution.findAll] Manager cu read_location - returnează toate execuțiile');
         const result = await query.getMany();
         return result;
       }
       // Dacă NU este manager, vede STRICT doar execuțiile proprii
       // Construim un nou query pentru a ne asigura că filtrul de employee_id este aplicat corect
-      console.log(`🔍 [execution.findAll] Angajat cu read_location - filtrează pentru employee_id=${userEmployeeId}`);
+      this.logger.log(`🔍 [execution.findAll] Angajat cu read_location - filtrează pentru employee_id=${userEmployeeId}`);
       
       const employeeQuery = this.executionRepository
         .createQueryBuilder('execution')
@@ -553,7 +535,7 @@ export class ExecutionService {
       }
       
       const result = await employeeQuery.getMany();
-      console.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
+      this.logger.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
       return result;
     }
 
@@ -564,14 +546,14 @@ export class ExecutionService {
     ) {
       // Dacă are și assignment.create (este manager), poate vedea TOATE executions
       if (user?.permissions?.includes('assignment.create')) {
-        console.log('🔍 [execution.findAll] Manager cu read_own - returnează toate execuțiile');
+        this.logger.log('🔍 [execution.findAll] Manager cu read_own - returnează toate execuțiile');
         const result = await query.getMany();
         return result;
       } else {
         // Dacă nu este manager, filtrează STRICT doar executions proprii
         // IMPORTANT: Folosim where în loc de andWhere pentru a reseta condițiile anterioare
         // și a ne asigura că filtrul de employee_id este aplicat corect
-        console.log(`🔍 [execution.findAll] Angajat cu read_own - filtrează pentru employee_id=${userEmployeeId}`);
+        this.logger.log(`🔍 [execution.findAll] Angajat cu read_own - filtrează pentru employee_id=${userEmployeeId}`);
         
         // Construim un nou query pentru angajați - doar execuțiile lor
         const employeeQuery = this.executionRepository
@@ -603,7 +585,7 @@ export class ExecutionService {
         }
         
         const result = await employeeQuery.getMany();
-        console.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
+        this.logger.log(`🔍 [execution.findAll] Găsite ${result.length} execuții pentru angajat (employee_id=${userEmployeeId})`);
         return result;
       }
     }
@@ -680,9 +662,7 @@ export class ExecutionService {
       return [];
     }
 
-    console.log(
-      `🚀 [BATCH EXECUTIONS] Loading executions for ${assignmentIds.length} assignments`,
-    );
+    this.logger.log(`🚀 [BATCH EXECUTIONS] Loading executions for ${assignmentIds.length} assignments`,);
 
     // OPTIMIZAT: Folosește select explicit pentru a reduce overhead-ul
     const executions = await this.executionRepository
@@ -696,7 +676,7 @@ export class ExecutionService {
       .cache(false) // Dezactivează cache pentru date fresh
       .getMany();
 
-    console.log(`✅ [BATCH EXECUTIONS] Loaded ${executions.length} executions`);
+      this.logger.log(`✅ [BATCH EXECUTIONS] Loaded ${executions.length} executions`);
     return executions;
   }
 
@@ -704,9 +684,7 @@ export class ExecutionService {
     assignmentId: number,
   ): Promise<TaskExecution | null> {
     // Găsește execuția cea mai recentă cu răspunsuri (dacă există), altfel cea mai recentă
-    console.log(
-      `[ExecutionService.getExecutionByAssignment] Looking for executions for assignment ${assignmentId}`,
-    );
+    this.logger.log(`[ExecutionService.getExecutionByAssignment] Looking for executions for assignment ${assignmentId}`,);
     const executions = await this.executionRepository
       .createQueryBuilder('execution')
       .leftJoinAndSelect('execution.answers', 'answers')
@@ -720,13 +698,9 @@ export class ExecutionService {
     }
 
     // Log pentru debugging
-    console.log(
-      `[ExecutionService] Found ${executions.length} executions for assignment ${assignmentId}`,
-    );
+    this.logger.log(`[ExecutionService] Found ${executions.length} executions for assignment ${assignmentId}`,);
     executions.forEach((exec, index) => {
-      console.log(
-        `[ExecutionService] Execution ${index + 1}: ID=${exec.id}, created_at=${exec.created_at}, answers count=${exec.answers?.length || 0}`,
-      );
+      this.logger.log(`[ExecutionService] Execution ${index + 1}: ID=${exec.id}, created_at=${exec.created_at}, answers count=${exec.answers?.length || 0}`,);
     });
 
     // Verificare suplimentară: caută toate răspunsurile care ar putea fi asociate cu assignment-ul
@@ -740,18 +714,14 @@ export class ExecutionService {
       const templateElementIds = assignment.template.elements.map(
         (el) => el.id,
       );
-      console.log(
-        `[ExecutionService] Assignment ${assignmentId} has template with ${templateElementIds.length} elements: ${templateElementIds.join(', ')}`,
-      );
+      this.logger.log(`[ExecutionService] Assignment ${assignmentId} has template with ${templateElementIds.length} elements: ${templateElementIds.join(', ')}`,);
 
       // Caută răspunsuri care au task_element_id din template-ul assignment-ului
       const allAnswersForTemplate = await this.answerRepository.find({
         where: { task_element_id: In(templateElementIds) },
         relations: ['task_element'],
       });
-      console.log(
-        `[ExecutionService] Found ${allAnswersForTemplate.length} total answers for template elements`,
-      );
+      this.logger.log(`[ExecutionService] Found ${allAnswersForTemplate.length} total answers for template elements`,);
 
       // Grupează răspunsurile după task_execution_id
       const answersByExecution = new Map<number, TaskExecutionAnswer[]>();
@@ -762,17 +732,13 @@ export class ExecutionService {
         answersByExecution.get(answer.task_execution_id)!.push(answer);
       });
 
-      console.log(
-        `[ExecutionService] Answers grouped by execution: ${Array.from(answersByExecution.keys()).join(', ')}`,
-      );
+      this.logger.log(`[ExecutionService] Answers grouped by execution: ${Array.from(answersByExecution.keys()).join(', ')}`,);
 
       // Verifică dacă există răspunsuri pentru execuții care nu sunt în lista de execuții găsite
       for (const [execId, answers] of answersByExecution.entries()) {
         const exec = executions.find((e) => e.id === execId);
         if (!exec) {
-          console.log(
-            `[ExecutionService] WARNING: Found ${answers.length} answers for execution ${execId} which is not in the executions list for assignment ${assignmentId}`,
-          );
+          this.logger.log(`[ExecutionService] WARNING: Found ${answers.length} answers for execution ${execId} which is not in the executions list for assignment ${assignmentId}`,);
 
           // Verifică dacă execuția există și pentru ce assignment este
           const missingExecution = await this.executionRepository.findOne({
@@ -781,25 +747,19 @@ export class ExecutionService {
           });
 
           if (missingExecution) {
-            console.log(
-              `[ExecutionService] Execution ${execId} belongs to assignment ${missingExecution.task_assignment_id}, not ${assignmentId}`,
-            );
+            this.logger.log(`[ExecutionService] Execution ${execId} belongs to assignment ${missingExecution.task_assignment_id}, not ${assignmentId}`,);
 
             // Dacă execuția are răspunsuri și este pentru un assignment diferit, verifică dacă ar trebui să fie inclusă
             // (poate există o problemă cu datele sau cu logica de căutare)
             if (missingExecution.task_assignment_id !== assignmentId) {
-              console.log(
-                `[ExecutionService] Execution ${execId} is for assignment ${missingExecution.task_assignment_id}, but we're looking for assignment ${assignmentId}`,
-              );
+              this.logger.log(`[ExecutionService] Execution ${execId} is for assignment ${missingExecution.task_assignment_id}, but we're looking for assignment ${assignmentId}`,);
             }
           }
         } else {
           // Dacă execuția este în listă dar nu are răspunsuri încărcate, încarcă-le
           if (!exec.answers || exec.answers.length === 0) {
             exec.answers = answers;
-            console.log(
-              `[ExecutionService] Loaded ${answers.length} answers for execution ${exec.id} from template elements search`,
-            );
+            this.logger.log(`[ExecutionService] Loaded ${answers.length} answers for execution ${exec.id} from template elements search`,);
           }
         }
       }
@@ -811,25 +771,19 @@ export class ExecutionService {
       const answersCount = await this.answerRepository.count({
         where: { task_execution_id: exec.id },
       });
-      console.log(
-        `[ExecutionService] Execution ${exec.id} has ${answersCount} answers in DB (direct count)`,
-      );
+      this.logger.log(`[ExecutionService] Execution ${exec.id} has ${answersCount} answers in DB (direct count)`,);
 
       // Verifică și prin query pentru a vedea dacă există răspunsuri
       const answersFromDB = await this.answerRepository.find({
         where: { task_execution_id: exec.id },
         relations: ['task_element'],
       });
-      console.log(
-        `[ExecutionService] Execution ${exec.id} has ${answersFromDB.length} answers from find query`,
-      );
+      this.logger.log(`[ExecutionService] Execution ${exec.id} has ${answersFromDB.length} answers from find query`,);
 
       // Dacă există răspunsuri în DB dar nu sunt încărcate, încarcă-le
       if (answersFromDB.length > 0) {
         exec.answers = answersFromDB;
-        console.log(
-          `[ExecutionService] Loaded ${answersFromDB.length} answers for execution ${exec.id}`,
-        );
+        this.logger.log(`[ExecutionService] Loaded ${answersFromDB.length} answers for execution ${exec.id}`,);
       } else if (!exec.answers || exec.answers.length === 0) {
         // Dacă nu există răspunsuri, setează array gol explicit
         exec.answers = [];
@@ -890,25 +844,19 @@ export class ExecutionService {
           });
 
           if (foundExecution) {
-            console.log(
-              `[ExecutionService] Found execution ${execId} with ${answers.length} answers, but it belongs to assignment ${foundExecution.task_assignment_id} (not ${assignmentId})`,
-            );
+            this.logger.log(`[ExecutionService] Found execution ${execId} with ${answers.length} answers, but it belongs to assignment ${foundExecution.task_assignment_id} (not ${assignmentId})`,);
 
             // Dacă execuția este pentru assignment-ul curent, o adaugă în listă
             if (foundExecution.task_assignment_id === assignmentId) {
               foundExecution.answers = answers;
               executions.push(foundExecution);
               executionWithAnswers = foundExecution;
-              console.log(
-                `[ExecutionService] Added execution ${execId} to the list with ${answers.length} answers`,
-              );
+              this.logger.log(`[ExecutionService] Added execution ${execId} to the list with ${answers.length} answers`,);
               break;
             } else {
               // Dacă execuția nu este pentru assignment-ul curent, dar are răspunsuri pentru elementele din template,
               // verifică dacă ar trebui să fie asociată cu assignment-ul curent (poate există o problemă cu datele)
-              console.log(
-                `[ExecutionService] Execution ${execId} has ${answers.length} answers but is for assignment ${foundExecution.task_assignment_id}, not ${assignmentId}`,
-              );
+              this.logger.log(`[ExecutionService] Execution ${execId} has ${answers.length} answers but is for assignment ${foundExecution.task_assignment_id}, not ${assignmentId}`,);
             }
           }
         }
@@ -923,9 +871,7 @@ export class ExecutionService {
       const finalAnswersCount = await this.answerRepository.count({
         where: { task_execution_id: result.id },
       });
-      console.log(
-        `[ExecutionService] Final check: execution ${result.id} has ${finalAnswersCount} answers in DB`,
-      );
+      this.logger.log(`[ExecutionService] Final check: execution ${result.id} has ${finalAnswersCount} answers in DB`,);
 
       if (finalAnswersCount > 0) {
         const answers = await this.answerRepository.find({
@@ -933,9 +879,7 @@ export class ExecutionService {
           relations: ['task_element'],
         });
         result.answers = answers;
-        console.log(
-          `[ExecutionService] Final check: loaded ${answers.length} answers for execution ${result.id}`,
-        );
+        this.logger.log(`[ExecutionService] Final check: loaded ${answers.length} answers for execution ${result.id}`,);
       } else if (
         assignment &&
         assignment.template &&
@@ -984,9 +928,7 @@ export class ExecutionService {
                 bestExecution = exec;
                 maxAnswers = answers.length;
                 bestExecution.answers = answers;
-                console.log(
-                  `[ExecutionService] Found better execution ${execId} with ${answers.length} answers (created ${hoursDiff.toFixed(2)} hours ago)`,
-                );
+                this.logger.log(`[ExecutionService] Found better execution ${execId} with ${answers.length} answers (created ${hoursDiff.toFixed(2)} hours ago)`,);
               }
             }
           }
@@ -997,9 +939,7 @@ export class ExecutionService {
           bestExecution.answers &&
           bestExecution.answers.length > 0
         ) {
-          console.log(
-            `[ExecutionService] Returning execution ${bestExecution.id} with ${bestExecution.answers.length} answers instead of execution ${result.id}`,
-          );
+          this.logger.log(`[ExecutionService] Returning execution ${bestExecution.id} with ${bestExecution.answers.length} answers instead of execution ${result.id}`,);
           return bestExecution;
         }
       }
@@ -1007,9 +947,7 @@ export class ExecutionService {
 
     // Log final pentru debugging
     if (result) {
-      console.log(
-        `[ExecutionService] Returning execution ${result.id} with ${result.answers?.length || 0} answers`,
-      );
+      this.logger.log(`[ExecutionService] Returning execution ${result.id} with ${result.answers?.length || 0} answers`,);
     }
 
     return result;
@@ -1432,7 +1370,7 @@ export class ExecutionService {
       Number(createDto.total_points || 0),
     );
 
-    console.log('✅ [daily-points] update aditiv:', {
+    this.logger.log('✅ [daily-points] update aditiv:', {
       employee_id: createDto.employee_id,
       work_date: normalizeWorkDate(createDto.work_date),
       location_id: createDto.location_id,
@@ -2408,14 +2346,14 @@ export class ExecutionService {
 
       if (!fs.existsSync(tasksDir)) {
         fs.mkdirSync(tasksDir, { recursive: true });
-        console.log(`📁 Created images/tasks directory: ${tasksDir}`);
+        this.logger.log(`📁 Created images/tasks directory: ${tasksDir}`);
       }
 
       const filePath = path.join(tasksDir, uniqueFileName);
       const buffer = Buffer.from(base64Data, 'base64');
 
       fs.writeFileSync(filePath, buffer);
-      console.log(`✅ Task image saved: ${filePath} (${buffer.length} bytes)`);
+      this.logger.log(`✅ Task image saved: ${filePath} (${buffer.length} bytes)`);
 
       return `/api/images/tasks/${uniqueFileName}`;
     } catch (error: any) {
@@ -2493,7 +2431,7 @@ export class ExecutionService {
       }
 
       fs.unlinkSync(filePath);
-      console.log(`✅ Task image deleted: ${filePath}`);
+      this.logger.log(`✅ Task image deleted: ${filePath}`);
     } catch (error: any) {
       console.error(`❌ Error deleting task image: ${error}`);
       throw new BadRequestException(

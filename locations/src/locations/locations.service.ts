@@ -1,11 +1,9 @@
-﻿import {
-  Injectable,
+﻿import { Injectable,
   NotFoundException,
   BadRequestException,
   Inject,
   ConflictException,
-  ForbiddenException,
-} from "@nestjs/common";
+  ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from "@nestjs/typeorm";
 import { DeepPartial, Repository, DataSource, In, Like } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
@@ -34,6 +32,8 @@ import { encodeRestosoftLinkCode } from "./restosoft-link-code";
 
 @Injectable()
 export class LocationsService {
+  private readonly logger = new Logger(LocationsService.name);
+
   constructor(
     @InjectRepository(WorkLocation)
     private readonly workLocationRepository: Repository<WorkLocation>,
@@ -279,21 +279,21 @@ export class LocationsService {
       // Create company folder if it doesn't exist
       if (!fs.existsSync(companyDir)) {
         fs.mkdirSync(companyDir, { recursive: true });
-        console.log(`📁 Created company directory: ${companyDir}`);
+        this.logger.log(`📁 Created company directory: ${companyDir}`);
       }
 
       // Create "Locații" folder if it doesn't exist
       const locationsDir = path.join(companyDir, "Locații");
       if (!fs.existsSync(locationsDir)) {
         fs.mkdirSync(locationsDir, { recursive: true });
-        console.log(`📁 Created locations directory: ${locationsDir}`);
+        this.logger.log(`📁 Created locations directory: ${locationsDir}`);
       }
 
       // Create location folder: companies/[Company]/Locații/[LocationName]
       const locationDir = path.join(locationsDir, location.location_name);
       if (!fs.existsSync(locationDir)) {
         fs.mkdirSync(locationDir, { recursive: true });
-        console.log(`📁 Created location directory: ${locationDir}`);
+        this.logger.log(`📁 Created location directory: ${locationDir}`);
       }
 
       // Obligatoriu per locație: Angajați și Furnizori (create pe server la fiecare locație nouă)
@@ -302,15 +302,11 @@ export class LocationsService {
         const subfolderPath = path.join(locationDir, subfolder);
         if (!fs.existsSync(subfolderPath)) {
           fs.mkdirSync(subfolderPath, { recursive: true });
-          console.log(
-            `📁 Created mandatory location subfolder: ${subfolderPath}`,
-          );
+          this.logger.log(`📁 Created mandatory location subfolder: ${subfolderPath}`,);
         }
       }
 
-      console.log(
-        `✅ Folder structure created successfully for location ${location.id}`,
-      );
+      this.logger.log(`✅ Folder structure created successfully for location ${location.id}`,);
     } catch (error) {
       console.error(
         `❌ Error creating folder structure for location ${location.id}:`,
@@ -328,9 +324,7 @@ export class LocationsService {
     target_url?: string,
   ): Promise<void> {
     try {
-      console.log(
-        `🔍 [LOCATIONS SERVICE] Sending notification - Type: ${type}, Location ID: ${locationId}`,
-      );
+      this.logger.log(`🔍 [LOCATIONS SERVICE] Sending notification - Type: ${type}, Location ID: ${locationId}`,);
       await firstValueFrom(
         this.notificationsClient.emit(
           { cmd: "locations.notification" },
@@ -346,9 +340,7 @@ export class LocationsService {
           },
         ),
       );
-      console.log(
-        `✅ [LOCATIONS SERVICE] Notification sent successfully - Type: ${type}, Location ID: ${locationId}`,
-      );
+      this.logger.log(`✅ [LOCATIONS SERVICE] Notification sent successfully - Type: ${type}, Location ID: ${locationId}`,);
     } catch (error) {
       console.error("Failed to send location notification:", error);
     }
@@ -460,14 +452,6 @@ export class LocationsService {
     }
 
     // Log pentru debugging - verifică ce câmpuri sunt disponibile în JWT
-    console.log(
-      `🔍 [findAllWorkLocations] Employee ID: ${employeeId}, JWT fields:`,
-      {
-        work_location_id: user?.work_location_id,
-        work_location_default_id: user?.work_location_default_id,
-        hasPermissions: !!user?.permissions,
-      },
-    );
 
     // Obține locațiile angajatului din employees_locations
     let employeeLocationIds: number[] = [];
@@ -549,9 +533,7 @@ export class LocationsService {
               .filter((id: any) => id != null)
               .map((id: any) => parseInt(id, 10))
               .filter((id: number) => !isNaN(id));
-            console.log(
-              `✅ Found ${employeeLocationIds.length} locations in employees_locations via direct DB query (employee ${employeeId}): [${employeeLocationIds.join(", ")}]`,
-            );
+              this.logger.log(`✅ Found ${employeeLocationIds.length} locations in employees_locations via direct DB query (employee ${employeeId}): [${employeeLocationIds.join(", ")}]`,);
           } else {
             console.warn(
               `⚠️ No locations found in employees_locations for employee ${employeeId}`,
@@ -898,9 +880,7 @@ export class LocationsService {
               );
 
               if (dbResult && dbResult.length > 0) {
-                console.log(
-                  `✅ Found location ${id} in employees_locations via direct DB query for employee ${employeeId}`,
-                );
+                this.logger.log(`✅ Found location ${id} in employees_locations via direct DB query for employee ${employeeId}`,);
                 return locationWithCompany;
               }
 
@@ -1370,7 +1350,7 @@ export class LocationsService {
     const employeeId = Number(userId);
 
     // Log pentru debugging
-    console.log("🔍 [recordRevenue Service] Saving revenue with:", {
+    this.logger.log("🔍 [recordRevenue Service] Saving revenue with:", {
       workLocationId,
       revenueDate,
       employeeId,
@@ -1416,10 +1396,8 @@ export class LocationsService {
     } as Partial<WorkLocationRevenue> as WorkLocationRevenue);
 
     const saved = await this.revenueRepository.save(row);
-    console.log(
-      "✅ [recordRevenue Service] Revenue saved successfully with employee_id:",
-      saved.employee_id,
-    );
+    this.logger.log("✅ [recordRevenue Service] Revenue saved successfully with employee_id:",
+      saved.employee_id,);
 
     await this.sendRevenueNotification(
       "revenue_sent",
@@ -1474,9 +1452,7 @@ export class LocationsService {
     workLocationId: number,
     revenueDate: string,
   ): Promise<void> {
-    console.log(
-      `🔔 [BONUS TRIGGER] Încasare ${revenueId} aprobată. Calcul bonusuri și manager_daily_payout pentru data: ${revenueDate}`,
-    );
+    this.logger.log(`🔔 [BONUS TRIGGER] Încasare ${revenueId} aprobată. Calcul bonusuri și manager_daily_payout pentru data: ${revenueDate}`,);
     let earnings: Array<{ employeeId: number; amount: number }> = [];
     try {
       earnings = await this.calculateEmployeeBonusesForDate(
@@ -1516,9 +1492,7 @@ export class LocationsService {
     const serviceSecret =
       process.env.SERVICE_SECRET || '';
     const hasCustomSecret = !!process.env.SERVICE_SECRET;
-    console.log(
-      `📤 [MANAGER PAYOUT TRIGGER] Apel tasks: ${tasksCronPath} (work_location_id=${workLocationId}, work_date=${revenueDate}), x-service-secret: ${hasCustomSecret ? "din env" : "implicit"}`,
-    );
+    this.logger.log(`📤 [MANAGER PAYOUT TRIGGER] Apel tasks: ${tasksCronPath} (work_location_id=${workLocationId}, work_date=${revenueDate}), x-service-secret: ${hasCustomSecret ? "din env" : "implicit"}`,);
     axios
       .post(
         tasksCronPath,
@@ -1537,13 +1511,9 @@ export class LocationsService {
       .then((res) => {
         const data = res.data ?? {};
         if (data.ok && data.created) {
-          console.log(
-            `✅ [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} → manager_daily_payout creat locație ${workLocationId}, data ${revenueDate}: puncte=${data.total_points}, puncte_manager=${data.amount}`,
-          );
+          this.logger.log(`✅ [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} → manager_daily_payout creat locație ${workLocationId}, data ${revenueDate}: puncte=${data.total_points}, puncte_manager=${data.amount}`,);
         } else {
-          console.log(
-            `📋 [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} – răspuns tasks: ok=${data.ok}, created=${data.created}, message=${data.message ?? "—"}`,
-          );
+          this.logger.log(`📋 [MANAGER PAYOUT TRIGGER] Încasare ${revenueId} – răspuns tasks: ok=${data.ok}, created=${data.created}, message=${data.message ?? "—"}`,);
         }
       })
       .catch((err) => {
@@ -1773,9 +1743,7 @@ export class LocationsService {
     try {
       // Normalize date to YYYY-MM-DD format for consistent querying
       const normalizedDate = revenueDate.toString().split(" ")[0].split("T")[0];
-      console.log(
-        `🔍 [BONUS CALC] Starting bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`,
-      );
+      this.logger.log(`🔍 [BONUS CALC] Starting bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`,);
 
       // Get all approved revenues for this revenue_date (date when revenue was created)
       // Query uses LIKE to match dates that start with normalizedDate (handles datetime format)
@@ -1791,9 +1759,7 @@ export class LocationsService {
         .getMany();
 
       if (!approvedRevenues || approvedRevenues.length === 0) {
-        console.log(
-          `⚠️ [BONUS CALC] No approved revenues found for location ${locationId}, date ${revenueDate}`,
-        );
+        this.logger.log(`⚠️ [BONUS CALC] No approved revenues found for location ${locationId}, date ${revenueDate}`,);
         return [];
       }
 
@@ -1818,7 +1784,7 @@ export class LocationsService {
       const serviceSecret =
         process.env.SERVICE_SECRET || '';
       try {
-        console.log(`🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`);
+        this.logger.log(`🔍 [BONUS CALC] Fetch employees: ${employeesEndpoint}`);
         const response = await axios.get(employeesEndpoint, {
           headers: {
             "Content-Type": "application/json",
@@ -1831,9 +1797,7 @@ export class LocationsService {
           : Array.isArray(response.data?.data)
             ? response.data.data
             : [];
-        console.log(
-          `👥 [BONUS CALC] Found ${employees.length} employees in location ${locationId}`,
-        );
+            this.logger.log(`👥 [BONUS CALC] Found ${employees.length} employees in location ${locationId}`,);
       } catch (error) {
         console.error(
           `❌ [BONUS CALC] Failed to fetch employees for location ${locationId} (URL: ${employeesEndpoint}). Set EMPLOYEES_HTTP_URL dacă locations și employees sunt în rețele diferite (ex. Docker: http://nume-serviciu-employees:3001):`,
@@ -1909,9 +1873,7 @@ export class LocationsService {
           const employeePoints = pointsByEmployeeId.get(employeeId) || 0;
 
           if (employeePoints <= 0) {
-            console.log(
-              `⚠️ [BONUS CALC] Employee ${employeeId} has no points for revenue_date: ${normalizedDate}, skipping`,
-            );
+            this.logger.log(`⚠️ [BONUS CALC] Employee ${employeeId} has no points for revenue_date: ${normalizedDate}, skipping`,);
             continue;
           }
 
@@ -1923,14 +1885,10 @@ export class LocationsService {
             const bonusForThisRevenue = employeePoints * multiplier;
             totalBonus += bonusForThisRevenue;
 
-            console.log(
-              `💰 [BONUS CALC] Employee ${employeeId}: ${employeePoints} points × ${multiplier} (revenue ${totalAmount}) = ${bonusForThisRevenue.toFixed(2)} RON`,
-            );
+            this.logger.log(`💰 [BONUS CALC] Employee ${employeeId}: ${employeePoints} points × ${multiplier} (revenue ${totalAmount}) = ${bonusForThisRevenue.toFixed(2)} RON`,);
           }
 
-          console.log(
-            `✅ [BONUS CALC] Employee ${employeeId} total bonus for revenue_date ${normalizedDate}: ${totalBonus.toFixed(2)} RON`,
-          );
+          this.logger.log(`✅ [BONUS CALC] Employee ${employeeId} total bonus for revenue_date ${normalizedDate}: ${totalBonus.toFixed(2)} RON`,);
 
           earnings.push({ employeeId, amount: totalBonus });
         } catch (employeeError) {
@@ -1941,9 +1899,7 @@ export class LocationsService {
         }
       }
 
-      console.log(
-        `✅ [BONUS CALC] Finished bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`,
-      );
+      this.logger.log(`✅ [BONUS CALC] Finished bonus calculation for location ${locationId}, revenue_date: ${normalizedDate}`,);
       return earnings;
     } catch (error) {
       console.error(
@@ -2041,7 +1997,7 @@ export class LocationsService {
       notes?: string;
     },
   ): Promise<WorkLocationFiles> {
-    console.log("📥 Received createFileDto:", {
+    this.logger.log("📥 Received createFileDto:", {
       work_location_id: createFileDto.work_location_id,
       file_name: createFileDto.file_name,
       file_type: createFileDto.file_type,
@@ -2161,14 +2117,10 @@ export class LocationsService {
           base64Data = base64Data.split(",")[1];
         }
 
-        console.log(
-          `💾 Saving file with ${base64Data.length} base64 characters`,
-        );
+        this.logger.log(`💾 Saving file with ${base64Data.length} base64 characters`,);
         const buffer = Buffer.from(base64Data, "base64");
         fs.writeFileSync(filePath, buffer);
-        console.log(
-          `✅ File saved to disk: ${filePath} (${buffer.length} bytes)`,
-        );
+        this.logger.log(`✅ File saved to disk: ${filePath} (${buffer.length} bytes)`,);
       } catch (error) {
         console.error("❌ Error saving file to disk:", error);
       }
@@ -2199,7 +2151,7 @@ export class LocationsService {
     });
 
     const savedFile = await this.filesRepository.save(file);
-    console.log(`✅ File record saved to database with ID: ${savedFile.id}`);
+    this.logger.log(`✅ File record saved to database with ID: ${savedFile.id}`);
 
     return savedFile;
   }
@@ -2458,12 +2410,10 @@ export class LocationsService {
     disposition: "inline" | "attachment";
   }> {
     try {
-      console.log(
-        `🔍 [serveFile] Starting to serve file with ID: ${file_id}, forceDownload: ${forceDownload}`,
-      );
+      this.logger.log(`🔍 [serveFile] Starting to serve file with ID: ${file_id}, forceDownload: ${forceDownload}`,);
 
       const file = await this.findOneFile(file_id);
-      console.log(`📄 [serveFile] File metadata retrieved:`, {
+      this.logger.log(`📄 [serveFile] File metadata retrieved:`, {
         id: file.id,
         name: file.file_name,
         work_location_id: file.work_location_id,
@@ -2526,10 +2476,8 @@ export class LocationsService {
           : path.join(locationDir, file.file_name);
       }
 
-      console.log(`📁 [serveFile] Full file path: ${filePath}`);
-      console.log(
-        `📁 [serveFile] Path exists check: ${fs.existsSync(filePath)}`,
-      );
+      this.logger.log(`📁 [serveFile] Full file path: ${filePath}`);
+      this.logger.log(`📁 [serveFile] Path exists check: ${fs.existsSync(filePath)}`,);
 
       if (!fs.existsSync(filePath)) {
         console.error(`❌ [serveFile] File not found on disk: ${filePath}`);
@@ -2537,12 +2485,10 @@ export class LocationsService {
       }
 
       const mimeType = this.getMimeType(file.file_name);
-      console.log(`📋 [serveFile] MIME type determined: ${mimeType}`);
+      this.logger.log(`📋 [serveFile] MIME type determined: ${mimeType}`);
 
       const fileBuffer = fs.readFileSync(filePath);
-      console.log(
-        `✅ [serveFile] File read successfully: ${file.file_name} (${fileBuffer.length} bytes)`,
-      );
+      this.logger.log(`✅ [serveFile] File read successfully: ${file.file_name} (${fileBuffer.length} bytes)`,);
 
       return {
         data: fileBuffer.toString("base64"),
@@ -2658,7 +2604,7 @@ export class LocationsService {
         // Remove the physical file if it exists
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
-          console.log(`✅ Deleted physical file: ${filePath}`);
+          this.logger.log(`✅ Deleted physical file: ${filePath}`);
         } else {
           console.warn(`⚠️ Physical file not found for removal: ${filePath}`);
         }
@@ -2677,7 +2623,7 @@ export class LocationsService {
 
   // Find files expiring on a specific date
   async findExpiringFiles(targetDate: string): Promise<WorkLocationFiles[]> {
-    console.log(`[LOCATIONS SERVICE] Finding files expiring on ${targetDate}`);
+    this.logger.log(`[LOCATIONS SERVICE] Finding files expiring on ${targetDate}`);
     // Format the date to match the database format (YYYY-MM-DD)
     const formattedDate = new Date(targetDate);
     formattedDate.setHours(0, 0, 0, 0);
@@ -2688,15 +2634,13 @@ export class LocationsService {
       .leftJoinAndSelect("file.workLocation", "location")
       .getMany();
 
-    console.log(
-      `[LOCATIONS SERVICE] Found ${files.length} files expiring on ${targetDate}`,
-    );
+      this.logger.log(`[LOCATIONS SERVICE] Found ${files.length} files expiring on ${targetDate}`,);
     return files;
   }
 
   // Find files that have already expired
   async findExpiredFiles(): Promise<WorkLocationFiles[]> {
-    console.log(`[LOCATIONS SERVICE] Finding expired files`);
+    this.logger.log(`[LOCATIONS SERVICE] Finding expired files`);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -2707,7 +2651,7 @@ export class LocationsService {
       .leftJoinAndSelect("file.workLocation", "location")
       .getMany();
 
-    console.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
+      this.logger.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
     return files;
   }
 
@@ -2739,19 +2683,17 @@ export class LocationsService {
       // Create images/cashing directory if it doesn't exist
       if (!fs.existsSync(cashingDir)) {
         fs.mkdirSync(cashingDir, { recursive: true });
-        console.log(`📁 Created images/cashing directory: ${cashingDir}`);
-        console.log(`📁 Repo root: ${repoRoot}`);
-        console.log(`📁 Images dir: ${imagesDir}`);
+        this.logger.log(`📁 Created images/cashing directory: ${cashingDir}`);
+        this.logger.log(`📁 Repo root: ${repoRoot}`);
+        this.logger.log(`📁 Images dir: ${imagesDir}`);
       }
 
       const filePath = path.join(cashingDir, uniqueFileName);
       const buffer = Buffer.from(base64Data, "base64");
 
       fs.writeFileSync(filePath, buffer);
-      console.log(
-        `✅ Cashing image saved: ${filePath} (${buffer.length} bytes)`,
-      );
-      console.log(`✅ File exists check: ${fs.existsSync(filePath)}`);
+      this.logger.log(`✅ Cashing image saved: ${filePath} (${buffer.length} bytes)`,);
+      this.logger.log(`✅ File exists check: ${fs.existsSync(filePath)}`);
 
       // Return the URL path (with cashing subfolder)
       return `/api/images/cashing/${uniqueFileName}`;
@@ -2834,7 +2776,7 @@ export class LocationsService {
       }
 
       fs.unlinkSync(filePath);
-      console.log(`✅ Cashing image deleted: ${filePath}`);
+      this.logger.log(`✅ Cashing image deleted: ${filePath}`);
     } catch (error: any) {
       console.error(`❌ Error deleting cashing image: ${error}`);
       throw new BadRequestException(

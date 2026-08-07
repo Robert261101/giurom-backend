@@ -14,7 +14,6 @@ export class InternalServiceGuard implements CanActivate {
     const internalService = request.headers['x-internal-service'];
     const serviceSecret = request.headers['x-service-secret'];
     
-    this.logger.log(`Internal service headers - Service: ${internalService}, Secret present: ${!!serviceSecret}`);
     
     // If internal service headers are present, validate them
     if (internalService && serviceSecret) {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query, UseGuards, Request, Res, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ExecutionService } from './execution.service';
@@ -17,6 +17,8 @@ import { Permissions } from '../permissions/permissions.decorator';
 @ApiTags('Executions')
 @Controller('executions')
 export class ExecutionController {
+  private readonly logger = new Logger(ExecutionController.name);
+
   constructor(private readonly executionService: ExecutionService) {}
 
   @Post()
@@ -336,7 +338,7 @@ export class ExecutionController {
   })
   @ApiResponse({ status: 400, description: 'Date invalide sau punctaj existent' })
   createDailyPoints(@Body() createDto: CreateEmployeeDailyPointsDto): Promise<EmployeeDailyPoints> {
-    console.log('📥 [daily-points] request primit:', {
+    this.logger.log('📥 [daily-points] request primit:', {
       employee_id: createDto.employee_id,
       work_date: createDto.work_date,
       location_id: (createDto as any).location_id,

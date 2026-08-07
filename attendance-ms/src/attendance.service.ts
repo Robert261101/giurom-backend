@@ -21,7 +21,7 @@ import {
   validateInflexionTimeline,
 } from './attendance-interval.util';
 import { CorrectPresenceDto, PresenceCorrectionAction } from './dto/correct-presence.dto';
-import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, OnModuleInit, Inject, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { HttpService } from '@nestjs/axios';
@@ -43,6 +43,8 @@ const ROMANIA_TZ = 'Europe/Bucharest';
 
 @Injectable()
 export class AttendanceService implements OnModuleInit {
+  private readonly logger = new Logger(AttendanceService.name);
+
   private readonly punchGateByEmployee = new Map<number, Promise<unknown>>();
 
   constructor(
@@ -110,7 +112,7 @@ export class AttendanceService implements OnModuleInit {
           location_id: locationId,
         })
       );
-      console.log(`✅ Added ${points} points to employee ${employeeId}: ${reason}`);
+      this.logger.log(`✅ Added ${points} points to employee ${employeeId}: ${reason}`);
     } catch (error) {
       console.error(`❌ Failed to add points to employee ${employeeId}:`, error.response?.data || error.message);
     }
@@ -494,12 +496,8 @@ export class AttendanceService implements OnModuleInit {
       const minimumLeadTimeMs = 60 * 60 * 1000;
       const earlyLeadMs = shiftStartMs - checkInInstantMs;
 
-      console.log(
-        `🕐 [Punctualitate] check_in=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo} shift_start=${new Date(shiftStartMs).toISOString()}`,
-      );
-      console.log(
-        `🕐 [Punctualitate] lead până la start (ms)=${earlyLeadMs}, prag: ${minimumLeadTimeMs}`,
-      );
+      this.logger.log(`🕐 [Punctualitate] check_in=${new Date(checkInInstantMs).toISOString()} zi_RO=${ymdRo} shift_start=${new Date(shiftStartMs).toISOString()}`,);
+      this.logger.log(`🕐 [Punctualitate] lead până la start (ms)=${earlyLeadMs}, prag: ${minimumLeadTimeMs}`,);
 
       if (Number.isNaN(shiftStartMs)) {
         console.warn(
@@ -514,9 +512,7 @@ export class AttendanceService implements OnModuleInit {
           Number((shift as any).work_location_id),
         );
       } else {
-        console.log(
-          `⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte de start-ul turei – nu se acordă puncte`,
-        );
+        this.logger.log(`⏰ Check-in pentru angajat ${shift.employee_id} nu respectă pragul de 1 oră înainte de start-ul turei – nu se acordă puncte`,);
       }
     }
 
@@ -584,7 +580,7 @@ export class AttendanceService implements OnModuleInit {
       
       autoCheckout = toZonedTime(todayShiftEnd, 'Europe/Bucharest') as any;
       
-      console.log(`🕐 Auto-checkout calculat: ${autoCheckout.toISOString()} (din shift.end_datetime: ${shift.end_datetime} + ${timeForCheckout} minute, check_in: ${check_in})`);
+      this.logger.log(`🕐 Auto-checkout calculat: ${autoCheckout.toISOString()} (din shift.end_datetime: ${shift.end_datetime} + ${timeForCheckout} minute, check_in: ${check_in})`);
     }
 
     let savedPresence: Presence;
@@ -745,7 +741,7 @@ export class AttendanceService implements OnModuleInit {
   ): Promise<Presence> {
     const presence = await this.findPresenceById(id, user, authorization);
 
-    console.log('[AttendanceService] updatePresence called:', {
+    this.logger.log('[AttendanceService] updatePresence called:', {
       presenceId: id,
       presenceShiftId: presence?.shift_id,
       presenceCheckOut: presence?.check_out,
@@ -770,13 +766,13 @@ export class AttendanceService implements OnModuleInit {
       // Verifică dacă prezența aparține angajatului prin shift
       const userEmployeeId = user?.userId || user?.id || user?.employee_id || user?.id_employee || user?.sub;
       
-      console.log('[AttendanceService] No update permission, checking ownership:', {
+      this.logger.log('[AttendanceService] No update permission, checking ownership:', {
         userEmployeeId,
         presenceShiftId: presence?.shift_id
       });
       
       if (!presence?.shift_id || !userEmployeeId) {
-        console.log('[AttendanceService] Missing shift_id or userEmployeeId');
+        this.logger.log('[AttendanceService] Missing shift_id or userEmployeeId');
         throw new BadRequestException('Nu aveți permisiunea de a modifica această prezență');
       }
       
@@ -786,21 +782,21 @@ export class AttendanceService implements OnModuleInit {
       const shiftEmployeeId = Number(shift?.employee_id);
       const userEmployeeIdNum = Number(userEmployeeId);
       
-      console.log('[AttendanceService] Comparing employee IDs:', {
+      this.logger.log('[AttendanceService] Comparing employee IDs:', {
         shiftEmployeeId,
         userEmployeeIdNum,
         match: shiftEmployeeId === userEmployeeIdNum
       });
       
       if (!shift || shiftEmployeeId !== userEmployeeIdNum) {
-        console.log('[AttendanceService] Employee IDs do not match');
+        this.logger.log('[AttendanceService] Employee IDs do not match');
         throw new BadRequestException('Nu aveți permisiunea de a modifica această prezență');
       }
 
       // SECURITATE: Pentru angajați fără attendance.update, permitem doar actualizarea check_out
       // și doar dacă check_out nu a fost deja setat
       if (presence.check_out) {
-        console.log('[AttendanceService] Check-out already set, cannot modify');
+        this.logger.log('[AttendanceService] Check-out already set, cannot modify');
         throw new BadRequestException('Check-out-ul a fost deja setat și nu poate fi modificat');
       }
 
@@ -810,20 +806,20 @@ export class AttendanceService implements OnModuleInit {
       const attemptedFields = Object.keys(updatePresenceDto).filter(key => updatePresenceDto[key] !== undefined);
       const unauthorizedFields = attemptedFields.filter(field => !allowedFields.includes(field));
       
-      console.log('[AttendanceService] Checking allowed fields:', {
+      this.logger.log('[AttendanceService] Checking allowed fields:', {
         attemptedFields,
         unauthorizedFields,
         allowedFields
       });
       
       if (unauthorizedFields.length > 0) {
-        console.log('[AttendanceService] Unauthorized fields detected');
+        this.logger.log('[AttendanceService] Unauthorized fields detected');
         throw new BadRequestException(`Nu aveți permisiunea de a modifica câmpurile: ${unauthorizedFields.join(', ')}. Puteți modifica doar check_out.`);
       }
 
       // Ignoră total_hours dacă este trimis - va fi calculat automat mai jos
       delete updatePresenceDto.total_hours;
-      console.log('[AttendanceService] Security checks passed, proceeding with update');
+      this.logger.log('[AttendanceService] Security checks passed, proceeding with update');
     }
 
     // Validare check-in și check-out
@@ -912,7 +908,7 @@ export class AttendanceService implements OnModuleInit {
               locId,
             );
             
-            console.log(`[AttendanceService] Notificare trimisă angajatului ${employeeUserId} (employee_id: ${shift.employee_id}) pentru finalizarea programului`);
+            this.logger.log(`[AttendanceService] Notificare trimisă angajatului ${employeeUserId} (employee_id: ${shift.employee_id}) pentru finalizarea programului`);
           }
         }
       } catch (error) {

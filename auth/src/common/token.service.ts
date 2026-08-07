@@ -55,7 +55,6 @@ export class TokenService {
 
     const accessExpiresIn = this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
     const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
-    this.logger.log(`Tokens generate pentru utilizatorul ID ${user.userId} - Access: ${accessExpiresIn}, Refresh: ${refreshExpiresIn}`);
     
     return {
       access_token: accessToken,
@@ -124,13 +123,11 @@ export class TokenService {
       if (userTokens && userTokens.size > 0) {
         // Șterge toate token-urile din tracking
         this.activeTokens.delete(userId);
-        this.logger.log(`${userTokens.size} access token-uri revocate pentru utilizatorul cu ID: ${userId}`);
       }
 
       if (userRefreshTokens && userRefreshTokens.size > 0) {
         // Șterge toate refresh token-urile
         this.refreshTokens.delete(userId);
-        this.logger.log(`${userRefreshTokens.size} refresh token-uri revocate pentru utilizatorul cu ID: ${userId}`);
       }
     } catch (error) {
       this.logger.error(`Eroare la revocarea token-urilor: ${error.message}`);

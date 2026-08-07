@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -13,6 +14,8 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -47,9 +50,8 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(httpApp as any, config);
   SwaggerModule.setup('api/docs', httpApp as any, document);
   await httpApp.listen(httpPort);
-  console.log(`📦 Stock HTTP on http://localhost:${httpPort}`);
-  console.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
-  console.log(`📷 Images served from: ${imagesDir}`);
+  logger.log(`📦 Stock HTTP on http://localhost:${httpPort}`);
+  logger.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
 
 }
 

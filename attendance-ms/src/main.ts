@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
@@ -12,6 +12,8 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom-frontend.vercel.app', 'https://giurom.bitap.ro'];
 }
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -48,8 +50,8 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3016;
   await app.listen(port);
-  console.log(`🕒 Attendance Microservice is running on: http://localhost:${port}`);
-  console.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);
+  logger.log(`🕒 Attendance Microservice is running on: http://localhost:${port}`);
+  logger.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

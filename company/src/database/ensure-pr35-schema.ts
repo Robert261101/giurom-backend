@@ -32,7 +32,6 @@ export async function ensurePr35CompanySchema(): Promise<void> {
     await addColumnIfMissing(conn, database, 'anaf_original_data',
       `ALTER TABLE companies ADD COLUMN anaf_original_data JSON NULL DEFAULT NULL AFTER anaf_verified_at`);
 
-    console.log('✅ [ensurePr35CompanySchema] Schema companies verificată');
   } catch (error: any) {
     console.error(`❌ [ensurePr35CompanySchema] Migrare eșuată: ${error?.message || error}`);
     throw error;
@@ -56,6 +55,5 @@ async function addColumnIfMissing(
   if (exists) {
     return;
   }
-  console.log(`📦 [ensurePr35CompanySchema] Adaug coloana companies.${columnName}...`);
   await conn.query(alterSql);
 }

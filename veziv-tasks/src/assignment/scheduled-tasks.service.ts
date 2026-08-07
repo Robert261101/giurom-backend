@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThanOrEqual, Not, IsNull, Between, In } from 'typeorm';
 import {
@@ -17,6 +17,8 @@ import { TaskGateway } from '../websocket/task.gateway';
 
 @Injectable()
 export class ScheduledTasksService {
+  private readonly logger = new Logger(ScheduledTasksService.name);
+
   constructor(
     @InjectRepository(TaskAssignment)
     private assignmentRepository: Repository<TaskAssignment>,
@@ -181,9 +183,7 @@ export class ScheduledTasksService {
   async activateScheduledTasksForToday(): Promise<boolean> {
     const now = new Date();
 
-    console.log(
-      `🔍 [ScheduledTasksService] Verificare sarcinile programate pentru ${this.formatDateForRomania(now)}`,
-    );
+    this.logger.log(`🔍 [ScheduledTasksService] Verificare sarcinile programate pentru ${this.formatDateForRomania(now)}`,);
 
     try {
       const scheduledTasks = await this.assignmentRepository.find({
@@ -194,9 +194,7 @@ export class ScheduledTasksService {
       });
 
       if (scheduledTasks.length > 0) {
-        console.log(
-          `🔍 [ScheduledTasksService] Găsite ${scheduledTasks.length} sarcini programate pentru activare`,
-        );
+        this.logger.log(`🔍 [ScheduledTasksService] Găsite ${scheduledTasks.length} sarcini programate pentru activare`,);
 
         // Activează sarcinile (schimbă statusul din SCHEDULED în ASSIGNED)
         const updateResult = await this.assignmentRepository.update(
@@ -231,9 +229,7 @@ export class ScheduledTasksService {
                     updated.id,
                     updated.assigned_to_id,
                   );
-                  console.log(
-                    `📤 [ScheduledTasksService] Notificare "Task activ" trimisă (programat→activ) task ${updated.id}, assigned_to_id=${updated.assigned_to_id}`,
-                  );
+                  this.logger.log(`📤 [ScheduledTasksService] Notificare "Task activ" trimisă (programat→activ) task ${updated.id}, assigned_to_id=${updated.assigned_to_id}`,);
                 } catch (e: any) {
                   console.warn(
                     `[ScheduledTasksService] Eroare notificare became_visible task ${t.id}:`,
@@ -247,14 +243,10 @@ export class ScheduledTasksService {
           }
         }
 
-        console.log(
-          `✅ [ScheduledTasksService] ${updateResult.affected || 0} sarcini au fost activate`,
-        );
+        this.logger.log(`✅ [ScheduledTasksService] ${updateResult.affected || 0} sarcini au fost activate`,);
         return (updateResult.affected || 0) > 0;
       } else {
-        console.log(
-          `ℹ️ [ScheduledTasksService] Nu sunt sarcini programate pentru activare acum`,
-        );
+        this.logger.log(`ℹ️ [ScheduledTasksService] Nu sunt sarcini programate pentru activare acum`,);
         return false;
       }
     } catch (error) {
@@ -303,10 +295,10 @@ export class ScheduledTasksService {
 
       // Afișează log-ul doar dacă s-a întâmplat ceva relevant
       if (hasRelevantActivity) {
-        console.log(`🔄 [CRONJOB] ==========================================`);
-        console.log(`🔄 [CRONJOB] ACTIVITATE DETECTATĂ - ${currentTime}`);
-        console.log(`🔄 [CRONJOB] Data: ${dateStr} (${todayName})`);
-        console.log(`🔄 [CRONJOB] ==========================================`);
+        this.logger.log(`🔄 [CRONJOB] ==========================================`);
+        this.logger.log(`🔄 [CRONJOB] ACTIVITATE DETECTATĂ - ${currentTime}`);
+        this.logger.log(`🔄 [CRONJOB] Data: ${dateStr} (${todayName})`);
+        this.logger.log(`🔄 [CRONJOB] ==========================================`);
       }
     } catch (error) {
       console.error(`❌ [CRONJOB] Eroare la verificarea sarcinilor:`, error);
@@ -320,7 +312,7 @@ export class ScheduledTasksService {
     today: Date,
     todayName: string,
   ): Promise<boolean> {
-    console.log(`🔄 [RECURENTA] PROCESARE RECURENȚĂ - ${todayName}`);
+    this.logger.log(`🔄 [RECURENTA] PROCESARE RECURENȚĂ - ${todayName}`);
 
     // Găsește toate sarcinile cu recurență activă
     const recurringTasks = await this.assignmentRepository.find({
@@ -330,9 +322,7 @@ export class ScheduledTasksService {
       relations: ['template', 'elements', 'elements.task_element'],
     });
 
-    console.log(
-      `🔍 [RECURENTA] Găsite ${recurringTasks.length} sarcini cu recurență activă`,
-    );
+    this.logger.log(`🔍 [RECURENTA] Găsite ${recurringTasks.length} sarcini cu recurență activă`,);
 
     let processedCount = 0;
     let createdCount = 0;
@@ -353,9 +343,7 @@ export class ScheduledTasksService {
           todayName,
         );
         if (shouldCreateNow) {
-          console.log(
-            `🔄 [RECURENTA] CREARE TASK RECURENT - ${todayName} - Task ID: ${task.id}`,
-          );
+          this.logger.log(`🔄 [RECURENTA] CREARE TASK RECURENT - ${todayName} - Task ID: ${task.id}`,);
 
           await this.processRecurringTask(task, today);
           createdCount++;
@@ -363,9 +351,7 @@ export class ScheduledTasksService {
       }
     }
 
-    console.log(
-      `🔄 [RECURENTA] RECURENȚĂ COMPLETĂ - Task-uri procesate: ${processedCount}, create: ${createdCount}`,
-    );
+    this.logger.log(`🔄 [RECURENTA] RECURENȚĂ COMPLETĂ - Task-uri procesate: ${processedCount}, create: ${createdCount}`,);
 
     return createdCount > 0;
   }
@@ -389,9 +375,7 @@ export class ScheduledTasksService {
 
       if (activeTasks.length > 0) {
         const currentTime = now.toTimeString().split(' ')[0];
-        console.log(
-          `🔔 [SOCKET] Notific ${activeTasks.length} task-uri active la ${currentTime}`,
-        );
+        this.logger.log(`🔔 [SOCKET] Notific ${activeTasks.length} task-uri active la ${currentTime}`,);
 
         // TODO: Implementează socket-ul aici
         // this.socketGateway.emit('tasksBecameActive', {
@@ -400,14 +384,12 @@ export class ScheduledTasksService {
         //   count: activeTasks.length
         // });
 
-        console.log(
-          `🔔 [SOCKET] Task-uri active:`,
+        this.logger.log(`🔔 [SOCKET] Task-uri active:`,
           activeTasks.map((t) => ({
             id: t.id,
             template: t.template?.template_name,
             scheduled: t.scheduled_datetime,
-          })),
-        );
+          })),);
       }
     } catch (error) {
       console.error(
@@ -452,15 +434,11 @@ export class ScheduledTasksService {
       });
 
       if (existingTaskToday) {
-        console.log(
-          `⏭️ [RECURENTA] Task recurent ${task.id} deja creat astăzi (ID: ${existingTaskToday.id}), skip.`,
-        );
+        this.logger.log(`⏭️ [RECURENTA] Task recurent ${task.id} deja creat astăzi (ID: ${existingTaskToday.id}), skip.`,);
         return;
       }
 
-      console.log(
-        `🔍 [ScheduledTasksService] Creez sarcini recurente pentru task-ul ${task.id}`,
-      );
+      this.logger.log(`🔍 [ScheduledTasksService] Creez sarcini recurente pentru task-ul ${task.id}`,);
 
       // Simulează crearea de sarcini pentru departament (ca la departamente)
       await this.createRecurringTasksForDepartment(task);
@@ -541,9 +519,7 @@ export class ScheduledTasksService {
         (currentHour === hours && currentMinute >= minutes);
 
       if (isPastScheduledTime) {
-        console.log(
-          `🕐 [RECURENTA] Ora a trecut pentru ${todayName}: ${specificTime} (curent: ${currentTime})`,
-        );
+        this.logger.log(`🕐 [RECURENTA] Ora a trecut pentru ${todayName}: ${specificTime} (curent: ${currentTime})`,);
         return true;
       }
     } else {
@@ -551,9 +527,7 @@ export class ScheduledTasksService {
       const isPastNineAM =
         currentHour > 9 || (currentHour === 9 && currentMinute >= 0);
       if (isPastNineAM) {
-        console.log(
-          `🕐 [RECURENTA] Ora fallback a trecut pentru ${todayName}: 09:00 (curent: ${currentTime})`,
-        );
+        this.logger.log(`🕐 [RECURENTA] Ora fallback a trecut pentru ${todayName}: 09:00 (curent: ${currentTime})`,);
         return true;
       }
     }
@@ -565,7 +539,7 @@ export class ScheduledTasksService {
     parentTask: TaskAssignment,
   ): Promise<void> {
     try {
-      console.log(`🔄 [RECURENTA] Procesare task recurent ${parentTask.id}`);
+      this.logger.log(`🔄 [RECURENTA] Procesare task recurent ${parentTask.id}`);
 
       // Calculează datele pentru task-ul curent
       const today = new Date();
@@ -594,9 +568,7 @@ export class ScheduledTasksService {
             new Date(parentTask.last_recurrence_generated_date),
           );
           if (lastGenStr === assignedDateStr) {
-            console.log(
-              `⏭️ [RECURENTA] Parent ${parentTask.id} deja generat pentru ${assignedDateStr} — skip.`,
-            );
+            this.logger.log(`⏭️ [RECURENTA] Parent ${parentTask.id} deja generat pentru ${assignedDateStr} — skip.`,);
             return;
           }
         }
@@ -608,9 +580,7 @@ export class ScheduledTasksService {
       const dateStr = today.toISOString().split('T')[0];
       const timeStr = assignedAt.toTimeString().split(' ')[0];
 
-      console.log(
-        `🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ - Data: ${dateStr} (${todayName}), Ora: ${timeStr}, Task părinte ID: ${parentTask.id}`,
-      );
+      this.logger.log(`🔄 [RECURENTA] S-A ATRIBUIT SARCINA RECURENTĂ - Data: ${dateStr} (${todayName}), Ora: ${timeStr}, Task părinte ID: ${parentTask.id}`,);
 
       // Extrage department ID(s) din department_group_id
       // Format un singur grup: dept_3_timestamp_random
@@ -629,9 +599,7 @@ export class ScheduledTasksService {
             .split('_')
             .map((s) => parseInt(s, 10))
             .filter((n) => !Number.isNaN(n) && n > 0 && n < 100000);
-          console.log(
-            `🔄 [RECURENTA] Mai multe grupuri (aceeași recurență): department_ids=${departmentIdsForGroup.join(', ')}`,
-          );
+            this.logger.log(`🔄 [RECURENTA] Mai multe grupuri (aceeași recurență): department_ids=${departmentIdsForGroup.join(', ')}`,);
         } else {
           const singleMatch = groupId.match(/^dept_(\d+)_/);
           if (singleMatch) {
@@ -650,9 +618,7 @@ export class ScheduledTasksService {
         if (departmentIdsForGroup.length === 1) {
           const departmentIdForGroup = departmentIdsForGroup[0];
           const recurrenceId = `dept_${departmentIdForGroup}_${Date.now()}_rec${parentTask.id}`;
-          console.log(
-            `🔄 [RECURENTA] Grup: Departament ID ${departmentIdForGroup} - Toate persoanele din grup vor primi sarcina`,
-          );
+          this.logger.log(`🔄 [RECURENTA] Grup: Departament ID ${departmentIdForGroup} - Toate persoanele din grup vor primi sarcina`,);
           await this.createRecurringTasksForGroup(
             parentTask,
             assignedAt,
@@ -664,9 +630,7 @@ export class ScheduledTasksService {
           for (const departmentId of departmentIdsForGroup) {
             try {
               const recurrenceId = `dept_${departmentId}_${Date.now()}_rec${parentTask.id}`;
-              console.log(
-                `🔄 [RECURENTA] Grup ${departmentId}/${departmentIdsForGroup.join(',')} - Creez task-uri recurente`,
-              );
+              this.logger.log(`🔄 [RECURENTA] Grup ${departmentId}/${departmentIdsForGroup.join(',')} - Creez task-uri recurente`,);
               await this.createRecurringTasksForGroup(
                 parentTask,
                 assignedAt,
@@ -698,9 +662,7 @@ export class ScheduledTasksService {
         if (isGroupTask) {
           // Task pentru grup (FCFS sau everyone_gets_it) - creează task-uri pentru grup
           // NU folosim assigned_to_id din părinte pentru task-urile de grup
-          console.log(
-            `🔄 [RECURENTA] Grup (${parentTask.assignment_mode}) - Creez task-uri pentru grup (ignor assigned_to_id=${parentTask.assigned_to_id})`,
-          );
+          this.logger.log(`🔄 [RECURENTA] Grup (${parentTask.assignment_mode}) - Creez task-uri pentru grup (ignor assigned_to_id=${parentTask.assigned_to_id})`,);
           await this.createRecurringTasksForGroup(
             parentTask,
             assignedAt,
@@ -715,9 +677,7 @@ export class ScheduledTasksService {
             return;
           }
 
-          console.log(
-            `🔄 [RECURENTA] Responsabil: Persoană cu ID ${parentTask.assigned_to_id}`,
-          );
+          this.logger.log(`🔄 [RECURENTA] Responsabil: Persoană cu ID ${parentTask.assigned_to_id}`,);
 
           // Pentru persoane individuale, creează un singur task
           await this.createSingleRecurringTask(
@@ -728,10 +688,8 @@ export class ScheduledTasksService {
         }
       }
 
-      console.log(
-        `🔄 [RECURENTA] Setări recurență:`,
-        JSON.stringify(parentTask.recurrence_settings, null, 2),
-      );
+      this.logger.log(`🔄 [RECURENTA] Setări recurență:`,
+        JSON.stringify(parentTask.recurrence_settings, null, 2),);
 
       // Actualizează parent cu data ultimei generări pentru a preveni recreate în aceeași zi
       try {
@@ -750,9 +708,7 @@ export class ScheduledTasksService {
             await this.assignmentRepository.update(parentTask.id, {
               last_recurrence_generated_date: assignedDateOnly,
             });
-            console.log(
-              `✅ [RECURENTA] parent.last_recurrence_generated_date set pentru ${parentTask.id} -> ${assignedDateStr}`,
-            );
+            this.logger.log(`✅ [RECURENTA] parent.last_recurrence_generated_date set pentru ${parentTask.id} -> ${assignedDateStr}`,);
           }
         }
       } catch (e) {
@@ -789,7 +745,7 @@ export class ScheduledTasksService {
       ? undefined
       : parentTask.assigned_to_id;
 
-    console.log(`🔍 [RECURENTA] Task părinte ${parentTask.id}:`, {
+      this.logger.log(`🔍 [RECURENTA] Task părinte ${parentTask.id}:`, {
       isParentRecurrenceTemplate,
       parentAssignedToId: parentTask.assigned_to_id,
       finalAssignedToId: assignedToId,
@@ -823,10 +779,8 @@ export class ScheduledTasksService {
       recurrence_settings: undefined,
     });
 
-    console.log(
-      `✅ [RECURENTA] Task recurent creat pentru persoana ${parentTask.assigned_to_id}!`,
-    );
-    console.log(`✅ [RECURENTA] Task nou ID: ${newTask.id}`);
+    this.logger.log(`✅ [RECURENTA] Task recurent creat pentru persoana ${parentTask.assigned_to_id}!`,);
+    this.logger.log(`✅ [RECURENTA] Task nou ID: ${newTask.id}`);
   }
 
   /**
@@ -852,17 +806,13 @@ export class ScheduledTasksService {
         if (locMatch) {
           locationId = parseInt(locMatch[1]);
           isLocationBased = true;
-          console.log(
-            `🔍 [RECURENTA] Location ID extras din group_id: ${locationId} (toți angajații pontați)`,
-          );
+          this.logger.log(`🔍 [RECURENTA] Location ID extras din group_id: ${locationId} (toți angajații pontați)`,);
         } else {
           const deptMatch =
             parentTask.department_group_id.match(/^dept_(\d+)_/);
           if (deptMatch) {
             departmentId = parseInt(deptMatch[1]);
-            console.log(
-              `🔍 [RECURENTA] Department ID extras din group_id: ${departmentId}`,
-            );
+            this.logger.log(`🔍 [RECURENTA] Department ID extras din group_id: ${departmentId}`,);
           }
         }
       }
@@ -881,18 +831,14 @@ export class ScheduledTasksService {
 
       if (isLocationBased && locationId) {
         // Obține toți angajații pontați la locația respectivă pentru data specificată
-        console.log(
-          `🔍 [RECURENTA] Obțin toți angajații pontați la locația ${locationId} pentru data ${assignedAt.toISOString().split('T')[0]}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Obțin toți angajații pontați la locația ${locationId} pentru data ${assignedAt.toISOString().split('T')[0]}`,);
         workingEmployees = await this.getLocationEmployees(
           locationId,
           assignedAt,
         );
       } else if (departmentId) {
         // Obține angajații din departament pentru data respectivă (la postare); dacă nu există, nu creăm task – fără eroare
-        console.log(
-          `🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId} pentru data ${assignedAt.toISOString().split('T')[0]}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId} pentru data ${assignedAt.toISOString().split('T')[0]}`,);
         try {
           workingEmployees = await this.getDepartmentEmployees(
             departmentId,
@@ -913,22 +859,16 @@ export class ScheduledTasksService {
 
       const departmentEmployees = workingEmployees;
 
-      console.log(
-        `🔍 [RECURENTA] Găsite ${departmentEmployees.length} persoane în departamentul ${departmentId}`,
-      );
+      this.logger.log(`🔍 [RECURENTA] Găsite ${departmentEmployees.length} persoane în departamentul ${departmentId}`,);
 
       if (departmentEmployees.length === 0) {
-        console.log(
-          `⚠️ [RECURENTA] Nu s-au găsit persoane în departamentul ${departmentId} – skip (fără eroare)`,
-        );
+        this.logger.log(`⚠️ [RECURENTA] Nu s-au găsit persoane în departamentul ${departmentId} – skip (fără eroare)`,);
         return;
       }
 
       const dueDate = this.computeDueDateForRecurring(parentTask, assignedAt);
 
-      console.log(
-        `🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`,
-      );
+      this.logger.log(`🔍 [RECURENTA] Assignment mode: ${parentTask.assignment_mode}`,);
 
       // Logică diferită în funcție de assignment_mode
       if (parentTask.assignment_mode === 'first_come_first_served') {
@@ -936,9 +876,7 @@ export class ScheduledTasksService {
         if (departmentEmployees.length === 1) {
           // ✅ UN SINGUR ANGAJAT → Atribuire automată directă
           const singleEmployee = departmentEmployees[0];
-          console.log(
-            `🎯 [RECURENTA] FCFS cu UN SINGUR angajat → Atribuire automată pentru ${singleEmployee.first_name} ${singleEmployee.last_name} (ID: ${singleEmployee.id})`,
-          );
+          this.logger.log(`🎯 [RECURENTA] FCFS cu UN SINGUR angajat → Atribuire automată pentru ${singleEmployee.first_name} ${singleEmployee.last_name} (ID: ${singleEmployee.id})`,);
 
           const createAssignmentDto: CreateAssignmentDto = {
             template_id: parentTask.template_id,
@@ -967,14 +905,10 @@ export class ScheduledTasksService {
             recurrence_settings: undefined,
           });
 
-          console.log(
-            `✅ [RECURENTA] Task atribuit automat cu ID: ${newTask.id} pentru ${singleEmployee.first_name} ${singleEmployee.last_name}`,
-          );
+          this.logger.log(`✅ [RECURENTA] Task atribuit automat cu ID: ${newTask.id} pentru ${singleEmployee.first_name} ${singleEmployee.last_name}`,);
         } else {
           // ❌ MULȚI ANGAJAȚI → Creează task FCFS normal (neatribuit)
-          console.log(
-            `🔍 [RECURENTA] FIRST_COME_FIRST_SERVED: Creez UN SINGUR task FCFS pentru grup (${departmentEmployees.length} angajați)`,
-          );
+          this.logger.log(`🔍 [RECURENTA] FIRST_COME_FIRST_SERVED: Creez UN SINGUR task FCFS pentru grup (${departmentEmployees.length} angajați)`,);
 
           const createAssignmentDto: CreateAssignmentDto = {
             template_id: parentTask.template_id,
@@ -1003,15 +937,11 @@ export class ScheduledTasksService {
             recurrence_settings: undefined,
           });
 
-          console.log(
-            `✅ [RECURENTA] Task FCFS creat cu ID: ${newTask.id} - vizibil pentru toți ${departmentEmployees.length} angajați din departament ${departmentId}`,
-          );
+          this.logger.log(`✅ [RECURENTA] Task FCFS creat cu ID: ${newTask.id} - vizibil pentru toți ${departmentEmployees.length} angajați din departament ${departmentId}`,);
         }
       } else {
         // Pentru EVERYONE_GETS_IT: creează task-uri individuale pentru fiecare angajat
-        console.log(
-          `🔍 [RECURENTA] EVERYONE_GETS_IT: Creez task pentru TOȚI angajații (${departmentEmployees.length})`,
-        );
+        this.logger.log(`🔍 [RECURENTA] EVERYONE_GETS_IT: Creez task pentru TOȚI angajații (${departmentEmployees.length})`,);
 
         for (const employee of departmentEmployees) {
           const createAssignmentDto: CreateAssignmentDto = {
@@ -1041,14 +971,10 @@ export class ScheduledTasksService {
             recurrence_settings: undefined,
           });
 
-          console.log(
-            `✅ [RECURENTA] Task recurent creat pentru angajatul ${employee.id} (${employee.first_name} ${employee.last_name})`,
-          );
+          this.logger.log(`✅ [RECURENTA] Task recurent creat pentru angajatul ${employee.id} (${employee.first_name} ${employee.last_name})`,);
         }
 
-        console.log(
-          `✅ [RECURENTA] Creat ${departmentEmployees.length} task-uri recurente pentru grupul ${departmentId}`,
-        );
+        this.logger.log(`✅ [RECURENTA] Creat ${departmentEmployees.length} task-uri recurente pentru grupul ${departmentId}`,);
       }
     } catch (error) {
       console.error(
@@ -1067,9 +993,7 @@ export class ScheduledTasksService {
     targetDate?: Date,
   ): Promise<any[]> {
     try {
-      console.log(
-        `🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId}${targetDate ? ` pentru data ${targetDate.toISOString().split('T')[0]}` : ''} din microserviciul employees`,
-      );
+      this.logger.log(`🔍 [RECURENTA] Obțin persoanele din departamentul ${departmentId}${targetDate ? ` pentru data ${targetDate.toISOString().split('T')[0]}` : ''} din microserviciul employees`,);
 
       // 1. Obține toți angajații activi din departament
       const employeesResponse = await firstValueFrom(
@@ -1090,17 +1014,13 @@ export class ScheduledTasksService {
 
       const allEmployees =
         employeesResponse.data?.employees || employeesResponse.data || [];
-      console.log(
-        `🔍 [RECURENTA] Găsite ${allEmployees.length} persoane active în departamentul ${departmentId}`,
-      );
+        this.logger.log(`🔍 [RECURENTA] Găsite ${allEmployees.length} persoane active în departamentul ${departmentId}`,);
 
       // 2. Dacă nu avem dată țintă, returnează toți angajații
       if (!targetDate) {
         // Log persoanele găsite pentru debugging
         allEmployees.forEach((emp: any) => {
-          console.log(
-            `🔍 [RECURENTA] - ${emp.first_name} ${emp.last_name} (ID: ${emp.id})`,
-          );
+          this.logger.log(`🔍 [RECURENTA] - ${emp.first_name} ${emp.last_name} (ID: ${emp.id})`,);
         });
         return allEmployees;
       }
@@ -1112,9 +1032,7 @@ export class ScheduledTasksService {
 
       try {
         // Obține toate shift-urile din attendance-ms (limit mare pentru a include toate intrările)
-        console.log(
-          `🔍 [RECURENTA] Obțin shift-urile pentru ${targetDateStr} de la attendance-ms`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Obțin shift-urile pentru ${targetDateStr} de la attendance-ms`,);
 
         // Helper pentru apelul către attendance-ms (poate folosi token Bearer sau doar header secret)
         const makeAttendanceRequest = async (token?: string) => {
@@ -1166,9 +1084,7 @@ export class ScheduledTasksService {
           allShifts = shiftsResponse.data.data;
         }
 
-        console.log(
-          `🔍 [RECURENTA] Total shifts de la attendance: ${allShifts.length}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Total shifts de la attendance: ${allShifts.length}`,);
 
         // Filtrează shift-urile care se potrivesc departamentului și acoperă ora țintă
         const relevantShifts = allShifts.filter((shift: any) => {
@@ -1187,18 +1103,14 @@ export class ScheduledTasksService {
           }
         });
 
-        console.log(
-          `🔍 [RECURENTA] Shifts relevante pentru departamentul ${departmentId} în ${targetDateStr} la ora ${targetDateTime.toTimeString().split(' ')[0]}: ${relevantShifts.length}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Shifts relevante pentru departamentul ${departmentId} în ${targetDateStr} la ora ${targetDateTime.toTimeString().split(' ')[0]}: ${relevantShifts.length}`,);
 
         // Extrage employee_ids unici din shifts relevante
         const employeeIdsWorking = [
           ...new Set(relevantShifts.map((s: any) => s.employee_id)),
         ];
-        console.log(
-          `🔍 [RECURENTA] Employee IDs care lucrează la ora țintă:`,
-          employeeIdsWorking,
-        );
+        this.logger.log(`🔍 [RECURENTA] Employee IDs care lucrează la ora țintă:`,
+          employeeIdsWorking,);
 
         // În loc să filtrăm prin allEmployees (care poate conține alte ID-uri),
         // solicităm detaliile angajaților direct din employees/batch pe baza ID-urilor din pontaj.
@@ -1227,20 +1139,14 @@ export class ScheduledTasksService {
                 const id = Number(emp?.id);
                 if (!Number.isFinite(id)) continue;
                 workingEmployees.push(emp);
-                console.log(
-                  `✅ [RECURENTA] Angajat din pontaj găsit: ${emp.first_name} ${emp.last_name} (ID: ${id})`,
-                );
+                this.logger.log(`✅ [RECURENTA] Angajat din pontaj găsit: ${emp.first_name} ${emp.last_name} (ID: ${id})`,);
               }
-              console.log(
-                `🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați (din batch) care lucrează la ora țintă`,
-              );
+              this.logger.log(`🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați (din batch) care lucrează la ora țintă`,);
               return workingEmployees;
             } else {
-              console.log(
-                `⚠️ [RECURENTA] employees/batch a returnat 0 angajați pentru IDs: ${employeeIdsWorking.join(
+              this.logger.log(`⚠️ [RECURENTA] employees/batch a returnat 0 angajați pentru IDs: ${employeeIdsWorking.join(
                   ',',
-                )} - folosesc fallback prin allEmployees`,
-              );
+                )} - folosesc fallback prin allEmployees`,);
             }
           } catch (err) {
             console.warn(
@@ -1254,19 +1160,13 @@ export class ScheduledTasksService {
         for (const employee of allEmployees) {
           if (employeeIdsWorking.includes(employee.id)) {
             workingEmployees.push(employee);
-            console.log(
-              `✅ [RECURENTA] (fallback) Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) lucrează în ${targetDateStr} la ora țintă`,
-            );
+            this.logger.log(`✅ [RECURENTA] (fallback) Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) lucrează în ${targetDateStr} la ora țintă`,);
           } else {
-            console.log(
-              `⏭️ [RECURENTA] (fallback) Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) NU lucrează în ${targetDateStr} la ora țintă`,
-            );
+            this.logger.log(`⏭️ [RECURENTA] (fallback) Angajatul ${employee.first_name} ${employee.last_name} (ID: ${employee.id}) NU lucrează în ${targetDateStr} la ora țintă`,);
           }
         }
 
-        console.log(
-          `🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați care lucrează la ora țintă din ${allEmployees.length} total (fallback)`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Găsite ${workingEmployees.length} angajați care lucrează la ora țintă din ${allEmployees.length} total (fallback)`,);
         return workingEmployees;
       } catch (error) {
         console.error(
@@ -1275,9 +1175,7 @@ export class ScheduledTasksService {
         );
         // Dacă attendance-ms returnează eroare (ex. 401), nu mai facem fallback la "toți angajații"
         // Comportament intenționat: nu crea task-uri fără confirmarea pontajului
-        console.log(
-          `⚠️ [RECURENTA] attendance-ms a eșuat — nu se vor crea task-uri fără pontaj valid`,
-        );
+        this.logger.log(`⚠️ [RECURENTA] attendance-ms a eșuat — nu se vor crea task-uri fără pontaj valid`,);
         return [];
       }
     } catch (error) {
@@ -1287,7 +1185,7 @@ export class ScheduledTasksService {
       );
 
       // Fallback la mock data în caz de eroare
-      console.log(`⚠️ [RECURENTA] Folosesc mock data ca fallback`);
+      this.logger.log(`⚠️ [RECURENTA] Folosesc mock data ca fallback`);
       return [
         { id: 2, first_name: 'Alexandru', last_name: 'Constantinescu' },
         { id: 3, first_name: 'John', last_name: 'Smith' },
@@ -1304,9 +1202,7 @@ export class ScheduledTasksService {
     targetDate?: Date,
   ): Promise<any[]> {
     try {
-      console.log(
-        `🔍 [RECURENTA] Obțin toți angajații pontați la locația ${locationId}${targetDate ? ` pentru data ${targetDate.toISOString().split('T')[0]}` : ''}`,
-      );
+      this.logger.log(`🔍 [RECURENTA] Obțin toți angajații pontați la locația ${locationId}${targetDate ? ` pentru data ${targetDate.toISOString().split('T')[0]}` : ''}`,);
 
       // Dacă nu avem dată țintă, nu putem filtra după pontaj
       if (!targetDate) {
@@ -1321,9 +1217,7 @@ export class ScheduledTasksService {
 
       try {
         // Obține toate shift-urile din attendance-ms pentru locația respectivă
-        console.log(
-          `🔍 [RECURENTA] Obțin shift-urile pentru locația ${locationId} pe ${targetDateStr} de la attendance-ms`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Obțin shift-urile pentru locația ${locationId} pe ${targetDateStr} de la attendance-ms`,);
 
         const makeAttendanceRequest = async (token?: string) => {
           const headers: Record<string, any> = {
@@ -1371,9 +1265,7 @@ export class ScheduledTasksService {
           allShifts = shiftsResponse.data.data;
         }
 
-        console.log(
-          `🔍 [RECURENTA] Total shifts de la attendance pentru locația ${locationId}: ${allShifts.length}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Total shifts de la attendance pentru locația ${locationId}: ${allShifts.length}`,);
 
         // Filtrează shift-urile care acoperă ora țintă (fără filtrare după departament)
         const relevantShifts = allShifts.filter((shift: any) => {
@@ -1391,23 +1283,17 @@ export class ScheduledTasksService {
           }
         });
 
-        console.log(
-          `🔍 [RECURENTA] Shifts relevante pentru locația ${locationId} în ${targetDateStr} la ora ${targetDateTime.toTimeString().split(' ')[0]}: ${relevantShifts.length}`,
-        );
+        this.logger.log(`🔍 [RECURENTA] Shifts relevante pentru locația ${locationId} în ${targetDateStr} la ora ${targetDateTime.toTimeString().split(' ')[0]}: ${relevantShifts.length}`,);
 
         // Extrage employee_ids unici din shifts relevante
         const employeeIdsWorking = [
           ...new Set(relevantShifts.map((s: any) => s.employee_id)),
         ];
-        console.log(
-          `🔍 [RECURENTA] Employee IDs care lucrează la locația ${locationId} la ora țintă:`,
-          employeeIdsWorking,
-        );
+        this.logger.log(`🔍 [RECURENTA] Employee IDs care lucrează la locația ${locationId} la ora țintă:`,
+          employeeIdsWorking,);
 
         if (employeeIdsWorking.length === 0) {
-          console.log(
-            `⚠️ [RECURENTA] Niciun angajat nu lucrează la locația ${locationId} la ora țintă`,
-          );
+          this.logger.log(`⚠️ [RECURENTA] Niciun angajat nu lucrează la locația ${locationId} la ora țintă`,);
           return [];
         }
 
@@ -1437,13 +1323,9 @@ export class ScheduledTasksService {
               const id = Number(emp?.id);
               if (!Number.isFinite(id)) continue;
               workingEmployees.push(emp);
-              console.log(
-                `✅ [RECURENTA] Angajat găsit la locația ${locationId}: ${emp.first_name} ${emp.last_name} (ID: ${id})`,
-              );
+              this.logger.log(`✅ [RECURENTA] Angajat găsit la locația ${locationId}: ${emp.first_name} ${emp.last_name} (ID: ${id})`,);
             }
-            console.log(
-              `🔍 [RECURENTA] Găsiți ${workingEmployees.length} angajați pontați la locația ${locationId}`,
-            );
+            this.logger.log(`🔍 [RECURENTA] Găsiți ${workingEmployees.length} angajați pontați la locația ${locationId}`,);
             return workingEmployees;
           }
         } catch (err) {
@@ -1453,9 +1335,7 @@ export class ScheduledTasksService {
           );
         }
 
-        console.log(
-          `⚠️ [RECURENTA] Nu s-au putut obține detaliile angajaților pentru locația ${locationId}`,
-        );
+        this.logger.log(`⚠️ [RECURENTA] Nu s-au putut obține detaliile angajaților pentru locația ${locationId}`,);
         return [];
       } catch (error) {
         console.error(
@@ -1506,9 +1386,7 @@ export class ScheduledTasksService {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0]; // Mâine
-    console.log(
-      `🔍 [ScheduledTasksService] Verificare task-uri cu "Vizibil de la" pentru ${today} și ${tomorrow}`,
-    );
+      this.logger.log(`🔍 [ScheduledTasksService] Verificare task-uri cu "Vizibil de la" pentru ${today} și ${tomorrow}`,);
 
     try {
       // Găsește toate task-urile cu status ASSIGNED sau SCHEDULED care au elemente și nu sunt încă vizibile
@@ -1520,9 +1398,7 @@ export class ScheduledTasksService {
         relations: ['elements', 'elements.task_element', 'template'],
       });
 
-      console.log(
-        `🔍 [ScheduledTasksService] Găsite ${assignments.length} task-uri cu status ASSIGNED sau SCHEDULED`,
-      );
+      this.logger.log(`🔍 [ScheduledTasksService] Găsite ${assignments.length} task-uri cu status ASSIGNED sau SCHEDULED`,);
       let activatedCount = 0;
 
       for (const assignment of assignments) {
@@ -1531,10 +1407,8 @@ export class ScheduledTasksService {
           (element) => element.task_element?.element_type === 'visible_from',
         );
 
-        console.log(
-          `🔍 [ScheduledTasksService] Task ${assignment.id} - visibleFromElement:`,
-          visibleFromElement,
-        );
+        this.logger.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - visibleFromElement:`,
+          visibleFromElement,);
 
         if (visibleFromElement?.value) {
           let visibleFromDate: string | null = null;
@@ -1542,31 +1416,23 @@ export class ScheduledTasksService {
           try {
             const visibleFromData = JSON.parse(visibleFromElement.value.trim());
             visibleFromDate = visibleFromData.date;
-            console.log(
-              `🔍 [ScheduledTasksService] Task ${assignment.id} - JSON parsed, date:`,
-              visibleFromDate,
-            );
+            this.logger.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - JSON parsed, date:`,
+              visibleFromDate,);
           } catch (e) {
             // Dacă nu e JSON, folosește valoarea direct (cu trim pentru a elimina \r\n)
             visibleFromDate = visibleFromElement.value.trim();
-            console.log(
-              `🔍 [ScheduledTasksService] Task ${assignment.id} - direct value:`,
-              visibleFromDate,
-            );
+            this.logger.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - direct value:`,
+              visibleFromDate,);
           }
 
           if (visibleFromDate) {
             const visibleDateTime = new Date(visibleFromDate);
             const now = new Date();
 
-            console.log(
-              `🔍 [ScheduledTasksService] Task ${assignment.id} - now: ${now.toISOString()}, visibleFrom: ${visibleDateTime.toISOString()}, shouldBeVisible: ${now >= visibleDateTime}`,
-            );
+            this.logger.log(`🔍 [ScheduledTasksService] Task ${assignment.id} - now: ${now.toISOString()}, visibleFrom: ${visibleDateTime.toISOString()}, shouldBeVisible: ${now >= visibleDateTime}`,);
 
             if (now >= visibleDateTime) {
-              console.log(
-                `🔍 [ScheduledTasksService] Task ${assignment.id} devine vizibil (visible_from: ${visibleFromDate})`,
-              );
+              this.logger.log(`🔍 [ScheduledTasksService] Task ${assignment.id} devine vizibil (visible_from: ${visibleFromDate})`,);
 
               // Schimbă is_visible_for_employee din false în true
               await this.assignmentRepository.update(
@@ -1603,9 +1469,7 @@ export class ScheduledTasksService {
                     assignment.id,
                     assignment.assigned_to_id,
                   );
-                  console.log(
-                    `📤 [ScheduledTasksService] Notificare "Task activ" trimisă pentru task ${assignment.id}, assigned_to_id=${assignment.assigned_to_id}`,
-                  );
+                  this.logger.log(`📤 [ScheduledTasksService] Notificare "Task activ" trimisă pentru task ${assignment.id}, assigned_to_id=${assignment.assigned_to_id}`,);
                 } catch (e: any) {
                   console.warn(
                     `[ScheduledTasksService] Eroare la trimitere notificare became_visible task ${assignment.id}:`,
@@ -1614,28 +1478,20 @@ export class ScheduledTasksService {
                 }
               }
 
-              console.log(
-                `✅ [ScheduledTasksService] Task ${assignment.id} este acum vizibil pentru angajați`,
-              );
+              this.logger.log(`✅ [ScheduledTasksService] Task ${assignment.id} este acum vizibil pentru angajați`,);
               activatedCount++;
             } else {
-              console.log(
-                `⏳ [ScheduledTasksService] Task ${assignment.id} încă nu este vizibil (visible_from: ${visibleFromDate})`,
-              );
+              this.logger.log(`⏳ [ScheduledTasksService] Task ${assignment.id} încă nu este vizibil (visible_from: ${visibleFromDate})`,);
             }
           }
         }
       }
 
       if (activatedCount > 0) {
-        console.log(
-          `✅ [ScheduledTasksService] ${activatedCount} task-uri cu "Vizibil de la" devin vizibile astăzi`,
-        );
+        this.logger.log(`✅ [ScheduledTasksService] ${activatedCount} task-uri cu "Vizibil de la" devin vizibile astăzi`,);
         return true;
       } else {
-        console.log(
-          `ℹ️ [ScheduledTasksService] Nu sunt task-uri cu "Vizibil de la" care să devină vizibile astăzi`,
-        );
+        this.logger.log(`ℹ️ [ScheduledTasksService] Nu sunt task-uri cu "Vizibil de la" care să devină vizibile astăzi`,);
         return false;
       }
     } catch (error) {
@@ -1776,9 +1632,7 @@ export class ScheduledTasksService {
   async testRecurrenceSystemForDate(
     testDate: Date,
   ): Promise<{ processed: number; created: number; errors: number }> {
-    console.log(
-      `🧪 [ScheduledTasksService] Testare manuală a sistemului de recurență pentru data: ${testDate.toISOString().split('T')[0]}`,
-    );
+    this.logger.log(`🧪 [ScheduledTasksService] Testare manuală a sistemului de recurență pentru data: ${testDate.toISOString().split('T')[0]}`,);
 
     let processed = 0;
     let created = 0;
@@ -1793,37 +1647,27 @@ export class ScheduledTasksService {
         relations: ['template', 'elements', 'elements.task_element'],
       });
 
-      console.log(
-        `🧪 [ScheduledTasksService] Găsite ${recurringTasks.length} sarcini cu recurență pentru testare`,
-      );
+      this.logger.log(`🧪 [ScheduledTasksService] Găsite ${recurringTasks.length} sarcini cu recurență pentru testare`,);
 
       for (const task of recurringTasks) {
         processed++;
         try {
-          console.log(
-            `🧪 [ScheduledTasksService] Testez task-ul ${task.id} cu recurența:`,
-            task.recurrence_settings,
-          );
+          this.logger.log(`🧪 [ScheduledTasksService] Testez task-ul ${task.id} cu recurența:`,
+            task.recurrence_settings,);
 
           // Verifică dacă trebuie să creeze task pentru data de test
           const shouldCreate = this.shouldCreateTasksForToday(
             task.recurrence_settings,
             testDate,
           );
-          console.log(
-            `🧪 [ScheduledTasksService] Should create for ${testDate.toISOString().split('T')[0]}: ${shouldCreate}`,
-          );
+          this.logger.log(`🧪 [ScheduledTasksService] Should create for ${testDate.toISOString().split('T')[0]}: ${shouldCreate}`,);
 
           if (shouldCreate) {
             await this.processRecurringTask(task, testDate);
             created++;
-            console.log(
-              `✅ [ScheduledTasksService] Task recurent creat pentru data de test`,
-            );
+            this.logger.log(`✅ [ScheduledTasksService] Task recurent creat pentru data de test`,);
           } else {
-            console.log(
-              `⏭️ [ScheduledTasksService] Task-ul nu trebuie creat pentru data de test`,
-            );
+            this.logger.log(`⏭️ [ScheduledTasksService] Task-ul nu trebuie creat pentru data de test`,);
           }
         } catch (error) {
           errors++;
@@ -1834,9 +1678,7 @@ export class ScheduledTasksService {
         }
       }
 
-      console.log(
-        `🧪 [ScheduledTasksService] Testare completă: ${processed} procesate, ${created} create, ${errors} erori`,
-      );
+      this.logger.log(`🧪 [ScheduledTasksService] Testare completă: ${processed} procesate, ${created} create, ${errors} erori`,);
     } catch (error) {
       console.error(
         `❌ [ScheduledTasksService] Eroare la testarea sistemului de recurență:`,

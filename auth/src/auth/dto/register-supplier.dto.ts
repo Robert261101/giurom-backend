@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
@@ -166,22 +166,18 @@ export class RegisterSupplierEmployeeFieldsDto {
   @Length(2, 50)
   nationality!: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Adresa reprezentantului (obligatorie, fără lungime minimă artificială)',
+    example: 'Centru',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @IsNotEmpty()
-  @Length(10, 500)
+  @IsNotEmpty({ message: 'Adresa este obligatorie' })
+  @Length(1, 500, {
+    message: 'Adresa trebuie să aibă între 1 și 500 de caractere',
+  })
   address!: string;
-
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  hire_date!: string;
-
-  @ApiProperty({ enum: ['permanent', 'fixed-term', 'internship'] })
-  @IsString()
-  @IsNotEmpty()
-  @IsIn(['permanent', 'fixed-term', 'internship'])
-  contract_type!: string;
 }
 
 export class RegisterSupplierDto {

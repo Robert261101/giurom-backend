@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -13,6 +14,8 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -70,7 +73,7 @@ async function bootstrap() {
   // Start HTTP server
   const httpPort = parseInt(process.env.PORT || '3011', 10);
   await app.listen(httpPort);
-  console.log(`👷 Employees HTTP service listening on http://localhost:${httpPort}`);
+  logger.log(`👷 Employees HTTP service listening on http://localhost:${httpPort}`);
 
 }
 

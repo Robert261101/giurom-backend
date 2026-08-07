@@ -1,11 +1,9 @@
-﻿import {
-  Injectable,
+import { Injectable,
   NotFoundException,
   ConflictException,
   BadRequestException,
   ForbiddenException,
-  Inject,
-} from "@nestjs/common";
+  Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from "@nestjs/typeorm";
 import { ClientProxy } from "@nestjs/microservices";
 import { Repository, MoreThanOrEqual, LessThan, In, IsNull } from "typeorm";
@@ -18,6 +16,7 @@ import { EmployeeWorkLocationHistory } from "./entities/employee-work-location-h
 import { EmployeeLocation } from "./entities/employee-location.entity";
 import { EmployeeFolder } from "./entities/employee-folder.entity";
 import { CreateEmployeeDto } from "./dto/create-employee.dto";
+import { CreateSupplierRegistrationEmployeeDto } from "./dto/create-supplier-registration-employee.dto";
 import { UpdateEmployeeDto } from "./dto/update-employee.dto";
 import { CreateEmployeeFileDto } from "./dto/create-employee-file.dto";
 import { UpdateEmployeeFileDto } from "./dto/update-employee-file.dto";
@@ -32,6 +31,8 @@ import axios from "axios";
 
 @Injectable()
 export class EmployeeService {
+  private readonly logger = new Logger(EmployeeService.name);
+
   constructor(
     @InjectRepository(Employee)
     private employeeRepository: Repository<Employee>,
@@ -237,6 +238,83 @@ export class EmployeeService {
     return savedEmployee;
   }
 
+  /**
+   * Creare employee pentru înregistrarea automată a unui furnizor.
+   * Nu cere hire_date / contract_type (rămân null în DB).
+   * Folosit doar de endpoint-ul intern, nu de POST /employees public.
+   */
+  async createFromSupplierRegistration(
+    dto: CreateSupplierRegistrationEmployeeDto,
+    selectedWorkLocationId?: number,
+  ): Promise<Employee> {
+    const existingEmployee = await this.employeeRepository.findOne({
+      where: { email: dto.email },
+    });
+    if (existingEmployee) {
+      throw new ConflictException("Un angajat cu acest email există deja");
+    }
+
+    const existingCNP = await this.employeeRepository.findOne({
+      where: { personal_number: dto.personal_number },
+    });
+    if (existingCNP) {
+      throw new ConflictException("Un angajat cu acest CNP există deja");
+    }
+
+    const birthDate = new Date(dto.birth_date);
+    const minAge = new Date();
+    minAge.setFullYear(minAge.getFullYear() - 16);
+    if (birthDate > minAge) {
+      throw new BadRequestException(
+        "Angajatul trebuie să aibă cel puțin 16 ani",
+      );
+    }
+
+    let workLocationDefaultId = dto.work_location_default_id ?? null;
+    if (
+      workLocationDefaultId == null &&
+      selectedWorkLocationId != null &&
+      Number.isFinite(Number(selectedWorkLocationId))
+    ) {
+      workLocationDefaultId = Number(selectedWorkLocationId);
+    }
+
+    const employee = this.employeeRepository.create({
+      ...dto,
+      hire_date: null,
+      contract_type: null,
+      work_location_default_id: workLocationDefaultId ?? undefined,
+      is_active: dto.is_active ?? true,
+    });
+
+    const savedEmployee = await this.employeeRepository.save(employee);
+
+    if (savedEmployee.work_location_default_id) {
+      const employeeLocation = this.employeeLocationRepository.create({
+        employeeId: savedEmployee.id,
+        idLocation: savedEmployee.work_location_default_id,
+      });
+      await this.employeeLocationRepository.save(employeeLocation);
+    }
+
+    await this.createEmployeeFolderStructure(savedEmployee);
+
+    await this.sendEmployeeNotification(
+      "employee_created",
+      "Angajat nou creat",
+      `A fost creat un nou angajat: ${savedEmployee.first_name} ${savedEmployee.last_name}`,
+      {
+        employeeId: savedEmployee.id,
+        firstName: savedEmployee.first_name,
+        lastName: savedEmployee.last_name,
+      },
+      savedEmployee.id,
+      selectedWorkLocationId,
+    );
+
+    return savedEmployee;
+  }
+
   private async createEmployeeFolderStructure(
     employee: Employee,
   ): Promise<void> {
@@ -254,7 +332,7 @@ export class EmployeeService {
     location_id?: number,
     department_name?: string,
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
-    console.log("🔍 [EMPLOYEES] findAll called with params:", {
+    this.logger.log("🔍 [EMPLOYEES] findAll called with params:", {
       page,
       limit,
       is_active,
@@ -295,10 +373,8 @@ export class EmployeeService {
 
     // Filtrare după locația din employees_locations
     if (location_id) {
-      console.log(
-        "🔍 [EMPLOYEES] Applying location filter for location_id:",
-        location_id,
-      );
+      this.logger.log("🔍 [EMPLOYEES] Applying location filter for location_id:",
+        location_id,);
       // Check both employee_locations table and work_location_default_id field
       queryBuilder.andWhere(
         "(employeeLocations.idLocation = :location_id OR employee.work_location_default_id = :location_id)",
@@ -308,10 +384,8 @@ export class EmployeeService {
 
     // Filtrare după numele departamentului - temporar dezactivată (tabela worklocation_departments nu există)
     if (department_name) {
-      console.log(
-        "🔍 [EMPLOYEES] Department name filter requested but not available:",
-        department_name,
-      );
+      this.logger.log("🔍 [EMPLOYEES] Department name filter requested but not available:",
+        department_name,);
       // TODO: Implementează filtrarea după numele departamentului când tabela worklocation_departments va fi disponibilă
     }
 
@@ -338,7 +412,7 @@ export class EmployeeService {
       }
     }
 
-    console.log("🔍 [EMPLOYEES] Query result:", {
+    this.logger.log("🔍 [EMPLOYEES] Query result:", {
       totalEmployees: total,
       returnedEmployees: employees.length,
       employees: employees.map((emp) => ({
@@ -351,14 +425,12 @@ export class EmployeeService {
 
     // Log detaliat pentru debugging
     if (location_id) {
-      console.log("🔍 [EMPLOYEES] Angajații din locația " + location_id + ":");
+      this.logger.log("🔍 [EMPLOYEES] Angajații din locația " + location_id + ":");
       employees.forEach((emp, index) => {
-        console.log(
-          `  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map((el) => el.idLocation).join(", ") || "none"})`,
-        );
+        this.logger.log(`  ${index + 1}. ${emp.first_name} ${emp.last_name} (ID: ${emp.id}, Locations: ${emp.employeeLocations?.map((el) => el.idLocation).join(", ") || "none"})`,);
       });
       if (employees.length === 0) {
-        console.log("  ❌ Nu s-au găsit angajați în locația " + location_id);
+        this.logger.log("  ❌ Nu s-au găsit angajați în locația " + location_id);
       }
     }
 
@@ -947,7 +1019,7 @@ export class EmployeeService {
     try {
       // 1. Delete employee files from database
       await this.filesRepository.delete({ employee_id: id } as any);
-      console.log(`✅ Deleted employee files for employee ${id}`);
+      this.logger.log(`✅ Deleted employee files for employee ${id}`);
     } catch (error) {
       console.error(
         `Failed to delete employee files for employee ${id}:`,
@@ -958,7 +1030,7 @@ export class EmployeeService {
     try {
       // 2. Delete generated documents
       await this.documentsRepository.delete({ employee_id: id } as any);
-      console.log(`✅ Deleted generated documents for employee ${id}`);
+      this.logger.log(`✅ Deleted generated documents for employee ${id}`);
     } catch (error) {
       console.error(
         `Failed to delete generated documents for employee ${id}:`,
@@ -971,7 +1043,7 @@ export class EmployeeService {
       await this.workLocationHistoryRepository.delete({
         employee_id: id,
       } as any);
-      console.log(`✅ Deleted work location history for employee ${id}`);
+      this.logger.log(`✅ Deleted work location history for employee ${id}`);
     } catch (error) {
       console.error(
         `Failed to delete work location history for employee ${id}:`,
@@ -982,9 +1054,7 @@ export class EmployeeService {
     try {
       // 4. Delete employee location assignments
       await this.employeeLocationRepository.delete({ employeeId: id } as any);
-      console.log(
-        `✅ Deleted employee location assignments for employee ${id}`,
-      );
+      this.logger.log(`✅ Deleted employee location assignments for employee ${id}`,);
     } catch (error) {
       console.error(
         `Failed to delete employee location assignments for employee ${id}:`,
@@ -1004,9 +1074,7 @@ export class EmployeeService {
     if (fs.existsSync(employeeFilesDirNew)) {
       try {
         fs.rmSync(employeeFilesDirNew, { recursive: true, force: true });
-        console.log(
-          `✅ Deleted employee files directory (new structure): ${employeeFilesDirNew}`,
-        );
+        this.logger.log(`✅ Deleted employee files directory (new structure): ${employeeFilesDirNew}`,);
       } catch (error) {
         console.error(
           `Failed to delete employee files directory (new structure): ${employeeFilesDirNew}`,
@@ -1020,9 +1088,7 @@ export class EmployeeService {
     if (fs.existsSync(employeeFilesDirOld)) {
       try {
         fs.rmSync(employeeFilesDirOld, { recursive: true, force: true });
-        console.log(
-          `✅ Deleted employee files directory (old structure): ${employeeFilesDirOld}`,
-        );
+        this.logger.log(`✅ Deleted employee files directory (old structure): ${employeeFilesDirOld}`,);
       } catch (error) {
         console.error(
           `Failed to delete employee files directory (old structure): ${employeeFilesDirOld}`,
@@ -1033,9 +1099,7 @@ export class EmployeeService {
 
     // 6. Finally, delete the employee record
     await this.employeeRepository.remove(employee);
-    console.log(
-      `✅ Deleted employee record: ${employee.first_name} ${employee.last_name}`,
-    );
+    this.logger.log(`✅ Deleted employee record: ${employee.first_name} ${employee.last_name}`,);
 
     await this.sendEmployeeNotification(
       "employee_deleted",
@@ -1141,7 +1205,7 @@ export class EmployeeService {
   async createFile(
     createFileDto: CreateEmployeeFileDto,
   ): Promise<EmployeeFiles> {
-    console.log("📥 Received createFileDto:", {
+    this.logger.log("📥 Received createFileDto:", {
       employee_id: createFileDto.employee_id,
       file_name: createFileDto.file_name,
       file_type: createFileDto.file_type,
@@ -1186,9 +1250,7 @@ export class EmployeeService {
       createFileDto.file_name.replace(/\.[^/.]+$/, "") || "file";
     const uniqueFileName = `${baseFileName}_${timestamp}.${fileExtension}`;
 
-    console.log(
-      `📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`,
-    );
+    this.logger.log(`📝 Original: ${createFileDto.file_name}, Generated: ${uniqueFileName}`,);
 
     // Map file types to appropriate subfolders
     const fileTypeToFolderMap: { [key: string]: string } = {
@@ -1208,7 +1270,7 @@ export class EmployeeService {
 
     let subfolder =
       fileTypeToFolderMap[createFileDto.file_type] || "Alte documente";
-    console.log("📁 Initial subfolder from file_type:", {
+      this.logger.log("📁 Initial subfolder from file_type:", {
       file_type: createFileDto.file_type,
       subfolder,
     });
@@ -1235,7 +1297,7 @@ export class EmployeeService {
       subfolder = folderPathNorm.startsWith(prefix)
         ? folderPathNorm.slice(prefix.length).replace(/\/+$/, "")
         : folder.description || subfolder;
-      console.log("📁 Subfolder din folder_id:", {
+        this.logger.log("📁 Subfolder din folder_id:", {
         folder_id: createFileDto.folder_id,
         subfolder,
       });
@@ -1243,10 +1305,10 @@ export class EmployeeService {
       const folderMatch = createFileDto.note.match(/\|folder:([^|]+)\|/);
       if (folderMatch && folderMatch[1]) {
         subfolder = folderMatch[1];
-        console.log("📁 Updated subfolder from note:", subfolder);
+        this.logger.log("📁 Updated subfolder from note:", subfolder);
       }
     }
-    console.log("📁 Final subfolder:", subfolder);
+    this.logger.log("📁 Final subfolder:", subfolder);
 
     // Salvare întotdeauna în files/employees/{nume_angajat}/profile_picture sau files/employees/{nume_angajat}/{subfolder}
     const employeeName = this.simplifyEmployeeName(
@@ -1256,10 +1318,8 @@ export class EmployeeService {
     const fileLinkPath = isProfilePicture
       ? `/files/employees/${employeeName}/profile_picture/${uniqueFileName}`
       : `/files/employees/${employeeName}/${subfolder}/${uniqueFileName}`;
-    console.log(
-      "🔗 File link path (files/employees + nume angajat):",
-      fileLinkPath,
-    );
+      this.logger.log("🔗 File link path (files/employees + nume angajat):",
+      fileLinkPath,);
 
     const updatedFileLink = fileLinkPath;
 
@@ -1277,7 +1337,7 @@ export class EmployeeService {
           if (base64Data.includes(",")) base64Data = base64Data.split(",")[1];
           const buffer = Buffer.from(base64Data, "base64");
           fs.writeFileSync(filePath, buffer);
-          console.log(`✅ Poza de profil salvată pe disk: ${filePath}`);
+          this.logger.log(`✅ Poza de profil salvată pe disk: ${filePath}`);
         } catch (error) {
           console.error(
             "❌ Eroare la salvarea pozei de profil pe disk:",
@@ -1331,7 +1391,7 @@ export class EmployeeService {
     });
 
     const savedFile = await this.filesRepository.save(file);
-    console.log(`✅ File record saved to database with ID: ${savedFile.id}`);
+    this.logger.log(`✅ File record saved to database with ID: ${savedFile.id}`);
 
     // Dacă este o fotografie de profil, actualizează profilul angajatului
     if (isProfilePicture) {
@@ -1345,9 +1405,7 @@ export class EmployeeService {
   private async removeExistingProfilePicture(
     employeeId: number,
   ): Promise<void> {
-    console.log(
-      `🗑️ Removing existing profile picture for employee ${employeeId}`,
-    );
+    this.logger.log(`🗑️ Removing existing profile picture for employee ${employeeId}`,);
 
     // Găsește fotografia de profil existentă
     const existingProfilePicture = await this.filesRepository.findOne({
@@ -1380,16 +1438,12 @@ export class EmployeeService {
 
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
-            console.log(
-              `✅ Deleted existing profile picture from disk: ${filePath}`,
-            );
+            this.logger.log(`✅ Deleted existing profile picture from disk: ${filePath}`,);
           }
 
           // Șterge înregistrarea din baza de date
           await this.filesRepository.delete(existingProfilePicture.id);
-          console.log(
-            `✅ Deleted existing profile picture record from database: ${existingProfilePicture.id}`,
-          );
+          this.logger.log(`✅ Deleted existing profile picture record from database: ${existingProfilePicture.id}`,);
         }
       } catch (error) {
         console.error("❌ Error removing existing profile picture:", error);
@@ -1403,9 +1457,7 @@ export class EmployeeService {
     employeeId: number,
     profilePictureUrl: string,
   ): Promise<void> {
-    console.log(
-      `📸 Updating profile picture URL for employee ${employeeId}: ${profilePictureUrl}`,
-    );
+    this.logger.log(`📸 Updating profile picture URL for employee ${employeeId}: ${profilePictureUrl}`,);
 
     // Convert direct file path to API proxy URL for the auth service
     // The auth service needs an API proxy URL that can be accessed by the frontend
@@ -1426,9 +1478,7 @@ export class EmployeeService {
         if (fileRecord) {
           // Create API proxy URL using the file ID
           apiProxyUrl = `/api/employees/file/${fileRecord.id}/view`;
-          console.log(
-            `🔄 Converted direct file path to API proxy URL: ${apiProxyUrl}`,
-          );
+          this.logger.log(`🔄 Converted direct file path to API proxy URL: ${apiProxyUrl}`,);
         } else {
           console.warn(
             `⚠️ Could not find profile picture file record for employee ${employeeId}`,
@@ -1512,12 +1562,10 @@ export class EmployeeService {
     fileName: string;
     disposition: "inline" | "attachment";
   }> {
-    console.log(
-      `🔍 Serving file with ID: ${file_id}, forceDownload: ${forceDownload}`,
-    );
+    this.logger.log(`🔍 Serving file with ID: ${file_id}, forceDownload: ${forceDownload}`,);
 
     const file = await this.findOneFile(file_id);
-    console.log(`📄 File metadata:`, {
+    this.logger.log(`📄 File metadata:`, {
       id: file.id,
       name: file.file_name,
       employee_id: file.employee_id,
@@ -2432,7 +2480,7 @@ export class EmployeeService {
 
   // Find files expiring on a specific date
   async findExpiringFiles(targetDate: string): Promise<EmployeeFiles[]> {
-    console.log(`[EMPLOYEES SERVICE] Finding files expiring on ${targetDate}`);
+    this.logger.log(`[EMPLOYEES SERVICE] Finding files expiring on ${targetDate}`);
     // Format the date to match the database format (YYYY-MM-DD)
     const formattedDate = new Date(targetDate);
     formattedDate.setHours(0, 0, 0, 0);
@@ -2443,15 +2491,13 @@ export class EmployeeService {
       .leftJoinAndSelect("file.employee", "employee")
       .getMany();
 
-    console.log(
-      `[EMPLOYEES SERVICE] Found ${files.length} files expiring on ${targetDate}`,
-    );
+      this.logger.log(`[EMPLOYEES SERVICE] Found ${files.length} files expiring on ${targetDate}`,);
     return files;
   }
 
   // Find files that have already expired
   async findExpiredFiles(): Promise<EmployeeFiles[]> {
-    console.log(`[EMPLOYEES SERVICE] Finding expired files`);
+    this.logger.log(`[EMPLOYEES SERVICE] Finding expired files`);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -2462,7 +2508,7 @@ export class EmployeeService {
       .leftJoinAndSelect("file.employee", "employee")
       .getMany();
 
-    console.log(`[EMPLOYEES SERVICE] Found ${files.length} expired files`);
+      this.logger.log(`[EMPLOYEES SERVICE] Found ${files.length} expired files`);
     return files;
   }
 
@@ -2515,9 +2561,7 @@ export class EmployeeService {
         locationId = employeeLocations[0].idLocation;
       } else if (employee.work_location_default_id != null) {
         locationId = employee.work_location_default_id;
-        console.log(
-          `[createFolder] Folosesc work_location_default_id: ${locationId} (angajat ${employeeId})`,
-        );
+        this.logger.log(`[createFolder] Folosesc work_location_default_id: ${locationId} (angajat ${employeeId})`,);
       }
       if (locationId != null) {
         try {
@@ -2563,7 +2607,7 @@ export class EmployeeService {
               );
             }
             locationPath = `/files/companies/${companyName}/Locații/${location.location_name}`;
-            console.log(`[createFolder] Cale locație: ${locationPath}`);
+            this.logger.log(`[createFolder] Cale locație: ${locationPath}`);
           } else {
             console.warn(
               `[createFolder] Răspuns gol de la locations/${locationId}`,
@@ -2576,9 +2620,7 @@ export class EmployeeService {
           );
         }
       } else {
-        console.log(
-          `[createFolder] Angajat ${employeeId} fără locație (employee_locations goale, work_location_default_id: ${employee.work_location_default_id ?? "null"}), folosesc files/employees/`,
-        );
+        this.logger.log(`[createFolder] Angajat ${employeeId} fără locație (employee_locations goale, work_location_default_id: ${employee.work_location_default_id ?? "null"}), folosesc files/employees/`,);
       }
     } catch (err: any) {
       console.warn(
@@ -2629,12 +2671,10 @@ export class EmployeeService {
       this.assertPathWithinBase(absoluteDir, repoRoot);
       if (!fs.existsSync(absoluteDir)) {
         fs.mkdirSync(absoluteDir, { recursive: true });
-        console.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
+        this.logger.log(`[createFolder] Creat director pe disk: ${absoluteDir}`);
       }
     }
-    console.log(
-      `[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? "null"}, path: ${folderPath})`,
-    );
+    this.logger.log(`[createFolder] Folder creat: ${description} (ID: ${saved.id}, parent_id: ${parentId ?? "null"}, path: ${folderPath})`,);
     return saved;
   }
 
@@ -2697,9 +2737,7 @@ export class EmployeeService {
       if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
         try {
           fs.renameSync(oldDir, newDir);
-          console.log(
-            `[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`,
-          );
+          this.logger.log(`[updateFolder] Redenumit director pe disk: ${oldDir} -> ${newDir}`,);
         } catch (err: any) {
           console.warn(
             `[updateFolder] Nu s-a putut redenumi directorul: ${err?.message || err}`,
@@ -2707,12 +2745,10 @@ export class EmployeeService {
         }
       } else if (!fs.existsSync(newDir)) {
         fs.mkdirSync(newDir, { recursive: true });
-        console.log(`[updateFolder] Creat director pe disk: ${newDir}`);
+        this.logger.log(`[updateFolder] Creat director pe disk: ${newDir}`);
       }
     }
-    console.log(
-      `[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`,
-    );
+    this.logger.log(`[updateFolder] Folder actualizat: ${oldDescription} -> ${newDescription} (ID: ${saved.id})`,);
     return saved;
   }
 
@@ -2729,9 +2765,7 @@ export class EmployeeService {
       );
     }
     await this.removeFolderRecursive(employeeId, folderId);
-    console.log(
-      `[removeFolder] Șters folder ${folderId} (${folder.description}) și descendenții pentru angajat ${employeeId}`,
-    );
+    this.logger.log(`[removeFolder] Șters folder ${folderId} (${folder.description}) și descendenții pentru angajat ${employeeId}`,);
   }
 
   private async removeFolderRecursive(
@@ -2765,9 +2799,7 @@ export class EmployeeService {
           this.assertPathWithinBase(absolutePath, repoRoot);
           if (fs.existsSync(absolutePath)) {
             fs.rmSync(absolutePath, { recursive: true, force: true });
-            console.log(
-              `[removeFolder] Șters director pe disk: ${absolutePath}`,
-            );
+            this.logger.log(`[removeFolder] Șters director pe disk: ${absolutePath}`,);
           }
         } catch (e) {
           console.warn(

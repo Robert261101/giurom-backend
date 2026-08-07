@@ -52,8 +52,12 @@ const PLAIN_EMPLOYEE_BASELINE_PERMISSIONS = [
   'leaves.read',
   // Comenzi client: listă + detalii + recepție parțială (+ lookup produse)
   'order.read',
+  'order.create',
   'order.reception',
   'products.read',
+  // GIU-15: aruncare (pending) + consum propriu — fără waste_approve / stock.* admin
+  'stock.waste_own',
+  'stock.consume_own',
 ] as const;
 
 @Injectable()

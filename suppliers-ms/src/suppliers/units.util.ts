@@ -185,6 +185,41 @@ export function normalizePriceBaseQuantity(
   return n
 }
 
+/** Rotunjire monetară la 2 zecimale (evită 6.049999…). */
+export function roundMoney(value: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+export function resolveProductVatRate(
+  vat: number | null | undefined,
+): number | null {
+  if (vat == null) return null
+  const n = Number(vat)
+  if (!Number.isFinite(n) || n < 0) return null
+  return n
+}
+
+export function priceWithVatFromNet(
+  netPrice: number,
+  vatRate: number,
+): number {
+  return roundMoney(Number(netPrice) * (1 + Number(vatRate) / 100))
+}
+
+export function priceNetFromGross(
+  grossPrice: number,
+  vatRate: number,
+): number {
+  const rate = Number(vatRate)
+  const divisor = 1 + rate / 100
+  if (!Number.isFinite(divisor) || divisor <= 0) {
+    return roundMoney(Number(grossPrice))
+  }
+  return roundMoney(Number(grossPrice) / divisor)
+}
+
 export function resolvePriceBaseUnit(
   priceBaseUnit: string | null | undefined,
   productUnit: string | null | undefined,

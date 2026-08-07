@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { config as loadEnv } from 'dotenv';
 import { join } from 'path';
@@ -17,6 +18,8 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -38,7 +41,7 @@ async function bootstrap() {
   
   const httpPort = parseInt(process.env.COMPANY_HTTP_PORT || '3003', 10);
   await httpApp.listen(httpPort);
-  console.log(`🏢 Company HTTP listening on http://localhost:${httpPort}`);
+  logger.log(`🏢 Company HTTP listening on http://localhost:${httpPort}`);
 
 }
 

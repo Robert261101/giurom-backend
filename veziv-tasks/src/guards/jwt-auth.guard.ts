@@ -28,7 +28,6 @@ export class JwtAuthGuard {
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
-      console.log('❌ [JwtAuthGuard] Token JWT lipsă')
       throw new UnauthorizedException('Token JWT lipsă');
     }
 
@@ -37,7 +36,6 @@ export class JwtAuthGuard {
       request.user = payload;
       return true;
     } catch (error) {
-      console.log('❌ [JwtAuthGuard] Token JWT invalid:', error.message)
       throw new UnauthorizedException('Token JWT invalid');
     }
   }

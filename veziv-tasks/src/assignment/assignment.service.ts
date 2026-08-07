@@ -757,21 +757,15 @@ export class AssignmentService {
         assignment.id,
       );
       if (execution) {
-        console.log(
-          `[AssignmentService] Found execution ${execution.id} for assignment ${assignment.id} with ${execution.answers?.length || 0} answers`,
-        );
+        this.logger.log(`[AssignmentService] Found execution ${execution.id} for assignment ${assignment.id} with ${execution.answers?.length || 0} answers`,);
         enrichedAssignment['execution'] = execution;
       } else {
-        console.log(
-          `[AssignmentService] No execution found for assignment ${assignment.id}`,
-        );
+        this.logger.log(`[AssignmentService] No execution found for assignment ${assignment.id}`,);
       }
     } catch (error) {
       // Dacă nu există execuție, continuă fără eroare
-      console.log(
-        `[AssignmentService] Error fetching execution for assignment ${assignment.id}:`,
-        error.message,
-      );
+      this.logger.log(`[AssignmentService] Error fetching execution for assignment ${assignment.id}:`,
+        error.message,);
     }
 
     // Logica pentru grupuri se face prin department_group_id, nu prin assigned_to_type
@@ -791,9 +785,7 @@ export class AssignmentService {
     }
 
     const startTime = Date.now();
-    console.log(
-      `🚀 [BATCH ENRICH] Starting batch enrichment for ${assignments.length} assignments`,
-    );
+    this.logger.log(`🚀 [BATCH ENRICH] Starting batch enrichment for ${assignments.length} assignments`,);
 
     // 1. Colectează toți assigned_to_id unici
     const uniqueEmployeeIds = new Set<number>();
@@ -811,9 +803,7 @@ export class AssignmentService {
     if (uniqueEmployeeIds.size > 0) {
       try {
         const employeeIdsArray = Array.from(uniqueEmployeeIds);
-        console.log(
-          `📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees via /employees/batch`,
-        );
+        this.logger.log(`📦 [BATCH ENRICH] Loading ${employeeIdsArray.length} employees via /employees/batch`,);
 
         const employeesServiceUrl = 'http://localhost:3011'; // internal employees HTTP service
         const headers = {
@@ -841,9 +831,7 @@ export class AssignmentService {
           }
         });
 
-        console.log(
-          `✅ [BATCH ENRICH] Loaded ${employeeInfoMap.size} employees via batch`,
-        );
+        this.logger.log(`✅ [BATCH ENRICH] Loaded ${employeeInfoMap.size} employees via batch`,);
       } catch (error) {
         console.error(
           `❌ [BATCH ENRICH] Error loading employees:`,
@@ -859,9 +847,7 @@ export class AssignmentService {
     const executionsMap = new Map<number, any>();
     if (assignmentIds.length > 0) {
       try {
-        console.log(
-          `📦 [BATCH ENRICH] Loading executions for ${assignmentIds.length} assignments`,
-        );
+        this.logger.log(`📦 [BATCH ENRICH] Loading executions for ${assignmentIds.length} assignments`,);
         const executions =
           await this.executionService.getExecutionsByAssignmentsBatch(
             assignmentIds,
@@ -879,9 +865,7 @@ export class AssignmentService {
           }
         });
 
-        console.log(
-          `✅ [BATCH ENRICH] Loaded ${executionsMap.size} executions`,
-        );
+        this.logger.log(`✅ [BATCH ENRICH] Loaded ${executionsMap.size} executions`,);
       } catch (error) {
         console.error(
           `❌ [BATCH ENRICH] Error loading executions:`,
@@ -913,9 +897,7 @@ export class AssignmentService {
     });
 
     const duration = Date.now() - startTime;
-    console.log(
-      `✅ [BATCH ENRICH] Completed in ${duration}ms (${assignments.length} assignments)`,
-    );
+    this.logger.log(`✅ [BATCH ENRICH] Completed in ${duration}ms (${assignments.length} assignments)`,);
 
     if (duration > 2000) {
       console.warn(
@@ -1546,9 +1528,7 @@ export class AssignmentService {
       sharedGroupId = buildLocationDepartmentGroupId(locationId);
     }
 
-    console.log(
-      `📦 [ASSIGNMENT SERVICE] Creating ${createAssignmentDtos.length} assignments in batch`,
-    );
+    this.logger.log(`📦 [ASSIGNMENT SERVICE] Creating ${createAssignmentDtos.length} assignments in batch`,);
 
     const createdAssignments: TaskAssignment[] = [];
     // Concurență mărginită — rulează câte 5 creări simultan în loc de secvențial (1 câte 1),
@@ -1580,9 +1560,7 @@ export class AssignmentService {
       createdAssignments.push(...chunkResults);
     }
 
-    console.log(
-      `✅ [ASSIGNMENT SERVICE] Successfully created ${createdAssignments.length} assignments in batch`,
-    );
+    this.logger.log(`✅ [ASSIGNMENT SERVICE] Successfully created ${createdAssignments.length} assignments in batch`,);
     return createdAssignments;
   }
 
@@ -2243,7 +2221,7 @@ export class AssignmentService {
     endDate?: Date,
     authorization?: string,
   ): Promise<TaskAssignment[]> {
-    console.log('🔍 [assignment.service] findAllWithPermissions params:', {
+    this.logger.log('🔍 [assignment.service] findAllWithPermissions params:', {
       userId: user?.sub,
       perms: user?.permissions,
       locationId,
@@ -2314,7 +2292,7 @@ export class AssignmentService {
           // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
           const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
           const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-          console.log('📅 [assignment.service] Date filter:', {
+          this.logger.log('📅 [assignment.service] Date filter:', {
             startDate: sdStr,
             endDate: edStr,
             startDateObj: startDate.toISOString(),
@@ -2332,13 +2310,11 @@ export class AssignmentService {
           thirtyDaysAgo.setDate(today.getDate() - 30);
           const sdStr = `${thirtyDaysAgo.getFullYear()}-${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(thirtyDaysAgo.getDate()).padStart(2, '0')}`;
           const edStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-          console.log(
-            '📅 [assignment.service] No date filter provided, using default: last 30 days',
+          this.logger.log('📅 [assignment.service] No date filter provided, using default: last 30 days',
             {
               startDate: sdStr,
               endDate: edStr,
-            },
-          );
+            },);
           // Include și sarcinile recurente părinte (sabloane) ca managerul să le vadă întotdeauna
           query.andWhere(
             `(assignment.scheduled_datetime IS NOT NULL AND DATE(assignment.scheduled_datetime) >= :sdStr) OR (assignment.scheduled_datetime IS NULL AND DATE(assignment.assigned_at) >= :sdStr) OR (JSON_UNQUOTE(JSON_EXTRACT(assignment.recurrence_settings, '$.enabled')) = 'true' AND assignment.parent_recurrence_id IS NULL)`,
@@ -2357,10 +2333,8 @@ export class AssignmentService {
             },
           )
           .getMany();
-        console.log(
-          '🔍 [assignment.service] read_all+create result count:',
-          result.length,
-        );
+          this.logger.log('🔍 [assignment.service] read_all+create result count:',
+          result.length,);
 
         // Debug pentru sarcinile recurente părinte
         const parentRecurring = result.filter((r) => {
@@ -2377,27 +2351,21 @@ export class AssignmentService {
             return false;
           }
         });
-        console.log(
-          `🔄 [assignment.service] Sarcini recurente părinte găsite: ${parentRecurring.length}`,
-        );
+        this.logger.log(`🔄 [assignment.service] Sarcini recurente părinte găsite: ${parentRecurring.length}`,);
         if (parentRecurring.length > 0) {
           parentRecurring.forEach((r) => {
-            console.log(
-              `🔄 [assignment.service] Parent recurring task ID: ${r.id}, status: ${r.status}, recurrence_settings:`,
-              JSON.stringify(r.recurrence_settings),
-            );
+            this.logger.log(`🔄 [assignment.service] Parent recurring task ID: ${r.id}, status: ${r.status}, recurrence_settings:`,
+              JSON.stringify(r.recurrence_settings),);
           });
         }
         if (startDate && endDate && result.length > 0) {
-          console.log(
-            '📅 [assignment.service] Sample dates from results:',
+          this.logger.log('📅 [assignment.service] Sample dates from results:',
             result.slice(0, 3).map((r) => ({
               id: r.id,
               assigned_at: r.assigned_at,
               scheduled_datetime: r.scheduled_datetime,
               status: r.status,
-            })),
-          );
+            })),);
         }
         // Expandă sarcinile recurente părinte pe fiecare zi din interval (pentru afișare în fiecare zi)
         const toEnrich =
@@ -2415,7 +2383,7 @@ export class AssignmentService {
           // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
           const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
           const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-          console.log('📅 [assignment.service] Date filter:', {
+          this.logger.log('📅 [assignment.service] Date filter:', {
             startDate: sdStr,
             endDate: edStr,
             startDateObj: startDate.toISOString(),
@@ -2442,10 +2410,8 @@ export class AssignmentService {
             },
           )
           .getMany();
-        console.log(
-          '🔍 [assignment.service] read_all (non-manager) result count:',
-          result.length,
-        );
+          this.logger.log('🔍 [assignment.service] read_all (non-manager) result count:',
+          result.length,);
         const toEnrichNonManager =
           startDate && endDate
             ? this.expandRecurringParentsInRange(result, startDate, endDate)
@@ -2616,7 +2582,7 @@ export class AssignmentService {
         // Formatează datele ca string-uri YYYY-MM-DD pentru comparație corectă
         const sdStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
         const edStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-        console.log('📅 [assignment.service] read_own Date filter:', {
+        this.logger.log('📅 [assignment.service] read_own Date filter:', {
           startDate: sdStr,
           endDate: edStr,
           startDateObj: startDate.toISOString(),
@@ -2664,8 +2630,8 @@ export class AssignmentService {
       // 🔍 DEBUG: Log query-ul SQL generat pentru debugging
       const sqlQuery = queryBuilder.getQuery();
       const sqlParams = queryBuilder.getParameters();
-      console.log('🔍 [assignment.service] SQL Query:', sqlQuery);
-      console.log('🔍 [assignment.service] SQL Parameters:', sqlParams);
+      this.logger.log('🔍 [assignment.service] SQL Query:', sqlQuery);
+      this.logger.log('🔍 [assignment.service] SQL Parameters:', sqlParams);
 
       const result = await queryBuilder.getMany();
       // Expandă sarcinile recurente părinte pe fiecare zi din interval (pentru afișare în fiecare zi)
@@ -2673,16 +2639,14 @@ export class AssignmentService {
         startDate && endDate
           ? this.expandRecurringParentsInRange(result, startDate, endDate)
           : result;
-      console.log(
-        '🔍 [assignment.service] read_own result count (înainte de filtrare finală):',
+          this.logger.log('🔍 [assignment.service] read_own result count (înainte de filtrare finală):',
         resultToFilter.length,
         'applied locationId:',
         locationId,
         'userDepartmentId:',
         userDepartmentId,
         'userId:',
-        user.sub,
-      );
+        user.sub,);
 
       // 🔒 FILTRARE FINALĂ ÎN MEMORIE: Elimină taskurile care au trecut prin SQL dar nu ar trebui să fie returnate
       // Această filtrare este o măsură de siguranță pentru a elimina taskurile care au trecut prin SQL din cauza unei logici complexe
@@ -2931,12 +2895,10 @@ export class AssignmentService {
         }
       }
 
-      console.log(
-        '🔍 [assignment.service] read_own result count (după filtrare finală):',
+      this.logger.log('🔍 [assignment.service] read_own result count (după filtrare finală):',
         finalFiltered.length,
         'eliminate:',
-        resultToFilter.length - finalFiltered.length,
-      );
+        resultToFilter.length - finalFiltered.length,);
 
       // 🔍 DEBUG: Verifică dacă există taskuri care nu ar trebui să fie returnate
       const incorrectTasks = finalFiltered.filter((r) => {
@@ -3028,16 +2990,14 @@ export class AssignmentService {
           );
         });
       } else {
-        console.log(
-          '✅ [assignment.service] Toate taskurile sunt corecte după filtrare finală!',
-        );
+        this.logger.log('✅ [assignment.service] Toate taskurile sunt corecte după filtrare finală!',);
       }
 
       // Folosește rezultatul filtrat
       const finalResult = finalFiltered;
 
       if (finalResult.length > 0) {
-        console.log('🔍 [assignment.service] Primul assignment din rezultat:', {
+        this.logger.log('🔍 [assignment.service] Primul assignment din rezultat:', {
           id: finalResult[0].id,
           is_visible_for_employee: finalResult[0].is_visible_for_employee,
           assigned_to_id: finalResult[0].assigned_to_id,
@@ -3146,14 +3106,12 @@ export class AssignmentService {
                   endDate,
                 )
               : locationResult;
-          console.log(
-            '🔍 [assignment.service] read_location result count:',
+              this.logger.log('🔍 [assignment.service] read_location result count:',
             toEnrichLocation.length,
             'applied locationId:',
             locationId !== undefined
               ? locationId
-              : employee.work_location_default_id,
-          );
+              : employee.work_location_default_id,);
 
           // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
           const enrichedLocationResults =
@@ -3295,14 +3253,12 @@ export class AssignmentService {
                       endDate,
                     )
                   : companyLocationResult;
-              console.log(
-                '🔍 [assignment.service] read_company result count:',
+                  this.logger.log('🔍 [assignment.service] read_company result count:',
                 toEnrichCompany.length,
                 'filter locationId:',
                 locationId,
                 'company locations count:',
-                locationIds.length,
-              );
+                locationIds.length,);
 
               // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
               const enrichedCompanyResults =
@@ -3604,9 +3560,7 @@ export class AssignmentService {
   async cleanupGroupTasks(
     departmentGroupId: string,
   ): Promise<{ cleaned: number; remaining: number }> {
-    console.log(
-      `🔍 [CLEANUP] Verific task-urile din grupul ${departmentGroupId}`,
-    );
+    this.logger.log(`🔍 [CLEANUP] Verific task-urile din grupul ${departmentGroupId}`,);
 
     // Găsește toate task-urile din grup
     const groupTasks = await this.assignmentRepository.find({
@@ -3615,16 +3569,14 @@ export class AssignmentService {
       },
     });
 
-    console.log(`🔍 [CLEANUP] Găsite ${groupTasks.length} task-uri în grup`);
-    console.log(
-      `🔍 [CLEANUP] Task-uri:`,
+    this.logger.log(`🔍 [CLEANUP] Găsite ${groupTasks.length} task-uri în grup`);
+    this.logger.log(`🔍 [CLEANUP] Task-uri:`,
       groupTasks.map((t) => ({
         id: t.id,
         assigned_to_id: t.assigned_to_id,
         status: t.status,
         assignment_mode: t.assignment_mode,
-      })),
-    );
+      })),);
 
     if (groupTasks.length === 0) {
       return { cleaned: 0, remaining: 0 };
@@ -3636,7 +3588,7 @@ export class AssignmentService {
     );
 
     if (inProgressTasks.length === 0) {
-      console.log(`ℹ️ [CLEANUP] Nu există task-uri acceptate în grup`);
+      this.logger.log(`ℹ️ [CLEANUP] Nu există task-uri acceptate în grup`);
       return { cleaned: 0, remaining: groupTasks.length };
     }
 
@@ -3647,9 +3599,7 @@ export class AssignmentService {
       if (
         acceptedTask.assignment_mode === AssignmentMode.FIRST_COME_FIRST_SERVED
       ) {
-        console.log(
-          `🔍 [CLEANUP] Task-ul ${acceptedTask.id} este FIRST_COME_FIRST_SERVED - șterg celelalte`,
-        );
+        this.logger.log(`🔍 [CLEANUP] Task-ul ${acceptedTask.id} este FIRST_COME_FIRST_SERVED - șterg celelalte`,);
 
         // Șterge toate celelalte task-uri din grup (nu pe cel acceptat)
         const otherTasks = groupTasks.filter(
@@ -3663,14 +3613,10 @@ export class AssignmentService {
             otherTasks.map((task) => task.id),
           );
           cleanedCount += otherTasks.length;
-          console.log(
-            `✅ [CLEANUP] Șterse ${otherTasks.length} task-uri din grup`,
-          );
+          this.logger.log(`✅ [CLEANUP] Șterse ${otherTasks.length} task-uri din grup`,);
         }
       } else {
-        console.log(
-          `ℹ️ [CLEANUP] Task-ul ${acceptedTask.id} este EVERYONE_GETS_IT - nu se șterge nimic`,
-        );
+        this.logger.log(`ℹ️ [CLEANUP] Task-ul ${acceptedTask.id} este EVERYONE_GETS_IT - nu se șterge nimic`,);
       }
     }
 
@@ -3681,9 +3627,7 @@ export class AssignmentService {
       },
     });
 
-    console.log(
-      `✅ [CLEANUP] Curățare completă: ${cleanedCount} șterse, ${remainingTasks.length} rămase`,
-    );
+    this.logger.log(`✅ [CLEANUP] Curățare completă: ${cleanedCount} șterse, ${remainingTasks.length} rămase`,);
 
     return { cleaned: cleanedCount, remaining: remainingTasks.length };
   }
@@ -3718,7 +3662,7 @@ export class AssignmentService {
    * Aprobă un task cu requires_manager_check și îl finalizează
    */
   async approveTask(id: number, managerId: number): Promise<TaskAssignment> {
-    console.log(`🔍 [APPROVE] Manager ${managerId} aprobă task-ul ${id}`);
+    this.logger.log(`🔍 [APPROVE] Manager ${managerId} aprobă task-ul ${id}`);
 
     const assignment = await this.findOne(id);
     if (!assignment) {
@@ -3755,9 +3699,7 @@ export class AssignmentService {
     // NU mai creăm execuție nouă - angajatul a creat deja execuția când a completat task-ul!
     // Execuția existentă conține deja toate răspunsurile (answers) ale angajatului
 
-    console.log(
-      `✅ [APPROVE] Task ${id} aprobat de manager ${managerId} și finalizat`,
-    );
+    this.logger.log(`✅ [APPROVE] Task ${id} aprobat de manager ${managerId} și finalizat`,);
 
     // Notificare pentru angajat: task aprobat de manager
     await this.sendAssignmentNotification(
@@ -3780,7 +3722,7 @@ export class AssignmentService {
    * Punctele rămân neschimbate.
    */
   async rejectTask(id: number, managerId: number): Promise<TaskAssignment> {
-    console.log(`🔍 [REJECT] Manager ${managerId} respinge task-ul ${id}`);
+    this.logger.log(`🔍 [REJECT] Manager ${managerId} respinge task-ul ${id}`);
 
     const assignment = await this.findOne(id);
     if (!assignment) {
@@ -3818,9 +3760,7 @@ export class AssignmentService {
         await this.executionRepository.update(execution.id, {
           comment: updatedComment,
         } as any);
-        console.log(
-          `✅ [REJECT] Execuția ${execution.id} a fost marcată ca nefinalizată pentru eficiență (puncte păstrate)`,
-        );
+        this.logger.log(`✅ [REJECT] Execuția ${execution.id} a fost marcată ca nefinalizată pentru eficiență (puncte păstrate)`,);
       } catch (error) {
         console.error(
           `❌ [REJECT] Eroare la marcarea execuției ${execution.id}:`,
@@ -3829,9 +3769,7 @@ export class AssignmentService {
         // Nu aruncăm eroarea pentru a nu bloca actualizarea task-ului
       }
     } else {
-      console.log(
-        `ℹ️ [REJECT] Nu există execuție pentru task ${id} - continuăm fără marker`,
-      );
+      this.logger.log(`ℹ️ [REJECT] Nu există execuție pentru task ${id} - continuăm fără marker`,);
     }
 
     // Închidem task-ul; la eficiență va conta nefinalizat datorită marker-ului din execuție.
@@ -3844,9 +3782,7 @@ export class AssignmentService {
       rejecting_times: newRejectingTimes,
     });
 
-    console.log(
-      `✅ [REJECT] Task ${id} marcat de manager ${managerId} ca nefinalizat pentru eficiență (respingere #${newRejectingTimes})`,
-    );
+    this.logger.log(`✅ [REJECT] Task ${id} marcat de manager ${managerId} ca nefinalizat pentru eficiență (respingere #${newRejectingTimes})`,);
 
     // Notificare pentru angajat
     await this.sendAssignmentNotification(
@@ -3868,16 +3804,12 @@ export class AssignmentService {
    * Obține sarcinile întârziate pentru angajatul curent
    */
   async getOverdueTasks(user: any): Promise<TaskAssignment[]> {
-    console.log(
-      '🔍 [assignment.service] getOverdueTasks - User:',
-      user ? 'EXISTĂ' : 'LIPSEȘTE',
-    );
+    this.logger.log('🔍 [assignment.service] getOverdueTasks - User:',
+      user ? 'EXISTĂ' : 'LIPSEȘTE',);
     if (user) {
-      console.log('🔍 [assignment.service] User ID:', user.sub);
-      console.log(
-        '🔍 [assignment.service] User permissions:',
-        user.permissions,
-      );
+      this.logger.log('🔍 [assignment.service] User ID:', user.sub);
+      this.logger.log('🔍 [assignment.service] User permissions:',
+        user.permissions,);
     }
 
     const now = new Date();
@@ -3893,9 +3825,7 @@ export class AssignmentService {
       user?.permissions?.includes('assignment.read_own') ||
       isOperationalStaffUser(user)
     ) {
-      console.log(
-        '✅ [assignment.service] User are assignment.read_own - filtrez după assigned_to_id',
-      );
+      this.logger.log('✅ [assignment.service] User are assignment.read_own - filtrez după assigned_to_id',);
 
       const result = await query
         .where('assignment.assigned_to_id = :userId', { userId: user.sub })
@@ -3940,11 +3870,9 @@ export class AssignmentService {
         return deadline && now > deadline;
       });
 
-      console.log(
-        '🔍 [assignment.service] Rezultat overdue tasks:',
+      this.logger.log('🔍 [assignment.service] Rezultat overdue tasks:',
         overdueTasks.length,
-        'assignments',
-      );
+        'assignments',);
 
       // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
       const enrichedResults =
@@ -3957,9 +3885,7 @@ export class AssignmentService {
       user?.permissions?.includes('assignment.read_all') ||
       user?.permissions?.includes('assignment.read_company')
     ) {
-      console.log(
-        '✅ [assignment.service] User este manager - returnez toate sarcinile întârziate',
-      );
+      this.logger.log('✅ [assignment.service] User este manager - returnez toate sarcinile întârziate',);
 
       const result = await query
         .where('assignment.status != :completedStatus', {
@@ -3997,11 +3923,9 @@ export class AssignmentService {
         return deadline && now > deadline;
       });
 
-      console.log(
-        '🔍 [assignment.service] Rezultat overdue tasks (manager):',
+      this.logger.log('🔍 [assignment.service] Rezultat overdue tasks (manager):',
         overdueTasks.length,
-        'assignments',
-      );
+        'assignments',);
 
       // Adaugă informații despre persoane și departamente - OPTIMIZAT cu batch loading
       const enrichedResults =
@@ -4010,9 +3934,7 @@ export class AssignmentService {
     }
 
     // Dacă nu are permisiuni, returnează array gol
-    console.log(
-      '❌ [assignment.service] User nu are permisiuni pentru overdue tasks',
-    );
+    this.logger.log('❌ [assignment.service] User nu are permisiuni pentru overdue tasks',);
     return [];
   }
 
@@ -4021,9 +3943,9 @@ export class AssignmentService {
    * Folosește un query minimal (fără template și enrich) pentru a evita timeout.
    */
   async postponeTask(id: number, userId: number): Promise<TaskAssignment> {
-    console.log(`🔍 [POSTPONE] ==========================================`);
-    console.log(`🔍 [POSTPONE] Postponing task ${id} for user ${userId}`);
-    console.log(`🔍 [POSTPONE] ==========================================`);
+    this.logger.log(`🔍 [POSTPONE] ==========================================`);
+    this.logger.log(`🔍 [POSTPONE] Postponing task ${id} for user ${userId}`);
+    this.logger.log(`🔍 [POSTPONE] ==========================================`);
 
     const uid = typeof userId === 'string' ? parseInt(userId, 10) : userId;
     if (Number.isNaN(uid)) {
@@ -4037,12 +3959,12 @@ export class AssignmentService {
     });
 
     if (!assignment) {
-      console.log(`❌ [POSTPONE] Task assignment ${id} not found`);
+      this.logger.log(`❌ [POSTPONE] Task assignment ${id} not found`);
       throw new Error('Task assignment not found');
     }
 
     if (assignment.assigned_to_id !== uid) {
-      console.log(`❌ [POSTPONE] Task ${id} doesn't belong to user ${uid}`);
+      this.logger.log(`❌ [POSTPONE] Task ${id} doesn't belong to user ${uid}`);
       throw new Error('Task does not belong to user');
     }
 
@@ -4068,13 +3990,13 @@ export class AssignmentService {
     }
 
     if (!hasAllowPostpone) {
-      console.log(`❌ [POSTPONE] Task ${id} doesn't allow postponement`);
+      this.logger.log(`❌ [POSTPONE] Task ${id} doesn't allow postponement`);
       throw new Error('Task does not allow postponement');
     }
 
     // Verifică dacă task-ul nu este deja finalizat
     if (assignment.status === 'completed') {
-      console.log(`❌ [POSTPONE] Task ${id} is already completed`);
+      this.logger.log(`❌ [POSTPONE] Task ${id} is already completed`);
       throw new Error('Task is already completed');
     }
 
@@ -4105,18 +4027,14 @@ export class AssignmentService {
       );
       if (el) {
         await this.elementRepository.update({ id: el.id }, { value: 'false' });
-        console.log(
-          `✅ [POSTPONE] Updated allow_postpone to false for task ${id}`,
-        );
+        this.logger.log(`✅ [POSTPONE] Updated allow_postpone to false for task ${id}`,);
       }
 
       await this.assignmentRepository.update(id, {
         was_postponed: true,
         due_date: newDueDate,
       });
-      console.log(
-        `✅ [POSTPONE] Updated was_postponed = true și due_date += ${postponeMinutes} min pentru task ${id}`,
-      );
+      this.logger.log(`✅ [POSTPONE] Updated was_postponed = true și due_date += ${postponeMinutes} min pentru task ${id}`,);
     } catch (error) {
       console.error(
         `❌ [POSTPONE] Error updating task assignment ${id}:`,
@@ -4125,10 +4043,8 @@ export class AssignmentService {
       throw new Error('Failed to update task assignment');
     }
 
-    console.log(
-      `✅ [POSTPONE] Task ${id} postponed successfully by user ${uid}`,
-    );
-    console.log(`🔍 [POSTPONE] ==========================================`);
+    this.logger.log(`✅ [POSTPONE] Task ${id} postponed successfully by user ${uid}`,);
+    this.logger.log(`🔍 [POSTPONE] ==========================================`);
 
     // Returnează un răspuns minimal (fără al doilea findOne) pentru a evita timeout
     return {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -26,6 +26,8 @@ export interface CompanyAccessRequester {
 
 @Injectable()
 export class CompanyService {
+  private readonly logger = new Logger(CompanyService.name);
+
   constructor(
     @InjectRepository(Company) private readonly companyRepository: Repository<Company>,
     @InjectRepository(CompanyDocument) private readonly companyDocumentRepository: Repository<CompanyDocument>,
@@ -122,21 +124,21 @@ export class CompanyService {
       const companyRootDir = path.join(this.getCompanyFilesRootDir(), company.company_name);
       if (!fs.existsSync(companyRootDir)) {
         fs.mkdirSync(companyRootDir, { recursive: true });
-        console.log(`📁 Created company root directory: ${companyRootDir}`);
+        this.logger.log(`📁 Created company root directory: ${companyRootDir}`);
       }
 
       // Obligatoriu: folder Locații în care vor apărea folderele per locație (Angajați, Furnizori)
       const locationsDir = path.join(companyRootDir, 'Locații');
       if (!fs.existsSync(locationsDir)) {
         fs.mkdirSync(locationsDir, { recursive: true });
-        console.log(`📁 Created locations directory: ${locationsDir}`);
+        this.logger.log(`📁 Created locations directory: ${locationsDir}`);
       }
       
       // Create "Companie" folder with all subfolders (documente firme)
       const companyDir = path.join(companyRootDir, 'Companie');
       if (!fs.existsSync(companyDir)) {
         fs.mkdirSync(companyDir, { recursive: true });
-        console.log(`📁 Created company directory: ${companyDir}`);
+        this.logger.log(`📁 Created company directory: ${companyDir}`);
       }
       
       // Create all required subfolders for "Companie"
@@ -166,11 +168,11 @@ export class CompanyService {
         const subfolderPath = path.join(companyDir, subfolder);
         if (!fs.existsSync(subfolderPath)) {
           fs.mkdirSync(subfolderPath, { recursive: true });
-          console.log(`📁 Created company subfolder: ${subfolderPath}`);
+          this.logger.log(`📁 Created company subfolder: ${subfolderPath}`);
         }
       }
       
-      console.log(`✅ Folder structure created successfully for company ${company.id}`);
+      this.logger.log(`✅ Folder structure created successfully for company ${company.id}`);
     } catch (error) {
       console.error(`❌ Error creating folder structure for company ${company.id}:`, error);
     }
@@ -187,8 +189,8 @@ export class CompanyService {
     
     // Send notification
     try {
-      console.log(`🔍 [COMPANY SERVICE] Attempting to send company notification for company ID: ${saved.id}`);
-      console.log(`📝 Notification details - Name: ${dto.company_name}, CUI: ${dto.cui}`);
+      this.logger.log(`🔍 [COMPANY SERVICE] Attempting to send company notification for company ID: ${saved.id}`);
+      this.logger.log(`📝 Notification details - Name: ${dto.company_name}, CUI: ${dto.cui}`);
       
       const notificationData = {
         type: 'company_created',
@@ -201,11 +203,11 @@ export class CompanyService {
         metadata: { companyId: saved.id, ...dto, ...(work_location_id != null ? { work_location_id } : {}) },
       };
       
-      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
       
       this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
       
-      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for company ${saved.id}`);
+      this.logger.log(`✅ [COMPANY SERVICE] Successfully sent notification for company ${saved.id}`);
     } catch (error) {
       console.error('❌ [COMPANY SERVICE] Failed to send company notification:', error);
     }
@@ -343,7 +345,7 @@ export class CompanyService {
   }
 
   async updateCompany(id: number, dto: UpdateCompanyDto, work_location_id?: number, requester?: CompanyAccessRequester): Promise<Company> {
-    console.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
+    this.logger.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
 
     const company = await this.findCompanyById(id, requester);
     if (dto.cui && dto.cui !== company.cui) {
@@ -355,7 +357,7 @@ export class CompanyService {
     
     // Send notification for updated company
     try {
-      console.log(`🔔 [COMPANY SERVICE] Sending notification for updated company ${updatedCompany.id}`);
+      this.logger.log(`🔔 [COMPANY SERVICE] Sending notification for updated company ${updatedCompany.id}`);
       
       const notificationData = {
         type: 'company_updated',
@@ -374,11 +376,11 @@ export class CompanyService {
         },
       };
       
-      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
       
       this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
       
-      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for updated company ${updatedCompany.id}`);
+      this.logger.log(`✅ [COMPANY SERVICE] Successfully sent notification for updated company ${updatedCompany.id}`);
     } catch (error) {
       console.error('❌ [COMPANY SERVICE] Failed to send company update notification:', error);
     }
@@ -387,7 +389,7 @@ export class CompanyService {
   }
 
   async removeCompany(id: number, work_location_id?: number, requester?: CompanyAccessRequester): Promise<void> {
-    console.log(`🔍 [COMPANY SERVICE] Removing company ${id}`);
+    this.logger.log(`🔍 [COMPANY SERVICE] Removing company ${id}`);
 
     const company = await this.findCompanyById(id, requester);
     const companyName = company.company_name;
@@ -395,7 +397,7 @@ export class CompanyService {
     
     // Send notification for deleted company
     try {
-      console.log(`🔔 [COMPANY SERVICE] Sending notification for deleted company ${id}`);
+      this.logger.log(`🔔 [COMPANY SERVICE] Sending notification for deleted company ${id}`);
       
       const notificationData = {
         type: 'company_deleted',
@@ -408,11 +410,11 @@ export class CompanyService {
         metadata: { companyId: id, companyName, ...(work_location_id != null ? { work_location_id } : {}) },
       };
       
-      console.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
+      this.logger.log(`📤 Sending notification data: ${JSON.stringify(notificationData, null, 2)}`);
       
       this.notificationsClient.emit({ cmd: 'company.notification' }, notificationData);
       
-      console.log(`✅ [COMPANY SERVICE] Successfully sent notification for deleted company ${id}`);
+      this.logger.log(`✅ [COMPANY SERVICE] Successfully sent notification for deleted company ${id}`);
     } catch (error) {
       console.error('❌ [COMPANY SERVICE] Failed to send company delete notification:', error);
     }
@@ -523,7 +525,7 @@ export class CompanyService {
       // Remove the physical file if it exists
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
-        console.log(`✅ Deleted physical file: ${filePath}`);
+        this.logger.log(`✅ Deleted physical file: ${filePath}`);
       } else {
         console.warn(`⚠️ Physical file not found for removal: ${filePath}`);
       }

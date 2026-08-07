@@ -16,6 +16,9 @@ import { SupplierOrderAssignment } from "./suppliers/entities/supplier-order-ass
 import { SupplierDocument } from "./suppliers/entities/supplier-document.entity";
 import { SupplierLocations } from "./suppliers/entities/supplier-locations.entity";
 import { SupplierProductClientMapping } from "./suppliers/entities/supplier-product-client-mapping.entity";
+import { SupplierProductClientPrice } from "./suppliers/entities/supplier-product-client-price.entity";
+import { SupplierProductClientPriceHistory } from "./suppliers/entities/supplier-product-client-price-history.entity";
+import { SupplierProductClientVisibility } from "./suppliers/entities/supplier-product-client-visibility.entity";
 import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-order-driver-assignment.entity";
 import { SupplierOrderWarehouseReview } from "./suppliers/entities/supplier-order-warehouse-review.entity";
 import { SupplierOrderItemChange } from "./suppliers/entities/supplier-order-item-change.entity";
@@ -80,6 +83,9 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierLocations,
         EmployeeSupplier,
         SupplierProductClientMapping,
+        SupplierProductClientPrice,
+        SupplierProductClientPriceHistory,
+        SupplierProductClientVisibility,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === "true",
       logging: process.env.DB_LOGGING === "true",
@@ -116,6 +122,9 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierLocations,
         EmployeeSupplier,
         SupplierProductClientMapping,
+        SupplierProductClientPrice,
+        SupplierProductClientPriceHistory,
+        SupplierProductClientVisibility,
       ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],

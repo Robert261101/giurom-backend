@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsEmail,
@@ -110,9 +111,12 @@ export class CreateEmployeeDto {
     description: 'Adresa completă a angajatului',
     example: 'Str. Exemplu nr. 123, București',
   })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString({ message: 'Adresa trebuie să fie un string' })
   @IsNotEmpty({ message: 'Adresa este obligatorie' })
-  @Length(10, 500, { message: 'Adresa trebuie să aibă între 10 și 500 de caractere' })
+  @Length(1, 500, {
+    message: 'Adresa trebuie să aibă între 1 și 500 de caractere',
+  })
   address: string;
 
   @ApiProperty({

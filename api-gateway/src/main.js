@@ -96,7 +96,6 @@ function resolveRepoRoot() {
   return repoRoot;
 }
 const imagesPath = path.join(resolveRepoRoot(), "images");
-console.log(`📂 API Gateway static images path: ${imagesPath}`);
 
 app.use(
   "/api/images",
@@ -390,11 +389,10 @@ function checkTarget(url, pathName) {
 
 // Start the gateway
 const server = app.listen(PORT, () => {
-  console.log(`🚀 API Gateway is running on http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/health`);
-  console.log("🔀 Routing configuration:");
+  console.info(`🚀 API Gateway is running on http://localhost:${PORT}`);
+  console.info(`📋 Health check: http://localhost:${PORT}/health`);
   Object.keys(microservices).forEach((p) => {
-    console.log(`   ${p} -> ${microservices[p].target}`);
+    console.info(`   ${p} -> ${microservices[p].target}`);
   });
 
   // Verificare microservicii (target-uri unice)
@@ -410,16 +408,11 @@ const server = app.listen(PORT, () => {
   Promise.all(checks).then((results) => {
     const failed = results.filter((r) => !r.ok);
     if (failed.length) {
-      console.log(
+      console.info(
         "\n⚠️  MICROSERVICII INACCESIBILE (ECONNREFUSED = serviciul nu rulează pe acel port):",
       );
       failed.forEach((r) => {
-        console.log(`   - ${r.path} -> ${r.target}`);
-        console.log(
-          `     Pornește microserviciul sau setează variabila de mediu corespunzătoare.`,
-        );
       });
-      console.log("");
     }
   });
 });
@@ -429,9 +422,6 @@ server.on("upgrade", (req, socket, head) => {
   const matchedProxy = wsProxies.find(({ path }) => pathname.startsWith(path));
 
   if (matchedProxy) {
-    console.log(
-      `[${new Date().toISOString()}] Upgrading WS ${pathname} -> ${matchedProxy.config.target}`,
-    );
     matchedProxy.proxy.upgrade(req, socket, head);
   } else {
     console.warn(

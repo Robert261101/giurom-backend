@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -14,6 +15,8 @@ function getAllowedOrigins(): string[] {
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
 
+const logger = new Logger('Bootstrap');
+
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
     throw new Error('SERVICE_SECRET must be set in production. Do not use default fallback.');
@@ -26,7 +29,6 @@ async function bootstrap() {
 
   // Log fiecare request (method + path) ca să vezi ce ajunge la suppliers-ms
   httpApp.use((req: any, _res: any, next: any) => {
-    console.log(`[REQUEST] ${req.method} ${req.url}`);
     next();
   });
 
@@ -49,8 +51,8 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(httpApp as any, config);
   SwaggerModule.setup('api/docs', httpApp as any, document);
   await httpApp.listen(httpPort);
-  console.log(`📠 Suppliers HTTP on http://localhost:${httpPort}`);
-  console.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
+  logger.log(`📠 Suppliers HTTP on http://localhost:${httpPort}`);
+  logger.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
 
 }
 

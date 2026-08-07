@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Res, ParseIntPipe, UseGuards, Request, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { PermissionsGuard } from './permissions/permissions.guard';
@@ -15,6 +15,8 @@ import { WorkLocation } from './locations/entity/work-location.entity';
 @Controller('locations')
 @UseGuards(PermissionsGuard)
 export class LocationsHttpController {
+  private readonly logger = new Logger(LocationsHttpController.name);
+
 	constructor(private readonly service: LocationsService) {}
 
 	// Revenue endpoints - trebuie să fie înainte de @Post() pentru a nu fi interceptate
@@ -374,9 +376,9 @@ export class LocationsHttpController {
 		@Res() res: Response,
 	) {
 		try {
-			console.log(`📥 [HTTP Controller] Received request to view location file ID: ${fileId}`);
+		  this.logger.log(`📥 [HTTP Controller] Received request to view location file ID: ${fileId}`);
 			const served = await this.service.serveFile(fileId, false);
-			console.log(`✅ [HTTP Controller] File served successfully, preparing response`);
+			this.logger.log(`✅ [HTTP Controller] File served successfully, preparing response`);
 			const buffer = Buffer.from(served.data, 'base64');
 			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
 			res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
@@ -445,7 +447,7 @@ export class LocationsHttpController {
 	@Get('files/expiring/:targetDate')
 	@Permissions('locations.read')
 	getExpiringFiles(@Param('targetDate') targetDate: string) {
-		console.log(`[LOCATIONS CONTROLLER] Getting files expiring on ${targetDate}`);
+	  this.logger.log(`[LOCATIONS CONTROLLER] Getting files expiring on ${targetDate}`);
 		return this.service.findExpiringFiles(targetDate);
 	}
 
@@ -453,7 +455,7 @@ export class LocationsHttpController {
 	@Get('files/expired')
 	@Permissions('locations.read')
 	getExpiredFiles() {
-		console.log(`[LOCATIONS CONTROLLER] Getting expired files`);
+	  this.logger.log(`[LOCATIONS CONTROLLER] Getting expired files`);
 		return this.service.findExpiredFiles();
 	}
 

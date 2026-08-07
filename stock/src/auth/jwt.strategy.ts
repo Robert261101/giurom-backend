@@ -24,9 +24,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       username: payload.username,
       roles: Array.isArray(payload.roles) ? payload.roles : [],
       permissions: payload.permissions || [],
-      roles: payload.roles || [],
-      company_id: payload.company_id ?? undefined,
-      company_type: payload.company_type ?? undefined,
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,
       company_type:

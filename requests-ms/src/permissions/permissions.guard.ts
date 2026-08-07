@@ -23,14 +23,12 @@ export class PermissionsGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const user = request?.user;
-    this.logger.log(`User: ${JSON.stringify(user)}`);
     
     if (!user?.permissions) {
       this.logger.error('User has no permissions');
       throw new ForbiddenException('Fără permisiuni');
     }
 
-    this.logger.log(`User permissions: ${JSON.stringify(user.permissions)}`);
 
     const hasAll = requiredPermissions.some((perm) =>
       (user.permissions as string[]).includes(perm),

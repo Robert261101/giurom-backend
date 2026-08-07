@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Request, UseGuards, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Request, UseGuards, Query, BadRequestException, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { AssignmentService } from './assignment.service';
 import { ScheduledTasksService } from './scheduled-tasks.service';
@@ -12,6 +12,8 @@ import { Permissions } from '../permissions/permissions.decorator';
 @ApiTags('Assignments')
 @Controller('assignments')
 export class AssignmentController {
+  private readonly logger = new Logger(AssignmentController.name);
+
   constructor(
     private readonly assignmentService: AssignmentService,
     private readonly scheduledTasksService: ScheduledTasksService
@@ -83,7 +85,7 @@ export class AssignmentController {
     @Query('endDate') endDate?: string,
   ): Promise<TaskAssignment[]> {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    console.log('🔍 [assignments.controller] findAll -> user perms:', req.user?.permissions, 'query.location_id:', location_id, 'parsed:', locationId);
+    this.logger.log('🔍 [assignments.controller] findAll -> user perms:', req.user?.permissions, 'query.location_id:', location_id, 'parsed:', locationId);
     const sd = startDate ? new Date(startDate) : undefined;
     const ed = endDate ? new Date(endDate) : undefined;
     return this.assignmentService.findAllWithPermissions(
