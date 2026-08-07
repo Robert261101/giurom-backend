@@ -336,13 +336,15 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
   }
 
   private tasksBaseUrl(): string {
-    return (
+    // veziv-tasks are setGlobalPrefix('tasks') → rutele reale sunt /tasks/executions/...
+    const raw = (
       this.configService.get<string>('TASKS_HTTP_URL') ||
       this.configService.get<string>('TASKS_API_BASE') ||
       process.env.TASKS_HTTP_URL ||
       process.env.TASKS_API_BASE ||
       'http://localhost:3008'
-    );
+    ).replace(/\/+$/, '');
+    return raw.endsWith('/tasks') ? raw : `${raw}/tasks`;
   }
 
   private internalHeaders(): Record<string, string> {
