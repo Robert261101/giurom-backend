@@ -85,6 +85,7 @@ export class TwoFactorAuthService {
         userData: user,
       });
 
+      this.logger.log(`Autentificare pas 1 reușită pentru ${user.email}, OTP trimis pe ${user.phone}`);
 
       return {
         message: `OTP trimis cu succes pe numărul ${user.phone}. Introduceți codul pentru a finaliza autentificarea.`,

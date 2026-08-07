@@ -27,6 +27,7 @@ export class InternalServiceGuard implements CanActivate {
       const internalService = data?.headers?.['x-internal-service'] || data?.['x-internal-service'];
       const serviceSecret = data?.headers?.['x-service-secret'] || data?.['x-service-secret'];
       
+      this.logger.log(`Internal service headers (RPC) - Service: ${internalService}, Secret present: ${!!serviceSecret}`);
       
       // If internal service headers are present, validate them
       if (internalService && serviceSecret) {
@@ -65,6 +66,7 @@ export class InternalServiceGuard implements CanActivate {
     
     // Pentru request-uri din browser (HTTPS) nu există x-internal-service – e normal, JWT preia autentificarea
     if (internalService || serviceSecret) {
+      this.logger.log(`Internal service headers (HTTP) - Service: ${internalService}, Secret present: ${!!serviceSecret}`);
     }
     
     // If internal service headers are present, validate them

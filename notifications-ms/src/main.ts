@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as crypto from 'crypto';
 
@@ -18,8 +18,6 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
-
-const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -46,7 +44,7 @@ async function bootstrap() {
   // Start HTTP server
   const port = process.env.PORT || 3011;
   await app.listen(port);
-  logger.log(`🔔 Notifications Microservice is running on: http://localhost:${port}`);
+  console.log(`🔔 Notifications Microservice is running on: http://localhost:${port}`);
 
   // Optionally create RabbitMQ microservice if RabbitMQ is available
   try {
@@ -60,7 +58,7 @@ async function bootstrap() {
     });
     
     await microservice.listen();
-    logger.log(`🐰 RabbitMQ microservice is running on queue: notifications`);
+    console.log(`🐰 RabbitMQ microservice is running on queue: notifications`);
   } catch (error: any) {
     console.warn(
       `⚠️  RabbitMQ not available, running HTTP-only mode. Notificările de task/creare nu vor ajunge. Eroare: ${error?.message ?? error}`,

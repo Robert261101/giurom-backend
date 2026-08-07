@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as fs from 'fs';
@@ -9,8 +9,6 @@ import { CreateRecipeMediaDto } from './dto/create-recipe-media.dto';
 
 @Injectable()
 export class RecipeMediaService {
-  private readonly logger = new Logger(RecipeMediaService.name);
-
   constructor(
     @InjectRepository(RecipeMedia)
     private mediaRepository: Repository<RecipeMedia>,
@@ -56,7 +54,7 @@ export class RecipeMediaService {
 
   // Creează un nou fișier media pentru rețetă
   async createMedia(createMediaDto: CreateRecipeMediaDto): Promise<RecipeMedia> {
-    this.logger.log('📥 Received createMediaDto:', {
+    console.log('📥 Received createMediaDto:', {
       recipe_id: createMediaDto.recipe_id,
       file_name: createMediaDto.file_name,
       file_type: createMediaDto.file_type,
@@ -85,7 +83,7 @@ export class RecipeMediaService {
     const imagesDir = this.getRecipesImagesDir();
     if (!fs.existsSync(imagesDir)) {
       fs.mkdirSync(imagesDir, { recursive: true });
-      this.logger.log(`📁 Created images/recipes directory: ${imagesDir}`);
+      console.log(`📁 Created images/recipes directory: ${imagesDir}`);
     }
 
     const fileLink = `/api/images/recipes/${uniqueFileName}`;
@@ -100,7 +98,7 @@ export class RecipeMediaService {
         }
         const buffer = Buffer.from(base64Data, 'base64');
         fs.writeFileSync(filePath, buffer);
-        this.logger.log(`✅ Recipe image saved: ${filePath} (${buffer.length} bytes)`);
+        console.log(`✅ Recipe image saved: ${filePath} (${buffer.length} bytes)`);
       } catch (error: any) {
         console.error('❌ Error saving recipe image:', error);
         throw new BadRequestException(`Eroare la salvarea imaginii: ${error.message}`);
@@ -124,7 +122,7 @@ export class RecipeMediaService {
     });
 
     const savedMedia = await this.mediaRepository.save(media);
-    this.logger.log(`✅ Media record saved to database with ID: ${savedMedia.id}`);
+    console.log(`✅ Media record saved to database with ID: ${savedMedia.id}`);
     
     return savedMedia;
   }

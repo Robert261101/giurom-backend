@@ -79,6 +79,8 @@ export class TwoFactorAuthService {
 
       // Salvează OTP-ul (expiră în 5 minute)
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      this.logger.log(`🔍 DEBUG: Salvare OTP cu cheia: ${userIdentifier}`);
+      this.logger.log(`🔍 DEBUG: OTP Storage keys înainte: ${Array.from(this.otpStorage.keys()).join(', ')}`);
       
       this.otpStorage.set(userIdentifier, {
         email: user.email,
@@ -88,7 +90,9 @@ export class TwoFactorAuthService {
         userId: user.userId
       });
       
+      this.logger.log(`🔍 DEBUG: OTP Storage keys după: ${Array.from(this.otpStorage.keys()).join(', ')}`);
 
+      this.logger.log(`OTP trimis cu succes către ${user.phone} pentru ${user.email}`);
       
       return { 
         message: `OTP trimis cu succes pe numărul ${user.phone}` 
@@ -145,6 +149,7 @@ export class TwoFactorAuthService {
       // Șterge OTP-ul după verificare
       this.otpStorage.delete(userIdentifier);
 
+      this.logger.log(`Autentificare OTP reușită pentru ${user.email}`);
 
       return tokens;
     } catch (error) {
@@ -209,6 +214,7 @@ export class TwoFactorAuthService {
 
   private async sendSms(phone: string, otp: string): Promise<boolean> {
     try {
+      this.logger.log(`Încerc să trimit SMS OTP către ${phone}`);
       
       if (!this.apiKey) {
         this.logger.error('MOBILE_SMS_API_KEY nu este configurat! Nu se poate trimite SMS.');

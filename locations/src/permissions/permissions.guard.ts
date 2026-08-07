@@ -111,6 +111,9 @@ export class PermissionsGuard implements CanActivate {
       `🔍 [PermissionsGuard] User has cashing.create: ${user.permissions?.includes("cashing.create") || false}`,
     );
     if (user.permissions && user.permissions.length > 0) {
+      this.logger.log(
+        `🔍 [PermissionsGuard] First 10 user permissions: ${JSON.stringify(user.permissions.slice(0, 10))}`,
+      );
     }
     this.logger.log(
       `🔍 [PermissionsGuard] Has all required permissions: ${hasAll}`,

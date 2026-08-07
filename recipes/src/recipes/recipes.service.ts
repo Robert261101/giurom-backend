@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
+﻿import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan, DeepPartial } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -24,8 +24,6 @@ import { isRecipeAdminUser, type RecipeAccessRequester } from './recipe-access';
 
 @Injectable()
 export class RecipeService {
-  private readonly logger = new Logger(RecipeService.name);
-
   private readonly stockServiceUrl: string;
 
   constructor(
@@ -103,7 +101,7 @@ export class RecipeService {
           isConsumable: !!is_consumable,
         });
         await this.recipeLocationRepository.save(recipeLocation);
-        this.logger.log(`✅ [RecipesService] Rețeta ${savedRecipe.id} a fost asignată automat la locația ${location_id}`);
+        console.log(`✅ [RecipesService] Rețeta ${savedRecipe.id} a fost asignată automat la locația ${location_id}`);
       } catch (error) {
         // Dacă există deja, nu e problemă (ar trebui să fie imposibil, dar să fie safe)
         console.warn(`⚠️ [RecipesService] Eroare la asignarea automată a rețetei ${savedRecipe.id} la locația ${location_id}:`, error);
@@ -163,7 +161,7 @@ export class RecipeService {
     queryBuilder
       .leftJoinAndSelect('recipe.recipeLocations', 'recipe_location')
       .andWhere('recipe_location.idLocation = :location_id', { location_id: params.location_id });
-      this.logger.log('🔍 [RecipesService] Filtrăm recipes după location_id (prin recipe_locations):', params.location_id);
+    console.log('🔍 [RecipesService] Filtrăm recipes după location_id (prin recipe_locations):', params.location_id);
     
     const offset = (page - 1) * limit;
     const [recipes, total] = await queryBuilder
@@ -535,13 +533,14 @@ export class RecipeService {
         'x-service-secret': serviceSecret
       };
       
-      this.logger.log(`🔍 [RecipesService] Verifying product ${createRecipeProductDto.product_id} at: ${productUrl}`);
-      this.logger.log(`📤 [RecipesService] Headers:`, headers);
+      console.log(`🔍 [RecipesService] Verifying product ${createRecipeProductDto.product_id} at: ${productUrl}`);
+      console.log(`🔑 [RecipesService] Using service secret: ${serviceSecret.substring(0, 5)}...`);
+      console.log(`📤 [RecipesService] Headers:`, headers);
       
       const response = await lastValueFrom(
         this.httpService.get(productUrl, { headers })
       );
-      this.logger.log(`✅ [RecipesService] Product ${createRecipeProductDto.product_id} verified:`, response.data);
+      console.log(`✅ [RecipesService] Product ${createRecipeProductDto.product_id} verified:`, response.data);
     } catch (error: any) {
       console.error(`❌ [RecipesService] Error verifying product ${createRecipeProductDto.product_id}:`, error?.response?.data || error?.message);
       console.error(`❌ [RecipesService] Full error:`, error?.response?.status, error?.response?.statusText);
@@ -812,7 +811,7 @@ export class RecipeService {
         const originalQuantity = Number(rp.quantity) || 0;
         let scaledQuantity = originalQuantity * scalingFactor;
         
-        this.logger.log(`🔍 [RecipeService] Ingredient calculation: product_id=${rp.product_id}, originalQuantity=${originalQuantity}, scalingFactor=${scalingFactor}, scaledQuantity=${scaledQuantity}`);
+        console.log(`🔍 [RecipeService] Ingredient calculation: product_id=${rp.product_id}, originalQuantity=${originalQuantity}, scalingFactor=${scalingFactor}, scaledQuantity=${scaledQuantity}`);
 
         // Încarcă datele produsului prin HTTP request (pentru că nu e relație TypeORM)
         let productUnit = 'g';
@@ -867,7 +866,7 @@ export class RecipeService {
               return sum + (parseFloat(item.quantity?.toString() || '0') || 0);
             }, 0);
             
-            this.logger.log(`📊 [RecipeService] Product ${rp.product_id} (${productName}): total stock items=${stockItems.length}, valid items=${validStockItems.length}, availableQuantity=${availableQuantity}${productUnit}`);
+            console.log(`📊 [RecipeService] Product ${rp.product_id} (${productName}): total stock items=${stockItems.length}, valid items=${validStockItems.length}, availableQuantity=${availableQuantity}${productUnit}`);
           }
         } catch (error: any) {
           console.error(`⚠️ [RecipeService] Eroare la verificarea stocului pentru produs ${rp.product_id}:`, error?.response?.data || error?.message);

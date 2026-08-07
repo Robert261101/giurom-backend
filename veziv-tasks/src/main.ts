@@ -3,7 +3,7 @@ dotenv.config();
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ResponseInterceptor } from './common/response.interceptor';
 import { useContainer } from 'class-validator';
@@ -11,11 +11,13 @@ import { randomUUID } from 'crypto';
 
 // Configurare timezone pentru România
 process.env.TZ = 'Europe/Bucharest';
+console.log('🕐 Timezone configurat pentru România:', process.env.TZ);
 
 // Polyfill pentru crypto - fix pentru eroarea @nestjs/schedule
 // @nestjs/schedule încearcă să acceseze crypto.randomUUID() dar în unele contexte crypto nu e disponibil global
 if (typeof (global as any).crypto === 'undefined') {
   (global as any).crypto = { randomUUID };
+  console.log('✅ Crypto polyfill aplicat pentru @nestjs/schedule');
 }
 
 function getAllowedOrigins(): string[] {
@@ -35,8 +37,6 @@ function getAllowedOrigins(): string[] {
     'https://giurom-frontend.vercel.app', 'https://giurom.bitap.ro',
   ];
 }
-
-const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production' && !process.env.SERVICE_SECRET) {
@@ -80,6 +80,6 @@ async function bootstrap() {
 
   const port = process.env.PORT ?? 3008;
   await app.listen(port);
-  logger.log(`Veziv Tasks Service rulează pe portul ${port}`);
+  console.log(`Veziv Tasks Service rulează pe portul ${port}`);
 }
 bootstrap();

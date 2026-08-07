@@ -1,12 +1,10 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY, PERMISSIONS_ANY_KEY, AUTH_ONLY_KEY } from './permissions.decorator';
 import { AttendanceService } from '../attendance.service';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  private readonly logger = new Logger(PermissionsGuard.name);
-
   constructor(
     private readonly reflector: Reflector,
     private readonly attendanceService: AttendanceService
@@ -119,7 +117,7 @@ export class PermissionsGuard implements CanActivate {
       // Verifică toate posibilitățile pentru ID-ul angajatului
       const userEmployeeId = user.id || user.userId || user.employee_id || user.id_employee || user.sub;
       
-      this.logger.log('[PermissionsGuard] Checking presence ownership:', {
+      console.log('[PermissionsGuard] Checking presence ownership:', {
         presenceId,
         userEmployeeId,
         userKeys: Object.keys(user || {}),
@@ -130,7 +128,7 @@ export class PermissionsGuard implements CanActivate {
       if (presenceId && userEmployeeId) {
         try {
           const presence = await this.attendanceService.findPresenceById(Number(presenceId));
-          this.logger.log('[PermissionsGuard] Found presence:', {
+          console.log('[PermissionsGuard] Found presence:', {
             presenceId: presence?.id,
             shiftId: presence?.shift_id
           });
@@ -141,7 +139,7 @@ export class PermissionsGuard implements CanActivate {
             const shiftEmployeeId = Number(shift?.employee_id);
             const userEmployeeIdNum = Number(userEmployeeId);
             
-            this.logger.log('[PermissionsGuard] Comparing:', {
+            console.log('[PermissionsGuard] Comparing:', {
               shiftEmployeeId,
               userEmployeeIdNum,
               match: shiftEmployeeId === userEmployeeIdNum
@@ -149,7 +147,7 @@ export class PermissionsGuard implements CanActivate {
             
             if (shift && shiftEmployeeId === userEmployeeIdNum) {
               // Permite actualizarea prezenței pentru propriul shift
-              this.logger.log('[PermissionsGuard] Allowing update - presence belongs to employee');
+              console.log('[PermissionsGuard] Allowing update - presence belongs to employee');
               return true;
             }
           }
@@ -158,7 +156,7 @@ export class PermissionsGuard implements CanActivate {
           console.error('[PermissionsGuard] Error checking presence ownership:', error);
         }
       } else {
-        this.logger.log('[PermissionsGuard] Missing presenceId or userEmployeeId:', {
+        console.log('[PermissionsGuard] Missing presenceId or userEmployeeId:', {
           presenceId,
           userEmployeeId
         });

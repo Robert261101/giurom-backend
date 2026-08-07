@@ -1,8 +1,10 @@
-import { Body,
+import {
+  Body,
   Controller,
   HttpCode,
   HttpStatus,
-  Post, Logger } from '@nestjs/common';
+  Post,
+} from '@nestjs/common';
 import { 
   ApiTags, 
   ApiOperation, 
@@ -18,8 +20,6 @@ import { TokenService } from '../common/token.service';
 @ApiTags('Autentificare 2FA')
 @Controller('2fa')
 export class TwoFactorAuthController {
-  private readonly logger = new Logger(TwoFactorAuthController.name);
-
   constructor(
     private readonly twoFactorAuthService: TwoFactorAuthService,
     private readonly tokenService: TokenService
@@ -96,7 +96,9 @@ export class TwoFactorAuthController {
   @Post('step2')
   async step2Verify(@Body() step2VerifyDto: Step2VerifyDto) {
     try {
+      console.log(`🔍 DEBUG Controller: Primit request pentru userId: ${step2VerifyDto.userId}, otp: ${step2VerifyDto.otp}`);
       const result = await this.twoFactorAuthService.step2Verify(step2VerifyDto.userId, step2VerifyDto.otp);
+      console.log(`🔍 DEBUG Controller: Rezultat generat: ${JSON.stringify(result)}`);
       return result;
     } catch (error) {
       console.error(`🔍 DEBUG Controller: Eroare în step2Verify: ${error.message}`);

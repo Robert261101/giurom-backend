@@ -21,6 +21,7 @@ export class PermissionsGuard implements CanActivate {
     if (permissionsAny?.length) {
       const user = request?.user;
       this.logger.log(`[PermissionsGuard] Checking ANY permissions: ${JSON.stringify(permissionsAny)}`);
+      this.logger.log(`[PermissionsGuard] User permissions: ${JSON.stringify(user?.permissions || [])}`);
 
       if (!user?.permissions) {
         this.logger.error('[PermissionsGuard] No user permissions found');

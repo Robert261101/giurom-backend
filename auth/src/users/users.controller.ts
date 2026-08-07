@@ -1,4 +1,5 @@
-﻿import { Controller,
+﻿import {
+  Controller,
   Get,
   Post,
   Body,
@@ -14,7 +15,8 @@
   ArgumentMetadata,
   Injectable,
   NotFoundException,
-  UseGuards, Logger } from '@nestjs/common';
+  UseGuards,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { HttpService } from '@nestjs/axios';
@@ -45,8 +47,6 @@ class NoValidationPipe implements PipeTransform {
 @ApiTags('users')
 @Controller('users')
 export class UsersController {
-  private readonly logger = new Logger(UsersController.name);
-
   constructor(
     private readonly usersService: UsersService,
     private readonly httpService: HttpService,
@@ -890,7 +890,7 @@ export class UsersController {
     @Req() req: AuthedRequest,
     @Param('employeeId', ParseIntPipe) employeeId: number,
   ): Promise<any> {
-    this.logger.log(`📥 Request for profile image for employee ${employeeId}`);
+    console.log(`📥 Request for profile image for employee ${employeeId}`);
 
     try {
       const user = await this.usersService.findByEmployeeIdForRequester(
@@ -898,7 +898,7 @@ export class UsersController {
         employeeId,
         this.usersService.isInternalRequest(req),
       );
-      this.logger.log(`✅ Found user ${user.id} for employee ${employeeId}`);
+      console.log(`✅ Found user ${user.id} for employee ${employeeId}`);
       
       // Handle profile image URL properly
       let profileImageUrl = user.profile_image;

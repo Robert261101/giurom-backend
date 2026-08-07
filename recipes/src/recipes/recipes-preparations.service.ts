@@ -1,9 +1,11 @@
-﻿import { Injectable,
+﻿import {
+  Injectable,
   NotFoundException,
   BadRequestException,
   Inject,
   OnModuleInit,
-  forwardRef, Logger } from '@nestjs/common';
+  forwardRef,
+} from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 import { ClientProxy } from "@nestjs/microservices";
@@ -18,8 +20,6 @@ import { RecipeAccessRequester, isRecipeAdminUser } from "./recipe-access";
 
 @Injectable()
 export class RecipePreparationsService implements OnModuleInit {
-  private readonly logger = new Logger(RecipePreparationsService.name);
-
   private readonly stockServiceUrl: string;
 
   constructor(
@@ -59,7 +59,9 @@ export class RecipePreparationsService implements OnModuleInit {
         .where("status IS NULL OR status = :empty", { empty: "" })
         .execute();
       if (result.affected && result.affected > 0) {
-        this.logger.log(`✅ [RecipePreparationsService] Updated ${result.affected} existing preparations with status = "active"`);
+        console.log(
+          `✅ [RecipePreparationsService] Updated ${result.affected} existing preparations with status = "active"`
+        );
       }
     } catch (error) {
       console.error(
@@ -118,8 +120,10 @@ export class RecipePreparationsService implements OnModuleInit {
       queryBuilder.andWhere("preparation.location_id = :locationId", {
         locationId,
       });
-      this.logger.log("🔍 [RecipePreparationsService] Filtrăm preparations după location_id:",
-        locationId);
+      console.log(
+        "🔍 [RecipePreparationsService] Filtrăm preparations după location_id:",
+        locationId
+      );
     } else {
       // FILTRARE OBLIGATORIE - afișează DOAR preparations cu location_id setat
       queryBuilder.andWhere("preparation.location_id IS NOT NULL");
@@ -258,7 +262,9 @@ export class RecipePreparationsService implements OnModuleInit {
       dto.recipe_id,
       dto.quantity
     );
-    this.logger.log(`🔍 [RecipePreparationsService] Collected ${allIngredients.length} ingredients for recipe ${dto.recipe_id}`);
+    console.log(
+      `🔍 [RecipePreparationsService] Collected ${allIngredients.length} ingredients for recipe ${dto.recipe_id}`
+    );
 
     // STEP 2: Verifică disponibilitatea TUTUROR ingredientelor ÎNAINTE de a consuma ceva
     if (allIngredients.length > 0) {
@@ -290,7 +296,9 @@ export class RecipePreparationsService implements OnModuleInit {
             `Stoc insuficient pentru: ${missingDetails}`
           );
         }
-        this.logger.log(`✅ [RecipePreparationsService] All ingredients available for recipe ${dto.recipe_id}`);
+        console.log(
+          `✅ [RecipePreparationsService] All ingredients available for recipe ${dto.recipe_id}`
+        );
       } catch (error: any) {
         if (error instanceof BadRequestException) throw error;
         const errorMessage =
@@ -504,7 +512,9 @@ export class RecipePreparationsService implements OnModuleInit {
         if (!rp.product_id || !Number.isFinite(neededTotal) || neededTotal <= 0)
           continue;
 
-          this.logger.log(`🔍 [RecipePreparationsService] Consuming ${neededTotal} units of product ${rp.product_id} for preparation ${preparationId}`);
+        console.log(
+          `🔍 [RecipePreparationsService] Consuming ${neededTotal} units of product ${rp.product_id} for preparation ${preparationId}`
+        );
 
         try {
           await lastValueFrom(
@@ -518,7 +528,9 @@ export class RecipePreparationsService implements OnModuleInit {
               { headers }
             )
           );
-          this.logger.log(`✅ [RecipePreparationsService] Successfully consumed ${neededTotal} units of product ${rp.product_id}`);
+          console.log(
+            `✅ [RecipePreparationsService] Successfully consumed ${neededTotal} units of product ${rp.product_id}`
+          );
         } catch (error: any) {
           console.error(
             `❌ [RecipePreparationsService] Error consuming product ${rp.product_id}:`,
@@ -543,7 +555,9 @@ export class RecipePreparationsService implements OnModuleInit {
         // Calculează cantitatea necesară de rețetă-ingredient
         const neededRecipeQuantity = Number(rr.quantity) * factor;
 
-        this.logger.log(`🔍 [RecipePreparationsService] Consuming ${neededRecipeQuantity} units of recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name}) for preparation ${preparationId}`);
+        console.log(
+          `🔍 [RecipePreparationsService] Consuming ${neededRecipeQuantity} units of recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name}) for preparation ${preparationId}`
+        );
 
         // Consumă recursiv ingredientele din rețeta-ingredient
         // IMPORTANT: Nu adăugăm rețeta-ingredient în visitedRecipeIds înainte de apelul recursiv
@@ -566,7 +580,9 @@ export class RecipePreparationsService implements OnModuleInit {
           newVisitedSet
         );
 
-        this.logger.log(`✅ [RecipePreparationsService] Successfully consumed recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name})`);
+        console.log(
+          `✅ [RecipePreparationsService] Successfully consumed recipe ${rr.ingredient_recipe_id} (${rr.ingredient_recipe.name})`
+        );
       }
     }
   }

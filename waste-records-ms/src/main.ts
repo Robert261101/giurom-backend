@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -12,8 +11,6 @@ function getAllowedOrigins(): string[] {
   }
   return fromEnv.length > 0 ? fromEnv : ['http://localhost:3000', 'http://localhost:3001', 'https://giurom.bitap.ro', 'https://giurom-frontend.vercel.app'];
 }
-
-const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -34,9 +31,9 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app as any, document);
   await app.listen(httpPort);
   // eslint-disable-next-line no-console
-  logger.log(`🗑️ Waste Records HTTP on http://localhost:${httpPort}`);
+  console.log(`🗑️ Waste Records HTTP on http://localhost:${httpPort}`);
   // eslint-disable-next-line no-console
-  logger.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
+  console.log(`📚 Swagger: http://localhost:${httpPort}/api/docs`);
 }
 
 bootstrap();

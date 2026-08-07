@@ -1,12 +1,10 @@
 
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../permissions/permissions.decorator';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  private readonly logger = new Logger(PermissionsGuard.name);
-
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -28,7 +26,7 @@ export class PermissionsGuard implements CanActivate {
 
     // Dacă userul nu are permisiuni în payload → blocăm accesul cu mesaj personalizat
     if (!user?.permissions) {
-      this.logger.log('❌ [PermissionsGuard] User nu are permisiuni - bloc accesul');
+      console.log('❌ [PermissionsGuard] User nu are permisiuni - bloc accesul')
       throw new ForbiddenException({
         statusCode: 403,
         message: 'Nu aveți permisiunile necesare pentru a accesa această resursă.',
@@ -70,7 +68,7 @@ export class PermissionsGuard implements CanActivate {
         .map(perm => actionMap[perm] || perm)
         .join(', ');
 
-        this.logger.log(`❌ [PermissionsGuard] User ${user.email} NU are permisiunile: ${missingPermissions.join(', ')}`);
+      console.log(`❌ [PermissionsGuard] User ${user.email} NU are permisiunile: ${missingPermissions.join(', ')}`)
       
       throw new ForbiddenException({
         statusCode: 403,

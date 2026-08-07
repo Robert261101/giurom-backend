@@ -16,6 +16,7 @@ export class InternalServiceGuard implements CanActivate {
     
     // Debug: log all headers that start with 'x-'
     const xHeaders = Object.keys(request.headers || {}).filter(key => key.toLowerCase().startsWith('x-'));
+    this.logger.log(`Internal service headers - Service: ${internalService}, Secret present: ${!!serviceSecret}, All x- headers: ${JSON.stringify(xHeaders)}`);
     
     // If internal service headers are present, validate them
     if (internalService && serviceSecret) {

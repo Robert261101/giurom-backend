@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, Req, ParseIntPipe, UseGuards, Headers, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, Req, ParseIntPipe, UseGuards, Headers } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService, CompanyAccessRequester } from './company/company.service';
@@ -12,8 +12,6 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
 
 @Controller('companies')
 export class CompanyHttpController {
-  private readonly logger = new Logger(CompanyHttpController.name);
-
 	constructor(private readonly service: CompanyService) {}
 
 	/**
@@ -112,14 +110,14 @@ export class CompanyHttpController {
 	@Get(':companyId/documents')
 	@Permissions('companies.read', 'companies.read_own')
 	getDocs(@Param('companyId') companyId: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId}`);
+		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId}`);
 		return this.service.findCompanyDocuments(parseInt(companyId, 10), this.buildAccessRequester(req));
 	}
 
 	@Get(':companyId/documents/folders')
 	@Permissions('companies.read', 'companies.read_own')
 	getCompanyFolders(@Param('companyId') companyId: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting folders for company ${companyId}`);
+		console.log(`[COMPANY CONTROLLER] Getting folders for company ${companyId}`);
 		return this.service.getCompanyFolders(parseInt(companyId, 10), this.buildAccessRequester(req));
 	}
 
@@ -138,7 +136,7 @@ export class CompanyHttpController {
 	@Get(':companyId/documents/structure')
 	@Permissions('companies.read', 'companies.read_own')
 	getCompanyFileStructure(@Param('companyId') companyId: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting file structure for company ${companyId}`);
+		console.log(`[COMPANY CONTROLLER] Getting file structure for company ${companyId}`);
 		return this.service.getCompanyFileStructure(parseInt(companyId, 10), this.buildAccessRequester(req));
 	}
 
@@ -149,7 +147,7 @@ export class CompanyHttpController {
 		@Query('path') folderPath: string,
 		@Req() req: any,
 	) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting files from folder ${folderPath} for company ${companyId}`);
+		console.log(`[COMPANY CONTROLLER] Getting files from folder ${folderPath} for company ${companyId}`);
 		return this.service.getFilesFromFolder(parseInt(companyId, 10), folderPath, this.buildAccessRequester(req));
 	}
 
@@ -163,7 +161,7 @@ export class CompanyHttpController {
 		@Req() req: any,
 	) {
 		try {
-		  this.logger.log(`[COMPANY CONTROLLER] Serving file from path ${filePath} for company ${companyId}, download: ${download}`);
+			console.log(`[COMPANY CONTROLLER] Serving file from path ${filePath} for company ${companyId}, download: ${download}`);
 			const forceDownload = download === 'true';
 			const served = await this.service.serveFileFromPath(parseInt(companyId, 10), filePath, forceDownload, this.buildAccessRequester(req));
 			const buffer = Buffer.from(served.data, 'base64');
@@ -186,35 +184,35 @@ export class CompanyHttpController {
 	@Get(':companyId/documents/folder/:folder')
 	@Permissions('companies.read', 'companies.read_own')
 	getDocsByFolder(@Param('companyId') companyId: string, @Param('folder') folder: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId} in folder ${folder}`);
+		console.log(`[COMPANY CONTROLLER] Getting documents for company ${companyId} in folder ${folder}`);
 		return this.service.findCompanyDocumentsByFolder(parseInt(companyId, 10), folder, this.buildAccessRequester(req));
 	}
 
 	@Get('documents/:documentId/info')
 	@Permissions('companies.read', 'companies.read_own')
 	getDoc(@Param('documentId') documentId: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting document info for ID ${documentId}`);
+		console.log(`[COMPANY CONTROLLER] Getting document info for ID ${documentId}`);
 		return this.service.findDocumentById(parseInt(documentId, 10), this.buildAccessRequester(req));
 	}
 
 	@Post(':companyId/documents')
 	@Permissions('companies.create')
 	createDoc(@Param('companyId') companyId: string, @Body() dto: CreateCompanyDocumentDto & { file_content?: string; expire_date?: string }, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Creating document for company ${companyId}`);
+		console.log(`[COMPANY CONTROLLER] Creating document for company ${companyId}`);
 		return this.service.createCompanyDocument({ ...(dto as any), company_id: parseInt(companyId, 10) }, this.buildAccessRequester(req));
 	}
 
 	@Patch('documents/:documentId')
 	@Permissions('companies.update')
 	updateDoc(@Param('documentId') documentId: string, @Body() dto: UpdateCompanyDocumentDto, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Updating document ${documentId}`);
+		console.log(`[COMPANY CONTROLLER] Updating document ${documentId}`);
 		return this.service.updateCompanyDocument(parseInt(documentId, 10), dto, this.buildAccessRequester(req));
 	}
 
 	@Delete('documents/:documentId')
 	@Permissions('companies.delete')
 	removeDoc(@Param('documentId') documentId: string, @Req() req: any) {
-	  this.logger.log(`[COMPANY CONTROLLER] Deleting document ${documentId}`);
+		console.log(`[COMPANY CONTROLLER] Deleting document ${documentId}`);
 		return this.service.removeCompanyDocument(parseInt(documentId, 10), this.buildAccessRequester(req));
 	}
 
@@ -222,7 +220,7 @@ export class CompanyHttpController {
 	@Get('documents/expiring/:targetDate')
 	@Permissions('companies.read')
 	getExpiringDocuments(@Param('targetDate') targetDate: string) {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting documents expiring on ${targetDate}`);
+		console.log(`[COMPANY CONTROLLER] Getting documents expiring on ${targetDate}`);
 		return this.service.findExpiringDocuments(targetDate);
 	}
 
@@ -230,7 +228,7 @@ export class CompanyHttpController {
 	@Get('documents/expired')
 	@Permissions('companies.read')
 	getExpiredDocuments() {
-	  this.logger.log(`[COMPANY CONTROLLER] Getting expired documents`);
+		console.log(`[COMPANY CONTROLLER] Getting expired documents`);
 		return this.service.findExpiredDocuments();
 	}
 
@@ -244,11 +242,11 @@ export class CompanyHttpController {
 		@Req() req: any,
 	) {
 		try {
-		  this.logger.log(`[COMPANY CONTROLLER] Serving company file ${fileId}, download: ${download}`);
+			console.log(`[COMPANY CONTROLLER] Serving company file ${fileId}, download: ${download}`);
 			const forceDownload = download === 'true';
 			const served = await this.service.serveCompanyFile(fileId, forceDownload, this.buildAccessRequester(req));
 			const buffer = Buffer.from(served.data, 'base64');
-			this.logger.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} with type ${served.mimeType}`);
+			console.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} with type ${served.mimeType}`);
 			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
 			res.setHeader(
 				'Content-Disposition',
@@ -274,10 +272,10 @@ export class CompanyHttpController {
 		@Req() req: any,
 	) {
 		try {
-		  this.logger.log(`[COMPANY CONTROLLER] Viewing company file ${fileId} inline`);
+			console.log(`[COMPANY CONTROLLER] Viewing company file ${fileId} inline`);
 			const served = await this.service.serveCompanyFile(fileId, false, this.buildAccessRequester(req));
 			const buffer = Buffer.from(served.data, 'base64');
-			this.logger.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} for inline view with type ${served.mimeType}`);
+			console.log(`[COMPANY CONTROLLER] Sending file ${served.fileName} for inline view with type ${served.mimeType}`);
 			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
 			res.setHeader('Content-Disposition', `inline; filename="${served.fileName}"`);
 			res.setHeader('Content-Length', buffer.length.toString());
