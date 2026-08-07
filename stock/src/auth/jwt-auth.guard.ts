@@ -7,7 +7,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest();
-    
+
     // If bypassAuth is set by InternalServiceGuard, allow the request
     if (request.bypassAuth) {
       this.logger.log('[JwtAuthGuard] Bypassing JWT authentication for internal service request');
@@ -30,23 +30,31 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       // Mișcările de stoc făcute în giurom 2.0, împinse înapoi aici ca sursa de adevăr
       // să rămână una singură. Vezi app2-movement.controller.ts.
       '/stock/integrations/app2-movement',
+      // Aprobarea/respingerea cererilor de aruncare, decisă în giurom 2.0. Consumul de
+      // stoc se execută tot aici. Vezi app2-waste.controller.ts.
+      '/stock/integrations/app2-waste-decision',
+      '/stock/integrations/app2-waste-refresh',
+      // Pozele dovezilor — App2 le cere cu cheia de sync (nu are cookie pe .eu).
+      '/stock/integrations/app2-waste-image',
     ];
+    const method = String(request.method || '').toUpperCase();
+    const methodOk =
+      method === 'POST' ||
+      (method === 'GET' && path.includes('/stock/integrations/app2-waste-image'));
     if (
       syncKey &&
       expected &&
       syncKey === expected &&
-      request.method === 'POST' &&
+      methodOk &&
       allowedSyncKeyPaths.some((allowed) => path.includes(allowed))
     ) {
       request.bypassAuth = true;
       this.logger.log(`[JwtAuthGuard] Bypassing JWT for sync-key path ${path}`);
       return true;
     }
-    
+
     this.logger.log('[JwtAuthGuard] Proceeding with normal JWT authentication');
     // Otherwise, proceed with normal JWT authentication
     return super.canActivate(context);
   }
 }
-
-

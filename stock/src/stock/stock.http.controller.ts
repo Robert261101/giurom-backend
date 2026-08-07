@@ -25,6 +25,7 @@ import { TransactionType } from "./entities/stock-transaction.entity";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
 import { UpdateWasteRecordDto } from "./dto/update-waste-record.dto";
 import { CreateWasteRequestDto } from "./dto/create-waste-request.dto";
+import { WasteExportService } from "./waste-export.service";
 import { CreateConsumptionRecordDto } from "./dto/create-consumption-record.dto";
 import { UpdateConsumptionRecordDto } from "./dto/update-consumption-record.dto";
 import { AssignCategoryDto } from "./dto/assign-category.dto";
@@ -35,7 +36,10 @@ import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 export class StockHttpController {
   private readonly logger = new Logger(StockHttpController.name);
 
-  constructor(private readonly service: StockService) {}
+  constructor(
+    private readonly service: StockService,
+    private readonly wasteExportService: WasteExportService,
+  ) {}
 
   // Products
   @Post("products") @Permissions("stock.create") async createProduct(
@@ -393,9 +397,13 @@ export class StockHttpController {
       ? req.user.permissions
       : [];
     const autoApprove = permissions.includes("stock.waste_approve");
-    return await this.service.createWasteRequest(dtoWithLocation, createdBy, {
+    const created = await this.service.createWasteRequest(dtoWithLocation, createdBy, {
       autoApprove,
     });
+    // Fire-and-forget: cererea trebuie sa apara repede in giurom 2.0, dar crearea ei nu
+    // are voie sa esueze daca App2 e indisponibil.
+    void this.wasteExportService.pushRequestSafe(created.id);
+    return created;
   }
 
   @Get("waste-requests")
@@ -430,6 +438,9 @@ export class StockHttpController {
     }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
     await this.service.approveWasteRequest(numId, approverId);
+    // Decizia luata aici trebuie sa se vada si in giurom 2.0, altfel cererea ar ramane
+    // acolo vesnic "de acceptat".
+    void this.wasteExportService.pushRequestSafe(numId);
     return { success: true };
   }
 
@@ -442,6 +453,7 @@ export class StockHttpController {
     }
     const approverId = req?.user?.id || req?.user?.employee_id || undefined;
     await this.service.rejectWasteRequest(numId, approverId);
+    void this.wasteExportService.pushRequestSafe(numId);
     return { success: true };
   }
 

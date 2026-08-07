@@ -18,9 +18,19 @@ export class JwtAuthGuard {
     const serviceSecret = request.headers['x-service-secret'];
     const expectedSecret = process.env.SERVICE_SECRET;
     if (internalService && serviceSecret && expectedSecret && serviceSecret === expectedSecret) {
+      // Read-only larg: locations (bonus) + employees-export (puncte/KPI către App2).
       request.user = {
         sub: 'internal',
-        permissions: ['execution.read_all', 'execution.read_location', 'execution.read_company'],
+        permissions: [
+          'execution.read_all',
+          'execution.read_location',
+          'execution.read_company',
+          'execution.read_own',
+          'assignment.read_all',
+          'assignment.read_company',
+          'assignment.read_own',
+          'assignment.read_location',
+        ],
       };
       return true;
     }

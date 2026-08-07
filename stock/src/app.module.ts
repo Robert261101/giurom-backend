@@ -28,6 +28,8 @@ import { CategoryService } from './stock/category.service';
 import { StockSyncCronService } from './stock/cron/stock-sync-cron.service';
 import { StockSyncController } from './stock/cron/stock-sync.controller';
 import { App2MovementController } from './stock/app2-movement.controller';
+import { App2WasteController } from './stock/app2-waste.controller';
+import { WasteExportService } from './stock/waste-export.service';
 
 @Module({
   imports: [
@@ -65,11 +67,12 @@ import { App2MovementController } from './stock/app2-movement.controller';
     }),
     TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride]),
   ],
-  controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController, StockSyncController, App2MovementController],
+  controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController, StockSyncController, App2MovementController, App2WasteController],
   providers: [
     StockService,
     CategoryService,
     StockSyncCronService,
+    WasteExportService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

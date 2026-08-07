@@ -22,8 +22,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: sub,
       employee_id: sub,
       username: payload.username,
-      roles: Array.isArray(payload.roles) ? payload.roles : [],
       permissions: payload.permissions || [],
+      roles: Array.isArray(payload.roles) ? payload.roles : [],
       work_location_id: payload.work_location_id ?? undefined,
       work_location_default_id: payload.work_location_default_id ?? undefined,
       company_type:
@@ -35,5 +35,3 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 }
-
-
