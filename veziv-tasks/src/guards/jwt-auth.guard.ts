@@ -25,8 +25,11 @@ export class JwtAuthGuard {
           'execution.read_all',
           'execution.read_location',
           'execution.read_company',
+          'execution.read_own',
           'assignment.read_all',
           'assignment.read_company',
+          'assignment.read_own',
+          'assignment.read_location',
         ],
       };
       return true;

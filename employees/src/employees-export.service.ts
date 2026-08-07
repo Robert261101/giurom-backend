@@ -179,14 +179,16 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
     const distinctLocationIds = [...new Set(pairs.map((p) => p.locationId))];
     const metaByLocation = await this.resolveLocationMeta(distinctLocationIds);
     const { startDate, endDate } = this.currentMonthRange();
-    const pointsByLocation = await this.fetchMonthPointsByLocation(
-      distinctLocationIds,
-      startDate,
-      endDate,
-    );
     const distinctEmployeeIds = [
       ...new Set(pairs.map((p) => Number(p.employee.id)).filter((id) => id > 0)),
     ];
+    // Același tipar ca tab-ul Activitate pe .eu: puncte pe angajat (toate locațiile),
+    // nu filtrate pe o singură location_id — altfel App2 vedea 0 când punctele erau pe altă locație.
+    const pointsByEmployee = await this.fetchMonthPointsByEmployee(
+      distinctEmployeeIds,
+      startDate,
+      endDate,
+    );
     const efficiencyByEmployee = await this.fetchEfficiencyByEmployee(
       distinctEmployeeIds,
       startDate,
@@ -201,8 +203,6 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
       const employeeId = Number(employee.id);
-      const locationPoints = pointsByLocation.get(locationId);
-      const monthPoints = locationPoints?.get(employeeId);
       items.push({
         company_id: meta.companyId,
         location_id: locationId,
@@ -216,7 +216,7 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         // Un angajat cu dată de încetare în trecut e inactiv, chiar dacă flagul a rămas pe
         // true — altfel contul din App2 ar rămâne deschis după plecarea omului.
         is_active: this.isActive(employee),
-        month_points: monthPoints ?? 0,
+        month_points: pointsByEmployee.get(employeeId) ?? 0,
         kpi_efficiency: efficiencyByEmployee.get(employeeId) ?? null,
       });
     }
@@ -356,53 +356,60 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Puncte pe angajat per locație (luna curentă). Fail-soft: locație eșuată → map gol.
-   * Env: TASKS_HTTP_URL (sau TASKS_API_BASE) către veziv-tasks, ex. http://localhost:3008
+   * Puncte pe angajat (luna curentă), ca pe tab-ul Activitate din .eu.
+   * Sursă: GET /tasks/executions/employee-points/:id (sumă pe zile).
+   * Fail-soft: angajat eșuat → 0.
    */
-  private async fetchMonthPointsByLocation(
-    locationIds: number[],
+  private async fetchMonthPointsByEmployee(
+    employeeIds: number[],
     startDate: string,
     endDate: string,
-  ): Promise<Map<number, Map<number, number>>> {
-    const result = new Map<number, Map<number, number>>();
+  ): Promise<Map<number, number>> {
+    const result = new Map<number, number>();
+    if (employeeIds.length === 0) return result;
+
     const base = this.tasksBaseUrl();
     const headers = this.internalHeaders();
+    const concurrency = 8;
+    let index = 0;
 
-    await Promise.all(
-      locationIds.map(async (locationId) => {
-        const byEmployee = new Map<number, number>();
-        try {
-          const res: any = await firstValueFrom(
-            this.httpService.get(`${base}/executions/location-employee-points`, {
-              headers,
-              params: {
-                location_id: locationId,
-                startDate,
-                endDate,
-              },
-            }),
-          );
-          const rows = Array.isArray(res?.data)
-            ? res.data
-            : Array.isArray(res?.data?.data)
-              ? res.data.data
-              : [];
-          for (const row of rows) {
-            const employeeId = Number(row.employee_id);
-            const points = Number(row.total_points ?? 0);
-            if (Number.isFinite(employeeId) && employeeId > 0) {
-              byEmployee.set(employeeId, Number.isFinite(points) ? points : 0);
+    const workers = Array.from(
+      { length: Math.min(concurrency, employeeIds.length) },
+      async () => {
+        while (index < employeeIds.length) {
+          const employeeId = employeeIds[index++];
+          try {
+            const res: any = await firstValueFrom(
+              this.httpService.get(
+                `${base}/executions/employee-points/${employeeId}`,
+                {
+                  headers,
+                  params: { startDate, endDate },
+                },
+              ),
+            );
+            const rows = Array.isArray(res?.data)
+              ? res.data
+              : Array.isArray(res?.data?.data)
+                ? res.data.data
+                : [];
+            let sum = 0;
+            for (const row of rows) {
+              const points = Number(row.total_points ?? row.points ?? 0);
+              if (Number.isFinite(points) && points > 0) sum += points;
             }
+            result.set(employeeId, sum);
+          } catch (err: any) {
+            this.logger.warn(
+              `⚠️ [EmployeesExport] Puncte angajat ${employeeId} indisponibile: ${err?.message}`,
+            );
+            result.set(employeeId, 0);
           }
-        } catch (err: any) {
-          this.logger.warn(
-            `⚠️ [EmployeesExport] Puncte locație ${locationId} indisponibile: ${err?.message}`,
-          );
         }
-        result.set(locationId, byEmployee);
-      }),
+      },
     );
 
+    await Promise.all(workers);
     return result;
   }
 
