@@ -430,8 +430,27 @@ export class LocationsService {
   ): Promise<{ locations: WorkLocation[]; total: number; totalPages: number }> {
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
+    const isGlobalAdmin =
+      user?.isAdmin === true ||
+      user?.isSuperAdmin === true ||
+      user?.permissions?.includes("assignment.read_all");
 
-    // Dacă are permisiunea locations.read, returnează toate locațiile
+    // Tenant isolation: companyId din query nu poate deschide locațiile unei firme neautorizate.
+    if (companyId != null && !isGlobalAdmin) {
+      const accessible = await this.getEmployeeCompanies(user);
+      const accessibleIds = new Set(
+        accessible.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0),
+      );
+      const jwtCompanyId = Number(user?.company_id ?? user?.companyId);
+      if (Number.isFinite(jwtCompanyId) && jwtCompanyId > 0) {
+        accessibleIds.add(jwtCompanyId);
+      }
+      if (!accessibleIds.has(Number(companyId))) {
+        return { locations: [], total: 0, totalPages: 0 };
+      }
+    }
+
+    // Dacă are permisiunea locations.read, returnează locațiile (filtrate după company dacă e cazul)
     if (hasLocationReadPermission) {
       const qb = this.workLocationRepository
         .createQueryBuilder("location")
@@ -559,37 +578,15 @@ export class LocationsService {
             return { locations: [], total: 0, totalPages: 0 };
           }
         } catch (dbError: any) {
-          // Dacă tabelul nu există în această bază de date, înseamnă că este în altă bază de date
-          // SOLUȚIE TEMPORARĂ: Permitem accesul la toate locațiile pentru utilizatorii autentificați
-          // când microserviciul employees nu este accesibil
-          // NOTĂ: Aceasta este o soluție temporară - în producție, microserviciul employees trebuie să fie accesibil
+          // Dacă tabelul nu există în această bază de date, înseamnă că este în altă bază de date.
+          // Nu expunem toate locațiile (cross-tenant) — fail closed.
           console.error(
             `❌ Failed to query employees_locations directly: ${dbError.message}`,
           );
           console.warn(
-            `⚠️ Cannot access employees_locations - allowing access to all locations for authenticated user (temporary solution)`,
+            `⚠️ Cannot access employees_locations — returning empty list (fail closed)`,
           );
-
-          // Returnăm toate locațiile (fără filtrare) când microserviciul employees nu este accesibil
-          // Aceasta este o soluție temporară până când microserviciul employees devine accesibil
-          const qb = this.workLocationRepository
-            .createQueryBuilder("location")
-            .leftJoinAndSelect("location.task_templates", "task_templates");
-          if (companyId)
-            qb.where("location.company_id = :companyId", { companyId });
-          if (city) qb.andWhere("location.city = :city", { city });
-          if (search)
-            qb.andWhere(
-              "location.location_name LIKE :search OR location.address LIKE :search",
-              { search: `%${search}%` },
-            );
-          const offset = (page - 1) * limit;
-          const [locations, total] = await qb
-            .orderBy("location.created_at", "DESC")
-            .skip(offset)
-            .take(limit)
-            .getManyAndCount();
-          return { locations, total, totalPages: Math.ceil(total / limit) };
+          return { locations: [], total: 0, totalPages: 0 };
         }
       }
     }
@@ -737,14 +734,25 @@ export class LocationsService {
       };
 
       const idsParam = companyIds.join(",");
+      const userTypeRaw = String(user?.company_type ?? user?.companyType ?? "")
+        .toLowerCase()
+        .trim();
+      const companyTypeFilter =
+        userTypeRaw === "client" || userTypeRaw === "furnizor"
+          ? userTypeRaw
+          : undefined;
       const response = await axios.get(`${companiesUrl}/companies/batch`, {
         headers: requestHeaders,
-        params: { ids: idsParam },
+        params: {
+          ids: idsParam,
+          ...(companyTypeFilter ? { company_type: companyTypeFilter } : {}),
+        },
         timeout: 3000,
       });
 
       const companies = Array.isArray(response.data) ? response.data : [];
       // Ne asigurăm că returnăm obiecte cu { id, company_name }
+      // (batch deja filtrează pe company_type când e trimis — nu amestecă furnizor în selectorul client)
       return companies
         .filter(
           (c: any) =>

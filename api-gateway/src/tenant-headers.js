@@ -5,6 +5,8 @@ const SKIP_PATH_PREFIXES = [
   "/api/images",
   "/auth",
   "/socket.io",
+  "/notifications/socket.io",
+  "/tasks/socket.io",
 ];
 
 const INTERNAL_SERVICE_HEADER = "x-internal-service";

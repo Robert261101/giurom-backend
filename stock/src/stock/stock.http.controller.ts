@@ -397,9 +397,14 @@ export class StockHttpController {
       ? req.user.permissions
       : [];
     const autoApprove = permissions.includes("stock.waste_approve");
-    const created = await this.service.createWasteRequest(dtoWithLocation, createdBy, {
-      autoApprove,
-    });
+    const created = await this.service.createWasteRequest(
+      dtoWithLocation,
+      createdBy,
+      {
+        autoApprove,
+        user: req?.user,
+      },
+    );
     // Fire-and-forget: cererea trebuie sa apara repede in giurom 2.0, dar crearea ei nu
     // are voie sa esueze daca App2 e indisponibil.
     void this.wasteExportService.pushRequestSafe(created.id);

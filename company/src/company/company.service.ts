@@ -20,8 +20,14 @@ import * as path from 'path';
 export interface CompanyAccessRequester {
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
+  /** Platform-wide (assignment.read_all) — poate lista firme indiferent de tip/tenant. */
+  hasPlatformWideAccess?: boolean;
   /** Header-ul "Authorization: Bearer ..." original al cererii, reutilizat pentru apelul către locations-ms. */
   authHeader?: string;
+  /** company_id din JWT — fallback când angajatul nu are încă locații mapate. */
+  companyId?: number;
+  /** Tipul tenantului din JWT: client | furnizor. Separator obligatoriu pentru dropdown Firma. */
+  companyType?: 'client' | 'furnizor';
 }
 
 @Injectable()
@@ -69,23 +75,86 @@ export class CompanyService {
    * (via endpointul deja existent `GET /locations/my/companies`, care rezolvă intern
    * employees-ms + company_id per work-location). Independent de orice companyId trimis de client.
    */
-  private async getRequesterAccessibleCompanyIds(authHeader: string): Promise<number[]> {
-    const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
-    try {
-      const resp = await axios.get(`${locationsUrl}/locations/my/companies`, {
-        headers: { Authorization: authHeader },
-        timeout: 3000,
-      });
-      const rows = Array.isArray(resp.data) ? resp.data : [];
-      return rows
-        .map((c: any) => Number(c.id))
-        .filter((id: number) => Number.isFinite(id) && id > 0);
-    } catch (error: any) {
-      console.error(
-        `⚠️ [getRequesterAccessibleCompanyIds] Nu am putut obține companiile angajatului: ${error?.message || error}`,
-      );
-      return [];
+  private async getRequesterAccessibleCompanyIds(
+    authHeader?: string,
+    jwtCompanyId?: number,
+  ): Promise<number[]> {
+    const ids = new Set<number>();
+    if (authHeader) {
+      const locationsUrl = process.env.LOCATIONS_HTTP_URL || 'http://localhost:3004';
+      try {
+        const resp = await axios.get(`${locationsUrl}/locations/my/companies`, {
+          headers: { Authorization: authHeader },
+          timeout: 3000,
+        });
+        const rows = Array.isArray(resp.data) ? resp.data : [];
+        for (const c of rows) {
+          const id = Number(c.id);
+          if (Number.isFinite(id) && id > 0) ids.add(id);
+        }
+      } catch (error: any) {
+        console.error(
+          `⚠️ [getRequesterAccessibleCompanyIds] Nu am putut obține companiile angajatului: ${error?.message || error}`,
+        );
+      }
     }
+    if (Number.isFinite(jwtCompanyId) && (jwtCompanyId as number) > 0) {
+      ids.add(jwtCompanyId as number);
+    }
+    return [...ids];
+  }
+
+  /**
+   * Acces catalog „global”: doar platform superadmin / assignment.read_all.
+   * Adminul unei firme CLIENT (isAdmin pe tenant) NU vede toate firmele din DB
+   * și NU vede firmele company_type=furnizor.
+   */
+  private requesterHasGlobalCompanyAccess(requester?: CompanyAccessRequester): boolean {
+    return !!(requester?.isSuperAdmin || requester?.hasPlatformWideAccess);
+  }
+
+  private normalizeCompanyType(
+    value: unknown,
+  ): 'client' | 'furnizor' | undefined {
+    const raw = String(value ?? '').toLowerCase().trim();
+    if (raw === 'client' || raw === 'furnizor') return raw;
+    return undefined;
+  }
+
+  /**
+   * Rezolvă tipul tenantului din JWT; dacă lipsește, din company_id în DB.
+   * Fără tip, filtrarea client↔furnizor nu poate fi aplicată.
+   */
+  private async resolveRequesterCompanyType(
+    requester?: CompanyAccessRequester,
+  ): Promise<'client' | 'furnizor' | undefined> {
+    const fromJwt = this.normalizeCompanyType(requester?.companyType);
+    if (fromJwt) return fromJwt;
+    const companyId = requester?.companyId;
+    if (!Number.isFinite(companyId) || (companyId as number) <= 0) {
+      return undefined;
+    }
+    const row = await this.companyRepository.findOne({
+      where: { id: companyId as number },
+      select: ['id', 'company_type'],
+    });
+    return this.normalizeCompanyType(row?.company_type);
+  }
+
+  /**
+   * Separă tenantii: un user cu company_type=client|furnizor nu listează tipul opus,
+   * indiferent de assignment.read_all / relații comerciale.
+   * Catalog mixt doar când NU există tip pe requester și nici ?company_type=.
+   */
+  private applySelectableCompanyTypeFilter(
+    qb: ReturnType<Repository<Company>['createQueryBuilder']>,
+    companyType?: 'client' | 'furnizor',
+    _requester?: CompanyAccessRequester,
+    explicitType?: 'client' | 'furnizor',
+  ): void {
+    const type = explicitType ?? companyType;
+    if (!type) return;
+    qb.andWhere('company.company_type = :companyType', { companyType: type });
   }
 
   /**
@@ -101,15 +170,25 @@ export class CompanyService {
     if (!requester) {
       return;
     }
-    if (requester.isAdmin || requester.isSuperAdmin) {
+    if (this.requesterHasGlobalCompanyAccess(requester)) {
       return;
     }
-    if (!requester.authHeader) {
-      throw new NotFoundException(`Compania cu ID-ul ${companyId} nu a fost găsită`);
-    }
-    const accessibleIds = await this.getRequesterAccessibleCompanyIds(requester.authHeader);
+    const accessibleIds = await this.getRequesterAccessibleCompanyIds(
+      requester.authHeader,
+      requester.companyId,
+    );
     if (!accessibleIds.includes(companyId)) {
       throw new NotFoundException(`Compania cu ID-ul ${companyId} nu a fost găsită`);
+    }
+    const requesterType = await this.resolveRequesterCompanyType(requester);
+    if (requesterType) {
+      const company = await this.companyRepository.findOne({
+        where: { id: companyId },
+        select: ['id', 'company_type'],
+      });
+      if (!company || company.company_type !== requesterType) {
+        throw new NotFoundException(`Compania cu ID-ul ${companyId} nu a fost găsită`);
+      }
     }
   }
   /**
@@ -287,23 +366,73 @@ export class CompanyService {
     return saved;
   }
 
-  async findAllCompanies(page = 1, limit = 10, search?: string, status?: string): Promise<{ companies: Company[]; total: number; totalPages: number }> {
+  async findAllCompanies(
+    page = 1,
+    limit = 10,
+    search?: string,
+    status?: string,
+    requester?: CompanyAccessRequester,
+    companyTypeFilter?: 'client' | 'furnizor',
+  ): Promise<{ companies: Company[]; total: number; totalPages: number }> {
     const qb = this.companyRepository.createQueryBuilder('company').leftJoinAndSelect('company.documents', 'documents');
     if (search) qb.where('company.company_name LIKE :search OR company.cui LIKE :search', { search: `%${search}%` });
     if (status) qb.andWhere('company.status = :status', { status });
+
+    // Separă client ↔ furnizor: dropdown-ul Firma / lista nu amestecă tipurile de tenant.
+    const resolvedType = await this.resolveRequesterCompanyType(requester);
+    this.applySelectableCompanyTypeFilter(qb, resolvedType, requester, companyTypeFilter);
+
+    // Catalog global nescope-uit doar pentru operator platformă FĂRĂ company_type pe JWT.
+    // Adminul firmei CLIENT cu assignment.read_all tot rămâne pe firmele accesibile + tipul lui.
+    const globalUnscopedCatalog =
+      this.requesterHasGlobalCompanyAccess(requester) &&
+      !resolvedType &&
+      !companyTypeFilter;
+    if (requester && !globalUnscopedCatalog) {
+      const accessibleIds = await this.getRequesterAccessibleCompanyIds(
+        requester.authHeader,
+        requester.companyId,
+      );
+      if (accessibleIds.length === 0) {
+        return { companies: [], total: 0, totalPages: 0 };
+      }
+      qb.andWhere('company.id IN (:...accessibleIds)', { accessibleIds });
+    }
+
     const offset = (page - 1) * limit;
     const [companies, total] = await qb.orderBy('company.created_at', 'DESC').skip(offset).take(limit).getManyAndCount();
     return { companies, total, totalPages: Math.ceil(total / limit) };
   }
 
-  // Returnează doar id și company_name pentru utilizatori cu permisiunea companies.read_own
-  async findForOwn(): Promise<{ id: number; company_name: string }[]> {
-    const companies = await this.companyRepository
+  /**
+   * Listă pentru companies.read_own: DOAR firmele la care requester-ul are acces
+   * (locații asignate + company_id din JWT), același tip de tenant.
+   */
+  async findForOwn(requester?: CompanyAccessRequester): Promise<{ id: number; company_name: string }[]> {
+    if (!requester) {
+      return [];
+    }
+
+    const accessibleIds = await this.getRequesterAccessibleCompanyIds(
+      requester.authHeader,
+      requester.companyId,
+    );
+
+    if (accessibleIds.length === 0) {
+      return [];
+    }
+
+    const qb = this.companyRepository
       .createQueryBuilder('company')
-      .select(['company.id', 'company.company_name'])
-      .where('company.status = :status', { status: 'active' })
-      .orderBy('company.company_name', 'ASC')
-      .getMany();
+      .select(['company.id', 'company.company_name', 'company.company_type'])
+      .where('company.id IN (:...accessibleIds)', { accessibleIds })
+      .andWhere('company.status IN (:...statuses)', { statuses: ['activ', 'active'] });
+
+    const resolvedType = await this.resolveRequesterCompanyType(requester);
+    this.applySelectableCompanyTypeFilter(qb, resolvedType, requester);
+    qb.orderBy('company.company_name', 'ASC');
+
+    const companies = await qb.getMany();
 
     return companies.map(company => ({
       id: company.id,
@@ -312,13 +441,25 @@ export class CompanyService {
   }
 
   // Returnează doar id și company_name pentru o companie (pentru utilizatori cu permisiunea companies.read_own)
-  async findNameById(id: number): Promise<{ id: number; company_name: string }> {
+  async findNameById(id: number, requester?: CompanyAccessRequester): Promise<{ id: number; company_name: string }> {
+    await this.assertCompanyAccessibleToRequester(id, requester);
+
     const company = await this.companyRepository.findOne({
       where: { id },
-      select: ['id', 'company_name']
+      select: ['id', 'company_name', 'company_type']
     });
     
     if (!company) {
+      throw new NotFoundException(`Compania cu ID-ul ${id} nu a fost găsită`);
+    }
+
+    const requesterType = await this.resolveRequesterCompanyType(requester);
+    if (
+      requester &&
+      !this.requesterHasGlobalCompanyAccess(requester) &&
+      requesterType &&
+      company.company_type !== requesterType
+    ) {
       throw new NotFoundException(`Compania cu ID-ul ${id} nu a fost găsită`);
     }
     
@@ -565,16 +706,21 @@ export class CompanyService {
    */
   async findByIdsBasic(
     ids: number[],
-  ): Promise<Array<Pick<Company, 'id' | 'company_name'>>> {
+    options?: { companyType?: 'client' | 'furnizor' },
+  ): Promise<Array<Pick<Company, 'id' | 'company_name' | 'company_type'>>> {
     if (!ids || ids.length === 0) {
       return [];
     }
 
     const uniqueIds = Array.from(new Set(ids));
+    const where: any = { id: In(uniqueIds) };
+    if (options?.companyType) {
+      where.company_type = options.companyType;
+    }
 
     const companies = await this.companyRepository.find({
-      where: { id: In(uniqueIds) },
-      select: ['id', 'company_name'],
+      where,
+      select: ['id', 'company_name', 'company_type'],
     });
 
     return companies;
