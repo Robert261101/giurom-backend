@@ -51,7 +51,7 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: npm run build
 
-      - name: Strip devDependencies (nodul de deploy nu mai ruleazÄƒ npm install)
+      - name: Strip devDependencies (nodul de deploy nu mai ruleaz? npm install)
         working-directory: ${{ matrix.service }}
         run: npm prune --omit=dev
 
@@ -62,10 +62,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy (dist + node_modules + package.json) via rsync
+      - name: Deploy (dist + node_modules + package.json [+ migrations]) via rsync
         run: |
           SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
           REMOTE="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/giurom-backend/${{ matrix.service }}/"
+
+          EXTRA_PATHS=()
+          # suppliers-ms (?i orice serviciu cu folder migrations/)
+          if [ -d "${{ matrix.service }}/migrations" ]; then
+            EXTRA_PATHS+=("${{ matrix.service }}/migrations")
+          fi
 
           for attempt in 1 2 3 4 5; do
             echo "Rsync attempt ${attempt}/5 for ${{ matrix.service }}..."
@@ -75,7 +81,18 @@ jobs:
               ${{ matrix.service }}/dist \
               ${{ matrix.service }}/node_modules \
               ${{ matrix.service }}/package.json \
+              "${EXTRA_PATHS[@]}" \
               "${REMOTE}"; then
+              # stock: SQL-urile sunt în src/stock/migrations ? le punem ca migrations/ pe server
+              if [ "${{ matrix.service }}" = "stock" ] && [ -d "stock/src/stock/migrations" ]; then
+                rsync -avz --delete \
+                  -e "ssh ${SSH_OPTS}" \
+                  stock/src/stock/migrations/ \
+                  "${REMOTE}migrations/" || {
+                    if [ "${attempt}" -lt 5 ]; then sleep $((attempt * 10)); continue; fi
+                    exit 1
+                  }
+              fi
               echo "Rsync succeeded on attempt ${attempt}"
               exit 0
             fi
@@ -111,3 +128,60 @@ jobs:
 
           echo "PM2 restart failed after 5 attempts for ${{ matrix.service }}"
           exit 1
+
+  migrate:
+    name: Run DB migrations
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync migration files + runner scripts
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+          REMOTE_USER_HOST="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
+          REMOTE_ROOT="/home/${{ secrets.DEPLOY_USER }}/giurom-backend"
+
+          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/scripts' '$REMOTE_ROOT/suppliers-ms/migrations' '$REMOTE_ROOT/stock/migrations'"
+
+          rsync -avz -e "ssh ${SSH_OPTS}" \
+            suppliers-ms/migrations/ \
+            "$REMOTE_USER_HOST:$REMOTE_ROOT/suppliers-ms/migrations/"
+
+          rsync -avz -e "ssh ${SSH_OPTS}" \
+            stock/src/stock/migrations/ \
+            "$REMOTE_USER_HOST:$REMOTE_ROOT/stock/migrations/"
+
+          rsync -avz -e "ssh ${SSH_OPTS}" \
+            scripts/run-server-migrations.sh \
+            scripts/migration-manifest.txt \
+            scripts/seed-stock-waste-permissions.js \
+            "$REMOTE_USER_HOST:$REMOTE_ROOT/scripts/"
+
+          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "chmod +x '$REMOTE_ROOT/scripts/run-server-migrations.sh'"
+
+      - name: Apply pending migrations on server
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+          ssh ${SSH_OPTS} ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            set -euo pipefail
+            export GIUROM_BACKEND_ROOT="$HOME/giurom-backend"
+            bash "$HOME/giurom-backend/scripts/run-server-migrations.sh"
+          '
+
+      - name: Restart services touched by migrations
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+          ssh ${SSH_OPTS} ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            pm2 restart suppliers-ms stock auth --update-env
+            pm2 save
+          '
