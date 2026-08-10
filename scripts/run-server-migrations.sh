@@ -79,9 +79,28 @@ server_path_for() {
   esac
 }
 
+read_db_name_from_env() {
+  local env_file="$1"
+  grep -E '^DB_DATABASE=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r'
+}
+
+# Unele SQL-uri (backfill cross-DB) folosesc placeholderi în loc de nume hardcodate.
+materialize_sql_file() {
+  local src="$1"
+  local dest="$2"
+  local auth_db employees_db
+  auth_db="$(read_db_name_from_env "$ROOT/auth/.env")"
+  employees_db="$(read_db_name_from_env "$ROOT/employees/.env")"
+  if [[ -z "$auth_db" || -z "$employees_db" ]]; then
+    echo "ERROR: nu pot citi DB_DATABASE din auth/employees .env" >&2
+    exit 1
+  fi
+  sed -e "s/__AUTH_DB__/${auth_db}/g" -e "s/__EMPLOYEES_DB__/${employees_db}/g" "$src" > "$dest"
+}
+
 run_sql_from_manifest_line() {
   local rel="$1"
-  local service file base
+  local service file base tmp
   service="$(resolve_service_for_path "$rel")"
   file="$(server_path_for "$rel")"
   base="$(basename "$rel")"
@@ -98,7 +117,14 @@ run_sql_from_manifest_line() {
     return 0
   fi
   echo "APPLY $base -> $DB_DATABASE"
-  mysql_cmd "$DB_DATABASE" < "$file"
+  if grep -q '__AUTH_DB__\|__EMPLOYEES_DB__' "$file"; then
+    tmp="$(mktemp)"
+    materialize_sql_file "$file" "$tmp"
+    mysql_cmd "$DB_DATABASE" < "$tmp"
+    rm -f "$tmp"
+  else
+    mysql_cmd "$DB_DATABASE" < "$file"
+  fi
   mark_applied "$base"
   echo "OK $base"
 }
