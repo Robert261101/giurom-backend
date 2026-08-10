@@ -22,10 +22,26 @@ export class CompanyHttpController {
 		const user = req?.user;
 		if (!user) return undefined;
 		const authHeader = req.headers?.authorization || req.headers?.Authorization;
+		const rawCompanyId = user.company_id ?? user.companyId;
+		const companyId = rawCompanyId != null ? Number(rawCompanyId) : undefined;
+		const permissions: string[] = Array.isArray(user.permissions) ? user.permissions : [];
+		const permSet = new Set(permissions.map((p) => String(p).toLowerCase().trim()));
+		const rawType = String(user.company_type ?? user.companyType ?? '').toLowerCase().trim();
+		const companyType =
+			rawType === 'client' || rawType === 'furnizor' ? (rawType as 'client' | 'furnizor') : undefined;
+		const isSuperAdmin =
+			user.isSuperAdmin === true || permSet.has('assignment.read_all');
+		const isAdmin =
+			user.isAdmin === true ||
+			isSuperAdmin ||
+			permSet.has('assignment.read_company');
 		return {
-			isAdmin: user.isAdmin === true,
-			isSuperAdmin: user.isSuperAdmin === true,
+			isAdmin,
+			isSuperAdmin,
+			hasPlatformWideAccess: isSuperAdmin || permSet.has('assignment.read_all'),
 			authHeader,
+			companyId: Number.isFinite(companyId) && (companyId as number) > 0 ? companyId : undefined,
+			companyType,
 		};
 	}
 
@@ -42,8 +58,24 @@ export class CompanyHttpController {
 
 	@Get()
 	@Permissions('companies.read')
-	findAll(@Query('page') page = '1', @Query('limit') limit = '10', @Query('search') search?: string, @Query('status') status?: string) {
-		return this.service.findAllCompanies(parseInt(page, 10), parseInt(limit, 10), search, status);
+	findAll(
+		@Req() req: any,
+		@Query('page') page = '1',
+		@Query('limit') limit = '10',
+		@Query('search') search?: string,
+		@Query('status') status?: string,
+		@Query('company_type') companyType?: string,
+	) {
+		const normalizedType =
+			companyType === 'client' || companyType === 'furnizor' ? companyType : undefined;
+		return this.service.findAllCompanies(
+			parseInt(page, 10),
+			parseInt(limit, 10),
+			search,
+			status,
+			this.buildAccessRequester(req),
+			normalizedType,
+		);
 	}
 
 	@Get('batch')
@@ -51,7 +83,8 @@ export class CompanyHttpController {
 	@Permissions('companies.read')
 	findBatch(
 		@Query('ids') ids: string,
-	): Promise<Array<Pick<Company, 'id' | 'company_name'>>> {
+		@Query('company_type') companyType?: string,
+	): Promise<Array<Pick<Company, 'id' | 'company_name' | 'company_type'>>> {
 		if (!ids) {
 			return Promise.resolve([]);
 		}
@@ -65,13 +98,15 @@ export class CompanyHttpController {
 			return Promise.resolve([]);
 		}
 
-		return this.service.findByIdsBasic(idList);
+		const normalizedType =
+			companyType === 'client' || companyType === 'furnizor' ? companyType : undefined;
+		return this.service.findByIdsBasic(idList, { companyType: normalizedType });
 	}
 
 	@Get('for-own')
 	@Permissions('companies.read_own')
-	findForOwn() {
-		return this.service.findForOwn();
+	findForOwn(@Req() req: any) {
+		return this.service.findForOwn(this.buildAccessRequester(req));
 	}
 
 	@Get('statistics')
@@ -80,8 +115,8 @@ export class CompanyHttpController {
 
 	@Get(':id/name')
 	@Permissions('companies.read_own')
-	findNameById(@Param('id') id: string) { 
-		return this.service.findNameById(parseInt(id, 10)); 
+	findNameById(@Param('id') id: string, @Req() req: any) { 
+		return this.service.findNameById(parseInt(id, 10), this.buildAccessRequester(req)); 
 	}
 
 	@Get(':id')

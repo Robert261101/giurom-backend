@@ -173,7 +173,7 @@ export class StockService {
   async createWasteRequest(
     dto: any,
     createdBy?: number,
-    options?: { autoApprove?: boolean },
+    options?: { autoApprove?: boolean; user?: any },
   ): Promise<WasteRequest> {
     if (!dto.product_id && !dto.recipe_preparation_id) {
       throw new BadRequestException(
@@ -181,10 +181,19 @@ export class StockService {
       );
     }
 
+    const locationId =
+      dto.location_id != null && Number.isFinite(Number(dto.location_id))
+        ? Number(dto.location_id)
+        : undefined;
+    if (locationId != null) {
+      await this.assertStockLocationAllowed(options?.user, locationId);
+    }
+
     const autoApprove = Boolean(options?.autoApprove);
 
     const entity = this.wasteRequestRepo.create({
       ...dto,
+      ...(locationId != null ? { location_id: locationId } : {}),
       created_by: createdBy,
       status: 'pending',
     });
@@ -897,7 +906,37 @@ await this.assertNoNameOrSkuConflictAtLocation(
       override.is_consumable = dto.is_consumable;
     }
     if (dto.photo !== undefined) {
+      const previousPhoto = override.photo;
       override.photo = dto.photo ?? null;
+      // Șterge fișierul vechi din override dacă e înlocuit (aceeași logică ca updateProduct).
+      if (
+        dto.photo &&
+        previousPhoto &&
+        dto.photo !== previousPhoto &&
+        String(previousPhoto).includes("/api/images/products/")
+      ) {
+        try {
+          const oldFileName = path.basename(
+            String(previousPhoto).split("/api/images/products/")[1] || "",
+          );
+          if (oldFileName) {
+            const oldPath = path.join(
+              this.getRepoRoot(),
+              "images",
+              "products",
+              oldFileName,
+            );
+            if (fs.existsSync(oldPath)) {
+              fs.unlinkSync(oldPath);
+              this.logger.log(`🗑️ Ștersă imaginea override veche: ${oldPath}`);
+            }
+          }
+        } catch (e: any) {
+          this.logger.warn(
+            `⚠️ Nu am putut șterge imaginea override veche: ${e?.message || e}`,
+          );
+        }
+      }
     }
     if (dto.min_stock_level !== undefined) {
       // min_stock_level rămâne global pe products — doar locațiile exclusive îl pot schimba direct
@@ -3026,11 +3065,18 @@ await this.assertNoNameOrSkuConflictAtLocation(
         base64Data = base64Data.split(",")[1];
       }
 
+      // Sanitize: doar basename, fără path traversal.
+      const rawBase = path.basename(String(fileName || "image.jpg"));
+      // Compresia FE produce JPEG — normalizăm la .jpg lowercase (stabil pe Linux).
+      const safeBase = rawBase.replace(/[^\w.\-]+/g, "_");
+      const withoutExt = safeBase.replace(/\.[^.]+$/, "") || `image_${Date.now()}`;
+      const normalizedIncoming = `${withoutExt}.jpg`;
+
       // Add timestamp prefix to filename
-      // Frontend sends: compressed_1764180869380.jpeg
-      // We save as: 1764180863230_compressed_1764180869380.jpeg (with our own timestamp)
+      // Frontend sends: compressed_<ts>.jpg
+      // We save as: <ts>_compressed_<ts>.jpg
       const timestamp = Date.now();
-      const uniqueFileName = `${timestamp}_${fileName}`;
+      const uniqueFileName = `${timestamp}_${normalizedIncoming}`;
 
       // Save to images/products directory on server
       const repoRoot = this.getRepoRoot();
@@ -3044,34 +3090,44 @@ await this.assertNoNameOrSkuConflictAtLocation(
       }
 
       const filePath = path.join(productsDir, uniqueFileName);
-      const buffer = Buffer.from(base64Data, "base64");
+      const resolvedFile = path.resolve(filePath);
+      const resolvedDir = path.resolve(productsDir);
+      if (
+        resolvedFile !== resolvedDir &&
+        !resolvedFile.startsWith(resolvedDir + path.sep)
+      ) {
+        throw new BadRequestException("Nume fișier invalid");
+      }
 
-      // ========== DEBUGGING: SALVARE IMAGINE ==========
+      const buffer = Buffer.from(base64Data, "base64");
+      if (!buffer.length) {
+        throw new BadRequestException("Conținutul imaginii este gol");
+      }
+
       this.logger.log("\n🟢 ========== SALVARE IMAGINE ==========");
       this.logger.log("📂 Repo root:", repoRoot);
-      this.logger.log("📂 Images dir:", imagesDir);
       this.logger.log("📂 Products dir:", productsDir);
-      this.logger.log("💾 File path complet:", filePath);
+      this.logger.log("💾 File path complet:", resolvedFile);
       this.logger.log("📝 Nume fișier:", uniqueFileName);
       this.logger.log("🟢 ========================================\n");
 
-      fs.writeFileSync(filePath, buffer);
+      fs.writeFileSync(resolvedFile, buffer);
+      if (!fs.existsSync(resolvedFile)) {
+        throw new BadRequestException(
+          "Imaginea nu a putut fi scrisă pe disk după upload",
+        );
+      }
       this.logger.log(
-        `✅ Product image saved: ${filePath} (${buffer.length} bytes)`
+        `✅ Product image saved: ${resolvedFile} (${buffer.length} bytes)`
       );
 
       // Return the URL path with /api prefix for API Gateway static files endpoint
       const returnPath = `/api/images/products/${uniqueFileName}`;
-      this.logger.log("\n🔵 ========== URL RETURNAT ==========");
-      this.logger.log("🔗 Path returnat către frontend:", returnPath);
-      this.logger.log("🔵 ====================================\n");
       this.logger.log(`🔗 [uploadProductImage] Returning path: ${returnPath}`);
-      this.logger.log(
-        `📁 [uploadProductImage] Physical file location: ${filePath}`
-      );
       return returnPath;
     } catch (error: any) {
       this.logger.error(`❌ Error uploading product image: ${error}`);
+      if (error instanceof BadRequestException) throw error;
       throw new BadRequestException(
         `Eroare la salvarea imaginii: ${error?.message || "Unknown error"}`
       );
@@ -3087,25 +3143,56 @@ await this.assertNoNameOrSkuConflictAtLocation(
     try {
       const repoRoot = this.getRepoRoot();
       const imagesDir = path.join(repoRoot, "images", "products");
-      const filePath = path.join(imagesDir, fileName);
+      const safeName = path.basename(String(fileName || ""));
+      if (!safeName || safeName.includes("..") || safeName !== path.basename(fileName)) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
 
-      this.logger.log(`🔍 [serveProductImage] Looking for file: ${fileName}`);
-      this.logger.log(`📁 [serveProductImage] Full path: ${filePath}`);
-      this.logger.log(`📂 [serveProductImage] Images directory: ${imagesDir}`);
+      let filePath = path.join(imagesDir, safeName);
+      const resolvedDir = path.resolve(imagesDir);
+      let resolvedFile = path.resolve(filePath);
+      if (
+        resolvedFile !== resolvedDir &&
+        !resolvedFile.startsWith(resolvedDir + path.sep)
+      ) {
+        throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+      }
 
-      if (!fs.existsSync(filePath)) {
-        this.logger.error(`❌ [serveProductImage] File NOT FOUND: ${filePath}`);
+      this.logger.log(`🔍 [serveProductImage] Looking for file: ${safeName}`);
+      this.logger.log(`📁 [serveProductImage] Full path: ${resolvedFile}`);
+
+      if (!fs.existsSync(resolvedFile)) {
+        // Case-insensitive fallback (Windows upload .JPG, Linux request .jpg)
+        try {
+          const entries = fs.readdirSync(imagesDir);
+          const match = entries.find(
+            (e) => e.toLowerCase() === safeName.toLowerCase(),
+          );
+          if (match) {
+            filePath = path.join(imagesDir, match);
+            resolvedFile = path.resolve(filePath);
+            if (!resolvedFile.startsWith(resolvedDir + path.sep)) {
+              throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
+            }
+          }
+        } catch (e: any) {
+          if (e instanceof NotFoundException) throw e;
+        }
+      }
+
+      if (!fs.existsSync(resolvedFile)) {
+        this.logger.error(`❌ [serveProductImage] File NOT FOUND: ${resolvedFile}`);
         throw new NotFoundException(`Imaginea ${fileName} nu a fost găsită`);
       }
 
       this.logger.log(
-        `✅ [serveProductImage] File found, serving: ${filePath}`
+        `✅ [serveProductImage] File found, serving: ${resolvedFile}`
       );
 
-      const buffer = fs.readFileSync(filePath);
+      const buffer = fs.readFileSync(resolvedFile);
 
       // Determină tipul MIME
-      const extension = fileName.split(".").pop()?.toLowerCase() || "jpg";
+      const extension = safeName.split(".").pop()?.toLowerCase() || "jpg";
       let mimeType = "image/jpeg";
 
       switch (extension) {

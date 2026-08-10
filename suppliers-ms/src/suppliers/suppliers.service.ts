@@ -4397,7 +4397,7 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    const { locationId } = await this.assertProductInMySupplierNomenclator(
+    const { summary, locationId } = await this.assertProductInMySupplierNomenclator(
       productId,
       userContext,
     );
@@ -4409,6 +4409,13 @@ export class SuppliersService {
     await this.stockHttpService.updateProductAtLocation(productId, locationId, {
       photo: imageUrl,
     });
+
+    // Sync supplier_products.image_url — altfel UI preferă URL-ul vechi (ex. .webp 404)
+    // și poza nouă din stock.products.photo dispare după refresh.
+    await this.supplierProductRepo.update(
+      { supplier_id: summary.id, product_id: productId },
+      { image_url: imageUrl },
+    );
 
     return { product_id: productId, photo: imageUrl };
   }

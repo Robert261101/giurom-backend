@@ -1,9 +1,17 @@
 /**
- * GIU-15: asigură permisiunile stock.waste_own / stock.waste_approve în catalog
- * și acordă waste_approve doar rolului admin (nu angajatului).
+ * GIU-15: asigură permisiunile stock.waste_own / stock.waste_approve / stock.consume_own
+ * în catalog și le acordă rolurilor corecte.
  *
- * Employee plain primește waste_own din PLAIN_EMPLOYEE_BASELINE_PERMISSIONS la login
- * (JWT), chiar fără rol DB „angajat”.
+ * Model:
+ * - stock.waste_own     → poate iniția o cerere de aruncare (pending)
+ * - stock.waste_approve → poate aproba/respinge; dacă creatorul o are, cererea se auto-aprobă
+ * - stock.consume_own   → poate consuma pe fluxul employee
+ *
+ * Employee plain primește waste_own + consume_own și din PLAIN_EMPLOYEE_BASELINE_PERMISSIONS
+ * la login (JWT), chiar fără rol DB „angajat”.
+ *
+ * Admin/client trebuie să aibă AMBELE waste_own + waste_approve (separate), ca să poată
+ * iniția din Stoc și să aprobe cererile angajaților.
  *
  * Usage: node scripts/seed-stock-waste-permissions.js
  */
@@ -83,12 +91,18 @@ async function ensureRolePermission(conn, roleName, permissionId) {
     'stock.consume_own': consumeOwnId,
   });
 
-  // Admin poate aproba; employee NU primește waste_approve pe rol.
-  await ensureRolePermission(conn, 'admin', wasteApproveId);
+  // Admin/client: poate iniția (waste_own) ȘI aproba (waste_approve) — permisiuni separate.
+  for (const roleName of ['admin', 'super-admin', 'superadmin']) {
+    await ensureRolePermission(conn, roleName, wasteOwnId);
+    await ensureRolePermission(conn, roleName, wasteApproveId);
+    await ensureRolePermission(conn, roleName, consumeOwnId);
+  }
 
-  // Opțional: dacă există rol angajat în DB, atașează waste_own (JWT baseline acoperă și fără rol).
-  await ensureRolePermission(conn, 'angajat', wasteOwnId);
-  await ensureRolePermission(conn, 'employee', wasteOwnId);
+  // Employee: doar inițiere/consum propriu (fără approve pe rol).
+  for (const roleName of ['angajat', 'employee']) {
+    await ensureRolePermission(conn, roleName, wasteOwnId);
+    await ensureRolePermission(conn, roleName, consumeOwnId);
+  }
 
   const [check] = await conn.query(
     `SELECT p.name, r.name AS role
