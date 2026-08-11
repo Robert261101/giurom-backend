@@ -120,7 +120,7 @@ export class CompanyHttpController {
 	}
 
 	@Get(':id')
-	@Permissions('companies.read')
+	@Permissions('companies.read', 'companies.read_own')
 	findOne(@Param('id') id: string, @Req() req: any) { return this.service.findCompanyById(parseInt(id, 10), this.buildAccessRequester(req)); }
 
 	@Get('cui/:cui')
