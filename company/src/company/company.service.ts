@@ -440,13 +440,39 @@ export class CompanyService {
     }));
   }
 
-  // Returnează doar id și company_name pentru o companie (pentru utilizatori cu permisiunea companies.read_own)
-  async findNameById(id: number, requester?: CompanyAccessRequester): Promise<{ id: number; company_name: string }> {
+  // Identitate legală a firmei (PDF cumpărător) pentru utilizatori cu companies.read_own
+  async findNameById(
+    id: number,
+    requester?: CompanyAccessRequester,
+  ): Promise<{
+    id: number;
+    company_name: string;
+    cui: string;
+    trade_register_number: string;
+    address: string;
+    city: string;
+    county: string;
+    postal_code: string | null;
+    phone_number: string | null;
+    email: string | null;
+  }> {
     await this.assertCompanyAccessibleToRequester(id, requester);
 
     const company = await this.companyRepository.findOne({
       where: { id },
-      select: ['id', 'company_name', 'company_type']
+      select: [
+        'id',
+        'company_name',
+        'cui',
+        'trade_register_number',
+        'address',
+        'city',
+        'county',
+        'postal_code',
+        'phone_number',
+        'email',
+        'company_type',
+      ],
     });
     
     if (!company) {
@@ -466,6 +492,14 @@ export class CompanyService {
     return {
       id: company.id,
       company_name: company.company_name,
+      cui: company.cui ?? '',
+      trade_register_number: company.trade_register_number ?? '',
+      address: company.address ?? '',
+      city: company.city ?? '',
+      county: company.county ?? '',
+      postal_code: company.postal_code ?? null,
+      phone_number: company.phone_number ?? null,
+      email: company.email ?? null,
     };
   }
 
