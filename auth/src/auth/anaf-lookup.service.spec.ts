@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   mapAnafV9ResponseToSnapshot,
   normalizeCuiDigits,
+  normalizeRomanianPostalCodeFromAnaf,
   ANAF_LOOKUP_USER_MESSAGES,
 } from './anaf-lookup.service';
 import { formatDefaultLocationName } from './location-name.util';
@@ -91,7 +92,7 @@ describe('mapAnafV9ResponseToSnapshot', () => {
         county: 'Timis',
         postalCode: '300001',
         country: 'Romania',
-        details: 'ap. 3',
+        details: 'Ap. 3',
       },
     });
   });
@@ -139,6 +140,72 @@ describe('mapAnafV9ResponseToSnapshot', () => {
     expect(snapshot?.caenCode).toBeNull();
     expect(snapshot?.address.street).toBeNull();
     expect(snapshot?.vatRegistered).toBe(false);
+  });
+
+  it('păstrează leading zero și detaliile Bl/Sc/Et/Ap (CUI 348855)', () => {
+    const pacificStarResponse = {
+      cod: 200,
+      message: 'SUCCESS',
+      found: [
+        {
+          date_generale: {
+            cui: 348855,
+            denumire: 'PACIFIC STAR TRADING SRL',
+            adresa:
+              'MUNICIPIUL BUCUREȘTI, SECTOR 2, SOS. IANCULUI, NR.11, BL.108, SC.A, ET.5, AP.19',
+            codPostal: 21713,
+          },
+          adresa_sediu_social: {
+            sdenumire_Strada: 'Șos. Iancului',
+            snumar_Strada: '11',
+            sdetalii_Adresa: '',
+            scod_Postal: 21713,
+            sdenumire_Localitate: 'Sector 2 Mun. București',
+            sdenumire_Judet: 'MUNICIPIUL BUCUREȘTI',
+          },
+        },
+      ],
+      notFound: [],
+    };
+
+    const snapshot = mapAnafV9ResponseToSnapshot(
+      pacificStarResponse,
+      '348855',
+    );
+    expect(snapshot?.address.street).toBe('Șos. Iancului');
+    expect(snapshot?.address.number).toBe('11');
+    expect(snapshot?.address.postalCode).toBe('021713');
+    expect(snapshot?.address.details).toBe('Bl. 108, Sc. A, Et. 5, Ap. 19');
+  });
+
+  it('normalizează cod poștal de 6 cifre fără modificare', () => {
+    const response = {
+      cod: 200,
+      found: [
+        {
+          date_generale: { denumire: 'FIRMA Y', codPostal: 300123 },
+        },
+      ],
+      notFound: [],
+    };
+    const snapshot = mapAnafV9ResponseToSnapshot(response, '12345678');
+    expect(snapshot?.address.postalCode).toBe('300123');
+  });
+});
+
+describe('normalizeRomanianPostalCodeFromAnaf', () => {
+  it('completează leading zeros pentru valori numerice ANAF', () => {
+    expect(normalizeRomanianPostalCodeFromAnaf(21713)).toBe('021713');
+    expect(normalizeRomanianPostalCodeFromAnaf('21713')).toBe('021713');
+    expect(normalizeRomanianPostalCodeFromAnaf('021713')).toBe('021713');
+    expect(normalizeRomanianPostalCodeFromAnaf(300123)).toBe('300123');
+  });
+
+  it('respinge valori invalide', () => {
+    expect(normalizeRomanianPostalCodeFromAnaf('')).toBeNull();
+    expect(normalizeRomanianPostalCodeFromAnaf(null)).toBeNull();
+    expect(normalizeRomanianPostalCodeFromAnaf(1234567)).toBeNull();
+    expect(normalizeRomanianPostalCodeFromAnaf('ABC')).toBeNull();
   });
 });
 

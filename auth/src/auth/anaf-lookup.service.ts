@@ -3,6 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { firstValueFrom } from 'rxjs';
+import { buildAnafAddressDetails } from './anaf-address.parser';
 
 /**
  * Snapshot intern normalizat al datelor unei firme preluate din ANAF.
@@ -97,6 +98,39 @@ function asTrimmedString(value: unknown): string | null {
 }
 
 /**
+ * Normalizează codul poștal românesc din răspunsul ANAF.
+ * ANAF poate returna valoarea ca number JSON (ex. 21713), pierzând zero-ul inițial.
+ * Tratează întotdeauna ca string de cifre și completează la 6 caractere.
+ */
+export function normalizeRomanianPostalCodeFromAnaf(
+  value: unknown,
+): string | null {
+  if (value == null) return null;
+
+  let digits: string;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    digits = String(Math.trunc(value));
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    digits = trimmed.replace(/\D/g, '');
+  } else {
+    return null;
+  }
+
+  if (!/^\d{1,6}$/.test(digits)) return null;
+  return digits.padStart(6, '0');
+}
+
+function asPostalCodeFromAnaf(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeRomanianPostalCodeFromAnaf(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+/**
  * Adaptor pur (testabil): transformă răspunsul brut ANAF v9 în snapshotul
  * intern stabil. Returnează null pentru CUI negăsit; aruncă pentru structuri
  * complet neașteptate.
@@ -140,13 +174,21 @@ export function mapAnafV9ResponseToSnapshot(
   const county =
     asTrimmedString(sediu['sdenumire_Judet']) ??
     asTrimmedString(fiscal['ddenumire_Judet']);
-  const postalCode =
-    asTrimmedString(sediu['scod_Postal']) ??
-    asTrimmedString(fiscal['dcod_Postal']) ??
-    asTrimmedString(general['codPostal']);
-  const details =
+  const postalCode = asPostalCodeFromAnaf(
+    sediu['scod_Postal'],
+    fiscal['dcod_Postal'],
+    general['codPostal'],
+  );
+  const explicitDetails =
     asTrimmedString(sediu['sdetalii_Adresa']) ??
     asTrimmedString(fiscal['ddetalii_Adresa']);
+  const generalAddress = asTrimmedString(general['adresa']);
+  const details = buildAnafAddressDetails({
+    explicitDetails,
+    generalAddress,
+    street,
+    number,
+  });
 
   const incorporationRaw = asTrimmedString(general['data_inregistrare']);
   const incorporationDate =
