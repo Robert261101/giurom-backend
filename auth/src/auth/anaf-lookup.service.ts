@@ -38,9 +38,23 @@ export type AnafLookupErrorCode =
   | 'timeout'
   | 'invalid_response';
 
+export const ANAF_LOOKUP_USER_MESSAGES: Record<AnafLookupErrorCode, string> = {
+  invalid_cui: 'CUI-ul introdus nu este valid. Verifică valoarea introdusă.',
+  not_found:
+    'CUI-ul introdus nu a fost găsit în baza de date ANAF. Verifică dacă este corect și încearcă din nou.',
+  anaf_unavailable:
+    'Serviciul ANAF este momentan indisponibil. Poți completa datele manual.',
+  timeout:
+    'ANAF nu a răspuns la timp. Încearcă din nou sau completează datele manual.',
+  invalid_response:
+    'Răspunsul ANAF nu a putut fi interpretat. Poți completa datele manual.',
+};
+
 export interface AnafLookupResult {
   found: boolean;
   error?: AnafLookupErrorCode;
+  /** Mesaj clar pentru utilizator, diferențiat pe tip de eroare. */
+  message?: string;
   company?: AnafCompanySnapshot;
   verified_at?: string;
   /** Token semnat server-side; dovedește la submit că lookup-ul a fost real. */
@@ -170,6 +184,16 @@ export function mapAnafV9ResponseToSnapshot(
   };
 }
 
+function anafLookupFailure(
+  error: AnafLookupErrorCode,
+): AnafLookupResult {
+  return {
+    found: false,
+    error,
+    message: ANAF_LOOKUP_USER_MESSAGES[error],
+  };
+}
+
 @Injectable()
 export class AnafLookupService {
   private readonly logger = new Logger(AnafLookupService.name);
@@ -195,7 +219,7 @@ export class AnafLookupService {
   async lookupCompany(rawCui: string): Promise<AnafLookupResult> {
     const cuiDigits = normalizeCuiDigits(rawCui);
     if (!cuiDigits) {
-      return { found: false, error: 'invalid_cui' };
+      return anafLookupFailure('invalid_cui');
     }
 
     const today = new Date().toISOString().slice(0, 10);
@@ -218,13 +242,13 @@ export class AnafLookupService {
         /timeout/i.test(String(error?.message ?? ''))
       ) {
         this.logger.warn(`ANAF lookup timeout pentru CUI ${cuiDigits}`);
-        return { found: false, error: 'timeout' };
+        return anafLookupFailure('timeout');
       }
       const status = error?.response?.status;
       this.logger.warn(
         `ANAF lookup indisponibil pentru CUI ${cuiDigits}: status=${status ?? 'N/A'} message=${error?.message}`,
       );
-      return { found: false, error: 'anaf_unavailable' };
+      return anafLookupFailure('anaf_unavailable');
     }
 
     let snapshot: AnafCompanySnapshot | null;
@@ -234,11 +258,11 @@ export class AnafLookupService {
       this.logger.warn(
         `Răspuns ANAF invalid pentru CUI ${cuiDigits}: ${error?.message}`,
       );
-      return { found: false, error: 'invalid_response' };
+      return anafLookupFailure('invalid_response');
     }
 
     if (!snapshot) {
-      return { found: false, error: 'not_found' };
+      return anafLookupFailure('not_found');
     }
 
     const verifiedAt = new Date().toISOString();
