@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   mapAnafV9ResponseToSnapshot,
   normalizeCuiDigits,
+  ANAF_LOOKUP_USER_MESSAGES,
 } from './anaf-lookup.service';
 import { formatDefaultLocationName } from './location-name.util';
 
@@ -157,5 +158,17 @@ describe('formatDefaultLocationName', () => {
   it('fallback generic când lipsește localitatea', () => {
     expect(formatDefaultLocationName('')).toBe('Locație');
     expect(formatDefaultLocationName(null)).toBe('Locație');
+  });
+});
+
+describe('ANAF_LOOKUP_USER_MESSAGES', () => {
+  it('oferă mesaje distincte pentru CUI negăsit vs indisponibilitate ANAF', () => {
+    expect(ANAF_LOOKUP_USER_MESSAGES.not_found).toContain('nu a fost găsit');
+    expect(ANAF_LOOKUP_USER_MESSAGES.not_found).not.toBe(
+      ANAF_LOOKUP_USER_MESSAGES.anaf_unavailable,
+    );
+    expect(ANAF_LOOKUP_USER_MESSAGES.not_found).not.toBe(
+      ANAF_LOOKUP_USER_MESSAGES.invalid_response,
+    );
   });
 });
