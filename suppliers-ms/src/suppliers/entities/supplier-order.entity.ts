@@ -86,6 +86,9 @@ export class SupplierOrder {
   @Column({ type: 'datetime', nullable: true })
   cancelled_at?: Date;
 
+  /** Calculated (not persisted): supplier has authenticatable furnizor login. */
+  has_supplier_account?: boolean;
+
   @ManyToOne(() => Supplier, (supplier) => supplier.orders, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;

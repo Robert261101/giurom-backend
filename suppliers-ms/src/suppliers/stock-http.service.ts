@@ -687,11 +687,6 @@ export class StockHttpService {
     return photoMap;
   }
 
-  /**
-   * Returnează metadate produs (name/unit/sku) pentru un set de product_id.
-   * Folosește endpoint-ul existent GET /stock/products/:id pentru compatibilitate
-   * cu versiunea curentă de stock-ms.
-   */
   async getProductsByIds(
     productIds: number[],
   ): Promise<Map<number, StockProductInfo>> {
@@ -737,9 +732,73 @@ export class StockHttpService {
     return productMap;
   }
 
-  /**
-   * Health check for stock service connectivity
-   */
+  async listStockAggregatesForProductAtLocation(
+    locationId: number,
+    productId: number,
+  ): Promise<Array<{ id: number; quantity: number }>> {
+    const params = new URLSearchParams({
+      location_id: String(locationId),
+      product_id: String(productId),
+      page: '1',
+      limit: '9',
+    });
+    const url = `${this.stockServiceUrl}/stock/items?${params.toString()}`;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(url, { headers: this.internalHeaders() }),
+      );
+      const body = response.data;
+      const rows: Array<Record<string, unknown>> = Array.isArray(body?.data)
+        ? body.data
+        : Array.isArray(body)
+          ? body
+          : [];
+      return rows
+        .map((row) => ({
+          id: Number(row.id),
+          quantity: Number(row.quantity) || 0,
+        }))
+        .filter((row) => Number.isFinite(row.id) && row.id > 0);
+    } catch (error: any) {
+      this.logger.error(
+        `❌ [StockHttpService] listStockAggregatesForProductAtLocation failed productId=${productId}, locationId=${locationId}: ${error?.message ?? error}`,
+      );
+      throw error;
+    }
+  }
+
+  async deleteStockAggregateById(stockId: number): Promise<void> {
+    const url = `${this.stockServiceUrl}/stock/items/${stockId}`;
+    try {
+      await firstValueFrom(
+        this.httpService.delete(url, { headers: this.internalHeaders() }),
+      );
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ?? error?.message ?? 'Eroare la ștergerea stocului';
+      this.logger.error(
+        `❌ [StockHttpService] deleteStockAggregateById failed stockId=${stockId}: ${message}`,
+      );
+      throw error;
+    }
+  }
+
+  async deleteCatalogProductById(productId: number): Promise<void> {
+    const url = `${this.stockServiceUrl}/stock/products/${productId}`;
+    try {
+      await firstValueFrom(
+        this.httpService.delete(url, { headers: this.internalHeaders() }),
+      );
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ?? error?.message ?? 'Eroare la ștergerea produsului';
+      this.logger.error(
+        `❌ [StockHttpService] deleteCatalogProductById failed productId=${productId}: ${message}`,
+      );
+      throw error;
+    }
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       const response = await firstValueFrom(
@@ -755,3 +814,4 @@ export class StockHttpService {
     }
   }
 }
+

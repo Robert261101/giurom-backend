@@ -44,7 +44,9 @@ import {
   SupplierProductClientPriceEditSource,
 } from './entities/supplier-product-client-price-history.entity';
 import { SupplierProductClientVisibility } from './entities/supplier-product-client-visibility.entity';
+import { SupplierProductClientActivation } from './entities/supplier-product-client-activation.entity';
 import { buildSupplierProductImageFields } from './supplier-product-image.helper';
+import { hasSupplierLoginAccount } from './has-supplier-login-account';
 import {
   computeLineSubtotal,
   compareQuantityToStock,
@@ -89,6 +91,7 @@ import { WarehouseReviewDto } from './dto/warehouse-review.dto';
 import { UpsertSupplierProductClientConfigDto } from './dto/upsert-supplier-product-client-config.dto';
 import { UpsertSupplierProductClientPriceDto } from './dto/upsert-supplier-product-client-price.dto';
 import { SetClientProductVisibilityDto } from './dto/set-client-product-visibility.dto';
+import { SetSupplierProductClientActivationDto } from './dto/set-supplier-product-client-activation.dto';
 import { CreateSupplierOrderAssignmentDto } from './dto/create-supplier-order-assignment.dto';
 import { CreateSupplierOrderDriverAssignmentDto } from './dto/create-supplier-order-driver-assignment.dto';
 import { UpdateOrderDeliveryDateDto } from './dto/update-order-delivery-date.dto';
@@ -179,6 +182,8 @@ export class SuppliersService {
     private readonly supplierProductClientPriceHistoryRepo: Repository<SupplierProductClientPriceHistory>,
     @InjectRepository(SupplierProductClientVisibility)
     private readonly supplierProductClientVisibilityRepo: Repository<SupplierProductClientVisibility>,
+    @InjectRepository(SupplierProductClientActivation)
+    private readonly supplierProductClientActivationRepo: Repository<SupplierProductClientActivation>,
     @InjectRepository(EmployeeSupplier) private readonly employeeSupplierRepo: Repository<EmployeeSupplier>,
     @InjectRepository(SupplierOrderAssignment)
     private readonly orderAssignmentRepo: Repository<SupplierOrderAssignment>,
@@ -195,6 +200,64 @@ export class SuppliersService {
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
       process.env.SERVICE_SECRET || '';
+  }
+
+  /**
+   * True dacă supplier-ul (după supplier_id → owner_company_id) are cont furnizor autentificabil.
+   * Sursa de adevăr pentru diferențierea flow-ului comenzilor.
+   */
+  async hasSupplierLoginAccount(supplierId: number): Promise<boolean> {
+    const id = Number(supplierId);
+    if (!Number.isFinite(id) || id <= 0) {
+      return false;
+    }
+    const supplier = await this.supplierRepo.findOne({
+      where: { id },
+      select: ['id', 'owner_company_id'],
+    });
+    return hasSupplierLoginAccount(this.connection, supplier);
+  }
+
+  private async assertSupplierAccountRequiredForTenantAction(
+    supplierId: number,
+    actionLabel: string,
+  ): Promise<void> {
+    const hasAccount = await this.hasSupplierLoginAccount(supplierId);
+    if (!hasAccount) {
+      throw new BadRequestException(
+        `Acțiunea „${actionLabel}” este disponibilă doar pentru furnizori cu cont autentificabil. ` +
+          `Acest furnizor nu are cont de furnizor în aplicație.`,
+      );
+    }
+  }
+
+  private async attachHasSupplierAccountFlag<
+    T extends { supplier_id?: number; supplier?: Supplier | null; has_supplier_account?: boolean },
+  >(orders: T[]): Promise<T[]> {
+    if (!orders.length) {
+      return orders;
+    }
+    const supplierIds = [
+      ...new Set(
+        orders
+          .map((o) => Number(o.supplier_id ?? o.supplier?.id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    const accountBySupplierId = new Map<number, boolean>();
+    await Promise.all(
+      supplierIds.map(async (supplierId) => {
+        accountBySupplierId.set(
+          supplierId,
+          await this.hasSupplierLoginAccount(supplierId),
+        );
+      }),
+    );
+    for (const order of orders) {
+      const sid = Number(order.supplier_id ?? order.supplier?.id);
+      order.has_supplier_account = accountBySupplierId.get(sid) === true;
+    }
+    return orders;
   }
 
   /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus), pentru notificări pe locație. */
@@ -601,6 +664,10 @@ export class SuppliersService {
     user?: OrderRequesterUser,
   ): Promise<SupplierOrder> {
     const order = await this.findOrderForRequester(orderId, user);
+    await this.assertSupplierAccountRequiredForTenantAction(
+      order.supplier_id,
+      'trimite înapoi la magazioner',
+    );
     const orderWithRelations = await this.orderRepo.findOne({
       where: { id: order.id },
       relations: ['items', 'supplier'],
@@ -633,6 +700,16 @@ export class SuppliersService {
     user?: OrderRequesterUser,
   ): Promise<SupplierOrderItem> {
     const item = await this.findOrderItemForRequester(itemId, user);
+    const orderForGuard = await this.orderRepo.findOne({
+      where: { id: item.order_id },
+      select: ['id', 'supplier_id'],
+    });
+    if (orderForGuard) {
+      await this.assertSupplierAccountRequiredForTenantAction(
+        orderForGuard.supplier_id,
+        'modificare disponibilitate produs',
+      );
+    }
     const current = item.availability_status || 'available';
     const newStatus = current === 'unavailable' ? 'available' : 'unavailable';
     await this.orderItemRepo.update(itemId, { availability_status: newStatus });
@@ -665,7 +742,11 @@ export class SuppliersService {
     dto: WarehouseReviewDto,
     user?: OrderRequesterUser,
   ): Promise<SupplierOrder> {
-    await this.findOrderForRequester(orderId, user);
+    const orderForGuard = await this.findOrderForRequester(orderId, user);
+    await this.assertSupplierAccountRequiredForTenantAction(
+      orderForGuard.supplier_id,
+      'verificare magazioner',
+    );
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, {
         where: { id: orderId },
@@ -1111,7 +1192,11 @@ export class SuppliersService {
     createdByUserId?: number,
     user?: OrderRequesterUser,
   ): Promise<SupplierOrderAssignment> {
-    await this.findOrderForRequester(supplierOrderId, user);
+    const orderForGuard = await this.findOrderForRequester(supplierOrderId, user);
+    await this.assertSupplierAccountRequiredForTenantAction(
+      orderForGuard.supplier_id,
+      'atribuire magazioner',
+    );
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, {
         where: { id: supplierOrderId },
@@ -1153,7 +1238,11 @@ export class SuppliersService {
     assignedByUserId?: number,
     user?: OrderRequesterUser,
   ): Promise<SupplierOrderDriverAssignment> {
-    await this.findOrderForRequester(orderId, user);
+    const orderForGuard = await this.findOrderForRequester(orderId, user);
+    await this.assertSupplierAccountRequiredForTenantAction(
+      orderForGuard.supplier_id,
+      'atribuire șofer',
+    );
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, { where: { id: orderId } });
       if (!order) {
@@ -1571,14 +1660,32 @@ export class SuppliersService {
   /**
    * GIU-10: clientul poate recepționa/anula doar după sosirea șoferului
    * (assignment arrived|done) sau dacă comanda e deja delivered/received.
+   * Excepție: furnizor fără cont autentificabil — nu există pas șofer pe flow.
    */
   private async assertDriverArrivedForClientActions(
     orderId: number,
     orderStatus?: OrderStatus,
+    supplierId?: number,
   ): Promise<void> {
     if (
       orderStatus === OrderStatus.DELIVERED ||
       orderStatus === OrderStatus.RECEIVED
+    ) {
+      return;
+    }
+
+    let resolvedSupplierId = Number(supplierId);
+    if (!Number.isFinite(resolvedSupplierId) || resolvedSupplierId <= 0) {
+      const order = await this.orderRepo.findOne({
+        where: { id: orderId },
+        select: ['id', 'supplier_id'],
+      });
+      resolvedSupplierId = Number(order?.supplier_id);
+    }
+    if (
+      Number.isFinite(resolvedSupplierId) &&
+      resolvedSupplierId > 0 &&
+      !(await this.hasSupplierLoginAccount(resolvedSupplierId))
     ) {
       return;
     }
@@ -2950,8 +3057,12 @@ export class SuppliersService {
             return trimmed === '' ? null : trimmed.slice(0, 255);
           })();
 
+    const visibleForClients = dto.is_active === true;
+    const globalIsActive = visibleForClients;
+
     const supplierProduct = this.supplierProductRepo.create({
       ...productFields,
+      is_active: globalIsActive,
       supplier_id: supplierId,
       company_id: companyId,
       gross_quantity: quantities.gross_quantity,
@@ -2966,6 +3077,16 @@ export class SuppliersService {
     this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
     this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct)}`);
     this.logger.log(`💾 [SUPPLIERS SERVICE] Persisted fields - net_quantity: ${savedProduct.net_quantity}, gross_quantity: ${savedProduct.gross_quantity}, unit_of_measure: ${savedProduct.unit_of_measure}`);
+
+    const resolvedCompanyId = Number(companyId ?? savedProduct.company_id ?? 0);
+    if (Number.isFinite(resolvedCompanyId) && resolvedCompanyId > 0) {
+      await this.bootstrapClientActivationForNewProduct(
+        supplierId,
+        resolvedCompanyId,
+        Number(savedProduct.id),
+        visibleForClients,
+      );
+    }
     
     // Send notification for new product
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new product ${savedProduct.id}`);
@@ -3179,8 +3300,8 @@ export class SuppliersService {
     return Number(companyId);
   }
 
-  /** GIU-12: produse ascunse explicit de client; lipsă rând = vizibil. */
-  private async getHiddenSupplierProductIdsForClientCompany(
+  /** GIU-12: preferință client — produse ascunse explicit; lipsă rând = vizibil. */
+  private async getClientPreferenceHiddenProductIds(
     clientCompanyId: number,
     supplierId: number,
   ): Promise<Set<number>> {
@@ -3206,6 +3327,59 @@ export class SuppliersService {
     );
   }
 
+  /** Produse dezactivate de furnizor pentru compania client (activare per-client). */
+  private async getSupplierDeactivatedProductIdsForClient(
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<Set<number>> {
+    const products = await this.supplierProductRepo.find({
+      where: { supplier_id: supplierId },
+      select: ['id', 'is_active'],
+    });
+    if (products.length === 0) {
+      return new Set();
+    }
+
+    const productIds = products
+      .map((product) => Number(product.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    const productsWithActivationConfig =
+      await this.getSupplierProductIdsWithClientActivationConfig(productIds);
+    const activationByProductId = await this.getClientActivationRowsForProducts(
+      clientCompanyId,
+      productIds,
+    );
+
+    const deactivated = new Set<number>();
+    for (const product of products) {
+      const isActiveForClient = this.resolveIsActiveForClientProduct(
+        Number(product.id),
+        product.is_active,
+        productsWithActivationConfig,
+        activationByProductId,
+      );
+      if (!isActiveForClient) {
+        deactivated.add(Number(product.id));
+      }
+    }
+    return deactivated;
+  }
+
+  /** Vizibilitate efectivă = dezactivat de furnizor ∪ ascuns de client. */
+  private async getEffectiveHiddenProductIdsForClient(
+    clientCompanyId: number,
+    supplierId: number,
+  ): Promise<Set<number>> {
+    const [clientPreferenceHidden, supplierDeactivated] = await Promise.all([
+      this.getClientPreferenceHiddenProductIds(clientCompanyId, supplierId),
+      this.getSupplierDeactivatedProductIdsForClient(
+        clientCompanyId,
+        supplierId,
+      ),
+    ]);
+    return new Set([...clientPreferenceHidden, ...supplierDeactivated]);
+  }
+
   private shouldApplyClientProductVisibilityFilter(
     userContext: SupplierProductUserContext | undefined,
     applyClientVisibility: boolean,
@@ -3224,7 +3398,7 @@ export class SuppliersService {
     clientCompanyId: number,
     supplierId: number,
   ): Promise<SupplierProduct[]> {
-    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+    const hiddenIds = await this.getEffectiveHiddenProductIdsForClient(
       clientCompanyId,
       supplierId,
     );
@@ -3239,12 +3413,25 @@ export class SuppliersService {
     supplierId: number,
     supplierProduct: SupplierProduct,
   ): Promise<void> {
-    if (!supplierProduct.is_active) {
+    const productIds = [Number(supplierProduct.id)];
+    const productsWithActivationConfig =
+      await this.getSupplierProductIdsWithClientActivationConfig(productIds);
+    const activationByProductId = await this.getClientActivationRowsForProducts(
+      clientCompanyId,
+      productIds,
+    );
+    const isActiveForClient = this.resolveIsActiveForClientProduct(
+      Number(supplierProduct.id),
+      supplierProduct.is_active,
+      productsWithActivationConfig,
+      activationByProductId,
+    );
+    if (!isActiveForClient) {
       throw new BadRequestException(
-        `Produsul „${supplierProduct.product_name}” nu este activ`,
+        `Produsul „${supplierProduct.product_name}” nu este activ pentru compania dumneavoastră`,
       );
     }
-    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+    const hiddenIds = await this.getEffectiveHiddenProductIdsForClient(
       clientCompanyId,
       supplierId,
     );
@@ -3267,7 +3454,7 @@ export class SuppliersService {
     }
     await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
 
-    const hiddenIds = await this.getHiddenSupplierProductIdsForClientCompany(
+    const hiddenIds = await this.getEffectiveHiddenProductIdsForClient(
       clientCompanyId,
       supplierId,
     );
@@ -3287,7 +3474,13 @@ export class SuppliersService {
     }
     await this.assertSupplierLinkedToClientCompany(supplierId, clientCompanyId);
 
-    const hiddenIds = [
+    const supplierDeactivatedIds =
+      await this.getSupplierDeactivatedProductIdsForClient(
+        clientCompanyId,
+        supplierId,
+      );
+
+    const requestedHiddenIds = [
       ...new Set(
         (dto.hidden_supplier_product_ids ?? [])
           .map((id) => Number(id))
@@ -3295,13 +3488,13 @@ export class SuppliersService {
       ),
     ];
 
-    if (hiddenIds.length > 0) {
+    if (requestedHiddenIds.length > 0) {
       const products = await this.supplierProductRepo.find({
-        where: { id: In(hiddenIds), supplier_id: supplierId },
+        where: { id: In(requestedHiddenIds), supplier_id: supplierId },
         select: ['id'],
       });
       const validIds = new Set(products.map((product) => Number(product.id)));
-      for (const id of hiddenIds) {
+      for (const id of requestedHiddenIds) {
         if (!validIds.has(id)) {
           throw new BadRequestException(
             `Produsul furnizor (id=${id}) nu aparține furnizorului selectat`,
@@ -3309,6 +3502,10 @@ export class SuppliersService {
         }
       }
     }
+
+    const clientPreferenceHiddenIds = requestedHiddenIds.filter(
+      (id) => !supplierDeactivatedIds.has(id),
+    );
 
     await this.connection.transaction(async (manager) => {
       const visibilityRepo = manager.getRepository(
@@ -3331,9 +3528,9 @@ export class SuppliersService {
         await visibilityRepo.delete(existingRows.map((row) => row.id));
       }
 
-      if (hiddenIds.length > 0) {
+      if (clientPreferenceHiddenIds.length > 0) {
         await visibilityRepo.save(
-          hiddenIds.map((supplierProductId) =>
+          clientPreferenceHiddenIds.map((supplierProductId) =>
             visibilityRepo.create({
               client_company_id: clientCompanyId,
               supplier_product_id: supplierProductId,
@@ -3344,7 +3541,13 @@ export class SuppliersService {
       }
     });
 
-    return { hidden_supplier_product_ids: hiddenIds.sort((a, b) => a - b) };
+    const effectiveHiddenIds = [
+      ...new Set([
+        ...clientPreferenceHiddenIds,
+        ...supplierDeactivatedIds,
+      ]),
+    ].sort((a, b) => a - b);
+    return { hidden_supplier_product_ids: effectiveHiddenIds };
   }
 
   private async getPreferredPriceMapForClientCompany(
@@ -3541,6 +3744,161 @@ export class SuppliersService {
     };
   }
 
+  private normalizeSupplierProductIsActive(value: unknown): boolean {
+    return value !== false && value !== 0 && value !== '0';
+  }
+
+  private async getSupplierProductIdsWithClientActivationConfig(
+    supplierProductIds: number[],
+  ): Promise<Set<number>> {
+    if (supplierProductIds.length === 0) {
+      return new Set();
+    }
+    const rows = await this.supplierProductClientActivationRepo
+      .createQueryBuilder('activation')
+      .select('activation.supplier_product_id', 'supplier_product_id')
+      .where('activation.supplier_product_id IN (:...supplierProductIds)', {
+        supplierProductIds,
+      })
+      .groupBy('activation.supplier_product_id')
+      .getRawMany<{ supplier_product_id: number | string }>();
+    return new Set(
+      rows
+        .map((row) => Number(row.supplier_product_id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    );
+  }
+
+  private async getClientActivationRowsForProducts(
+    clientCompanyId: number,
+    supplierProductIds: number[],
+  ): Promise<Map<number, SupplierProductClientActivation>> {
+    if (supplierProductIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.supplierProductClientActivationRepo.find({
+      where: {
+        client_company_id: clientCompanyId,
+        supplier_product_id: In(supplierProductIds),
+      },
+    });
+    const map = new Map<number, SupplierProductClientActivation>();
+    for (const row of rows) {
+      map.set(Number(row.supplier_product_id), row);
+    }
+    return map;
+  }
+
+  private resolveIsActiveForClientProduct(
+    supplierProductId: number,
+    globalIsActive: unknown,
+    productsWithActivationConfig: Set<number>,
+    activationByProductId: Map<number, SupplierProductClientActivation>,
+  ): boolean {
+    const globalActive = this.normalizeSupplierProductIsActive(globalIsActive);
+    if (!globalActive) {
+      return false;
+    }
+    if (!productsWithActivationConfig.has(supplierProductId)) {
+      return globalActive;
+    }
+    const row = activationByProductId.get(supplierProductId);
+    if (!row) {
+      return false;
+    }
+    return this.normalizeSupplierProductIsActive(row.is_active) && globalActive;
+  }
+
+  /** Companii client legate de furnizor prin locații de livrare. */
+  private async getLinkedClientCompanyIdsForSupplier(
+    supplierId: number,
+    supplierCompanyId?: number | null,
+  ): Promise<number[]> {
+    const rows = await this.supplierLocationsRepo.find({
+      where: { supplier_id: supplierId },
+    });
+    const clientIds = new Set<number>();
+    for (const row of rows) {
+      const { location, failed } = await this.fetchLocationOrFail(row.id_location);
+      if (failed || !location) {
+        continue;
+      }
+      const locCompanyId = Number(
+        location?.company_id ?? location?.companyId ?? 0,
+      );
+      if (!Number.isFinite(locCompanyId) || locCompanyId <= 0) {
+        continue;
+      }
+      if (
+        supplierCompanyId != null &&
+        Number.isFinite(Number(supplierCompanyId)) &&
+        locCompanyId === Number(supplierCompanyId)
+      ) {
+        continue;
+      }
+      clientIds.add(locCompanyId);
+    }
+    return [...clientIds];
+  }
+
+  /**
+   * Produse noi: inactiv per-client implicit; bifarea „Vizibil pentru client” la creare = activ pentru toți clienții legați.
+   * Produse vechi fără rânduri de activare rămân pe fallback global is_active.
+   */
+  private async bootstrapClientActivationForNewProduct(
+    supplierId: number,
+    supplierCompanyId: number,
+    supplierProductId: number,
+    visibleForClients: boolean,
+  ): Promise<void> {
+    const clientCompanyIds = await this.getLinkedClientCompanyIdsForSupplier(
+      supplierId,
+      supplierCompanyId,
+    );
+    if (clientCompanyIds.length === 0) {
+      return;
+    }
+
+    const rows = clientCompanyIds.map((clientCompanyId) =>
+      this.supplierProductClientActivationRepo.create({
+        supplier_company_id: supplierCompanyId,
+        client_company_id: clientCompanyId,
+        supplier_product_id: supplierProductId,
+        is_active: visibleForClients,
+      }),
+    );
+    await this.supplierProductClientActivationRepo.save(rows);
+  }
+
+  private async attachResolvedIsActiveForClientCompany<
+    T extends SupplierProduct,
+  >(
+    products: T[],
+    clientCompanyId: number,
+  ): Promise<Array<T & { is_active: boolean }>> {
+    if (products.length === 0) {
+      return products;
+    }
+    const productIds = products
+      .map((product) => Number(product.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    const productsWithActivationConfig =
+      await this.getSupplierProductIdsWithClientActivationConfig(productIds);
+    const activationByProductId = await this.getClientActivationRowsForProducts(
+      clientCompanyId,
+      productIds,
+    );
+    return products.map((product) => ({
+      ...product,
+      is_active: this.resolveIsActiveForClientProduct(
+        Number(product.id),
+        product.is_active,
+        productsWithActivationConfig,
+        activationByProductId,
+      ),
+    }));
+  }
+
   async getMySupplierClientProductPrices(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
@@ -3608,6 +3966,16 @@ export class SuppliersService {
       summary.id,
     );
 
+    const supplierProductIds = products.map((product) => Number(product.id));
+    const productsWithActivationConfig =
+      await this.getSupplierProductIdsWithClientActivationConfig(
+        supplierProductIds,
+      );
+    const activationByProductId = await this.getClientActivationRowsForProducts(
+      clientCompanyId,
+      supplierProductIds,
+    );
+
     const data = products.map((product) => {
       const currentPrice = pricesMap.get(Number(product.id)) ?? null;
       const standardPrice = Number(product.price_per_unit) || 0;
@@ -3643,13 +4011,115 @@ export class SuppliersService {
               )
             : null,
         unit_of_measure: product.unit_of_measure,
-        is_active: Boolean(product.is_active),
+        is_active: this.resolveIsActiveForClientProduct(
+          Number(product.id),
+          product.is_active,
+          productsWithActivationConfig,
+          activationByProductId,
+        ),
         updated_at: currentPrice?.updated_at ?? null,
         updated_by_user_id: currentPrice?.updated_by_user_id ?? null,
       };
     });
 
     return buildOrdersPaginatedResponse(data, page, limit, total);
+  }
+
+  async setMySupplierClientProductActivation(
+    companyId: number | null | undefined,
+    companyType: string | null | undefined,
+    clientCompanyId: number,
+    supplierProductId: number,
+    dto: SetSupplierProductClientActivationDto,
+  ): Promise<{ supplier_product_id: number; is_active: boolean }> {
+    const summary = await this.findMySupplierForFurnizorTenant(
+      companyId,
+      companyType,
+    );
+    await this.findMySupplierClientByIdForFurnizorTenant(
+      companyId,
+      companyType,
+      clientCompanyId,
+    );
+
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: {
+        id: supplierProductId,
+        supplier_id: summary.id,
+      },
+    });
+    if (!supplierProduct) {
+      throw new NotFoundException('Produsul furnizor nu a fost găsit');
+    }
+
+    const resolvedCompanyId = Number(companyId);
+    const shouldActivate = dto.is_active === true;
+
+    if (shouldActivate) {
+      if (!this.normalizeSupplierProductIsActive(supplierProduct.is_active)) {
+        supplierProduct.is_active = true;
+        await this.supplierProductRepo.save(supplierProduct);
+      }
+      const existing = await this.supplierProductClientActivationRepo.findOne({
+        where: {
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+        },
+      });
+      if (existing) {
+        existing.is_active = true;
+        await this.supplierProductClientActivationRepo.save(existing);
+      } else {
+        await this.supplierProductClientActivationRepo.save(
+          this.supplierProductClientActivationRepo.create({
+            supplier_company_id: resolvedCompanyId,
+            client_company_id: clientCompanyId,
+            supplier_product_id: supplierProductId,
+            is_active: true,
+          }),
+        );
+      }
+    } else {
+      const existing = await this.supplierProductClientActivationRepo.findOne({
+        where: {
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+        },
+      });
+      if (existing) {
+        existing.is_active = false;
+        await this.supplierProductClientActivationRepo.save(existing);
+      } else {
+        await this.supplierProductClientActivationRepo.save(
+          this.supplierProductClientActivationRepo.create({
+            supplier_company_id: resolvedCompanyId,
+            client_company_id: clientCompanyId,
+            supplier_product_id: supplierProductId,
+            is_active: false,
+          }),
+        );
+      }
+    }
+
+    const productsWithActivationConfig =
+      await this.getSupplierProductIdsWithClientActivationConfig([
+        supplierProductId,
+      ]);
+    const activationByProductId = await this.getClientActivationRowsForProducts(
+      clientCompanyId,
+      [supplierProductId],
+    );
+    const isActive = this.resolveIsActiveForClientProduct(
+      supplierProductId,
+      supplierProduct.is_active,
+      productsWithActivationConfig,
+      activationByProductId,
+    );
+
+    return {
+      supplier_product_id: supplierProductId,
+      is_active: isActive,
+    };
   }
 
   async upsertMySupplierClientProductPrice(
@@ -4469,6 +4939,72 @@ export class SuppliersService {
     }
   }
 
+  async deleteMySupplierNomenclatorProduct(
+    productId: number,
+    userContext?: SupplierProductUserContext,
+  ): Promise<void> {
+    if (!userContext) {
+      throw new ForbiddenException('Contextul utilizatorului lipsește');
+    }
+    const { summary, locationId } = await this.assertProductInMySupplierNomenclator(
+      productId,
+      userContext,
+    );
+
+    const quantities =
+      await this.stockHttpService.getQuantitiesForProductsAtLocation(locationId, [
+        productId,
+      ]);
+    const qtyRow = quantities.find((row) => Number(row.product_id) === productId);
+    const quantity = qtyRow?.quantity ?? 0;
+    const unit = qtyRow?.unit ?? '';
+    if (quantity > 0) {
+      throw new BadRequestException(
+        `Nu se poate șterge produsul: există stoc de ${quantity}${unit ? ` ${unit}` : ''} la depozit.`,
+      );
+    }
+
+    const supplierProducts = await this.supplierProductRepo.find({
+      where: { supplier_id: summary.id, product_id: productId },
+    });
+    if (supplierProducts.length > 0) {
+      await this.supplierProductRepo.remove(supplierProducts);
+    }
+
+    const stockRows =
+      await this.stockHttpService.listStockAggregatesForProductAtLocation(
+        locationId,
+        productId,
+      );
+    for (const stockRow of stockRows) {
+      if (stockRow.quantity > 0) {
+        throw new BadRequestException(
+          'Nu se poate șterge produsul cât timp există stoc la depozit.',
+        );
+      }
+      await this.stockHttpService.deleteStockAggregateById(stockRow.id);
+    }
+
+    try {
+      await this.stockHttpService.deleteCatalogProductById(productId);
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ??
+        error?.message ??
+        'Eroare la ștergerea produsului din nomenclator';
+      if (
+        typeof message === 'string' &&
+        message.includes('Produsul este folosit în stocuri')
+      ) {
+        this.logger.log(
+          `ℹ️ [deleteMySupplierNomenclatorProduct] Produs ${productId} păstrat în catalog global — există stoc în alte locații.`,
+        );
+        return;
+      }
+      throw new BadRequestException(message);
+    }
+  }
+
   private async assertProductInMySupplierNomenclator(
     productId: number,
     userContext: SupplierProductUserContext,
@@ -4704,6 +5240,13 @@ export class SuppliersService {
         Number(userContext.companyId),
         supplierId,
       );
+      rows = await this.attachResolvedIsActiveForClientCompany(
+        rows,
+        Number(userContext.companyId),
+      );
+      if (!includeInactive) {
+        rows = rows.filter((row) => row.is_active !== false);
+      }
     }
     return rows;
   }
@@ -5013,10 +5556,29 @@ export class SuppliersService {
     // Regula finală brut/net (timing stoc): la crearea/plasarea comenzii de client NU se
     // scade stocul furnizorului. Scăderea se face la confirmarea furnizorului
     // (vezi updateOrderStatus → tranziția în `confirmed`).
+    //
+    // Furnizor FĂRĂ cont autentificabil: nu există actor care să confirme / atribuie
+    // magazioner/șofer — auto-confirmăm (fără scădere stoc platformă) ca recepția client
+    // să poată continua fără pașii de tenant furnizor.
+    const hasAccount = await this.hasSupplierLoginAccount(savedOrder.supplier_id);
+    if (
+      !hasAccount &&
+      (orderStatus === OrderStatus.SENT || orderStatus === OrderStatus.DRAFT)
+    ) {
+      await this.orderRepo.update(savedOrder.id, {
+        status: OrderStatus.CONFIRMED,
+      });
+      savedOrder.status = OrderStatus.CONFIRMED;
+      this.logger.log(
+        `ℹ️ [SUPPLIERS SERVICE] Order ${savedOrder.id}: supplier ${savedOrder.supplier_id} ` +
+          `has no login account → auto status=confirmed (skip furnizor tenant steps, no stock deduct)`,
+      );
+    }
 
     await this.generateOrderPDF(savedOrder, supplier);
 
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new order ${savedOrder.id}`);
+    // Notificare către admini/manageri pe locația client (nu depinde de cont furnizor).
     await this.sendSupplierNotification(
       'supplier_order_created',
       'Comanda furnizor noua',
@@ -5026,15 +5588,18 @@ export class SuppliersService {
         orderId: savedOrder.id,
         supplierName: supplier.supplier_name,
         orderDate: savedOrder.order_date.toISOString(),
+        has_supplier_account: hasAccount,
       },
       `/furnizori/${supplier.id}`,
       dto.supplier_location_id ?? undefined,
     );
 
-    return (await this.orderRepo.findOne({
+    const created = (await this.orderRepo.findOne({
       where: { id: savedOrder.id },
-      relations: ['items', 'documents'],
+      relations: ['items', 'documents', 'supplier'],
     })) as SupplierOrder;
+    await this.attachHasSupplierAccountFlag([created]);
+    return created;
   }
 
   private async generateOrderPDF(order: SupplierOrder, supplier: Supplier): Promise<void> {
@@ -5192,7 +5757,11 @@ export class SuppliersService {
       throw new ConflictException('Comanda este anulată');
     }
 
-    await this.assertDriverArrivedForClientActions(order.id, order.status);
+    await this.assertDriverArrivedForClientActions(
+      order.id,
+      order.status,
+      order.supplier_id,
+    );
 
     if (order.status === OrderStatus.DELIVERED) {
       const itemsIncomplete = (order.items || []).some((item) => {
@@ -6218,7 +6787,11 @@ export class SuppliersService {
     }
 
     if (newStatus === OrderStatus.CANCELLED) {
-      await this.assertDriverArrivedForClientActions(orderId, previousStatus);
+      await this.assertDriverArrivedForClientActions(
+        orderId,
+        previousStatus,
+        order.supplier_id,
+      );
     }
 
     this.logger.log(
@@ -6231,6 +6804,18 @@ export class SuppliersService {
     // confirmare previousStatus este de regulă `magazioner` și deduct-ul TREBUIE să ruleze.
     // Dubla-scădere (ex. re-confirm după send-back) e prevenită idempotent în stock-ms
     // prin target-ul `supplier-order-confirm:*`.
+    // Furnizor fără cont: confirmarea tenant nu se aplică (auto-confirm la create fără deduct).
+    const hasAccount = await this.hasSupplierLoginAccount(order.supplier_id);
+    if (
+      newStatus === OrderStatus.CONFIRMED &&
+      previousStatus !== OrderStatus.CONFIRMED &&
+      !hasAccount
+    ) {
+      throw new BadRequestException(
+        'Confirmarea din contul furnizorului nu este disponibilă pentru furnizori fără cont autentificabil.',
+      );
+    }
+
     if (
       newStatus === OrderStatus.CONFIRMED &&
       previousStatus !== OrderStatus.CONFIRMED
@@ -6262,7 +6847,10 @@ export class SuppliersService {
     }
 
     await this.orderRepo.update(order.id, updateData);
-    const updated = await this.orderRepo.findOne({ where: { id: order.id } });
+    const updated = await this.orderRepo.findOne({
+      where: { id: order.id },
+      relations: ['supplier'],
+    });
     if (!updated) throw new NotFoundException('Comanda nu a putut fi reîncărcată după actualizare');
     if (newStatus === OrderStatus.CANCELLED && order.supplier_location_id != null) {
       const supplier = await this.supplierRepo.findOne({ where: { id: order.supplier_id } });
@@ -6276,6 +6864,7 @@ export class SuppliersService {
         '/comenzi'
       );
     }
+    await this.attachHasSupplierAccountFlag([updated]);
     return updated;
   }
 
@@ -6307,7 +6896,11 @@ export class SuppliersService {
       throw new BadRequestException('Nu se pot anula item-uri pentru o comandă complet livrată');
     }
 
-    await this.assertDriverArrivedForClientActions(order.id, order.status);
+    await this.assertDriverArrivedForClientActions(
+      order.id,
+      order.status,
+      order.supplier_id,
+    );
     
     if (!order.items || order.items.length === 0) {
       throw new BadRequestException('Comanda nu are item-uri');
@@ -6451,7 +7044,11 @@ export class SuppliersService {
       throw new BadRequestException('Nu se poate anula partea rămasă pentru o comandă complet livrată');
     }
 
-    await this.assertDriverArrivedForClientActions(order.id, order.status);
+    await this.assertDriverArrivedForClientActions(
+      order.id,
+      order.status,
+      order.supplier_id,
+    );
     
     if (!order.items || order.items.length === 0) {
       this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Order ${orderId} has no items`);
@@ -8051,6 +8648,7 @@ export class SuppliersService {
     qb.orderBy('order.created_at', 'DESC');
     const list = await qb.getMany();
     await this.attachOrderChangesArray(list);
+    await this.attachHasSupplierAccountFlag(list);
     return list;
   }
 
@@ -8108,6 +8706,7 @@ export class SuppliersService {
 
     const batchList = await qb.getMany();
     await this.attachOrderChangesArray(batchList);
+    await this.attachHasSupplierAccountFlag(batchList);
     return batchList;
   }
 
@@ -8196,6 +8795,7 @@ export class SuppliersService {
 
     await this.attachOrderChangesArray(batchList);
     await this.attachOrderDeliveryDetails(batchList);
+    await this.attachHasSupplierAccountFlag(batchList);
     return buildOrdersPaginatedResponse(batchList, page, limit, total);
   }
 
