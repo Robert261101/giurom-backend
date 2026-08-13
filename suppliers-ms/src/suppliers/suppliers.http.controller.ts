@@ -56,6 +56,7 @@ import { SupplierIncrementStockDto } from "./dto/supplier-increment-stock.dto";
 import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-product-client-config.dto";
 import { UpsertSupplierProductClientPriceDto } from "./dto/upsert-supplier-product-client-price.dto";
 import { SetClientProductVisibilityDto } from "./dto/set-client-product-visibility.dto";
+import { SetSupplierProductClientActivationDto } from "./dto/set-supplier-product-client-activation.dto";
 import {
   buildSupplierProductUserContext,
   buildSupplierAccessRequester,
@@ -344,6 +345,27 @@ export class SuppliersHttpController {
     );
   }
 
+  @Put("my-supplier/clients/:companyId/products/:supplierProductId/activation")
+  @Permissions("suppliers.create")
+  @ApiOperation({
+    summary: "Activează sau dezactivează un produs furnizor pentru un client",
+  })
+  setMySupplierClientProductActivation(
+    @Param("companyId") companyId: string,
+    @Param("supplierProductId") supplierProductId: string,
+    @Body() dto: SetSupplierProductClientActivationDto,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
+  ) {
+    const user = req?.user;
+    return this.service.setMySupplierClientProductActivation(
+      user?.company_id,
+      user?.company_type,
+      Number(companyId),
+      Number(supplierProductId),
+      dto,
+    );
+  }
+
   @Delete("my-supplier/clients/:companyId/products/:supplierProductId/preferred-price")
   @Permissions("suppliers.create")
   @ApiOperation({
@@ -546,6 +568,22 @@ export class SuppliersHttpController {
     return this.service.updateMySupplierNomenclatorProduct(
       Number(productId),
       dto,
+      buildSupplierProductUserContext(req?.user),
+    );
+  }
+
+  @Delete("my-supplier/nomenclator-products/:productId")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Șterge produs din nomenclatorul depozitului furnizorului (cleanup intern stock-ms)",
+  })
+  deleteMySupplierNomenclatorProduct(
+    @Param("productId") productId: string,
+    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+  ) {
+    return this.service.deleteMySupplierNomenclatorProduct(
+      Number(productId),
       buildSupplierProductUserContext(req?.user),
     );
   }
@@ -948,7 +986,7 @@ export class SuppliersHttpController {
   }
 
   @Delete("products/:productId")
-  @Permissions("suppliers.delete")
+  @PermissionsAny("suppliers.delete", "suppliers.create")
   removeProduct(
     @Param("productId") productId: string,
     @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
