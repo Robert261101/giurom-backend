@@ -13,6 +13,7 @@ import { Controller,
   ValidationPipe, Logger } from '@nestjs/common';
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
+import { getJwtCompanyId, isGlobalStockAdmin } from "./stock-access";
 import { StockService } from "./stock.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
@@ -54,10 +55,19 @@ export class StockHttpController {
   }
   @Get("products")
   @Permissions("products.read")
-  async getProducts(@Query("location_id") locationId?: string) {
+  async getProducts(
+    @Query("location_id") locationId?: string,
+    @Request() req?: { user?: { permissions?: string[]; company_id?: number | null } },
+  ) {
     const parsedLocationId = locationId ? Number(locationId) : undefined;
 
     if (parsedLocationId !== undefined && Number.isFinite(parsedLocationId)) {
+      if (!isGlobalStockAdmin(req?.user)) {
+        await this.service.assertLocationInCompany(
+          parsedLocationId,
+          getJwtCompanyId(req?.user),
+        );
+      }
       return await this.service.findProductsByLocation(parsedLocationId);
     }
 

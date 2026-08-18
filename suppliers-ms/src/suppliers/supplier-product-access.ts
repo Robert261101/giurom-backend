@@ -125,6 +125,53 @@ export function isFurnizorProductManager(ctx: SupplierProductUserContext): boole
   );
 }
 
+/**
+ * Client-company admin (not furnizor tenant) who may manage the catalog of a
+ * client-managed supplier (no authenticatable furnizor login). Service still
+ * must check supplier association + hasSupplierLoginAccount === false.
+ */
+export function isClientAdminCatalogManager(
+  ctx: SupplierProductUserContext,
+): boolean {
+  if (ctx.companyType === 'furnizor') {
+    return false;
+  }
+  if (
+    ctx.companyId == null ||
+    !Number.isFinite(Number(ctx.companyId)) ||
+    Number(ctx.companyId) <= 0
+  ) {
+    return false;
+  }
+  return isAdminOrSuperAdminFromContext(ctx);
+}
+
+/**
+ * Client-managed catalog ownership: product belongs to the managed supplier.
+ * `supplier_products.company_id` is the furnizor-tenant tag (nullable legacy),
+ * not a client-company foreign key — accept null, the administering client,
+ * or the supplier owner_company_id.
+ */
+export function isAllowedClientManagedProductCompany(
+  productCompanyId: number | null | undefined,
+  clientCompanyId: number,
+  supplierOwnerCompanyId: number | null | undefined,
+): boolean {
+  const productCompany = Number(productCompanyId);
+  if (!Number.isFinite(productCompany) || productCompany <= 0) {
+    return true;
+  }
+  if (productCompany === Number(clientCompanyId)) {
+    return true;
+  }
+  const ownerCompany = Number(supplierOwnerCompanyId);
+  return (
+    Number.isFinite(ownerCompany) &&
+    ownerCompany > 0 &&
+    productCompany === ownerCompany
+  );
+}
+
 export function assertFurnizorProductManager(ctx: SupplierProductUserContext): void {
   if (!isFurnizorProductManager(ctx)) {
     throw new ForbiddenException(

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsEmail, IsBoolean, IsOptional, IsNumber, Length, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsEmail, IsBoolean, IsOptional, IsNumber, Length, Matches, ValidateIf } from 'class-validator';
 
 export class CreateSupplierDto {
   @ApiProperty()
@@ -66,6 +66,20 @@ export class CreateSupplierDto {
   @IsNotEmpty()
   @Length(2, 150)
   contact_person: string;
+
+  @ApiProperty({ required: false, description: 'Cod CAEN (4 cifre)' })
+  @ValidateIf((_, v) => typeof v === 'string' && v.trim() !== '')
+  @IsString()
+  @Matches(/^\d{4}$/)
+  @IsOptional()
+  activity_code?: string;
+
+  @ApiProperty({ required: false, description: 'Denumire sediu / locație principală' })
+  @ValidateIf((_, v) => typeof v === 'string' && v.trim() !== '')
+  @IsString()
+  @Length(1, 255)
+  @IsOptional()
+  headquarters_name?: string;
 
   @ApiProperty({ required: false })
   @IsString()

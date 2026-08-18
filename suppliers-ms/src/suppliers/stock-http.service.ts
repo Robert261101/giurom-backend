@@ -5,7 +5,7 @@ import { firstValueFrom } from 'rxjs';
 
 export interface CreateStockItemDto {
   product_id: number;
-  supplier_order_item_id: number;
+  supplier_order_item_id?: number;
   quantity: number;
   price: number;
   entry_date: string;
