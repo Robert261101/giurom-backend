@@ -48,6 +48,14 @@ export class Supplier {
   @Column({ type: 'varchar', length: 150, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   contact_person: string;
 
+  /** Cod CAEN al firmei (opțional). Păstrat pe suppliers pentru furnizori fără company tenant. */
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  activity_code: string | null;
+
+  /** Denumire sediu / locație principală (nu creează locație în locations-ms). */
+  @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
+  headquarters_name: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   bank_name: string | null;
 
@@ -78,6 +86,9 @@ export class Supplier {
 
   @OneToMany('SupplierLocations', 'supplier')
   locations: any[];
+
+  /** Calculated (not persisted): supplier has authenticatable furnizor login. */
+  has_supplier_account?: boolean;
 }
 
 

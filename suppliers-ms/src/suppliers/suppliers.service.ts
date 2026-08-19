@@ -46,7 +46,10 @@ import {
 import { SupplierProductClientVisibility } from './entities/supplier-product-client-visibility.entity';
 import { SupplierProductClientActivation } from './entities/supplier-product-client-activation.entity';
 import { buildSupplierProductImageFields } from './supplier-product-image.helper';
-import { hasSupplierLoginAccount } from './has-supplier-login-account';
+import {
+  getOwnerCompanyIdsWithSupplierLogin,
+  hasSupplierLoginAccount,
+} from './has-supplier-login-account';
 import {
   computeLineSubtotal,
   compareQuantityToStock,
@@ -104,7 +107,9 @@ import {
   assertFurnizorProductManager,
   isAdminOrSuperAdminFromPermissions,
   canManageSupplierProductClientMapping,
+  isClientAdminCatalogManager,
   isFurnizorProductManager,
+  isAllowedClientManagedProductCompany,
   resolveCompanyTypeFromAuth,
   type SupplierProductUserContext,
   type SupplierAccessRequester,
@@ -260,6 +265,29 @@ export class SuppliersService {
     return orders;
   }
 
+  private async attachHasSupplierAccountOnSuppliers<
+    T extends { id: number; owner_company_id?: number | null; has_supplier_account?: boolean },
+  >(suppliers: T[]): Promise<T[]> {
+    if (!suppliers.length) {
+      return suppliers;
+    }
+    const ownerCompanyIds = suppliers
+      .map((supplier) => Number(supplier.owner_company_id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    const withAccount = await getOwnerCompanyIdsWithSupplierLogin(
+      this.connection,
+      ownerCompanyIds,
+    );
+    for (const supplier of suppliers) {
+      const ownerCompanyId = Number(supplier.owner_company_id);
+      supplier.has_supplier_account =
+        Number.isFinite(ownerCompanyId) &&
+        ownerCompanyId > 0 &&
+        withAccount.has(ownerCompanyId);
+    }
+    return suppliers;
+  }
+
   /** selectedWorkLocationId = locația selectată în UI (colț dreapta sus), pentru notificări pe locație. */
   private async sendSupplierNotification(
     type: string,
@@ -371,10 +399,34 @@ export class SuppliersService {
       throw new BadRequestException('Furnizor duplicat (registration_number sau vat_number)');
     }
     
-    // Separate special fields from supplier data
+    // Separate special fields from supplier data.
+    // Client-managed create must never attach a furnizor tenant (owner_company_id).
     const supplierData = { ...dto } as any;
     delete supplierData.folderName;
     delete supplierData.documents;
+    delete supplierData.location_id;
+    delete supplierData.owner_company_id;
+    supplierData.owner_company_id = null;
+    supplierData.contact_person =
+      typeof supplierData.contact_person === 'string' && supplierData.contact_person.trim()
+        ? supplierData.contact_person.trim()
+        : String(supplierData.supplier_name || '').trim().slice(0, 150);
+    supplierData.phone =
+      typeof supplierData.phone === 'string' ? supplierData.phone.trim() : '';
+    const email =
+      typeof supplierData.email === 'string' ? supplierData.email.trim() : '';
+    if (!email) {
+      throw new BadRequestException('Email-ul companiei este obligatoriu');
+    }
+    supplierData.email = email;
+    if (typeof supplierData.activity_code === 'string') {
+      const code = supplierData.activity_code.trim();
+      supplierData.activity_code = code || null;
+    }
+    if (typeof supplierData.headquarters_name === 'string') {
+      const name = supplierData.headquarters_name.trim();
+      supplierData.headquarters_name = name || null;
+    }
     
     const supplier = this.supplierRepo.create(supplierData);
     const savedSupplier = (await this.supplierRepo.save(supplier as any)) as Supplier;
@@ -791,8 +843,8 @@ export class SuppliersService {
           priceBaseQuantity != null
             ? priceBaseQuantity
             : sp?.price_base_quantity;
-        const subtotal = computeLineSubtotal(qty, pricePerUnit, base);
-        const total = subtotal + (subtotal * vat) / 100;
+        const subtotal = roundMoney(computeLineSubtotal(qty, pricePerUnit, base));
+        const total = roundMoney(subtotal + (subtotal * vat) / 100);
         return { subtotal, total };
       };
 
@@ -2182,17 +2234,25 @@ export class SuppliersService {
    */
   async findForOrders(
     _locationId?: number,
-  ): Promise<{ id: number; supplier_name: string; phone: string | null }[]> {
+  ): Promise<
+    Array<{
+      id: number;
+      supplier_name: string;
+      phone: string | null;
+      has_supplier_account: boolean;
+    }>
+  > {
     const suppliers = await this.supplierRepo.find({
-      select: ['id', 'supplier_name', 'phone'],
+      select: ['id', 'supplier_name', 'phone', 'owner_company_id'],
       where: { is_active: true },
       order: { supplier_name: 'ASC' },
     });
-
+    await this.attachHasSupplierAccountOnSuppliers(suppliers);
     return suppliers.map((s) => ({
       id: s.id,
       supplier_name: s.supplier_name,
       phone: s.phone ?? null,
+      has_supplier_account: s.has_supplier_account === true,
     }));
   }
 
@@ -2218,6 +2278,8 @@ export class SuppliersService {
       email: string;
       contact_person: string;
       is_active: boolean;
+      owner_company_id?: number | null;
+      has_supplier_account?: boolean;
       created_at: Date;
       updated_at: Date;
     }>
@@ -2238,6 +2300,7 @@ export class SuppliersService {
         'supplier.email',
         'supplier.contact_person',
         'supplier.is_active',
+        'supplier.owner_company_id',
         'supplier.created_at',
         'supplier.updated_at',
       ]);
@@ -2281,7 +2344,9 @@ export class SuppliersService {
     }
 
     qb.orderBy('supplier.supplier_name', 'ASC');
-    return qb.getMany();
+    const suppliers = await qb.getMany();
+    await this.attachHasSupplierAccountOnSuppliers(suppliers);
+    return suppliers;
   }
 
   /**
@@ -2880,6 +2945,7 @@ export class SuppliersService {
       this.logger.log(`📂 [findOne]   folder[${i}] id=${f.id} description="${f.description}" folder_path="${f.folder_path}" documents=${docs.length}`);
     });
 
+    supplier.has_supplier_account = await this.hasSupplierLoginAccount(supplier.id);
     return supplier;
   }
 
@@ -2991,6 +3057,10 @@ export class SuppliersService {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
 
+    if (isClientAdminCatalogManager(userContext) && !isFurnizorProductManager(userContext)) {
+      return this.addProductAsClientAdmin(dto, userContext);
+    }
+
     if (!isFurnizorProductManager(userContext)) {
       assertClientViewOnlyOnMutations(userContext);
     }
@@ -3019,63 +3089,14 @@ export class SuppliersService {
       );
     }
 
-    const existingProduct = await this.supplierProductRepo.findOne({
-      where: { supplier_id: supplierId, product_id: dto.product_id },
-    });
-    if (existingProduct) {
-      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Product already associated with supplier: ${dto.product_id}`);
-      throw new BadRequestException('Produsul este deja asociat');
-    }
-
-    const quantities = this.validateOptionalGrossNetQuantities(
-      dto.gross_quantity,
-      dto.net_quantity,
-    );
-
-    const {
-      gross_quantity: _dtoGross,
-      net_quantity: _dtoNet,
-      supplier_id: _dtoSupplierId,
-      price_base_quantity: _dtoPriceBaseQty,
-      price_base_unit: _dtoPriceBaseUnit,
-      storage_location: _dtoStorageLocation,
-      ...productFields
-    } = dto;
-
-    const priceBaseQuantity = normalizePriceBaseQuantity(dto.price_base_quantity);
-    const priceBaseUnit = resolvePriceBaseUnit(
-      dto.price_base_unit,
-      dto.unit_of_measure,
-    );
-
-    const storageLocationRaw = dto.storage_location;
-    const storageLocation =
-      storageLocationRaw == null
-        ? null
-        : (() => {
-            const trimmed = String(storageLocationRaw).trim();
-            return trimmed === '' ? null : trimmed.slice(0, 255);
-          })();
-
     const visibleForClients = dto.is_active === true;
-    const globalIsActive = visibleForClients;
-
-    const supplierProduct = this.supplierProductRepo.create({
-      ...productFields,
-      is_active: globalIsActive,
-      supplier_id: supplierId,
-      company_id: companyId,
-      gross_quantity: quantities.gross_quantity,
-      net_quantity: quantities.net_quantity,
-      price_base_quantity: priceBaseQuantity,
-      price_base_unit: priceBaseQuantity != null ? priceBaseUnit : null,
-      storage_location: storageLocation,
-    });
-    this.logger.log(`📦 [SUPPLIERS SERVICE] Created supplier product object: ${JSON.stringify(supplierProduct)}`);
-
-    const savedProduct = await this.supplierProductRepo.save(supplierProduct);
+    const savedProduct = await this.persistNewSupplierProduct(
+      dto,
+      supplierId,
+      companyId,
+      visibleForClients,
+    );
     this.logger.log(`✅ [SUPPLIERS SERVICE] Product added to supplier successfully with ID: ${savedProduct.id}`);
-    this.logger.log(`📊 [SUPPLIERS SERVICE] Saved product data: ${JSON.stringify(savedProduct)}`);
     this.logger.log(`💾 [SUPPLIERS SERVICE] Persisted fields - net_quantity: ${savedProduct.net_quantity}, gross_quantity: ${savedProduct.gross_quantity}, unit_of_measure: ${savedProduct.unit_of_measure}`);
 
     const resolvedCompanyId = Number(companyId ?? savedProduct.company_id ?? 0);
@@ -3087,22 +3108,66 @@ export class SuppliersService {
         visibleForClients,
       );
     }
-    
-    // Send notification for new product
+
     this.logger.log(`🔔 [SUPPLIERS SERVICE] Sending notification for new product ${savedProduct.id}`);
     await this.sendSupplierNotification(
       'supplier_product_added',
       'Produs adaugat furnizor',
       `A fost adaugat un produs la furnizorul ${supplier.supplier_name}`,
       supplier.id,
-      { 
+      {
         productId: savedProduct.id,
         supplierName: supplier.supplier_name,
-        productData: dto
+        productData: dto,
       },
-      `/furnizori/${supplier.id}`  // Add target_url
+      `/furnizori/${supplier.id}`,
     );
-    
+
+    return savedProduct;
+  }
+
+  private async addProductAsClientAdmin(
+    dto: CreateSupplierProductDto,
+    userContext: SupplierProductUserContext,
+  ): Promise<SupplierProduct> {
+    const supplierId = Number(dto.supplier_id);
+    const { supplier, clientCompanyId } =
+      await this.assertClientAdminCanManageClientManagedSupplier(
+        supplierId,
+        userContext,
+      );
+
+    const isActive = dto.is_active !== false;
+    const savedProduct = await this.persistNewSupplierProduct(
+      dto,
+      supplier.id,
+      clientCompanyId,
+      isActive,
+    );
+    await this.bootstrapClientManagedProductRelations(
+      supplier,
+      clientCompanyId,
+      Number(savedProduct.id),
+      isActive,
+    );
+
+    this.logger.log(
+      `✅ [SUPPLIERS SERVICE] Client-managed product ${savedProduct.id} added for supplier ${supplier.id} by client company ${clientCompanyId}`,
+    );
+
+    await this.sendSupplierNotification(
+      'supplier_product_added',
+      'Produs adaugat furnizor',
+      `A fost adaugat un produs la furnizorul ${supplier.supplier_name}`,
+      supplier.id,
+      {
+        productId: savedProduct.id,
+        supplierName: supplier.supplier_name,
+        productData: dto,
+      },
+      `/furnizori/${supplier.id}`,
+    );
+
     return savedProduct;
   }
 
@@ -3210,6 +3275,7 @@ export class SuppliersService {
   /**
    * Validează stocul furnizorului pentru toate liniile înainte de creare comandă.
    * Nu modifică stocul. Respinge toată comanda dacă orice linie e invalidă.
+   * Furnizor fără cont autentificabil (`has_supplier_account === false`): nu verificăm stocul.
    */
   private async assertSupplierStockSufficientForNewOrder(
     supplierId: number,
@@ -3220,6 +3286,9 @@ export class SuppliersService {
     }>,
   ): Promise<void> {
     if (resolvedLines.length === 0) return;
+    if (!(await this.hasSupplierLoginAccount(supplierId))) {
+      return;
+    }
 
     const locationId = await this.resolveSupplierStockLocationId(supplierId);
     const stockProductIds = [
@@ -4493,6 +4562,218 @@ export class SuppliersService {
   }
 
   /**
+   * Client admin may CRUD supplier_products only for a supplier that:
+   * exists, is linked to the current client company, and has no furnizor login.
+   */
+  private async assertClientAdminCanManageClientManagedSupplier(
+    supplierId: number,
+    userContext: SupplierProductUserContext,
+  ): Promise<{ supplier: Supplier; clientCompanyId: number }> {
+    if (!isClientAdminCatalogManager(userContext)) {
+      throw new ForbiddenException(
+        'Doar un admin al companiei client poate administra catalogul unui furnizor fără cont',
+      );
+    }
+    const id = Number(supplierId);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('supplier_id este obligatoriu și trebuie să fie un număr valid');
+    }
+    const supplier = await this.supplierRepo.findOne({ where: { id } });
+    if (!supplier) {
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+    const clientCompanyId = Number(userContext.companyId);
+    await this.assertSupplierLinkedToClientCompany(id, clientCompanyId);
+    if (await this.hasSupplierLoginAccount(id)) {
+      throw new ForbiddenException(
+        'Catalogul acestui furnizor este administrat de contul furnizorului, nu de client',
+      );
+    }
+    return { supplier, clientCompanyId };
+  }
+
+  private async assertClientAdminOwnsSupplierProduct(
+    product: SupplierProduct,
+    supplier: Supplier,
+    clientCompanyId: number,
+  ): Promise<void> {
+    if (Number(product.supplier_id) !== Number(supplier.id)) {
+      throw new ForbiddenException(
+        'Produsul nu aparține furnizorului selectat',
+      );
+    }
+    if (
+      !isAllowedClientManagedProductCompany(
+        product.company_id,
+        clientCompanyId,
+        supplier.owner_company_id,
+      )
+    ) {
+      throw new ForbiddenException(
+        'Produsul nu aparține companiei client autentificate',
+      );
+    }
+  }
+
+  private async bootstrapClientManagedProductRelations(
+    supplier: Supplier,
+    clientCompanyId: number,
+    supplierProductId: number,
+    isActive: boolean,
+  ): Promise<void> {
+    const ownerCompanyId = Number(supplier.owner_company_id);
+    const supplierCompanyId =
+      Number.isFinite(ownerCompanyId) && ownerCompanyId > 0
+        ? ownerCompanyId
+        : clientCompanyId;
+
+    const existingActivation = await this.supplierProductClientActivationRepo.findOne({
+      where: {
+        client_company_id: clientCompanyId,
+        supplier_product_id: supplierProductId,
+      },
+    });
+    if (existingActivation) {
+      existingActivation.is_active = isActive;
+      existingActivation.supplier_company_id = supplierCompanyId;
+      await this.supplierProductClientActivationRepo.save(existingActivation);
+    } else {
+      await this.supplierProductClientActivationRepo.save(
+        this.supplierProductClientActivationRepo.create({
+          supplier_company_id: supplierCompanyId,
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+          is_active: isActive,
+        }),
+      );
+    }
+
+    const existingVisibility = await this.supplierProductClientVisibilityRepo.findOne({
+      where: {
+        client_company_id: clientCompanyId,
+        supplier_product_id: supplierProductId,
+      },
+    });
+    if (existingVisibility) {
+      existingVisibility.is_visible = true;
+      await this.supplierProductClientVisibilityRepo.save(existingVisibility);
+    } else {
+      await this.supplierProductClientVisibilityRepo.save(
+        this.supplierProductClientVisibilityRepo.create({
+          client_company_id: clientCompanyId,
+          supplier_product_id: supplierProductId,
+          is_visible: true,
+        }),
+      );
+    }
+
+    const supplierProduct = await this.supplierProductRepo.findOne({
+      where: { id: supplierProductId },
+    });
+    const clientStockProductId = Number(supplierProduct?.product_id);
+    if (!Number.isFinite(clientStockProductId) || clientStockProductId <= 0) {
+      return;
+    }
+
+    await this.ensureClientManagedProductMapping(
+      clientCompanyId,
+      supplierProductId,
+      clientStockProductId,
+    );
+  }
+
+  /**
+   * Client-managed create picks a product from the client nomenclator.
+   * The order modal requires an explicit mapping (supplier_product → client stock product)
+   * to select/submit a line; identity mapping is correct because product_id already is
+   * that nomenclator row.
+   */
+  private async ensureClientManagedProductMapping(
+    clientCompanyId: number,
+    supplierProductId: number,
+    clientStockProductId: number,
+  ): Promise<void> {
+    const existing = await this.supplierProductClientMappingRepo.findOne({
+      where: {
+        client_company_id: clientCompanyId,
+        supplier_product_id: supplierProductId,
+      },
+    });
+    if (existing) {
+      if (Number(existing.client_stock_product_id) !== clientStockProductId) {
+        existing.client_stock_product_id = clientStockProductId;
+        await this.supplierProductClientMappingRepo.save(existing);
+      }
+      return;
+    }
+    await this.supplierProductClientMappingRepo.save(
+      this.supplierProductClientMappingRepo.create({
+        client_company_id: clientCompanyId,
+        supplier_product_id: supplierProductId,
+        client_stock_product_id: clientStockProductId,
+      }),
+    );
+  }
+
+  private async persistNewSupplierProduct(
+    dto: CreateSupplierProductDto,
+    supplierId: number,
+    companyId: number | null,
+    isActive: boolean,
+  ): Promise<SupplierProduct> {
+    const existingProduct = await this.supplierProductRepo.findOne({
+      where: { supplier_id: supplierId, product_id: dto.product_id },
+    });
+    if (existingProduct) {
+      this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Product already associated with supplier: ${dto.product_id}`);
+      throw new BadRequestException('Produsul este deja asociat');
+    }
+
+    const quantities = this.validateOptionalGrossNetQuantities(
+      dto.gross_quantity,
+      dto.net_quantity,
+    );
+
+    const {
+      gross_quantity: _dtoGross,
+      net_quantity: _dtoNet,
+      supplier_id: _dtoSupplierId,
+      price_base_quantity: _dtoPriceBaseQty,
+      price_base_unit: _dtoPriceBaseUnit,
+      storage_location: _dtoStorageLocation,
+      ...productFields
+    } = dto;
+
+    const priceBaseQuantity = normalizePriceBaseQuantity(dto.price_base_quantity);
+    const priceBaseUnit = resolvePriceBaseUnit(
+      dto.price_base_unit,
+      dto.unit_of_measure,
+    );
+
+    const storageLocationRaw = dto.storage_location;
+    const storageLocation =
+      storageLocationRaw == null
+        ? null
+        : (() => {
+            const trimmed = String(storageLocationRaw).trim();
+            return trimmed === '' ? null : trimmed.slice(0, 255);
+          })();
+
+    const supplierProduct = this.supplierProductRepo.create({
+      ...productFields,
+      is_active: isActive,
+      supplier_id: supplierId,
+      company_id: companyId,
+      gross_quantity: quantities.gross_quantity,
+      net_quantity: quantities.net_quantity,
+      price_base_quantity: priceBaseQuantity,
+      price_base_unit: priceBaseQuantity != null ? priceBaseUnit : null,
+      storage_location: storageLocation,
+    });
+    return this.supplierProductRepo.save(supplierProduct);
+  }
+
+  /**
    * Ca assertSupplierLinkedToClientCompany, dar în loc să respingă cu 403 atunci când
    * furnizorul nu are încă nicio locație a companiei client, creează automat asocierea
    * (la locația de lucru curentă, dacă e cunoscută, altfel la prima locație a companiei).
@@ -5177,7 +5458,10 @@ export class SuppliersService {
         : null;
 
     let filteredProducts = products;
-    if (resolvedLocationId != null) {
+    const applyWarehouseStockFilter =
+      resolvedLocationId != null &&
+      (await this.hasSupplierLoginAccount(supplierId));
+    if (applyWarehouseStockFilter && resolvedLocationId != null) {
       const productIdsAtLocation =
         await this.stockHttpService.getProductIdsAtLocation(resolvedLocationId);
       const catalogProductIdsAtLocation = new Set(productIdsAtLocation);
@@ -5471,14 +5755,16 @@ export class SuppliersService {
               supplierProduct.unit_of_measure,
             )
           : null;
-      const subtotal = computeLineSubtotal(
-        itemDto.quantity,
-        pricePerUnit,
-        priceBaseQuantity,
+      const subtotal = roundMoney(
+        computeLineSubtotal(
+          itemDto.quantity,
+          pricePerUnit,
+          priceBaseQuantity,
+        ),
       );
       const vat = Number(supplierProduct.vat) || 0;
-      const vatAmount = (subtotal * vat) / 100;
-      const total = subtotal + vatAmount;
+      const vatAmount = roundMoney((subtotal * vat) / 100);
+      const total = roundMoney(subtotal + vatAmount);
 
       resolvedLines.push({
         itemDto,
@@ -5492,14 +5778,19 @@ export class SuppliersService {
       });
     }
 
-    await this.assertSupplierStockSufficientForNewOrder(
-      dto.supplier_id,
-      resolvedLines.map((line) => ({
-        supplierProduct: line.supplierProduct,
-        quantity: Number(line.itemDto.quantity) || 0,
-        productName: line.supplierProduct.product_name,
-      })),
-    );
+    const hasAccount = await this.hasSupplierLoginAccount(dto.supplier_id);
+    // Furnizor fără cont: nu are depozit operat; auto-confirm nu scade stoc.
+    // Assert-ul de cantitate rămâne doar pentru furnizorii cu cont.
+    if (hasAccount) {
+      await this.assertSupplierStockSufficientForNewOrder(
+        dto.supplier_id,
+        resolvedLines.map((line) => ({
+          supplierProduct: line.supplierProduct,
+          quantity: Number(line.itemDto.quantity) || 0,
+          productName: line.supplierProduct.product_name,
+        })),
+      );
+    }
     
     // Creează comanda (inclusiv companie / locație muncă pentru UI și rapoarte)
     const orderData = {
@@ -5549,8 +5840,8 @@ export class SuppliersService {
       });
       await this.orderItemRepo.save(orderItem);
     }
-    savedOrder.total_amount = totalAmountWithoutVat;
-    savedOrder.total_amount_with_vat = totalAmountWithVat;
+    savedOrder.total_amount = roundMoney(totalAmountWithoutVat);
+    savedOrder.total_amount_with_vat = roundMoney(totalAmountWithVat);
     await this.orderRepo.save(savedOrder);
 
     // Regula finală brut/net (timing stoc): la crearea/plasarea comenzii de client NU se
@@ -5560,7 +5851,6 @@ export class SuppliersService {
     // Furnizor FĂRĂ cont autentificabil: nu există actor care să confirme / atribuie
     // magazioner/șofer — auto-confirmăm (fără scădere stoc platformă) ca recepția client
     // să poată continua fără pașii de tenant furnizor.
-    const hasAccount = await this.hasSupplierLoginAccount(savedOrder.supplier_id);
     if (
       !hasAccount &&
       (orderStatus === OrderStatus.SENT || orderStatus === OrderStatus.DRAFT)
@@ -9028,7 +9318,7 @@ export class SuppliersService {
 
   async updateSupplierProduct(
     productId: number,
-    _supplierId: number,
+    supplierId: number,
     updateData: UpdateSupplierProductDto,
     userContext?: SupplierProductUserContext,
   ): Promise<SupplierProduct> {
@@ -9036,15 +9326,13 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    if (!isFurnizorProductManager(userContext)) {
-      assertClientViewOnlyOnMutations(userContext);
-    }
-    assertFurnizorProductManager(userContext);
 
-    const supplierProduct = await this.findSupplierProductForUser(
-      productId,
-      userContext,
-    );
+    const { product: supplierProduct, clientManaged } =
+      await this.resolveSupplierProductForMutation(
+        productId,
+        supplierId,
+        userContext,
+      );
 
     const {
       supplier_id: _ignoredSupplierId,
@@ -9097,6 +9385,14 @@ export class SuppliersService {
       }
     }
     const updated = await this.supplierProductRepo.save(supplierProduct);
+    if (clientManaged) {
+      await this.bootstrapClientManagedProductRelations(
+        clientManaged.supplier,
+        clientManaged.clientCompanyId,
+        Number(updated.id),
+        this.normalizeSupplierProductIsActive(updated.is_active),
+      );
+    }
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product updated successfully: ${JSON.stringify(updated)}`);
     return updated;
   }
@@ -9104,22 +9400,63 @@ export class SuppliersService {
   async removeSupplierProduct(
     productId: number,
     userContext?: SupplierProductUserContext,
+    supplierId?: number,
   ): Promise<void> {
     this.logger.log(`🔍 [SUPPLIERS SERVICE] Removing supplier product ${productId}`);
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    if (!isFurnizorProductManager(userContext)) {
-      assertClientViewOnlyOnMutations(userContext);
-    }
-    assertFurnizorProductManager(userContext);
 
-    const supplierProduct = await this.findSupplierProductForUser(
+    const { product: supplierProduct } = await this.resolveSupplierProductForMutation(
       productId,
+      supplierId,
       userContext,
     );
     await this.supplierProductRepo.remove(supplierProduct);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Supplier product removed successfully`);
+  }
+
+  private async resolveSupplierProductForMutation(
+    productId: number,
+    supplierId: number | undefined,
+    userContext: SupplierProductUserContext,
+  ): Promise<{
+    product: SupplierProduct;
+    clientManaged?: { supplier: Supplier; clientCompanyId: number };
+  }> {
+    if (isFurnizorProductManager(userContext)) {
+      const product = await this.findSupplierProductForUser(productId, userContext);
+      return { product };
+    }
+
+    if (isClientAdminCatalogManager(userContext)) {
+      const product = await this.supplierProductRepo.findOne({
+        where: { id: productId },
+      });
+      if (!product) {
+        throw new NotFoundException('Produsul furnizor nu a fost găsit');
+      }
+      const resolvedSupplierId =
+        supplierId != null && Number.isFinite(Number(supplierId)) && Number(supplierId) > 0
+          ? Number(supplierId)
+          : Number(product.supplier_id);
+      const { supplier, clientCompanyId } =
+        await this.assertClientAdminCanManageClientManagedSupplier(
+          resolvedSupplierId,
+          userContext,
+        );
+      await this.assertClientAdminOwnsSupplierProduct(
+        product,
+        supplier,
+        clientCompanyId,
+      );
+      return { product, clientManaged: { supplier, clientCompanyId } };
+    }
+
+    assertClientViewOnlyOnMutations(userContext);
+    throw new ForbiddenException(
+      'Doar conturile de tip furnizor pot gestiona nomenclatorul propriu de produse',
+    );
   }
 
   // === MEASUREMENT VARIANTS METHODS ===

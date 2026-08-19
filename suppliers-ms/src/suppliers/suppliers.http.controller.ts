@@ -783,7 +783,7 @@ export class SuppliersHttpController {
   }
 
   @Get(":supplierId/client-product-visibility")
-  @PermissionsAny("assignment.read_all", "assignment.read_company")
+  @PermissionsAny("assignment.read_all", "assignment.read_company", "suppliers.create")
   @ApiOperation({
     summary:
       "Produse ascunse de client pentru un furnizor (GIU-12). Lipsă configurare = toate vizibile.",
@@ -807,7 +807,7 @@ export class SuppliersHttpController {
   }
 
   @Put(":supplierId/client-product-visibility")
-  @PermissionsAny("assignment.read_all", "assignment.read_company")
+  @PermissionsAny("assignment.read_all", "assignment.read_company", "suppliers.create")
   @ApiOperation({
     summary:
       "Salvează produsele ascunse de client pentru un furnizor (GIU-12). Doar admin companie client.",
@@ -960,7 +960,16 @@ export class SuppliersHttpController {
   @Permissions("suppliers.create")
   addProduct(
     @Body() dto: CreateSupplierProductDto,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        roles?: string[];
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
   ) {
     return this.service.addProduct(dto, buildSupplierProductUserContext(req?.user));
   }
@@ -971,7 +980,16 @@ export class SuppliersHttpController {
     @Param("productId") productId: string,
     @Body() dto: UpdateSupplierProductDto,
     @Query("supplier_id") supplierIdRaw?: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        roles?: string[];
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
   ) {
     const supplierId = supplierIdRaw ? parseInt(supplierIdRaw, 10) : undefined;
     if (!supplierId || !Number.isFinite(supplierId) || supplierId <= 0) {
@@ -989,11 +1007,24 @@ export class SuppliersHttpController {
   @PermissionsAny("suppliers.delete", "suppliers.create")
   removeProduct(
     @Param("productId") productId: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Query("supplier_id") supplierIdRaw?: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        isAdmin?: boolean;
+        isSuperAdmin?: boolean;
+      };
+    },
   ) {
+    const supplierId = supplierIdRaw ? parseInt(supplierIdRaw, 10) : undefined;
     return this.service.removeSupplierProduct(
       Number(productId),
       buildSupplierProductUserContext(req?.user),
+      supplierId != null && Number.isFinite(supplierId) && supplierId > 0
+        ? supplierId
+        : undefined,
     );
   }
 

@@ -162,7 +162,14 @@ export function compareQuantityToStock(params: {
   }
 }
 
-/** lineTotal = quantity / priceBaseQuantity * price; baza lipsă → 1 */
+/**
+ * Politică financiară (aceeași ca frontend `lib/order-line-money.ts`):
+ * lineNet = roundMoney(qty × netUnit)
+ * lineVat = roundMoney(lineNet × vatRate / 100)
+ * lineGross = roundMoney(lineNet + lineVat)
+ * Rotunjire doar la 2 zecimale, în aceste puncte — fără floor / truncare.
+ * lineNet = quantity / priceBaseQuantity * price; baza lipsă → 1
+ */
 export function computeLineSubtotal(
   quantity: number,
   pricePerUnit: number,
