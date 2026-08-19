@@ -8,5 +8,7 @@ suppliers-ms/migrations/20260806_supplier_product_client_prices.sql
 suppliers-ms/migrations/20260806_giu13_price_history_utc_and_vat.sql
 suppliers-ms/migrations/20260806_giu13_price_history_name_and_standard_snapshots.sql
 suppliers-ms/migrations/20260806_giu13_backfill_history_changed_by_name.sql
+suppliers-ms/migrations/20260812_supplier_product_client_activation.sql
+suppliers-ms/migrations/20260817_supplier_company_hq_fields.sql
 stock/src/stock/migrations/008-products-name-sku-non-unique.sql
 stock/src/stock/migrations/009-stock-quantity-scale-3.sql
