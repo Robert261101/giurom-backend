@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -883,7 +883,8 @@ export class SuppliersHttpController {
   @Patch("order-items/:itemId/toggle-availability")
   @Permissions("order.read")
   @ApiOperation({ summary: "Toggle availability_status for a supplier order item" })
-  toggleItemAvailability(@Param("itemId") itemId: string, @Request() req: any) {
+  async toggleItemAvailability(@Param("itemId") itemId: string, @Request() req: any) {
+    await this.service.assertActiveShiftForOperationalUser(req?.user, req?.headers?.authorization);
     return this.service.toggleItemAvailability(Number(itemId), req?.user);
   }
 
@@ -1055,7 +1056,7 @@ export class SuppliersHttpController {
   }
 
   @Patch("variants/:variantId")
-  @Permissions("suppliers.update")
+  @PermissionsAny("suppliers.update", "suppliers.create")
   @ApiOperation({ summary: "Update a measurement variant" })
   updateVariant(
     @Param("variantId") variantId: string,
@@ -1070,7 +1071,7 @@ export class SuppliersHttpController {
   }
 
   @Delete("variants/:variantId")
-  @Permissions("suppliers.delete")
+  @PermissionsAny("suppliers.delete", "suppliers.create")
   @ApiOperation({ summary: "Delete a measurement variant" })
   deleteVariant(
     @Param("variantId") variantId: string,
@@ -1283,11 +1284,12 @@ export class SuppliersHttpController {
   @Patch("orders/:orderId/warehouse-review")
   /** Magazionerii au `order.read` în rol; acțiunea face parte din fluxul lor. */
   @Permissions("order.read")
-  warehouseReviewOrder(
+  async warehouseReviewOrder(
     @Param("orderId") orderId: string,
     @Body() dto: WarehouseReviewDto,
     @Request() req: any,
   ) {
+    await this.service.assertActiveShiftForOperationalUser(req?.user, req?.headers?.authorization);
     return this.service.warehouseReview(Number(orderId), dto, req?.user);
   }
 
@@ -1411,7 +1413,8 @@ export class SuppliersHttpController {
   /** Șoferii și conturile furnizor au `order.read`, nu `order.approve`. */
   @PermissionsAny("order.approve", "order.read")
   @ApiOperation({ summary: "Marchează o atribuire șofer ca finalizată" })
-  completeDriverAssignment(@Param("assignmentId") assignmentId: string, @Request() req: any) {
+  async completeDriverAssignment(@Param("assignmentId") assignmentId: string, @Request() req: any) {
+    await this.service.assertActiveShiftForOperationalUser(req?.user, req?.headers?.authorization);
     return this.service.completeDriverAssignment(Number(assignmentId), req?.user);
   }
 
@@ -1421,10 +1424,11 @@ export class SuppliersHttpController {
   @ApiOperation({
     summary: "GIU-10: șoferul confirmă „Ajuns în locație” (deblochează recepție/anulare client)",
   })
-  markDriverAssignmentArrived(
+  async markDriverAssignmentArrived(
     @Param("assignmentId") assignmentId: string,
     @Request() req: any,
   ) {
+    await this.service.assertActiveShiftForOperationalUser(req?.user, req?.headers?.authorization);
     return this.service.markDriverAssignmentArrived(Number(assignmentId), req?.user);
   }
 
@@ -1818,3 +1822,4 @@ function parseSelectedWorkLocationId(value: string | undefined): number | undefi
   const n = parseInt(value, 10);
   return Number.isFinite(n) ? n : undefined;
 }
+
