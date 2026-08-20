@@ -138,6 +138,106 @@ export class SuppliersService {
     };
   }
 
+  /**
+   * Verifică dacă utilizatorul operațional (magazioner/șofer) are tură activă
+   * apelând `GET /attendance/my-active-shift` din attendance-ms cu token-ul JWT original al userului.
+   *
+   * - hasActiveShift=true  → permite acțiunea
+   * - hasActiveShift=false → 403 Forbidden
+   * - attendance-ms indisponibil / timeout / eroare → 503 ServiceUnavailable (fail-closed)
+   * - 403 primit de la attendance-ms → retransmis ca 403 (nu transformat în 503)
+   *
+   * Nu aplică restricția pentru utilizatorii non-operaționali (admin, furnizor-tenant):
+   * verifică explicit rolurile magazioner/șofer din JWT, nu doar prezenţa unui sub numeric.
+   *
+   * @param user          - obiectul user din JWT (req.user)
+   * @param authorization - header-ul Authorization din request (Bearer <token>)
+   */
+  async assertActiveShiftForOperationalUser(
+    user?: OrderRequesterUser,
+    authorization?: string,
+  ): Promise<void> {
+    // Verificare rol operațional: cel puțin unul din rolurile magazioner/sofer trebuie prezent.
+    // Adminii și furnizorii-tenant au `assignment.read_all` / `assignment.read_company` sau nu au
+    // aceste roluri — nu aplicăm restricția de tură pentru ei.
+    const roles = Array.isArray(user?.roles)
+      ? (user.roles as string[]).map((r) => String(r).toLowerCase().trim())
+      : [];
+    const permissions = Array.isArray(user?.permissions)
+      ? (user.permissions as string[])
+      : [];
+    const isAdmin =
+      permissions.includes('assignment.read_all') ||
+      permissions.includes('assignment.read_company') ||
+      user?.isAdmin === true ||
+      user?.isSuperAdmin === true;
+    const isOperational =
+      !isAdmin && (roles.includes('magazioner') || roles.includes('sofer'));
+
+    if (!isOperational) {
+      return;
+    }
+
+    const employeeId = resolveOrderActorUserId(user);
+    const attendanceUrl =
+      this.configService.get<string>('ATTENDANCE_HTTP_URL') ||
+      process.env.ATTENDANCE_HTTP_URL ||
+      'http://localhost:3016';
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authorization) {
+        headers['Authorization'] = authorization;
+      }
+
+      const resp = await firstValueFrom(
+        this.httpService.get<{ hasActiveShift: boolean }>(
+          `${attendanceUrl}/attendance/my-active-shift`,
+          { headers, timeout: 5000 },
+        ),
+      );
+      if (!resp.data?.hasActiveShift) {
+        throw new ForbiddenException(
+          'Trebuie să începi programul înainte de a efectua această acțiune.',
+        );
+      }
+    } catch (err) {
+      // ForbiddenException aruncată local (hasActiveShift=false) → retransmitem ca 403
+      if (err instanceof ForbiddenException) throw err;
+
+      // AxiosError: attendance-ms a răspuns cu un status HTTP explicit
+      const axiosStatus: number | undefined =
+        (err as any)?.response?.status ?? (err as any)?.status;
+      if (axiosStatus != null) {
+        if (axiosStatus === 401) {
+          throw new ForbiddenException(
+            'Sesiunea a expirat. Autentifică-te din nou.',
+          );
+        }
+        if (axiosStatus === 403) {
+          throw new ForbiddenException(
+            'Trebuie să începi programul înainte de a efectua această acțiune.',
+          );
+        }
+        // 4xx neașteptat de la attendance-ms → 503 (eroare de infrastructură)
+        this.logger.error(
+          `❌ [assertActiveShiftForOperationalUser] attendance-ms a returnat ${axiosStatus} pentru employee=${employeeId}`,
+        );
+        throw new ServiceUnavailableException(
+          'Nu s-a putut verifica tura activă. Încearcă din nou.',
+        );
+      }
+
+      // Timeout, ECONNREFUSED, eroare de rețea sau orice altă eroare neașteptată → 503
+      this.logger.error(
+        `❌ [assertActiveShiftForOperationalUser] Nu am putut contacta attendance-ms pentru employee=${employeeId}: ${(err as Error)?.message}`,
+      );
+      throw new ServiceUnavailableException(
+        'Nu s-a putut verifica tura activă. Încearcă din nou.',
+      );
+    }
+  }
+
   /** Statuses where a placed order requires a client delivery location (anything except draft / cancelled). */
   private static readonly STATUSES_WITHOUT_SUPPLIER_STOCK_DEDUCTED = new Set<OrderStatus>([
     OrderStatus.DRAFT,
@@ -9470,15 +9570,12 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    if (!isFurnizorProductManager(userContext)) {
-      assertClientViewOnlyOnMutations(userContext);
-    }
-    assertFurnizorProductManager(userContext);
-
-    const supplierProduct = await this.findSupplierProductForUser(
-      dto.supplier_product_id,
-      userContext,
-    );
+    const { product: supplierProduct } =
+      await this.resolveSupplierProductForMutation(
+        dto.supplier_product_id,
+        undefined,
+        userContext,
+      );
 
     // Validate measurement_unit compatibility with supplier_products.unit_of_measure
     if (dto.measurement_unit && dto.measurement_unit !== supplierProduct.unit_of_measure) {
@@ -9523,11 +9620,11 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    if (!isFurnizorProductManager(userContext)) {
-      assertClientViewOnlyOnMutations(userContext);
-    }
-    assertFurnizorProductManager(userContext);
-    await this.findSupplierProductForUser(variant.supplier_product_id, userContext);
+    await this.resolveSupplierProductForMutation(
+      variant.supplier_product_id,
+      undefined,
+      userContext,
+    );
 
     // If updating measurement_unit, validate against supplier product
     if (updateData.measurement_unit) {
@@ -9558,11 +9655,11 @@ export class SuppliersService {
     if (!userContext) {
       throw new ForbiddenException('Contextul utilizatorului lipsește');
     }
-    if (!isFurnizorProductManager(userContext)) {
-      assertClientViewOnlyOnMutations(userContext);
-    }
-    assertFurnizorProductManager(userContext);
-    await this.findSupplierProductForUser(variant.supplier_product_id, userContext);
+    await this.resolveSupplierProductForMutation(
+      variant.supplier_product_id,
+      undefined,
+      userContext,
+    );
 
     await this.supplierProductMeasurementVariantRepo.remove(variant);
     this.logger.log(`✅ [SUPPLIERS SERVICE] Measurement variant deleted successfully`);
