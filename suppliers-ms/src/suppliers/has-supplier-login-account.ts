@@ -1,4 +1,7 @@
+import { Logger } from '@nestjs/common';
 import type { Connection } from 'typeorm';
+
+const logger = new Logger('HasSupplierLoginAccount');
 
 export type SupplierAccountLookupInput = {
   id: number;
@@ -82,7 +85,18 @@ export async function getOwnerCompanyIdsWithSupplierLogin(
         .map((row) => Number(row.company_id))
         .filter((id) => Number.isFinite(id) && id > 0),
     );
-  } catch {
+  } catch (error) {
+    // Temporary: surface the real cross-DB failure on server instead of failing closed silently.
+    const err = error as { message?: string; code?: string; sqlMessage?: string; errno?: number };
+    logger.error(
+      `Cross-DB supplier login lookup failed ` +
+        `(auth=${authDbName}, employees=${employeesDbName}, locations=${locationsDbName}, ` +
+        `ownerCompanyIds=${uniqueIds.join(',')}): ` +
+        `${err?.sqlMessage || err?.message || String(error)}` +
+        (err?.code ? ` [code=${err.code}]` : '') +
+        (err?.errno != null ? ` [errno=${err.errno}]` : ''),
+      error instanceof Error ? error.stack : undefined,
+    );
     return new Set();
   }
 }
