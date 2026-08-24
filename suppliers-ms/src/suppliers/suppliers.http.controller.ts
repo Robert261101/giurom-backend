@@ -120,6 +120,23 @@ export class SuppliersHttpController {
   }
 
   /**
+   * Ultimele gestiuni alese pe produsele locației — pentru precompletarea selectorului
+   * la următoarea comandă. Listă goală dacă nu s-a comandat încă nimic pe locația legată.
+   */
+  @Get("giurom2/last-zones")
+  @PermissionsAny("order.read", "suppliers.create")
+  async listLastGiurom2Zones(
+    @Query("company_id") companyId?: string,
+    @Query("location_id") locationId?: string,
+  ) {
+    const last_zones = await this.suppliersService.listLastGiurom2Zones(
+      Number(companyId),
+      Number(locationId),
+    );
+    return { last_zones };
+  }
+
+  /**
    * Export manual, one-shot, al comenzilor recente/active către giurom 2.0.
    * Nu rulează automat pe cron.
    */

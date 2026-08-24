@@ -11,6 +11,7 @@ suppliers-ms/migrations/20260806_giu13_backfill_history_changed_by_name.sql
 suppliers-ms/migrations/20260812_supplier_product_client_activation.sql
 suppliers-ms/migrations/20260817_supplier_company_hq_fields.sql
 suppliers-ms/migrations/20260823_giurom2_zone_per_line.sql
+suppliers-ms/migrations/20260824_supplier_product_last_giurom2_zone.sql
 stock/src/stock/migrations/008-products-name-sku-non-unique.sql
 stock/src/stock/migrations/009-stock-quantity-scale-3.sql
 stock/src/stock/migrations/010-waste-request-giurom2-zone.sql

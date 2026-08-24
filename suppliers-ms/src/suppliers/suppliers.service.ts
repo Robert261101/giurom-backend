@@ -23,6 +23,8 @@ import { Supplier } from './entities/supplier.entity';
 import { SupplierFolder } from './entities/supplier-folder.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
 import { SupplierProductMeasurementVariant } from './entities/supplier-product-measurement-variant.entity';
+import { Giurom2Zone } from './entities/giurom2-zone.entity';
+import { SupplierProductLastGiurom2Zone } from './entities/supplier-product-last-giurom2-zone.entity';
 import { SupplierOrder, OrderStatus } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import {
@@ -294,6 +296,8 @@ export class SuppliersService {
     @InjectRepository(EmployeeSupplier) private readonly employeeSupplierRepo: Repository<EmployeeSupplier>,
     @InjectRepository(SupplierOrderAssignment)
     private readonly orderAssignmentRepo: Repository<SupplierOrderAssignment>,
+    @InjectRepository(SupplierProductLastGiurom2Zone)
+    private readonly lastGiurom2ZoneRepo: Repository<SupplierProductLastGiurom2Zone>,
     @InjectConnection() private readonly connection: Connection,
     private readonly stockHttpService: StockHttpService,
     private readonly httpService: HttpService,
@@ -330,6 +334,74 @@ export class SuppliersService {
       );
     }
     return resolved;
+  }
+
+  /**
+   * Ultimele gestiuni alese pe produse, pentru locația clientului.
+   * Folosit la precompletarea selectorului pe următoarea comandă.
+   */
+  async listLastGiurom2Zones(
+    companyId: number,
+    locationId: number,
+  ): Promise<Array<{ supplier_product_id: number; giurom2_zone_id: number }>> {
+    if (!Number.isFinite(companyId) || !Number.isFinite(locationId)) return [];
+    const rows = await this.lastGiurom2ZoneRepo.find({
+      where: { company_id: companyId, location_id: locationId },
+    });
+    return rows.map((row) => ({
+      supplier_product_id: Number(row.supplier_product_id),
+      giurom2_zone_id: Number(row.giurom2_zone_id),
+    }));
+  }
+
+  /**
+   * Memorează gestiunea aleasă pe fiecare linie, ca la următoarea comandă pe aceeași
+   * locație să se precompleteze. Upsert pe (firmă, locație, produs furnizor).
+   */
+  private async rememberGiurom2ZonesForOrder(
+    companyId: number | null | undefined,
+    locationId: number | null | undefined,
+    lines: Array<{ supplier_product_id: number; giurom2_zone_id: number | null }>,
+  ): Promise<void> {
+    if (
+      companyId == null ||
+      locationId == null ||
+      !Number.isFinite(Number(companyId)) ||
+      !Number.isFinite(Number(locationId))
+    ) {
+      return;
+    }
+    const company = Number(companyId);
+    const location = Number(locationId);
+    const toSave = lines.filter(
+      (line) =>
+        Number.isFinite(line.supplier_product_id) &&
+        line.supplier_product_id > 0 &&
+        line.giurom2_zone_id != null &&
+        Number.isFinite(line.giurom2_zone_id),
+    );
+    if (toSave.length === 0) return;
+
+    const now = new Date();
+    await this.lastGiurom2ZoneRepo
+      .createQueryBuilder()
+      .insert()
+      .into(SupplierProductLastGiurom2Zone)
+      .values(
+        toSave.map((line) => ({
+          company_id: company,
+          location_id: location,
+          supplier_product_id: line.supplier_product_id,
+          giurom2_zone_id: Number(line.giurom2_zone_id),
+          updated_at: now,
+        })),
+      )
+      .orUpdate(['giurom2_zone_id', 'updated_at'], [
+        'company_id',
+        'location_id',
+        'supplier_product_id',
+      ])
+      .execute();
   }
 
   /**
@@ -5957,10 +6029,19 @@ export class SuppliersService {
 
     let totalAmountWithoutVat = 0;
     let totalAmountWithVat = 0;
+    const rememberedZones: Array<{
+      supplier_product_id: number;
+      giurom2_zone_id: number | null;
+    }> = [];
     for (const line of resolvedLines) {
       totalAmountWithoutVat += line.subtotal;
       totalAmountWithVat += line.total;
 
+      const zoneId = this.resolveGiurom2ZoneId(
+        line.itemDto.giurom2_zone_id,
+        allowedZoneIds,
+        savedOrder.id,
+      );
       const orderItem = this.orderItemRepo.create({
         order_id: savedOrder.id,
         product_id: Number(line.itemDto.product_id),
@@ -5972,17 +6053,23 @@ export class SuppliersService {
         price_base_unit: line.priceBaseUnit,
         subtotal: line.subtotal,
         total: line.total,
-        giurom2_zone_id: this.resolveGiurom2ZoneId(
-          line.itemDto.giurom2_zone_id,
-          allowedZoneIds,
-          savedOrder.id,
-        ),
+        giurom2_zone_id: zoneId,
       });
       await this.orderItemRepo.save(orderItem);
+      rememberedZones.push({
+        supplier_product_id: line.supplierProduct.id,
+        giurom2_zone_id: zoneId,
+      });
     }
     savedOrder.total_amount = roundMoney(totalAmountWithoutVat);
     savedOrder.total_amount_with_vat = roundMoney(totalAmountWithVat);
     await this.orderRepo.save(savedOrder);
+
+    await this.rememberGiurom2ZonesForOrder(
+      savedOrder.company_id,
+      savedOrder.location_id,
+      rememberedZones,
+    );
 
     // Regula finală brut/net (timing stoc): la crearea/plasarea comenzii de client NU se
     // scade stocul furnizorului. Scăderea se face la confirmarea furnizorului
