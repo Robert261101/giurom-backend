@@ -28,15 +28,14 @@ interface RemoteZonesResponse {
  * App1 nu învață conceptul de gestiune: gestiunea e o etichetă opacă, aleasă pe linia de
  * comandă și cărată până la documentul de intrare. Stocul App1 rămâne general pe locație.
  *
- * Împrospătarea e **leneșă**: prima cerere după expirarea cache-ului aduce lista, iar orice
- * eșec de rețea lasă în urmă catalogul vechi în loc să rupă formularul de comandă. O locație
- * nelegată primește 404 de la App2 — atunci golim cache-ul ei, ca selectorul să dispară.
+ * Lista se împrospătează la fiecare citire (cu deduplicare pe cereri simultane): altfel, după
+ * ce în App2 se bifează gestiuni noi, selectorul din comandă rămâne pe catalogul vechi până
+ * expiră TTL-ul. Eșecul de rețea lasă în urmă cache-ul, ca formularul să nu se rupă. 404 de
+ * la App2 (locație nelegată) golește cache-ul, ca selectorul să dispară.
  */
 @Injectable()
 export class Giurom2ZonesService {
   private readonly logger = new Logger(Giurom2ZonesService.name);
-  /** Cât timp e considerat proaspăt catalogul unei locații. */
-  private static readonly CACHE_TTL_MS = 10 * 60 * 1000;
   /** Împrospătări în curs, ca zece cereri simultane să nu cheme App2 de zece ori. */
   private readonly inFlight = new Map<string, Promise<void>>();
 
@@ -53,13 +52,6 @@ export class Giurom2ZonesService {
    */
   async listForLocation(companyId: number, locationId: number): Promise<Giurom2Zone[]> {
     if (!Number.isFinite(companyId) || !Number.isFinite(locationId)) return [];
-
-    const cached = await this.readCache(companyId, locationId);
-    const fresh =
-      cached.length > 0 &&
-      Date.now() - new Date(cached[0].synced_at).getTime() <
-        Giurom2ZonesService.CACHE_TTL_MS;
-    if (fresh) return cached;
 
     await this.refresh(companyId, locationId);
     return this.readCache(companyId, locationId);
