@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { In, Repository } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
 import { Giurom2Zone } from './entities/giurom2-zone.entity';
+import { zonesCatalogUrlFromKnown } from './giurom2-zones-url';
 
 interface RemoteZone {
   id: number;
@@ -96,8 +97,8 @@ export class Giurom2ZonesService {
   private async fetchAndStore(companyId: number, locationId: number): Promise<void> {
     const baseUrl = this.resolveZonesUrl();
     if (!baseUrl) {
-      this.logger.debug(
-        '[Giurom2Zones] Fără GIUROM2_ZONES_URL / GIUROM2_ENTRY_DOCUMENTS_SYNC_URL — catalogul nu se împrospătează.',
+      this.logger.warn(
+        '[Giurom2Zones] Fără GIUROM2_ZONES_URL / GIUROM2_ENTRY_DOCUMENTS_SYNC_URL / GIUROM2_SUPPLIER_ORDER_SYNC_URL — catalogul nu se împrospătează.',
       );
       return;
     }
@@ -167,25 +168,18 @@ export class Giurom2ZonesService {
   }
 
   /**
-   * URL-ul catalogului. `GIUROM2_ZONES_URL` are prioritate; altfel îl deducem din URL-ul
-   * documentelor de intrare, care e deja setat pe server — o variabilă de mediu în minus de
-   * ținut minte la deploy, cu override explicit când adresa diferă.
+   * URL-ul catalogului. `GIUROM2_ZONES_URL` are prioritate; altfel îl deducem din URL-urile
+   * deja setate (documente / comenzi). Păstrăm prefixul `/api` — fără el, stocul merge
+   * (URL complet) iar selectorul de gestiune nu (404 pe `/integrations/...`).
    */
   private resolveZonesUrl(): string | null {
     const explicit = this.configService.get<string>('GIUROM2_ZONES_URL')?.trim();
     if (explicit) return explicit;
 
-    const entryDocsUrl = this.configService
-      .get<string>('GIUROM2_ENTRY_DOCUMENTS_SYNC_URL')
-      ?.trim();
-    if (!entryDocsUrl) return null;
-    try {
-      const parsed = new URL(entryDocsUrl);
-      parsed.pathname = '/integrations/stock-sync/zones';
-      parsed.search = '';
-      return parsed.toString();
-    } catch {
-      return null;
-    }
+    const known =
+      this.configService.get<string>('GIUROM2_ENTRY_DOCUMENTS_SYNC_URL')?.trim() ||
+      this.configService.get<string>('GIUROM2_SUPPLIER_ORDER_SYNC_URL')?.trim();
+    if (!known) return null;
+    return zonesCatalogUrlFromKnown(known);
   }
 }

@@ -115,8 +115,8 @@ export class Giurom2ZonesService {
   private async fetchAndStore(companyId: number, locationId: number): Promise<void> {
     const baseUrl = this.resolveZonesUrl();
     if (!baseUrl) {
-      this.logger.debug(
-        '[Giurom2Zones] Fără GIUROM2_ZONES_URL / GIUROM2_STOCK_SYNC_URL — catalogul nu se împrospătează.',
+      this.logger.warn(
+        '[Giurom2Zones] Fără GIUROM2_ZONES_URL / GIUROM2_STOCK_SYNC_URL / GIUROM2_WASTE_SYNC_URL — catalogul nu se împrospătează.',
       );
       return;
     }
@@ -200,7 +200,16 @@ export class Giurom2ZonesService {
     if (!known) return null;
     try {
       const parsed = new URL(known);
-      parsed.pathname = '/integrations/stock-sync/zones';
+      const path = parsed.pathname.replace(/\/+$/, '');
+      const marker = '/integrations/';
+      const idx = path.indexOf(marker);
+      if (idx >= 0) {
+        parsed.pathname = `${path.slice(0, idx)}${marker}stock-sync/zones`;
+      } else if (/\/stock-sync$/i.test(path)) {
+        parsed.pathname = `${path}/zones`;
+      } else {
+        parsed.pathname = `${path}/integrations/stock-sync/zones`;
+      }
       parsed.search = '';
       return parsed.toString();
     } catch {
