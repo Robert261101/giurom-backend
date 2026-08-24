@@ -38,6 +38,16 @@ export class WasteRequest {
   @Column({ type: 'int', nullable: true })
   location_id?: number;
 
+  /**
+   * Gestiunea din giurom 2.0 din care se aruncă (`storage_zones.id` de acolo).
+   *
+   * Inertă în App1: stocul se scade în continuare din stocul general al locației. E eticheta
+   * după care giurom 2.0 scade din gestiunea corectă, în loc să pună diferența pe cea care
+   * absoarbe reconcilierea. NULL = locație nelegată sau fără alegere.
+   */
+  @Column({ type: 'int', nullable: true })
+  giurom2_zone_id?: number | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

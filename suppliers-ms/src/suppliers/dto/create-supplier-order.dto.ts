@@ -47,6 +47,17 @@ export class CreateSupplierOrderItemDto {
   @IsNumber()
   @IsPositive()
   price_per_unit: number;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Gestiunea din giurom 2.0 pe care intră produsul (storage_zones.id). Ignorată dacă ' +
+      'locația nu e legată. Nu afectează stocul App1 — e doar eticheta de rutare.',
+  })
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  giurom2_zone_id?: number;
 }
 
 export class CreateSupplierOrderDto {

@@ -29,6 +29,7 @@ import {
 import { SuppliersService } from "./suppliers.service";
 import { SuppliersExportService } from "./suppliers-export.service";
 import { EntryDocumentsExportService } from "./entry-documents-export.service";
+import { Giurom2ZonesService } from "./giurom2-zones.service";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { CreateSupplierWithDocumentsDto } from "./dto/create-supplier-with-documents.dto";
 import { CreateSupplierProductDto } from "./dto/create-supplier-product.dto";
@@ -74,7 +75,49 @@ export class SuppliersHttpController {
     private readonly service: SuppliersService,
     private readonly suppliersExportService: SuppliersExportService,
     private readonly entryDocumentsExportService: EntryDocumentsExportService,
+    private readonly giurom2ZonesService: Giurom2ZonesService,
   ) {}
+
+  /**
+   * Gestiunile din giurom 2.0 pe care le poate alimenta locația dată.
+   *
+   * Listă goală = locația nu e legată (sau canalul de comenzi e oprit): frontend-ul ascunde
+   * selectorul, iar comanda merge exact ca înainte. Permisiunea e cea de comandă, nu una nouă
+   * — cine poate deschide formularul de comandă poate vedea lista.
+   */
+  @Get("giurom2/zones")
+  @PermissionsAny("order.read", "suppliers.create")
+  async listGiurom2Zones(
+    @Query("company_id") companyId?: string,
+    @Query("location_id") locationId?: string,
+  ) {
+    const zones = await this.giurom2ZonesService.listForLocation(
+      Number(companyId),
+      Number(locationId),
+    );
+    return {
+      zones: zones.map((zone) => ({
+        id: zone.external_zone_id,
+        name: zone.name,
+        code: zone.code ?? null,
+        is_default: Number(zone.is_default) === 1,
+      })),
+    };
+  }
+
+  /**
+   * Reîncarcă forțat catalogul de gestiuni al unei locații, ocolind TTL-ul cache-ului.
+   * Necesar imediat după ce în giurom 2.0 se schimbă setul de gestiuni al legăturii.
+   */
+  @Post("giurom2/zones/refresh")
+  @PermissionsAny("order.read", "suppliers.create")
+  async refreshGiurom2Zones(
+    @Query("company_id") companyId?: string,
+    @Query("location_id") locationId?: string,
+  ) {
+    await this.giurom2ZonesService.refresh(Number(companyId), Number(locationId));
+    return this.listGiurom2Zones(companyId, locationId);
+  }
 
   /**
    * Export manual, one-shot, al comenzilor recente/active către giurom 2.0.

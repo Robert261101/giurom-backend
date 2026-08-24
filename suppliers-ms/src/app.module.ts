@@ -20,12 +20,14 @@ import { SupplierProductClientPrice } from "./suppliers/entities/supplier-produc
 import { SupplierProductClientPriceHistory } from "./suppliers/entities/supplier-product-client-price-history.entity";
 import { SupplierProductClientVisibility } from "./suppliers/entities/supplier-product-client-visibility.entity";
 import { SupplierProductClientActivation } from "./suppliers/entities/supplier-product-client-activation.entity";
+import { Giurom2Zone } from "./suppliers/entities/giurom2-zone.entity";
 import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-order-driver-assignment.entity";
 import { SupplierOrderWarehouseReview } from "./suppliers/entities/supplier-order-warehouse-review.entity";
 import { SupplierOrderItemChange } from "./suppliers/entities/supplier-order-item-change.entity";
 import { SuppliersService } from "./suppliers/suppliers.service";
 import { SuppliersExportService } from "./suppliers/suppliers-export.service";
 import { EntryDocumentsExportService } from "./suppliers/entry-documents-export.service";
+import { Giurom2ZonesService } from "./suppliers/giurom2-zones.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
 import { SuppliersHttpController } from "./suppliers/suppliers.http.controller";
@@ -88,6 +90,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientPriceHistory,
         SupplierProductClientVisibility,
         SupplierProductClientActivation,
+        Giurom2Zone,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === "true",
       logging: process.env.DB_LOGGING === "true",
@@ -128,6 +131,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientPriceHistory,
         SupplierProductClientVisibility,
         SupplierProductClientActivation,
+        Giurom2Zone,
       ]),
   ],
   controllers: [SuppliersMicroController, SuppliersHttpController],
@@ -135,6 +139,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
     SuppliersService,
     SuppliersExportService,
     EntryDocumentsExportService,
+    Giurom2ZonesService,
     StockHttpService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },

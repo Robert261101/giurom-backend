@@ -10,6 +10,7 @@ import { Stock } from './stock/entities/stock.entity';
 import { StockTransaction } from './stock/entities/stock-transaction.entity';
 import { WasteRecord } from './stock/entities/waste-record.entity';
 import { WasteRequest } from './stock/entities/waste-request.entity';
+import { Giurom2Zone } from './stock/entities/giurom2-zone.entity';
 import { ConsumptionRecord } from './stock/entities/consumption-record.entity';
 import { Category } from './stock/entities/category.entity';
 import { OrderList } from './stock/entities/order-list.entity';
@@ -29,6 +30,7 @@ import { StockSyncCronService } from './stock/cron/stock-sync-cron.service';
 import { StockSyncController } from './stock/cron/stock-sync.controller';
 import { App2MovementController } from './stock/app2-movement.controller';
 import { App2WasteController } from './stock/app2-waste.controller';
+import { Giurom2ZonesService } from './stock/giurom2-zones.service';
 import { WasteExportService } from './stock/waste-export.service';
 
 @Module({
@@ -55,7 +57,7 @@ import { WasteExportService } from './stock/waste-export.service';
       username: process.env.DB_USERNAME as string,
       password: process.env.DB_PASSWORD as string,
       database: process.env.DB_DATABASE as string,
-      entities: [Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride],
+      entities: [Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride, Giurom2Zone],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
@@ -65,7 +67,7 @@ import { WasteExportService } from './stock/waste-export.service';
         charset: 'utf8mb4',
       },
     }),
-    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride]),
+    TypeOrmModule.forFeature([Product, Stock, StockTransaction, WasteRecord, ConsumptionRecord, Category, OrderList, WasteRequest, ProductLocationOverride, Giurom2Zone]),
   ],
   controllers: [StockMicroController, StockHttpController, StockHealthController, CategoryController, StockSyncController, App2MovementController, App2WasteController],
   providers: [
@@ -73,6 +75,7 @@ import { WasteExportService } from './stock/waste-export.service';
     CategoryService,
     StockSyncCronService,
     WasteExportService,
+    Giurom2ZonesService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

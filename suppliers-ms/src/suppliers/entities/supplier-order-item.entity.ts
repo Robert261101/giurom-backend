@@ -67,6 +67,16 @@ export class SupplierOrderItem {
   @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   return_reason?: string;
 
+  /**
+   * Gestiunea aleasă la comandă (`storage_zones.id` din giurom 2.0), pentru locațiile legate.
+   *
+   * Inertă în App1: stocul intră în continuare general pe locație, exact ca până acum. E doar
+   * eticheta de rutare, cărată până la documentul de intrare, unde giurom 2.0 o folosește ca
+   * să pună fiecare produs pe gestiunea lui. NULL = locație nelegată sau fără alegere.
+   */
+  @Column({ type: 'int', nullable: true })
+  giurom2_zone_id?: number | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

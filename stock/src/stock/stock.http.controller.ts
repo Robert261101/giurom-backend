@@ -26,6 +26,7 @@ import { TransactionType } from "./entities/stock-transaction.entity";
 import { CreateWasteRecordDto } from "./dto/create-waste-record.dto";
 import { UpdateWasteRecordDto } from "./dto/update-waste-record.dto";
 import { CreateWasteRequestDto } from "./dto/create-waste-request.dto";
+import { Giurom2ZonesService } from "./giurom2-zones.service";
 import { WasteExportService } from "./waste-export.service";
 import { CreateConsumptionRecordDto } from "./dto/create-consumption-record.dto";
 import { UpdateConsumptionRecordDto } from "./dto/update-consumption-record.dto";
@@ -40,7 +41,32 @@ export class StockHttpController {
   constructor(
     private readonly service: StockService,
     private readonly wasteExportService: WasteExportService,
+    private readonly giurom2ZonesService: Giurom2ZonesService,
   ) {}
+
+  /**
+   * Gestiunile din giurom 2.0 pentru locația dată, pentru selectorul din formularul de
+   * aruncare. Listă goală = locația nu e legată: formularul rămâne exact cel de până acum.
+   */
+  @Get("giurom2/zones")
+  @Permissions("stock.waste_own")
+  async listGiurom2Zones(
+    @Query("company_id") companyId?: string,
+    @Query("location_id") locationId?: string,
+  ) {
+    const zones = await this.giurom2ZonesService.listForLocation(
+      Number(companyId),
+      Number(locationId),
+    );
+    return {
+      zones: zones.map((zone) => ({
+        id: zone.external_zone_id,
+        name: zone.name,
+        code: zone.code ?? null,
+        is_default: Number(zone.is_default) === 1,
+      })),
+    };
+  }
 
   // Products
   @Post("products") @Permissions("stock.create") async createProduct(

@@ -27,6 +27,11 @@ interface WasteRequestRow {
   photos: string[];
   status: 'pending' | 'approved' | 'rejected';
   requested_by: number | null;
+  /**
+   * Gestiunea aleasă în App1 (`storage_zones.id` din giurom 2.0) din care se aruncă.
+   * `null` = fără alegere ⇒ acolo cererea cade pe gestiunea implicită a legăturii.
+   */
+  zone_ref: number | null;
   created_at: string;
 }
 
@@ -327,6 +332,8 @@ export class WasteExportService implements OnModuleInit, OnModuleDestroy {
         photos: Array.isArray(request.photos) ? request.photos : [],
         status: request.status,
         requested_by: request.created_by != null ? Number(request.created_by) : null,
+        zone_ref:
+          request.giurom2_zone_id != null ? Number(request.giurom2_zone_id) : null,
         created_at: this.toIso(request.created_at),
       });
     }
@@ -375,6 +382,16 @@ export class WasteExportService implements OnModuleInit, OnModuleDestroy {
           `skipped_no_zone=${data.skipped_no_zone ?? '?'}, ` +
           `unmapped=${Array.isArray(data.unmapped_locations) ? data.unmapped_locations.length : 0}`,
       );
+      // Cereri a căror gestiune n-a putut fi folosită: au căzut pe cea implicită în giurom 2.0.
+      // Fără avertismentul ăsta, cazul e vizibil doar în logul de acolo, iar aici exportul
+      // arată perfect reușit — marfa scade din altă gestiune decât a ales operatorul.
+      const unresolved = (data as { unresolved_zones?: unknown[] }).unresolved_zones;
+      if (Array.isArray(unresolved) && unresolved.length > 0) {
+        this.logger.warn(
+          `⚠️ [WasteExport] ${unresolved.length} cereri au ajuns pe gestiunea implicită — ` +
+            `gestiunea cerută nu aparține locației legate: ${JSON.stringify(unresolved.slice(0, 10))}`,
+        );
+      }
       return { ...data, sent: rows.length, diagnostics: baseDiag };
     } catch (err: any) {
       const status = err?.response?.status;

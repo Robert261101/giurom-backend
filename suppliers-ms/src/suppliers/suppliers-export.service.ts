@@ -16,6 +16,12 @@ interface SupplierOrderExportItem {
   price_per_unit: number;
   subtotal: number;
   received_quantity: number;
+  /**
+   * Gestiunea aleasă în App1 (`storage_zones.id` din giurom 2.0). Aici e doar **intenția** —
+   * se vede în App2 înainte de recepție. Cantitatea ajunge pe gestiune abia prin documentul
+   * de intrare, care poartă aceeași etichetă.
+   */
+  zone_ref: number | null;
 }
 
 interface SupplierOrderExportRow {
@@ -176,6 +182,7 @@ export class SuppliersExportService {
           price_per_unit: Number(item.price_per_unit) || 0,
           subtotal: Number(item.subtotal) || 0,
           received_quantity: Number(item.received_quantity) || 0,
+          zone_ref: item.giurom2_zone_id ?? null,
         };
       });
 

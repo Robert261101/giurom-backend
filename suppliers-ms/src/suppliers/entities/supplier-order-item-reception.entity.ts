@@ -87,6 +87,16 @@ export class SupplierOrderItemReception {
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   net_quantity?: number | null;
 
+  /**
+   * Gestiunea pe care intră această tranșă în giurom 2.0, moștenită din linia de comandă.
+   *
+   * Trăiește pe recepție, nu doar pe comandă, fiindcă o linie se recepționează în tranșe
+   * (`newlyReceivedQty`), iar tranșele pot ajunge în gestiuni diferite — jumătate la depozit,
+   * jumătate direct la bar. Cu eticheta doar pe comandă, cazul s-ar pierde tăcut.
+   */
+  @Column({ type: 'int', nullable: true })
+  giurom2_zone_id?: number | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 }

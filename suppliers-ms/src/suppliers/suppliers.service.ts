@@ -17,6 +17,8 @@ import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import { randomUUID } from 'crypto';
 import { EntryDocumentsExportService } from './entry-documents-export.service';
+import { Giurom2ZonesService } from './giurom2-zones.service';
+import { resolveOrderLineZoneId } from './giurom2-zone-ref';
 import { Supplier } from './entities/supplier.entity';
 import { SupplierFolder } from './entities/supplier-folder.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
@@ -297,6 +299,7 @@ export class SuppliersService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly entryDocumentsExportService: EntryDocumentsExportService,
+    private readonly giurom2ZonesService: Giurom2ZonesService,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
   ) {
     this.locationsServiceUrl =
@@ -305,6 +308,28 @@ export class SuppliersService {
     this.serviceSecret =
       this.configService.get<string>('SERVICE_SECRET') ||
       process.env.SERVICE_SECRET || '';
+  }
+
+  /**
+   * Gestiunea giurom 2.0 cerută pe o linie → valoarea salvată efectiv.
+   *
+   * O gestiune care nu aparține locației comenzii e o eroare de UI (catalog învechit, locație
+   * schimbată după alegere), nu vina operatorului, și n-are voie să facă o comandă să eșueze:
+   * o punem pe `null` — în App2 linia cade pe gestiunea implicită — și lăsăm urmă în log.
+   */
+  private resolveGiurom2ZoneId(
+    requested: number | null | undefined,
+    allowedZoneIds: Set<number>,
+    orderId: number,
+  ): number | null {
+    const resolved = resolveOrderLineZoneId(requested, allowedZoneIds);
+    if (resolved == null && requested != null) {
+      this.logger.warn(
+        `⚠️ [SUPPLIERS SERVICE] Comanda ${orderId}: gestiunea ${requested} nu aparține ` +
+          'locației comenzii — linia rămâne fără gestiune și va cădea pe cea implicită în giurom 2.0.',
+      );
+    }
+    return resolved;
   }
 
   /**
@@ -5920,6 +5945,16 @@ export class SuppliersService {
     
     this.logger.log(`📦 [SUPPLIERS SERVICE] Order created with supplier_location_id: ${dto.supplier_location_id}`);
 
+    // Gestiunile din giurom 2.0 permise pentru locația comenzii, citite o singură dată:
+    // altfel N linii ar însemna N interogări. Perechea (company_id, location_id) e exact
+    // cea salvată pe comandă, adică cea pe care o va trimite și exportul — dacă aici am
+    // valida pe altă locație, eticheta ar trece validarea și ar pica abia în App2.
+    // Set gol = locație nelegată; atunci gestiunile nici nu ajung să fie cerute din UI.
+    const allowedZoneIds = await this.giurom2ZonesService.allowedZoneIds(
+      Number(savedOrder.company_id),
+      Number(savedOrder.location_id),
+    );
+
     let totalAmountWithoutVat = 0;
     let totalAmountWithVat = 0;
     for (const line of resolvedLines) {
@@ -5937,6 +5972,11 @@ export class SuppliersService {
         price_base_unit: line.priceBaseUnit,
         subtotal: line.subtotal,
         total: line.total,
+        giurom2_zone_id: this.resolveGiurom2ZoneId(
+          line.itemDto.giurom2_zone_id,
+          allowedZoneIds,
+          savedOrder.id,
+        ),
       });
       await this.orderItemRepo.save(orderItem);
     }
@@ -6300,6 +6340,10 @@ export class SuppliersService {
           stock_item_id: undefined,
           status: ReceptionStatus.PENDING, // Status pending pentru aprobare
           reception_batch_id: receptionBatchId,
+          // Gestiunea giurom 2.0 moștenită din linia de comandă. Stă pe tranșă, nu doar pe
+          // comandă, ca tranșele să poată merge în gestiuni diferite când UI-ul de magazioner
+          // va permite schimbarea la recepție. Nu influențează stocul App1.
+          giurom2_zone_id: orderItem.giurom2_zone_id ?? null,
         });
         this.logger.log(`📝 [SUPPLIERS SERVICE] Created PENDING reception for item ${orderItem.id} with quantity ${newlyReceivedQty}`);
       }

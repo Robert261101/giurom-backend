@@ -30,6 +30,7 @@ import {
 } from "./entities/stock-transaction.entity";
 import { WasteRecord } from "./entities/waste-record.entity";
 import { WasteRequest } from "./entities/waste-request.entity";
+import { Giurom2ZonesService } from "./giurom2-zones.service";
 import { ConsumptionRecord } from "./entities/consumption-record.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
@@ -165,11 +166,34 @@ export class StockService {
     private readonly productLocationOverrideRepo: Repository<ProductLocationOverride>,
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
+    private readonly giurom2ZonesService: Giurom2ZonesService,
     private readonly httpService?: HttpService,
     private readonly configService?: ConfigService
   ) {}
 
   // === WASTE REQUESTS ===
+  /**
+   * Gestiunea giurom 2.0 cerută pe o aruncare → valoarea salvată efectiv.
+   * `null` înseamnă „fără gestiune": în giurom 2.0 cererea cade pe cea implicită.
+   */
+  private async resolveGiurom2ZoneId(
+    requested: number | null | undefined,
+    locationId?: number,
+  ): Promise<number | null> {
+    if (requested == null || locationId == null) return null;
+    const zoneId = Number(requested);
+    if (!Number.isFinite(zoneId) || zoneId <= 0) return null;
+
+    const allowed = await this.giurom2ZonesService.cachedZoneIdsForLocation(locationId);
+    if (allowed.has(zoneId)) return zoneId;
+
+    this.logger.warn(
+      `⚠️ [WasteRequest] Gestiunea ${zoneId} nu e a locației ${locationId} — ` +
+        'cererea rămâne fără gestiune și va cădea pe cea implicită în giurom 2.0.',
+    );
+    return null;
+  }
+
   async createWasteRequest(
     dto: any,
     createdBy?: number,
@@ -191,9 +215,18 @@ export class StockService {
 
     const autoApprove = Boolean(options?.autoApprove);
 
+    // Gestiunea din giurom 2.0, validată pe cache-ul local — fără drum în rețea, fiindcă
+    // aruncarea se face și de pe telefon. O gestiune care nu e a locației se ignoră tăcut:
+    // e o eroare de UI, nu a operatorului, iar acolo cererea cade pe gestiunea implicită.
+    const giurom2ZoneId = await this.resolveGiurom2ZoneId(
+      dto.giurom2_zone_id,
+      locationId,
+    );
+
     const entity = this.wasteRequestRepo.create({
       ...dto,
       ...(locationId != null ? { location_id: locationId } : {}),
+      giurom2_zone_id: giurom2ZoneId,
       created_by: createdBy,
       status: 'pending',
     });

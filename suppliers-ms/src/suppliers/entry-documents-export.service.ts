@@ -18,6 +18,7 @@ import { SupplierOrder } from './entities/supplier-order.entity';
 import { SupplierOrderItem } from './entities/supplier-order-item.entity';
 import { SupplierProduct } from './entities/supplier-product.entity';
 import { StockHttpService } from './stock-http.service';
+import { resolveEntryDocumentZoneRef } from './giurom2-zone-ref';
 
 interface EntryDocumentItem {
   source_reception_id: number;
@@ -29,6 +30,11 @@ interface EntryDocumentItem {
   unit_price: number;
   /** Cotă TVA (%) din nomenclatorul / linia de comandă App1 — ex. 21. */
   vat_rate: number;
+  /**
+   * Gestiunea aleasă în App1 (`storage_zones.id` din giurom 2.0) pe care intră linia.
+   * `null` = locație nelegată sau fără alegere ⇒ App2 o pune pe gestiunea implicită.
+   */
+  zone_ref: number | null;
 }
 
 interface EntryDocumentRow {
@@ -224,12 +230,28 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
       ),
     );
 
+    this.warnOnUnresolvedZones(response?.data);
+
     return {
       documents: built.rows.length,
       lines: built.totalItems,
       skipped_without_mapping_fields: built.skippedWithoutMappingFields,
       response: response?.data,
     };
+  }
+
+  /**
+   * giurom 2.0 raportează liniile a căror gestiune n-a putut fi folosită — au căzut pe cea
+   * implicită. Fără linia asta, cazul e vizibil doar în logul de acolo, iar aici arată ca un
+   * export reușit: marfa ajunge în altă gestiune decât a cerut operatorul, tăcut.
+   */
+  private warnOnUnresolvedZones(payload: unknown): void {
+    const unresolved = (payload as { unresolved_zones?: unknown })?.unresolved_zones;
+    if (!Array.isArray(unresolved) || unresolved.length === 0) return;
+    this.logger.warn(
+      `⚠️ [EntryDocs] ${unresolved.length} linii au ajuns pe gestiunea implicită în giurom 2.0 ` +
+        `— gestiunea cerută nu aparține locației legate: ${JSON.stringify(unresolved.slice(0, 10))}`,
+    );
   }
 
   private async buildDocuments(entries: SupplierOrderItemReception[]): Promise<{
@@ -311,6 +333,10 @@ export class EntryDocumentsExportService implements OnModuleInit, OnModuleDestro
               : Number(reception.received_delta) || 0,
           unit_price: Number(orderItem?.price_per_unit) || 0,
           vat_rate: this.resolveVatRate(orderItem, supplierProduct),
+          zone_ref: resolveEntryDocumentZoneRef(
+            reception.giurom2_zone_id,
+            orderItem?.giurom2_zone_id,
+          ),
         };
       });
 
