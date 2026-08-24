@@ -129,7 +129,7 @@ export class SuppliersHttpController {
     @Query("company_id") companyId?: string,
     @Query("location_id") locationId?: string,
   ) {
-    const last_zones = await this.suppliersService.listLastGiurom2Zones(
+    const last_zones = await this.service.listLastGiurom2Zones(
       Number(companyId),
       Number(locationId),
     );
