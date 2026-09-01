@@ -13,7 +13,7 @@ import { Controller,
   ValidationPipe, Logger } from '@nestjs/common';
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
-import { getJwtCompanyId, isGlobalStockAdmin } from "./stock-access";
+import { getJwtCompanyId, isGlobalStockAdmin, isTenantStockRequester, assertTenantLocationIdRequired, parseStockLocationId } from "./stock-access";
 import { StockService } from "./stock.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { CreateProductAtLocationDto } from "./dto/create-product-at-location.dto";
@@ -85,9 +85,18 @@ export class StockHttpController {
     @Query("location_id") locationId?: string,
     @Request() req?: { user?: { permissions?: string[]; company_id?: number | null } },
   ) {
-    const parsedLocationId = locationId ? Number(locationId) : undefined;
+    const parsedLocationId = parseStockLocationId(locationId);
 
-    if (parsedLocationId !== undefined && Number.isFinite(parsedLocationId)) {
+    if (isTenantStockRequester(req?.user)) {
+      assertTenantLocationIdRequired(req?.user, parsedLocationId);
+      await this.service.assertLocationInCompany(
+        parsedLocationId!,
+        getJwtCompanyId(req?.user),
+      );
+      return await this.service.findProductsByLocation(parsedLocationId!);
+    }
+
+    if (parsedLocationId !== undefined) {
       if (!isGlobalStockAdmin(req?.user)) {
         await this.service.assertLocationInCompany(
           parsedLocationId,
@@ -110,9 +119,15 @@ export class StockHttpController {
   }
   @Get("products/:id") @Permissions("products.read") async getProduct(
     @Param("id") id: string,
+    @Query("location_id") locationId?: string,
     @Request() req?: any,
   ) {
-    return await this.service.findProduct(Number(id), req?.user);
+    const parsedLocationId = parseStockLocationId(locationId);
+    return await this.service.findProduct(
+      Number(id),
+      req?.user,
+      parsedLocationId,
+    );
   }
   @Patch("products/:id") @Permissions("stock.update") async updateProduct(
     @Param("id") id: string,
@@ -193,6 +208,7 @@ export class StockHttpController {
     @Query("stock_filter") stockFilter?: string,
     @Query("sort_by") sortBy?: string,
     @Query("sort_direction") sortDirection?: string,
+    @Request() req?: any,
   ) {
     const parsedStockFilter =
       stockFilter === "with_stock" || stockFilter === "without_stock"
@@ -200,12 +216,13 @@ export class StockHttpController {
         : "all";
     const parsedSortDirection =
       sortDirection === "desc" ? "desc" : "asc";
+    const parsedLocationId = parseStockLocationId(locationId);
 
     return await this.service.findAllStocksPaginated(
       page ? Number(page) : 1,
       limit ? Number(limit) : 9,
       {
-        locationId: locationId ? Number(locationId) : undefined,
+        locationId: parsedLocationId,
         productId:
           productId != null && productId !== ""
             ? Number(productId)
@@ -216,12 +233,21 @@ export class StockHttpController {
         sortBy,
         sortDirection: parsedSortDirection,
       },
+      req?.user,
     );
   }
   @Get("items/location/:locationId/product-ids") @Permissions("stock.read") async getProductIdsAtLocation(
     @Param("locationId") locationId: string,
+    @Request() req?: any,
   ) {
-    return await this.service.getProductIdsAtLocation(Number(locationId));
+    const parsed = Number(locationId);
+    if (!isGlobalStockAdmin(req?.user)) {
+      await this.service.assertLocationInCompany(
+        parsed,
+        getJwtCompanyId(req?.user),
+      );
+    }
+    return await this.service.getProductIdsAtLocation(parsed);
   }
 
   @Get("items/location/:locationId/quantities")
@@ -229,13 +255,21 @@ export class StockHttpController {
   async getQuantitiesAtLocation(
     @Param("locationId") locationId: string,
     @Query("product_ids") productIdsRaw?: string,
+    @Request() req?: any,
   ) {
+    const parsed = Number(locationId);
+    if (!isGlobalStockAdmin(req?.user) && !req?.bypassAuth) {
+      await this.service.assertLocationInCompany(
+        parsed,
+        getJwtCompanyId(req?.user),
+      );
+    }
     const productIds = (productIdsRaw ?? "")
       .split(",")
       .map((id) => Number(id.trim()))
       .filter((id) => Number.isFinite(id) && id > 0);
     return await this.service.getQuantitiesForProductsAtLocation(
-      Number(locationId),
+      parsed,
       productIds,
     );
   }
@@ -271,7 +305,9 @@ export class StockHttpController {
     @Query("location_id") locationId?: string,
     @Query("stock_id") stockId?: string,
     @Query("type") type?: string,
+    @Request() req?: any,
   ) {
+    const parsedLocationId = parseStockLocationId(locationId);
     const filters: {
       product_id?: number;
       location_id?: number;
@@ -279,13 +315,14 @@ export class StockHttpController {
       type?: TransactionType;
     } = {};
     if (productId) filters.product_id = Number(productId);
-    if (locationId) filters.location_id = Number(locationId);
+    if (parsedLocationId != null) filters.location_id = parsedLocationId;
     if (stockId) filters.stock_id = Number(stockId);
     if (type === "entry" || type === "exit") {
       filters.type = type as TransactionType;
     }
     return await this.service.findAllTransactions(
       Object.keys(filters).length > 0 ? filters : undefined,
+      req?.user,
     );
   }
 
@@ -293,13 +330,22 @@ export class StockHttpController {
   @Post("check-availability")
   @Permissions("stock.read")
   async checkAvailability(
-    @Body() dto: { products: Array<{ product_id: number; quantity: number }> },
+    @Body()
+    dto: {
+      products: Array<{ product_id: number; quantity: number; location_id?: number }>;
+      location_id?: number;
+    },
+    @Request() req?: any,
   ) {
     this.logger.log(`📡 [StockHttpController] Checking availability for ${dto.products?.length || 0} products`,);
-    return await this.service.checkStockAvailability(dto.products || []);
+    return await this.service.checkStockAvailability(
+      dto.products || [],
+      req?.user,
+      dto.location_id != null ? Number(dto.location_id) : undefined,
+    );
   }
 
-  // Consume product (FIFO by expiration)
+  // Consume product (FEFO by expiration)
   @Post("consume")
   @Permissions("stock.update")
   async consume(
@@ -312,11 +358,9 @@ export class StockHttpController {
       location_id?: number;
       recipe_preparation_id?: number;
     },
+    @Request() req?: any,
   ) {
-    const locationId =
-      dto.location_id != null && Number.isFinite(Number(dto.location_id))
-        ? Number(dto.location_id)
-        : undefined;
+    const locationId = parseStockLocationId(dto.location_id);
         this.logger.log(`📡 [StockHttpController] Received consume request: product_id=${dto.product_id}, quantity=${dto.quantity}, location_id=${locationId ?? 'null'}, target=${dto.target ?? 'null'}`,);
     const result = await this.service.consumeProduct(
       Number(dto.product_id),
@@ -325,6 +369,7 @@ export class StockHttpController {
       dto.employee_id,
       locationId,
       dto.recipe_preparation_id,
+      req?.user,
     );
     this.logger.log(`📡 [StockHttpController] Completed consume request for product ${dto.product_id}`,);
     return result;
@@ -344,6 +389,7 @@ export class StockHttpController {
       location_id?: number;
       recipe_preparation_id?: number;
     },
+    @Request() req?: any,
   ) {
     this.logger.log(`📡 [StockHttpController] Received employee consume request:`,
       dto,);
@@ -352,8 +398,9 @@ export class StockHttpController {
       Number(dto.quantity),
       dto.target || "employee-consumption",
       dto.employee_id,
-      dto.location_id,
+      parseStockLocationId(dto.location_id),
       dto.recipe_preparation_id,
+      req?.user,
     );
     this.logger.log(`📡 [StockHttpController] Completed employee consume request for product ${dto.product_id}`,);
     return result;
@@ -582,23 +629,26 @@ export class StockHttpController {
     @Query("employee_id") employeeId?: string,
     @Query("start_date") startDate?: string,
     @Query("end_date") endDate?: string,
+    @Request() req?: any,
   ) {
+    const parsedLocationId = parseStockLocationId(locationId);
     const filters = {
       ...(productId && { product_id: Number(productId) }),
-      ...(locationId && { location_id: Number(locationId) }),
+      ...(parsedLocationId != null && { location_id: parsedLocationId }),
       ...(employeeId && { employee_id: Number(employeeId) }),
       ...(startDate && { start_date: startDate }),
       ...(endDate && { end_date: endDate }),
     };
     return await this.service.findAllConsumptionRecords(
       Object.keys(filters).length > 0 ? filters : undefined,
+      req?.user,
     );
   }
 
   @Get("consumption-records/:id")
   @Permissions("stock.read")
-  async getConsumptionRecord(@Param("id") id: string) {
-    return await this.service.findConsumptionRecord(Number(id));
+  async getConsumptionRecord(@Param("id") id: string, @Request() req?: any) {
+    return await this.service.findConsumptionRecord(Number(id), req?.user);
   }
 
   @Patch("consumption-records/:id")
@@ -606,14 +656,15 @@ export class StockHttpController {
   async updateConsumptionRecord(
     @Param("id") id: string,
     @Body() dto: UpdateConsumptionRecordDto,
+    @Request() req?: any,
   ) {
-    return await this.service.updateConsumptionRecord(Number(id), dto);
+    return await this.service.updateConsumptionRecord(Number(id), dto, req?.user);
   }
 
   @Delete("consumption-records/:id")
   @Permissions("stock.delete")
-  async deleteConsumptionRecord(@Param("id") id: string) {
-    return await this.service.deleteConsumptionRecord(Number(id));
+  async deleteConsumptionRecord(@Param("id") id: string, @Request() req?: any) {
+    return await this.service.deleteConsumptionRecord(Number(id), req?.user);
   }
 
   @Get("consumption-records/stats")
@@ -624,16 +675,19 @@ export class StockHttpController {
     @Query("employee_id") employeeId?: string,
     @Query("start_date") startDate?: string,
     @Query("end_date") endDate?: string,
+    @Request() req?: any,
   ) {
+    const parsedLocationId = parseStockLocationId(locationId);
     const filters = {
       ...(productId && { product_id: Number(productId) }),
-      ...(locationId && { location_id: Number(locationId) }),
+      ...(parsedLocationId != null && { location_id: parsedLocationId }),
       ...(employeeId && { employee_id: Number(employeeId) }),
       ...(startDate && { start_date: startDate }),
       ...(endDate && { end_date: endDate }),
     };
     return await this.service.getConsumptionStats(
       Object.keys(filters).length > 0 ? filters : undefined,
+      req?.user,
     );
   }
 

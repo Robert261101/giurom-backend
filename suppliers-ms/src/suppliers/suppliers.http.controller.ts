@@ -1,4 +1,4 @@
-﻿import {
+import {
   Controller,
   Get,
   Post,
@@ -18,6 +18,7 @@
   Logger,
   UsePipes,
   ValidationPipe,
+  HttpCode,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -58,9 +59,11 @@ import { UpsertSupplierProductClientConfigDto } from "./dto/upsert-supplier-prod
 import { UpsertSupplierProductClientPriceDto } from "./dto/upsert-supplier-product-client-price.dto";
 import { SetClientProductVisibilityDto } from "./dto/set-client-product-visibility.dto";
 import { SetSupplierProductClientActivationDto } from "./dto/set-supplier-product-client-activation.dto";
+import { ConnectSupplierDto } from "./dto/connect-supplier.dto";
 import {
   buildSupplierProductUserContext,
   buildSupplierAccessRequester,
+  isTenantScopedSupplierRequester,
 } from "./supplier-product-access";
 import { resolveOrderActorUserId } from "./order-access";
 import { buildOrdersPaginatedResponse } from "./suppliers-pagination.util";
@@ -188,7 +191,10 @@ export class SuppliersHttpController {
     }
 
     try {
-      const result = await this.service.findAll(locationId);
+      const result = await this.service.findAll(
+        locationId,
+        buildSupplierAccessRequester(req?.user),
+      );
       this.logger.log(`[SUPPLIERS HTTP] GET /suppliers result count=${result?.length}`);
       return result;
     } catch (error) {
@@ -201,18 +207,28 @@ export class SuppliersHttpController {
   @Permissions("order.read")
   @ApiOperation({
     summary:
-      "Catalog global furnizori activi pentru dropdown comenzi (fără filtru supplier_locations)",
+      "Furnizori activi pentru dropdown comenzi (tenant-scoped ca /catalog)",
+    description:
+      "Platform-wide: toți activi. Client: Manual pe locațiile companiei + Cont via client_supplier_links. Excluie inactivii și quota_status blocked/removed.",
   })
-  getSuppliersForOrders(@Query("location_id") location_id?: string) {
+  getSuppliersForOrders(
+    @Query("location_id") location_id?: string,
+    @Request() req?: any,
+  ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.service.findForOrders(locationId);
+    return this.service.findForOrders(
+      locationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Get("catalog")
   @PermissionsAny("suppliers.read", "suppliers.create")
   @ApiOperation({
     summary:
-      "Catalog global al furnizorilor din platformă (fără filtru pe supplier_locations)",
+      "Catalog furnizori pentru pagina /furnizori (fără duplicate pe supplier_locations)",
+    description:
+      "Platform-wide: toți furnizorii. Client: Manual pe locațiile companiei; Cont doar via client_supplier_links. Furnizor tenant: propriul supplier (owner_company_id).",
   })
   @ApiQuery({ name: "search", required: false, description: "Căutare după nume sau CUI" })
   @ApiQuery({
@@ -223,6 +239,7 @@ export class SuppliersHttpController {
   getSuppliersCatalog(
     @Query("search") search?: string,
     @Query("is_active") is_active?: string,
+    @Request() req?: any,
   ) {
     let isActive: boolean | undefined;
     if (is_active === "true" || is_active === "1") {
@@ -230,10 +247,13 @@ export class SuppliersHttpController {
     } else if (is_active === "false" || is_active === "0") {
       isActive = false;
     }
-    return this.service.findCatalog({
-      search: search?.trim() || undefined,
-      is_active: isActive,
-    });
+    return this.service.findCatalog(
+      {
+        search: search?.trim() || undefined,
+        is_active: isActive,
+      },
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Get("internal/employees/:employeeId/supplier-ids")
@@ -250,6 +270,23 @@ export class SuppliersHttpController {
     }
     const supplier_ids = await this.service.getEmployeeSupplierIds(employeeId);
     return { employee_id: employeeId, supplier_ids };
+  }
+
+  @Post("internal/companies/:companyId/locations/:locationId/attach-suppliers")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      'Internal: după create location — atașează toți supplierii company-wide (Manual + Cont linked) la locația nouă',
+  })
+  async attachCompanySuppliersToLocationInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Param("locationId", ParseIntPipe) locationId: number,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    return this.service.attachCompanySuppliersToLocation(companyId, locationId);
   }
 
   @Get("my-supplier")
@@ -327,6 +364,234 @@ export class SuppliersHttpController {
       user?.company_id,
       user?.company_type,
       { search, status },
+    );
+  }
+
+  @Get("my-supplier/connection-code")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Codul unic de asociere al furnizorului operațional (owner_company_id = JWT company)",
+  })
+  @ApiResponse({ status: 200, description: "Cod returnat" })
+  @ApiResponse({ status: 403, description: "Nu este cont furnizor" })
+  getMySupplierConnectionCode(
+    @Request() req?: {
+      user?: {
+        userId?: number | null;
+        company_id?: number | null;
+        company_type?: string | null;
+        roles?: string[];
+        work_location_id?: number | null;
+      };
+    },
+  ) {
+    const user = req?.user;
+    return this.service.getMySupplierConnectionCode(
+      user?.company_id,
+      user?.company_type,
+      user?.roles,
+      {
+        workLocationId: user?.work_location_id,
+        employeeId: user?.userId,
+      },
+    );
+  }
+
+  @Post("my-supplier/connection-code/regenerate")
+  @PermissionsAny("order.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Regenerează codul de asociere (codul vechi devine invalid; link-urile existente rămân)",
+  })
+  regenerateMySupplierConnectionCode(
+    @Request() req?: {
+      user?: {
+        userId?: number | null;
+        company_id?: number | null;
+        company_type?: string | null;
+        roles?: string[];
+        work_location_id?: number | null;
+      };
+    },
+  ) {
+    const user = req?.user;
+    return this.service.regenerateMySupplierConnectionCode(
+      user?.company_id,
+      user?.company_type,
+      user?.roles,
+      {
+        workLocationId: user?.work_location_id,
+        employeeId: user?.userId,
+      },
+    );
+  }
+
+  @Get("me/subscription-usage")
+  @PermissionsAny("suppliers.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Plan + usage furnizori (Cont / Manual) pentru tenant-ul client din JWT",
+  })
+  getMySubscriptionUsage(@Request() req?: any) {
+    return this.service.getMySupplierSubscriptionUsage(
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Get("me/subscription/downgrade-preview")
+  @PermissionsAny("companies.read_own", "companies.read", "suppliers.read")
+  @ApiOperation({
+    summary:
+      "Previzualizare downgrade: surplus și furnizori eligibili pentru blocare",
+  })
+  getDowngradePreview(
+    @Query("plan_code") planCode: string,
+    @Query("account_limit") accountLimit: string,
+    @Query("manual_limit") manualLimit: string,
+    @Request() req?: any,
+  ) {
+    return this.service.getDowngradePreviewForPlan(
+      String(planCode || "").toLowerCase().trim(),
+      Number(accountLimit),
+      Number(manualLimit),
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Post(":id/quota/unblock")
+  @PermissionsAny("suppliers.update", "suppliers.create")
+  @HttpCode(200)
+  @ApiOperation({
+    summary: "Deblochează un furnizor blocat de abonament (dacă există slot)",
+  })
+  unblockSupplierQuota(@Param("id") id: string, @Request() req?: any) {
+    return this.service.unblockSupplierQuota(
+      Number(id),
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Post(":id/remove-from-account")
+  @Permissions("suppliers.delete")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Elimină furnizorul din contul clientului fără hard-delete (păstrează istoricul)",
+  })
+  removeFromAccount(@Param("id") id: string, @Request() req?: any) {
+    return this.service.removeFromAccount(
+      Number(id),
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Get("internal/companies/:companyId/subscription/downgrade-preview")
+  @ApiOperation({ summary: "Internal: downgrade preview for company-ms" })
+  getDowngradePreviewInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Query("plan_code") planCode: string,
+    @Query("account_limit") accountLimit: string,
+    @Query("manual_limit") manualLimit: string,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    return this.service.getDowngradePreviewForPlan(
+      String(planCode || "").toLowerCase().trim(),
+      Number(accountLimit),
+      Number(manualLimit),
+      { company_id: companyId, company_type: "client" },
+    );
+  }
+
+  @Post("internal/companies/:companyId/subscription/apply-downgrade-blocks")
+  @HttpCode(200)
+  @ApiOperation({ summary: "Internal: apply downgrade blocks before plan change" })
+  async applyDowngradeBlocksInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body()
+    body: {
+      account_limit?: number;
+      manual_limit?: number;
+      block_account_supplier_ids?: number[];
+      block_manual_supplier_ids?: number[];
+    },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    const locationIds = await this.service.fetchCompanyLocationIdsForInternal(
+      companyId,
+    );
+    const rollbackItems = await this.service.applyDowngradeBlocksInternal(
+      companyId,
+      locationIds,
+      Number(body?.account_limit),
+      Number(body?.manual_limit),
+      body?.block_account_supplier_ids || [],
+      body?.block_manual_supplier_ids || [],
+    );
+    return { rollback_items: rollbackItems };
+  }
+
+  @Post("internal/companies/:companyId/subscription/rollback-downgrade-blocks")
+  @HttpCode(200)
+  @ApiOperation({ summary: "Internal: rollback downgrade blocks on plan activation failure" })
+  rollbackDowngradeBlocksInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body() body: { rollback_items?: unknown[] },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    return this.service.rollbackDowngradeBlocksInternal(
+      companyId,
+      (body?.rollback_items || []) as any,
+    );
+  }
+
+  @Post("connect")
+  @PermissionsAny("suppliers.read", "suppliers.create")
+  @HttpCode(201)
+  @ApiOperation({
+    summary:
+      "Asociază un furnizor cu cont la firma client folosind codul unic (company_id doar din JWT)",
+  })
+  @ApiResponse({ status: 201, description: "Asociere creată" })
+  @ApiResponse({ status: 404, description: "Cod invalid" })
+  @ApiResponse({ status: 409, description: "Deja asociat" })
+  connectSupplier(
+    @Body() dto: ConnectSupplierDto,
+    @Request() req?: any,
+  ) {
+    return this.service.connectSupplierByCode(
+      dto?.code,
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Patch(":id/client-association")
+  @Permissions("suppliers.update")
+  @ApiOperation({
+    summary:
+      "Client: Activează/dezactivează asocierea Cont (client_supplier_links.is_active). Nu modifică suppliers.is_active.",
+  })
+  updateClientAssociation(
+    @Param("id") id: string,
+    @Body() body: { is_active?: boolean },
+    @Request() req?: any,
+  ) {
+    if (typeof body?.is_active !== "boolean") {
+      throw new BadRequestException("is_active (boolean) este obligatoriu");
+    }
+    return this.service.updateMyClientSupplierAssociation(
+      Number(id),
+      body.is_active,
+      buildSupplierAccessRequester(req?.user),
     );
   }
 
@@ -650,7 +915,12 @@ export class SuppliersHttpController {
 
   @Post()
   @Permissions("suppliers.create")
-  @ApiQuery({ name: "location_id", required: false, description: "Locația selectată în UI (colț dreapta sus)" })
+  @ApiQuery({
+    name: "location_id",
+    required: false,
+    description:
+      "Locație UI opțională (context ops/foldere). Ownership Manual = toate locațiile companiei din JWT.",
+  })
   create(
     @Body() dto: CreateSupplierDto,
     @Request() req?: any,
@@ -659,23 +929,40 @@ export class SuppliersHttpController {
   ) {
     const selectedId = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const user = req?.user;
+    const requester = buildSupplierAccessRequester(user);
     const location_id_resolved =
       selectedId ?? user?.work_location_id ?? user?.work_location_default_id;
 
-    if (!location_id_resolved) {
+    // Tenant client: company-wide seed — location optional (UI only).
+    // Platform/internal: keep requiring a location for legacy assign.
+    if (
+      !isTenantScopedSupplierRequester(requester) &&
+      !location_id_resolved
+    ) {
       throw new BadRequestException(
         "Nu se poate crea un furnizor fără o locație asignată. Vă rugăm să selectați o locație.",
       );
     }
 
-    return this.service.create(dto, location_id_resolved);
+    return this.service.create(
+      dto,
+      location_id_resolved != null ? Number(location_id_resolved) : undefined,
+      requester,
+    );
   }
 
   @Post("with-documents")
   @Permissions("suppliers.create")
-  createWithDocs(@Body() dto: CreateSupplierWithDocumentsDto) {
+  createWithDocs(
+    @Body() dto: CreateSupplierWithDocumentsDto,
+    @Request() req?: any,
+  ) {
     const location_id = (dto as any).location_id != null ? Number((dto as any).location_id) : undefined;
-    return this.service.createWithDocuments(dto, location_id);
+    return this.service.createWithDocuments(
+      dto,
+      location_id,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   // === SUPPLIER LOCATIONS ENDPOINTS (trebuie să fie înainte de :id pentru a evita conflictele de rute) ===
@@ -697,6 +984,8 @@ export class SuppliersHttpController {
         company_type?: string | null;
         isAdmin?: boolean;
         isSuperAdmin?: boolean;
+        permissions?: string[];
+        roles?: string[];
       };
     },
   ) {
@@ -708,6 +997,8 @@ export class SuppliersHttpController {
         company_type: req?.user?.company_type,
         isAdmin: req?.user?.isAdmin,
         isSuperAdmin: req?.user?.isSuperAdmin,
+        permissions: req?.user?.permissions,
+        roles: req?.user?.roles,
       },
     );
   }
@@ -794,15 +1085,31 @@ export class SuppliersHttpController {
   @PermissionsAny("suppliers.read", "suppliers.create", "order.read")
   @ApiOperation({
     summary:
-      "Asocieri produs furnizor → nomenclator client pentru compania autentificată",
+      "Asocieri produs furnizor → nomenclator client per locație (compania autentificată)",
   })
   getClientProductMappings(
     @Param("supplierId") supplierId: string,
-    @Request() req?: { user?: { company_id?: number | null; company_type?: string | null; permissions?: string[] } },
+    @Query("location_id") locationIdQuery?: string,
+    @Headers("x-work-location-id") xWorkLocationId?: string,
+    @Request() req?: {
+      user?: {
+        company_id?: number | null;
+        company_type?: string | null;
+        permissions?: string[];
+        work_location_id?: number;
+        work_location_default_id?: number;
+      };
+    },
   ) {
+    const selectedWorkLocationId =
+      parseSelectedWorkLocationId(locationIdQuery) ??
+      parseSelectedWorkLocationId(xWorkLocationId) ??
+      req?.user?.work_location_id ??
+      req?.user?.work_location_default_id;
     return this.service.getClientProductMappingsForSupplier(
       Number(supplierId),
       buildSupplierProductUserContext(req?.user),
+      selectedWorkLocationId,
     );
   }
 
@@ -922,22 +1229,22 @@ export class SuppliersHttpController {
 
   @Get(":supplierId/drivers")
   @Permissions("order.read")
-  getDrivers(@Param("supplierId") supplierId: string) {
+  getDrivers(@Param("supplierId") supplierId: string, @Request() req?: any) {
     const id = Number(supplierId);
     if (!Number.isFinite(id) || id <= 0) {
       throw new BadRequestException("Invalid supplier id");
     }
-    return this.service.getSupplierDrivers(id);
+    return this.service.getSupplierDrivers(id, req?.user);
   }
 
   @Get(":supplierId/warehouse")
   @Permissions("order.read")
-  getWarehouseEmployees(@Param("supplierId") supplierId: string) {
+  getWarehouseEmployees(@Param("supplierId") supplierId: string, @Request() req?: any) {
     const id = Number(supplierId);
     if (!Number.isFinite(id) || id <= 0) {
       throw new BadRequestException("Invalid supplier id");
     }
-    return this.service.getSupplierWarehouseEmployees(id);
+    return this.service.getSupplierWarehouseEmployees(id, req?.user);
   }
 
   @Patch("order-items/:itemId/toggle-availability")
@@ -1149,9 +1456,18 @@ export class SuppliersHttpController {
   getOrders(
     @Param("supplierId") supplierId: string,
     @Query("location_id") location_id?: string,
+    @Query("company_id") company_id?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.service.getSupplierOrders(Number(supplierId), locationId);
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
+    return this.service.getSupplierOrders(
+      Number(supplierId),
+      locationId,
+      requester,
+      requestedCompanyId,
+    );
   }
 
   /**
@@ -1165,6 +1481,8 @@ export class SuppliersHttpController {
     @Query("date_from") dateFrom?: string,
     @Query("date_to") dateTo?: string,
     @Query("location_id") location_id?: string,
+    @Query("company_id") company_id?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     if (!supplierIdsRaw) {
       return [];
@@ -1180,11 +1498,15 @@ export class SuppliersHttpController {
     }
 
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
 
     return this.service.getSupplierOrdersBatch(supplierIds, {
       dateFrom,
       dateTo,
       locationId,
+      requester,
+      requestedCompanyId,
     });
   }
 
@@ -1200,8 +1522,10 @@ export class SuppliersHttpController {
     @Query("date_from") dateFrom?: string,
     @Query("date_to") dateTo?: string,
     @Query("location_id") location_id?: string,
+    @Query("company_id") company_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     if (!supplierIdsRaw) {
       return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
@@ -1214,9 +1538,11 @@ export class SuppliersHttpController {
       return { data: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1, hasNextPage: false, hasPreviousPage: false } };
     }
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
     return this.service.getSupplierOrdersBatchPaginated(
       supplierIds,
-      { dateFrom, dateTo, locationId },
+      { dateFrom, dateTo, locationId, requester, requestedCompanyId },
       pageRaw,
       limitRaw,
     );
@@ -1236,8 +1562,10 @@ export class SuppliersHttpController {
   getCancelledOrdersPaginated(
     @Query("supplier_ids") supplierIdsRaw: string,
     @Query("location_id") locationIdRaw: string,
+    @Query("company_id") company_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     if (!supplierIdsRaw || !locationIdRaw) {
       return buildOrdersPaginatedResponse([], 1, 10, 0);
@@ -1249,7 +1577,16 @@ export class SuppliersHttpController {
     const locationId = parseInt(locationIdRaw, 10);
     const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
-    return this.service.getCancelledOrdersPaginated(supplierIds, locationId, page, limit);
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
+    return this.service.getCancelledOrdersPaginated(
+      supplierIds,
+      locationId,
+      page,
+      limit,
+      requester,
+      requestedCompanyId,
+    );
   }
 
   /**
@@ -1266,8 +1603,10 @@ export class SuppliersHttpController {
   getActiveOrdersPaginated(
     @Query("supplier_ids") supplierIdsRaw: string,
     @Query("location_id") locationIdRaw: string,
+    @Query("company_id") company_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     if (!supplierIdsRaw || !locationIdRaw) {
       return buildOrdersPaginatedResponse([], 1, 10, 0);
@@ -1279,7 +1618,16 @@ export class SuppliersHttpController {
     const locationId = parseInt(locationIdRaw, 10);
     const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
-    return this.service.getActiveOrdersPaginated(supplierIds, locationId, page, limit);
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
+    return this.service.getActiveOrdersPaginated(
+      supplierIds,
+      locationId,
+      page,
+      limit,
+      requester,
+      requestedCompanyId,
+    );
   }
 
   /**
@@ -1296,8 +1644,10 @@ export class SuppliersHttpController {
   getReceivedOrdersPaginated(
     @Query("supplier_ids") supplierIdsRaw: string,
     @Query("location_id") locationIdRaw: string,
+    @Query("company_id") company_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     if (!supplierIdsRaw || !locationIdRaw) {
       return buildOrdersPaginatedResponse([], 1, 10, 0);
@@ -1309,7 +1659,16 @@ export class SuppliersHttpController {
     const locationId = parseInt(locationIdRaw, 10);
     const page = Math.max(1, parseInt(pageRaw || "1", 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(limitRaw || "10", 10) || 10));
-    return this.service.getReceivedOrdersPaginated(supplierIds, locationId, page, limit);
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
+    return this.service.getReceivedOrdersPaginated(
+      supplierIds,
+      locationId,
+      page,
+      limit,
+      requester,
+      requestedCompanyId,
+    );
   }
 
   @Post("orders")
@@ -1436,8 +1795,13 @@ export class SuppliersHttpController {
   getDriverUsedPriorities(
     @Param("driverId") driverId: string,
     @Query("delivery_date") delivery_date: string,
+    @Request() req: any,
   ) {
-    return this.service.getDriverUsedPriorities(Number(driverId), delivery_date);
+    return this.service.getDriverUsedPriorities(
+      Number(driverId),
+      delivery_date,
+      req?.user,
+    );
   }
 
   @Get("drivers/:driverId/orders/paginated")
@@ -1448,6 +1812,7 @@ export class SuppliersHttpController {
     @Query("location_id") location_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: any,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     return this.service.getDriverAssignmentsPaginated(
@@ -1455,6 +1820,7 @@ export class SuppliersHttpController {
       locationId,
       pageRaw,
       limitRaw,
+      req?.user,
     );
   }
 
@@ -1464,9 +1830,14 @@ export class SuppliersHttpController {
   getDriverAssignments(
     @Param("driverId") driverId: string,
     @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.service.getDriverAssignments(Number(driverId), locationId);
+    return this.service.getDriverAssignments(
+      Number(driverId),
+      locationId,
+      req?.user,
+    );
   }
 
   @Patch("driver-assignments/:assignmentId/complete")
@@ -1500,6 +1871,7 @@ export class SuppliersHttpController {
     @Query("location_id") location_id?: string,
     @Query("page") pageRaw?: string,
     @Query("limit") limitRaw?: string,
+    @Request() req?: any,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     return this.service.getStorekeeperAssignmentsPaginated(
@@ -1507,6 +1879,7 @@ export class SuppliersHttpController {
       locationId,
       pageRaw,
       limitRaw,
+      req?.user,
     );
   }
 
@@ -1516,9 +1889,14 @@ export class SuppliersHttpController {
   getStorekeeperOrders(
     @Param("employeeId") employeeId: string,
     @Query("location_id") location_id?: string,
+    @Request() req?: any,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
-    return this.service.getStorekeeperAssignments(Number(employeeId), locationId);
+    return this.service.getStorekeeperAssignments(
+      Number(employeeId),
+      locationId,
+      req?.user,
+    );
   }
 
   @Patch("orders/:orderId/status")
@@ -1580,8 +1958,12 @@ export class SuppliersHttpController {
     @Query("start_date") startDate: string,
     @Query("end_date") endDate: string,
     @Query("location_id") locationId?: string,
+    @Query("company_id") company_id?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     const locId = locationId ? parseInt(locationId, 10) : undefined;
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
     const range = this.resolveReceptionDateRange(
       startDate,
       endDate,
@@ -1591,6 +1973,8 @@ export class SuppliersHttpController {
       range.startDate,
       range.endDate,
       locId,
+      requester,
+      requestedCompanyId,
     );
   }
 
@@ -1607,6 +1991,8 @@ export class SuppliersHttpController {
     @Query("order_item_id") orderItemId?: string,
     @Query("product_id") productId?: string,
     @Query("user_id") userId?: string,
+    @Query("company_id") company_id?: string,
+    @Request() req?: { user?: Record<string, unknown> },
   ) {
     const hasOtherFilter =
       !!orderId || !!orderItemId || !!productId || !!userId;
@@ -1615,6 +2001,8 @@ export class SuppliersHttpController {
       endDate,
       hasOtherFilter,
     );
+    const requestedCompanyId = company_id ? parseInt(company_id, 10) : undefined;
+    const requester = buildSupplierAccessRequester(req?.user);
     return this.service.getReceptionEvents(
       range.startDate,
       range.endDate,
@@ -1622,6 +2010,8 @@ export class SuppliersHttpController {
       orderItemId ? Number(orderItemId) : undefined,
       productId ? Number(productId) : undefined,
       userId ? Number(userId) : undefined,
+      requester,
+      requestedCompanyId,
     );
   }
 
@@ -1727,10 +2117,12 @@ export class SuppliersHttpController {
   }
   @Get(":supplierId/orders/:orderId/email-link")
   @Permissions("order.read")
-  emailLink(
+  async emailLink(
     @Param("supplierId") supplierId: string,
     @Param("orderId") orderId: string,
+    @Request() req: any,
   ) {
+    await this.service.findOrderForRequester(Number(orderId), req?.user);
     return {
       emailLink: this.service.generateEmailLink(
         Number(supplierId),
@@ -1741,10 +2133,12 @@ export class SuppliersHttpController {
 
   @Get(":supplierId/orders/:orderId/whatsapp-link")
   @Permissions("order.read")
-  whatsappLink(
+  async whatsappLink(
     @Param("supplierId") supplierId: string,
     @Param("orderId") orderId: string,
+    @Request() req: any,
   ) {
+    await this.service.findOrderForRequester(Number(orderId), req?.user);
     return {
       whatsappLink: this.service.generateWhatsAppLink(
         Number(supplierId),

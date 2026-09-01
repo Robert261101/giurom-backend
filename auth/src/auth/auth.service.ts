@@ -12,6 +12,8 @@ import { SecurityAlertsService, SecurityEventType } from '../common/security/sec
 import { AnomalyDetectionService } from '../common/security/anomaly-detection.service';
 import { TwoFactorAuthService } from '../2fa-auth/2fa-auth.service';
 import { RegisterSupplierDto } from './dto/register-supplier.dto';
+import { RegisterClientDto } from './dto/register-client.dto';
+import { CLIENT_ADMIN_ROLE_NAME } from '../users/client-role-assignment.util';
 import {
   AnafCompanySnapshot,
   AnafLookupResult,
@@ -828,6 +830,289 @@ export class AuthService {
       }
       if (supplierId != null) {
         await this.deleteSupplierInternal(supplierId);
+      }
+      if (locationId != null) {
+        await this.deleteLocationInternal(locationId);
+      }
+      if (companyId != null) {
+        await this.deleteCompanyInternal(companyId);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Lookup public firmă după CUI pentru înregistrare client (aceeași integrare ANAF).
+   */
+  async lookupRegisterClientCompany(rawCui: string): Promise<AnafLookupResult> {
+    return this.anafLookupService.lookupCompany(rawCui);
+  }
+
+  /**
+   * Self-registration client:
+   * company(client) → location → employee → user → client-admin
+   * (fără suppliers-ms). Rollback compensatoriu la eșec.
+   */
+  async registerClient(
+    dto: RegisterClientDto,
+  ): Promise<{ message: string; employee_id: number; company_id: number }> {
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Parolele nu coincid');
+    }
+
+    const cuiDigits = normalizeCuiDigits(dto.company?.cui);
+    if (!cuiDigits) {
+      throw new BadRequestException('CUI invalid');
+    }
+    const cuiWithPrefix = `RO${cuiDigits}`;
+
+    let anafSnapshot: AnafCompanySnapshot | null = null;
+    let anafVerifiedAt: string | null = null;
+    if (dto.anaf_token) {
+      const verified = await this.anafLookupService.verifyAnafToken(
+        dto.anaf_token,
+        cuiDigits,
+      );
+      if (verified) {
+        anafSnapshot = verified.snapshot;
+        anafVerifiedAt = verified.verified_at;
+      } else {
+        this.logger.warn(
+          `Token ANAF invalid/expirat la înregistrare client (CUI ${cuiDigits}); compania va fi creată cu data_source=manual`,
+        );
+      }
+    }
+    const dataSource: 'anaf' | 'manual' = anafSnapshot ? 'anaf' : 'manual';
+
+    await this.assertCuiNotRegistered(cuiWithPrefix);
+
+    const clientAdminRole = await this.usersService.findRoleByName(
+      CLIENT_ADMIN_ROLE_NAME,
+    );
+    if (!clientAdminRole) {
+      throw new InternalServerErrorException(
+        'Rolul client-admin lipsește din sistem. Contactați administratorul.',
+      );
+    }
+
+    const loc = dto.location;
+    const streetAddress = [
+      loc.street.trim(),
+      `nr. ${loc.number.trim()}`,
+      loc.details?.trim() || null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const locationName =
+      loc.location_name?.trim() ||
+      formatDefaultLocationName(loc.city?.trim());
+    const country = loc.country?.trim() || 'Romania';
+
+    let companyId: number | null = null;
+    let locationId: number | null = null;
+    let employeeId: number | null = null;
+    let userId: number | null = null;
+
+    try {
+      const companyPayload = {
+        company_name: dto.company.company_name.trim(),
+        cui: cuiWithPrefix,
+        trade_register_number: dto.company.trade_register_number.trim(),
+        address: streetAddress,
+        city: loc.city.trim(),
+        county: loc.county.trim(),
+        postal_code: loc.postal_code || undefined,
+        country,
+        phone_number: dto.company.phone_number || undefined,
+        email: dto.company.email || undefined,
+        incorporation_date:
+          dto.company.incorporation_date ||
+          anafSnapshot?.incorporationDate ||
+          new Date().toISOString().slice(0, 10),
+        legal_form: dto.company.legal_form || 'SRL',
+        activity_code:
+          dto.company.activity_code || anafSnapshot?.caenCode || '0000',
+        vat_payer: anafSnapshot?.vatRegistered ?? false,
+        company_type: 'client' as const,
+        data_source: dataSource,
+        anaf_verified_at: anafVerifiedAt,
+        anaf_original_data: anafSnapshot,
+      };
+
+      let companyResponse;
+      try {
+        companyResponse = await firstValueFrom(
+          this.httpService.post(
+            `${this.companiesUrl()}/companies`,
+            companyPayload,
+            { headers: this.internalServiceHeaders() },
+          ),
+        );
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/există deja/i.test(message)) {
+          throw new ConflictException(
+            'Există deja o companie înregistrată cu acest CUI',
+          );
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea compania',
+        );
+      }
+      const company = this.unwrapPayload<{ id: number }>(companyResponse.data);
+      companyId = Number(company?.id);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        throw new InternalServerErrorException(
+          'Răspuns invalid de la serviciul companii',
+        );
+      }
+
+      const locationPayload = {
+        company_id: companyId,
+        location_name: locationName,
+        address:
+          streetAddress.length >= 10
+            ? streetAddress
+            : `${streetAddress}, ${loc.city.trim()}`,
+        city: loc.city.trim(),
+        county: loc.county.trim(),
+        postal_code: loc.postal_code || undefined,
+        country,
+        phone_number: dto.company.phone_number || undefined,
+        email: dto.company.email || undefined,
+        notes: 'Sediu principal (creat automat la înregistrarea clientului)',
+      };
+
+      let locationResponse;
+      try {
+        locationResponse = await firstValueFrom(
+          this.httpService.post(
+            `${this.locationsUrl()}/locations`,
+            locationPayload,
+            { headers: this.internalServiceHeaders() },
+          ),
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          this.extractErrorMessage(error) || 'Nu s-a putut crea locația',
+        );
+      }
+      const location = this.unwrapPayload<{ id: number }>(
+        locationResponse.data,
+      );
+      locationId = Number(location?.id);
+      if (!Number.isFinite(locationId) || locationId <= 0) {
+        throw new InternalServerErrorException(
+          'Răspuns invalid de la serviciul locații',
+        );
+      }
+
+      const emp = dto.employee;
+      const employeePayload = {
+        first_name: emp.first_name.trim(),
+        last_name: emp.last_name.trim(),
+        email: emp.email.trim(),
+        phone: emp.phone.trim(),
+        personal_number: emp.personal_number.trim(),
+        birth_date: emp.birth_date,
+        gender: emp.gender,
+        nationality: emp.nationality.trim(),
+        address: emp.address.trim(),
+        work_location_default_id: locationId,
+        is_active: true,
+      };
+
+      let employeeResponse;
+      try {
+        // Reutilizează endpoint-ul intern de self-registration (relaxat hire_date)
+        employeeResponse = await firstValueFrom(
+          this.httpService.post(
+            `${this.employeesUrl()}/employees/internal/supplier-registration?location_id=${locationId}`,
+            employeePayload,
+            {
+              headers: {
+                ...this.internalServiceHeaders(),
+                'x-work-location-id': String(locationId),
+              },
+            },
+          ),
+        );
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/email există deja|email already/i.test(message)) {
+          throw new ConflictException(
+            'Există deja un angajat cu acest email',
+          );
+        }
+        if (/cnp|personal_number/i.test(message)) {
+          throw new ConflictException('Există deja un angajat cu acest CNP');
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea angajatul',
+        );
+      }
+
+      const employee = this.unwrapPayload<{ id: number }>(
+        employeeResponse.data,
+      );
+      employeeId = Number(employee?.id);
+      if (!Number.isFinite(employeeId) || employeeId <= 0) {
+        throw new InternalServerErrorException(
+          'Răspuns invalid de la serviciul angajați',
+        );
+      }
+
+      let user;
+      try {
+        user = await this.usersService.create({
+          id_employee: employeeId,
+          password: dto.password,
+          is_active: true,
+          is_2fa: false,
+        });
+      } catch (error) {
+        const message = this.extractErrorMessage(error);
+        if (/există deja/i.test(message)) {
+          throw new ConflictException(
+            'Există deja un cont pentru acest angajat',
+          );
+        }
+        throw new BadRequestException(
+          message || 'Nu s-a putut crea contul utilizator',
+        );
+      }
+      userId = user.id;
+
+      // Trusted internal assignment — bypass allowlist client-admin
+      try {
+        await this.usersService.createUserRole({
+          userId: user.id,
+          roleId: clientAdminRole.id,
+        });
+      } catch (error) {
+        throw new InternalServerErrorException(
+          `Nu s-a putut atribui rolul client-admin: ${this.extractErrorMessage(error)}`,
+        );
+      }
+
+      return {
+        message: 'Contul de client a fost creat cu succes',
+        employee_id: employeeId,
+        company_id: companyId,
+      };
+    } catch (error) {
+      // Compensare: user → employee → location → company (fără supplier)
+      if (userId != null && employeeId != null) {
+        try {
+          await this.usersService.remove(employeeId);
+        } catch (rollbackErr) {
+          this.logger.warn(
+            `Rollback user eșuat: ${this.extractErrorMessage(rollbackErr)}`,
+          );
+        }
+      }
+      if (employeeId != null) {
+        await this.deleteEmployeeInternal(employeeId);
       }
       if (locationId != null) {
         await this.deleteLocationInternal(locationId);

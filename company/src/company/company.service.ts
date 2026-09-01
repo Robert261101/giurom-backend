@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
@@ -10,6 +10,8 @@ import { CreateCompanyWithDocumentsDto } from './dto/create-company-with-documen
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { CreateCompanyDocumentDto } from './dto/create-company-document.dto';
 import { UpdateCompanyDocumentDto } from './dto/update-company-document.dto';
+import { shouldBlockCompanyTypeChange } from './company-tenant.util';
+import { SubscriptionService } from './subscription.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -28,6 +30,8 @@ export interface CompanyAccessRequester {
   companyId?: number;
   /** Tipul tenantului din JWT: client | furnizor. Separator obligatoriu pentru dropdown Firma. */
   companyType?: 'client' | 'furnizor';
+  permissions?: string[];
+  roles?: string[];
 }
 
 @Injectable()
@@ -36,6 +40,7 @@ export class CompanyService {
     @InjectRepository(Company) private readonly companyRepository: Repository<Company>,
     @InjectRepository(CompanyDocument) private readonly companyDocumentRepository: Repository<CompanyDocument>,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   /**
@@ -260,6 +265,18 @@ export class CompanyService {
     if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);
     const company = this.companyRepository.create(dto);
     const saved = await this.companyRepository.save(company);
+
+    // Client companies get Free subscription (idempotent). Furnizor: skip.
+    if (saved.company_type === 'client') {
+      try {
+        await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
+      } catch (error: any) {
+        console.error(
+          `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
+          error?.message || error,
+        );
+      }
+    }
     
     // Create the required folder structure for the new company
     await this.createCompanyFolderStructure(saved);
@@ -298,6 +315,17 @@ export class CompanyService {
     const { documents, ...companyData } = dto as any;
     const companyEntity: Company = this.companyRepository.create(companyData as Partial<Company>);
     const saved: Company = await this.companyRepository.save(companyEntity);
+
+    if (saved.company_type === 'client') {
+      try {
+        await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
+      } catch (error: any) {
+        console.error(
+          `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
+          error?.message || error,
+        );
+      }
+    }
     
     // Create the required folder structure for the new company
     await this.createCompanyFolderStructure(saved);
@@ -521,6 +549,25 @@ export class CompanyService {
     console.log(`🔍 [COMPANY SERVICE] Updating company ${id} with data:`, JSON.stringify(dto, null, 2));
 
     const company = await this.findCompanyById(id, requester);
+
+    // Non-platform tenants cannot change structural company_type (client ↔ furnizor).
+    const isPlatformCompanyAdmin =
+      !requester || this.requesterHasGlobalCompanyAccess(requester);
+    if (
+      shouldBlockCompanyTypeChange(
+        isPlatformCompanyAdmin,
+        company.company_type,
+        dto.company_type,
+      )
+    ) {
+      throw new ForbiddenException(
+        'Nu puteți modifica tipul companiei',
+      );
+    }
+    if (!isPlatformCompanyAdmin) {
+      delete (dto as { company_type?: unknown }).company_type;
+    }
+
     if (dto.cui && dto.cui !== company.cui) {
       const existing = await this.companyRepository.findOne({ where: { cui: dto.cui } });
       if (existing) throw new ConflictException(`O companie cu CUI-ul ${dto.cui} există deja`);

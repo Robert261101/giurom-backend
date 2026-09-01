@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -19,6 +19,12 @@ import { WorkLocationDepartments } from "../locations/entity/work-location-depar
 import { WorkLocationDepartmentPositions } from "../locations/entity/work-location-department-positions.entity";
 import { CreateWorkLocationDto } from "./dto/create-work-location.dto";
 import { UpdateWorkLocationDto } from "./dto/update-work-location.dto";
+import {
+  isPlatformWideLocationsUser,
+  resolveCreateLocationCompanyId,
+  resolveJwtCompanyId,
+  resolveListCompanyFilter,
+} from "./locations-tenant.util";
 import { CreateTaskTemplateAssignmentDto } from "./dto/create-task-template-assignment.dto";
 import { UpdateTaskTemplateAssignmentDto } from "./dto/update-task-template-assignment.dto";
 import {
@@ -143,8 +149,16 @@ export class LocationsService {
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
     if (hasLocationReadPermission) {
+      if (isPlatformWideLocationsUser(user)) {
+        return this.workLocationRepository.find({
+          where: { id: In(uniqueIds) },
+          order: { id: "ASC" } as any,
+        });
+      }
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null) return [];
       return this.workLocationRepository.find({
-        where: { id: In(uniqueIds) },
+        where: { id: In(uniqueIds), company_id: jwtCompanyId },
         order: { id: "ASC" } as any,
       });
     }
@@ -384,10 +398,22 @@ export class LocationsService {
     }
   }
 
-  async createWorkLocation(dto: CreateWorkLocationDto): Promise<WorkLocation> {
-    const entity: WorkLocation = this.workLocationRepository.create(
-      dto as unknown as Partial<WorkLocation>,
-    ) as WorkLocation;
+  async createWorkLocation(
+    dto: CreateWorkLocationDto,
+    user?: any,
+  ): Promise<WorkLocation> {
+    let companyId: number;
+    try {
+      companyId = resolveCreateLocationCompanyId(dto.company_id, user);
+    } catch (err: any) {
+      throw new ForbiddenException(
+        err?.message || 'Nu puteți crea locația pentru altă companie',
+      );
+    }
+    const entity: WorkLocation = this.workLocationRepository.create({
+      ...(dto as unknown as Partial<WorkLocation>),
+      company_id: companyId,
+    }) as WorkLocation;
     const saved: WorkLocation = await this.workLocationRepository.save(
       entity as WorkLocation,
     );
@@ -407,6 +433,10 @@ export class LocationsService {
       console.warn(`[createWorkLocation] Nu s-a putut crea departamentul Manager pentru locația ${saved.id}:`, err?.message || err);
     }
 
+    // Company-wide suppliers: attach Manual + Cont-linked suppliers to the new location.
+    // Best-effort — location remains even if suppliers sync fails (idempotent retry).
+    await this.attachCompanySuppliersToNewLocation(companyId, saved.id);
+
     // Send notification for new location
     await this.sendLocationNotification(
       "location_created",
@@ -420,6 +450,44 @@ export class LocationsService {
     return saved;
   }
 
+  /**
+   * Internal call to suppliers-ms: materialize supplier_locations for a new work_location.
+   * Does not throw — location create must not roll back on suppliers sync failure.
+   */
+  private async attachCompanySuppliersToNewLocation(
+    companyId: number,
+    locationId: number,
+  ): Promise<void> {
+    const suppliersUrl = (
+      process.env.SUPPLIERS_HTTP_URL || "http://localhost:3007"
+    ).replace(/\/$/, "");
+    const serviceSecret = process.env.SERVICE_SECRET || "";
+    const url = `${suppliersUrl}/suppliers/internal/companies/${companyId}/locations/${locationId}/attach-suppliers`;
+    try {
+      const response = await axios.post(
+        url,
+        {},
+        {
+          headers: {
+            "x-internal-service": "locations",
+            "x-service-secret": serviceSecret,
+            "Content-Type": "application/json",
+          },
+          timeout: 8000,
+        },
+      );
+      console.log(
+        `[createWorkLocation] attach-suppliers company=${companyId} location=${locationId}:`,
+        response?.data,
+      );
+    } catch (err: any) {
+      console.error(
+        `[createWorkLocation] Failed attach-suppliers company=${companyId} location=${locationId}:`,
+        err?.response?.data || err?.message || err,
+      );
+    }
+  }
+
   async findAllWorkLocations(
     page = 1,
     limit = 10,
@@ -430,33 +498,21 @@ export class LocationsService {
   ): Promise<{ locations: WorkLocation[]; total: number; totalPages: number }> {
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
-    const isGlobalAdmin =
-      user?.isAdmin === true ||
-      user?.isSuperAdmin === true ||
-      user?.permissions?.includes("assignment.read_all");
-
-    // Tenant isolation: companyId din query nu poate deschide locațiile unei firme neautorizate.
-    if (companyId != null && !isGlobalAdmin) {
-      const accessible = await this.getEmployeeCompanies(user);
-      const accessibleIds = new Set(
-        accessible.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0),
-      );
-      const jwtCompanyId = Number(user?.company_id ?? user?.companyId);
-      if (Number.isFinite(jwtCompanyId) && jwtCompanyId > 0) {
-        accessibleIds.add(jwtCompanyId);
-      }
-      if (!accessibleIds.has(Number(companyId))) {
-        return { locations: [], total: 0, totalPages: 0 };
-      }
+    const listFilter = resolveListCompanyFilter(companyId, user);
+    if (listFilter.deny) {
+      return { locations: [], total: 0, totalPages: 0 };
     }
+    const effectiveCompanyId = listFilter.companyId ?? undefined;
 
     // Dacă are permisiunea locations.read, returnează locațiile (filtrate după company dacă e cazul)
     if (hasLocationReadPermission) {
       const qb = this.workLocationRepository
         .createQueryBuilder("location")
         .leftJoinAndSelect("location.task_templates", "task_templates");
-      if (companyId)
-        qb.where("location.company_id = :companyId", { companyId });
+      if (effectiveCompanyId != null)
+        qb.where("location.company_id = :companyId", {
+          companyId: effectiveCompanyId,
+        });
       if (city) qb.andWhere("location.city = :city", { city });
       if (search)
         qb.andWhere(
@@ -784,20 +840,15 @@ export class LocationsService {
     if (!workLocation)
       throw new NotFoundException(`Locația cu ID-ul ${id} nu a fost găsită`);
 
-    if (user && !user.bypassAuth) {
-      const perms = (user.permissions as string[]) || [];
-      const isGlobalAdmin = perms.includes('assignment.read_all');
-      if (!isGlobalAdmin) {
-        const jwtCompanyId = Number(user.company_id);
-        if (
-          Number.isFinite(jwtCompanyId) &&
-          jwtCompanyId > 0 &&
-          Number(workLocation.company_id) !== jwtCompanyId
-        ) {
-          throw new ForbiddenException(
-            'Locația nu aparține companiei dumneavoastră',
-          );
-        }
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (
+        jwtCompanyId != null &&
+        Number(workLocation.company_id) !== jwtCompanyId
+      ) {
+        throw new ForbiddenException(
+          'Locația nu aparține companiei dumneavoastră',
+        );
       }
     }
 
@@ -972,7 +1023,18 @@ export class LocationsService {
     };
   }
 
-  async findWorkLocationsByCompany(companyId: number): Promise<WorkLocation[]> {
+  async findWorkLocationsByCompany(
+    companyId: number,
+    user?: any,
+  ): Promise<WorkLocation[]> {
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null || jwtCompanyId !== Number(companyId)) {
+        throw new ForbiddenException(
+          'Nu puteți lista locațiile altei companii',
+        );
+      }
+    }
     return await this.workLocationRepository.find({
       where: { company_id: companyId },
       relations: ["task_templates"],
@@ -981,12 +1043,15 @@ export class LocationsService {
   }
 
   /** Un singur request: locații + foldere + fișiere pentru o firmă (optimizare pentru tab Documente). */
-  async findWorkLocationsByCompanyWithDocuments(companyId: number): Promise<{
+  async findWorkLocationsByCompanyWithDocuments(
+    companyId: number,
+    user?: any,
+  ): Promise<{
     locations: WorkLocation[];
     foldersByLocationId: Record<number, WorkLocationFolder[]>;
     filesByLocationId: Record<number, WorkLocationFiles[]>;
   }> {
-    const locations = await this.findWorkLocationsByCompany(companyId);
+    const locations = await this.findWorkLocationsByCompany(companyId, user);
     const locationIds = locations.map((l) => l.id);
     if (locationIds.length === 0) {
       return { locations, foldersByLocationId: {}, filesByLocationId: {} };
@@ -1078,8 +1143,9 @@ export class LocationsService {
 
   async createTaskTemplateAssignment(
     dto: CreateTaskTemplateAssignmentDto,
+    user?: any,
   ): Promise<WorkLocationTaskTemplate> {
-    await this.findWorkLocationById(dto.location_id);
+    await this.findWorkLocationById(dto.location_id, user);
     const existing = await this.taskTemplateRepository.findOne({
       where: {
         location_id: dto.location_id,
@@ -1107,6 +1173,7 @@ export class LocationsService {
     locationId?: number,
     templateId?: number,
     active?: boolean,
+    user?: any,
   ): Promise<{
     assignments: WorkLocationTaskTemplate[];
     total: number;
@@ -1121,6 +1188,16 @@ export class LocationsService {
       qb.andWhere("assignment.template_id = :templateId", { templateId });
     if (active !== undefined)
       qb.andWhere("assignment.active = :active", { active });
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null) {
+        qb.andWhere("1 = 0");
+      } else {
+        qb.andWhere("work_location.company_id = :tenantCompanyId", {
+          tenantCompanyId: jwtCompanyId,
+        });
+      }
+    }
     const offset = (page - 1) * limit;
     const [assignments, total] = await qb
       .orderBy("assignment.assigned_at", "DESC")
@@ -1130,8 +1207,18 @@ export class LocationsService {
     return { assignments, total, totalPages: Math.ceil(total / limit) };
   }
 
+  private async assertTaskTemplateAssignmentTenantAccess(
+    id: number,
+    user?: any,
+  ): Promise<WorkLocationTaskTemplate> {
+    const assignment = await this.findTaskTemplateAssignmentById(id);
+    await this.findWorkLocationById(assignment.location_id, user);
+    return assignment;
+  }
+
   async findTaskTemplateAssignmentById(
     id: number,
+    user?: any,
   ): Promise<WorkLocationTaskTemplate> {
     const assignment = await this.taskTemplateRepository.findOne({
       where: { id },
@@ -1139,13 +1226,17 @@ export class LocationsService {
     });
     if (!assignment)
       throw new NotFoundException(`Atribuirea cu ID-ul ${id} nu a fost găsită`);
+    if (user && !isPlatformWideLocationsUser(user)) {
+      await this.findWorkLocationById(assignment.location_id, user);
+    }
     return assignment;
   }
 
   async findTaskTemplateAssignmentsByLocation(
     locationId: number,
+    user?: any,
   ): Promise<WorkLocationTaskTemplate[]> {
-    await this.findWorkLocationById(locationId);
+    await this.findWorkLocationById(locationId, user);
     return await this.taskTemplateRepository.find({
       where: { location_id: locationId },
       relations: ["work_location"],
@@ -1167,29 +1258,39 @@ export class LocationsService {
     return this.departmentsRepository.find(opts);
   }
 
-  /** Un singur departament după id. Folosit de veziv-tasks. */
   async findWorkLocationDepartmentById(
     id: number,
+    user?: any,
   ): Promise<WorkLocationDepartments | null> {
-    return this.departmentsRepository.findOne({ where: { id } as any });
+    const dept = await this.departmentsRepository.findOne({ where: { id } as any });
+    if (!dept) {
+      return null;
+    }
+    await this.findWorkLocationById(Number(dept.work_location_id), user);
+    return dept;
   }
 
   async findDepartmentsByLocation(
     locationId: number,
+    user?: any,
   ): Promise<WorkLocationDepartments[]> {
-    // Return departments directly; do not enforce location existence to avoid 404s when data is partially seeded
+    await this.findWorkLocationById(locationId, user);
     return this.departmentsRepository.find({
       where: { work_location_id: locationId } as any,
       order: { name: "ASC" } as any,
     });
   }
 
-  async createDepartment(dto: {
+  async createDepartment(
+    dto: {
     work_location_id: number;
     name: string;
     code: string;
     description?: string | null;
-  }) {
+  },
+    user?: any,
+  ) {
+    await this.findWorkLocationById(dto.work_location_id, user);
     const row = this.departmentsRepository.create({
       work_location_id: dto.work_location_id,
       name: dto.name,
@@ -1201,19 +1302,37 @@ export class LocationsService {
 
   async findPositionsByDepartment(
     departmentId: number,
+    user?: any,
   ): Promise<WorkLocationDepartmentPositions[]> {
+    const dept = await this.departmentsRepository.findOne({
+      where: { id: departmentId } as any,
+    });
+    if (!dept) {
+      throw new NotFoundException('Departamentul nu a fost găsit');
+    }
+    await this.findWorkLocationById(Number(dept.work_location_id), user);
     return this.positionsRepository.find({
       where: { department_id: departmentId } as any,
       order: { name: "ASC" } as any,
     });
   }
 
-  async createDepartmentPosition(dto: {
+  async createDepartmentPosition(
+    dto: {
     department_id: number;
     name: string;
     code: string;
     description?: string | null;
-  }) {
+  },
+    user?: any,
+  ) {
+    const dept = await this.departmentsRepository.findOne({
+      where: { id: dto.department_id } as any,
+    });
+    if (!dept) {
+      throw new NotFoundException('Departamentul nu a fost găsit');
+    }
+    await this.findWorkLocationById(Number(dept.work_location_id), user);
     const row = this.positionsRepository.create({
       department_id: dto.department_id,
       name: dto.name,
@@ -1226,22 +1345,51 @@ export class LocationsService {
   async updateTaskTemplateAssignment(
     id: number,
     dto: UpdateTaskTemplateAssignmentDto,
+    user?: any,
   ): Promise<WorkLocationTaskTemplate> {
-    const assignment = await this.findTaskTemplateAssignmentById(id);
+    const assignment = await this.assertTaskTemplateAssignmentTenantAccess(
+      id,
+      user,
+    );
     Object.assign(assignment, dto);
     return await this.taskTemplateRepository.save(
       assignment as WorkLocationTaskTemplate,
     );
   }
 
-  async removeTaskTemplateAssignment(id: number): Promise<void> {
-    const assignment = await this.findTaskTemplateAssignmentById(id);
+  async removeTaskTemplateAssignment(id: number, user?: any): Promise<void> {
+    const assignment = await this.assertTaskTemplateAssignmentTenantAccess(
+      id,
+      user,
+    );
     await this.taskTemplateRepository.remove(
       assignment as WorkLocationTaskTemplate,
     );
   }
 
-  async deactivateTemplateAssignments(templateId: number): Promise<void> {
+  async deactivateTemplateAssignments(
+    templateId: number,
+    user?: any,
+  ): Promise<void> {
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null) {
+        throw new ForbiddenException(
+          'Compania utilizatorului nu este determinată',
+        );
+      }
+      const assignments = await this.taskTemplateRepository.find({
+        where: { template_id: templateId, active: true },
+        relations: ['work_location'],
+      });
+      for (const assignment of assignments) {
+        if (assignment.work_location?.company_id === jwtCompanyId) {
+          assignment.active = false;
+          await this.taskTemplateRepository.save(assignment);
+        }
+      }
+      return;
+    }
     await this.taskTemplateRepository.update(
       { template_id: templateId },
       { active: false },
@@ -1251,8 +1399,12 @@ export class LocationsService {
   async toggleAssignmentStatus(
     id: number,
     active: boolean,
+    user?: any,
   ): Promise<WorkLocationTaskTemplate> {
-    const assignment = await this.findTaskTemplateAssignmentById(id);
+    const assignment = await this.assertTaskTemplateAssignmentTenantAccess(
+      id,
+      user,
+    );
     assignment.active = active;
     return await this.taskTemplateRepository.save(
       assignment as WorkLocationTaskTemplate,
@@ -2042,12 +2194,29 @@ export class LocationsService {
 
   // ==================== LOCATION FILES METHODS ====================
 
+  private async assertLocationTenantAccess(
+    locationId: number,
+    user?: any,
+  ): Promise<WorkLocation> {
+    return this.findWorkLocationById(locationId, user);
+  }
+
+  private async assertLocationFileTenantAccess(
+    fileId: number,
+    user?: any,
+  ): Promise<WorkLocationFiles> {
+    const file = await this.findOneFile(fileId);
+    await this.findWorkLocationById(file.work_location_id, user);
+    return file;
+  }
+
   // Creează un nou fișier pentru locație
   async createFile(
     createFileDto: CreateWorkLocationFileDto & {
       expire_date?: string;
       notes?: string;
     },
+    user?: any,
   ): Promise<WorkLocationFiles> {
     console.log("📥 Received createFileDto:", {
       work_location_id: createFileDto.work_location_id,
@@ -2057,16 +2226,11 @@ export class LocationsService {
       content_length: createFileDto.file_content?.length || 0,
     });
 
-    // Verifică dacă locația există
-    const location = await this.workLocationRepository.findOne({
-      where: { id: createFileDto.work_location_id },
-    });
-
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${createFileDto.work_location_id} nu a fost găsită`,
-      );
-    }
+    // Verifică dacă locația există și aparține tenantului
+    const location = await this.assertLocationTenantAccess(
+      createFileDto.work_location_id,
+      user,
+    );
 
     // Get company information using HTTP call to company service
     let companyName = "Unknown";
@@ -2229,16 +2393,9 @@ export class LocationsService {
   // Găsește toate fișierele unei locații
   async findFilesByLocation(
     work_location_id: number,
+    user?: any,
   ): Promise<WorkLocationFiles[]> {
-    const location = await this.workLocationRepository.findOne({
-      where: { id: work_location_id },
-    });
-
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${work_location_id} nu a fost găsită`,
-      );
-    }
+    await this.assertLocationTenantAccess(work_location_id, user);
 
     return await this.filesRepository.find({
       where: { work_location_id },
@@ -2249,15 +2406,9 @@ export class LocationsService {
 
   async findFoldersByLocation(
     work_location_id: number,
+    user?: any,
   ): Promise<WorkLocationFolder[]> {
-    const location = await this.workLocationRepository.findOne({
-      where: { id: work_location_id },
-    });
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${work_location_id} nu a fost găsită`,
-      );
-    }
+    await this.assertLocationTenantAccess(work_location_id, user);
     return this.folderRepository.find({
       where: { work_location_id },
       order: { description: "ASC" },
@@ -2267,15 +2418,9 @@ export class LocationsService {
   async createFolder(
     locationId: number,
     body: { description: string; parent_id?: number | null },
+    user?: any,
   ): Promise<WorkLocationFolder> {
-    const location = await this.workLocationRepository.findOne({
-      where: { id: locationId },
-    });
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${locationId} nu a fost găsită`,
-      );
-    }
+    const location = await this.assertLocationTenantAccess(locationId, user);
     const companyName = await this.getCompanyNameForLocation(location);
     const basePath = this.getLocationBasePath(
       companyName,
@@ -2331,7 +2476,9 @@ export class LocationsService {
     locationId: number,
     folderId: number,
     body: { description: string },
+    user?: any,
   ): Promise<WorkLocationFolder> {
+    await this.assertLocationTenantAccess(locationId, user);
     const folder = await this.folderRepository.findOne({
       where: { id: folderId, work_location_id: locationId },
     });
@@ -2340,14 +2487,7 @@ export class LocationsService {
         `Folderul cu ID-ul ${folderId} nu a fost găsit`,
       );
     }
-    const location = await this.workLocationRepository.findOne({
-      where: { id: locationId },
-    });
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${locationId} nu a fost găsită`,
-      );
-    }
+    const location = await this.assertLocationTenantAccess(locationId, user);
 
     const existingSibling = await this.folderRepository.findOne({
       where: {
@@ -2399,7 +2539,8 @@ export class LocationsService {
     }) as Promise<WorkLocationFolder>;
   }
 
-  async removeFolder(locationId: number, folderId: number): Promise<void> {
+  async removeFolder(locationId: number, folderId: number, user?: any): Promise<void> {
+    await this.assertLocationTenantAccess(locationId, user);
     const folder = await this.folderRepository.findOne({
       where: { id: folderId, work_location_id: locationId },
     });
@@ -2408,14 +2549,7 @@ export class LocationsService {
         `Folderul cu ID-ul ${folderId} nu a fost găsit`,
       );
     }
-    const location = await this.workLocationRepository.findOne({
-      where: { id: locationId },
-    });
-    if (!location) {
-      throw new NotFoundException(
-        `Locația cu ID-ul ${locationId} nu a fost găsită`,
-      );
-    }
+    const location = await this.assertLocationTenantAccess(locationId, user);
     const companyName = await this.getCompanyNameForLocation(location);
     const basePath = this.getLocationBasePath(
       companyName,
@@ -2459,6 +2593,7 @@ export class LocationsService {
   async serveFile(
     file_id: number,
     forceDownload: boolean = false,
+    user?: any,
   ): Promise<{
     data: string;
     mimeType: string;
@@ -2470,7 +2605,7 @@ export class LocationsService {
         `🔍 [serveFile] Starting to serve file with ID: ${file_id}, forceDownload: ${forceDownload}`,
       );
 
-      const file = await this.findOneFile(file_id);
+      const file = await this.assertLocationFileTenantAccess(file_id, user);
       console.log(`📄 [serveFile] File metadata retrieved:`, {
         id: file.id,
         name: file.file_name,
@@ -2586,8 +2721,8 @@ export class LocationsService {
   }
 
   // Șterge un fișier
-  async removeFile(id: number): Promise<{ message: string }> {
-    const file = await this.findOneFile(id);
+  async removeFile(id: number, user?: any): Promise<{ message: string }> {
+    const file = await this.assertLocationFileTenantAccess(id, user);
 
     // Remove physical file from disk
     try {
@@ -2684,17 +2819,29 @@ export class LocationsService {
   }
 
   // Find files expiring on a specific date
-  async findExpiringFiles(targetDate: string): Promise<WorkLocationFiles[]> {
+  async findExpiringFiles(
+    targetDate: string,
+    user?: any,
+  ): Promise<WorkLocationFiles[]> {
     console.log(`[LOCATIONS SERVICE] Finding files expiring on ${targetDate}`);
-    // Format the date to match the database format (YYYY-MM-DD)
     const formattedDate = new Date(targetDate);
     formattedDate.setHours(0, 0, 0, 0);
 
-    const files = await this.filesRepository
+    const qb = this.filesRepository
       .createQueryBuilder("file")
       .where("DATE(file.expire_date) = :targetDate", { targetDate })
-      .leftJoinAndSelect("file.workLocation", "location")
-      .getMany();
+      .leftJoinAndSelect("file.workLocation", "location");
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null) {
+        qb.andWhere("1 = 0");
+      } else {
+        qb.andWhere("location.company_id = :tenantCompanyId", {
+          tenantCompanyId: jwtCompanyId,
+        });
+      }
+    }
+    const files = await qb.getMany();
 
     console.log(
       `[LOCATIONS SERVICE] Found ${files.length} files expiring on ${targetDate}`,
@@ -2703,17 +2850,27 @@ export class LocationsService {
   }
 
   // Find files that have already expired
-  async findExpiredFiles(): Promise<WorkLocationFiles[]> {
+  async findExpiredFiles(user?: any): Promise<WorkLocationFiles[]> {
     console.log(`[LOCATIONS SERVICE] Finding expired files`);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const files = await this.filesRepository
+    const qb = this.filesRepository
       .createQueryBuilder("file")
       .where("file.expire_date < :today", { today })
       .andWhere("file.expire_date IS NOT NULL")
-      .leftJoinAndSelect("file.workLocation", "location")
-      .getMany();
+      .leftJoinAndSelect("file.workLocation", "location");
+    if (user && !isPlatformWideLocationsUser(user)) {
+      const jwtCompanyId = resolveJwtCompanyId(user);
+      if (jwtCompanyId == null) {
+        qb.andWhere("1 = 0");
+      } else {
+        qb.andWhere("location.company_id = :tenantCompanyId", {
+          tenantCompanyId: jwtCompanyId,
+        });
+      }
+    }
+    const files = await qb.getMany();
 
     console.log(`[LOCATIONS SERVICE] Found ${files.length} expired files`);
     return files;

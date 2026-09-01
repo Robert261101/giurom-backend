@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -15,6 +15,20 @@ import { UserRole } from './entities/user-role.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  CLIENT_ADMIN_ASSIGNABLE_ROLE_NAMES,
+  CLIENT_ADMIN_ROLE_NAME,
+  getClientAdminAssignRoleBlockReason,
+  isClientAdminRequester,
+  normalizeRoleName,
+} from './client-role-assignment.util';
+import { hasPlatformWideAccess } from '@giurom/tenant-access';
+import {
+  filterUserRolesForRequester,
+  hasPlatformRbacCatalogAccess,
+  shouldListUserRolesGlobally,
+  type UserRolesListFilters,
+} from './user-roles-list-scope.util';
 import * as bcrypt from 'bcrypt';
 import { firstValueFrom } from 'rxjs';
 
@@ -23,7 +37,9 @@ export type RequesterAuthContext = {
   sub?: number;
   id?: number;
   company_id?: number | null;
+  companyId?: number | null;
   company_type?: string | null;
+  isSuperAdmin?: boolean;
   roles?: string[];
   permissions?: string[];
 };
@@ -847,20 +863,10 @@ export class UsersService {
     return out;
   }
 
-  /** Super-admin / admin global — fără filtrare pe company_id. */
+  /** Platform-wide users admin — tenant-bound JWT stays company-scoped. */
   isGlobalUsersAdmin(requester?: RequesterAuthContext | null): boolean {
     if (!requester) return false;
-    const roles = (requester.roles || []).map((r) =>
-      String(r).toLowerCase().trim(),
-    );
-    if (roles.includes('super-admin') || roles.includes('superadmin')) {
-      return true;
-    }
-    if (roles.includes('admin')) {
-      return true;
-    }
-    const perms = requester.permissions || [];
-    return perms.includes('assignment.read_all');
+    return hasPlatformWideAccess(requester);
   }
 
   /** id_employee din payload JWT (câmp `id` sau `sub`). */
@@ -939,11 +945,160 @@ export class UsersService {
     isInternal: boolean,
   ): Promise<void> {
     if (isInternal || this.isGlobalUsersAdmin(requester)) return;
-    const perms = requester?.permissions || [];
-    if (perms.includes('permissions.read')) return;
+    if (hasPlatformRbacCatalogAccess(requester)) return;
     throw new ForbiddenException(
       'Permisiuni insuficiente pentru gestionarea rolurilor',
     );
+  }
+
+  /**
+   * Gate for user↔role mutations.
+   * Platform: permissions.read or global admin.
+   * Tenant client-admin: users.assign_role (without needing permissions.read).
+   */
+  async assertCanAssignUserRoles(
+    requester: RequesterAuthContext | null | undefined,
+    isInternal: boolean,
+  ): Promise<void> {
+    if (isInternal || this.isGlobalUsersAdmin(requester)) return;
+    const perms = requester?.permissions || [];
+    if (perms.includes('permissions.read') || perms.includes('users.assign_role')) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Permisiuni insuficiente pentru atribuirea rolurilor',
+    );
+  }
+
+  /**
+   * Extra checks when requester is a tenant client-admin (not platform).
+   * - same company (already via assertCanManageUserAccount)
+   * - allowlist / deny-list / privilege ceiling on target role
+   * - cannot remove own client-admin role
+   */
+  async assertClientAdminRoleAssignmentAllowed(
+    requester: RequesterAuthContext | null | undefined,
+    opts: {
+      targetUserId: number;
+      roleId?: number | null;
+      /** When removing an existing user_role row */
+      existingUserRoleId?: number | null;
+      action: 'assign' | 'remove' | 'replace';
+    },
+  ): Promise<void> {
+    if (!requester || !isClientAdminRequester(requester)) {
+      return;
+    }
+    if (this.isGlobalUsersAdmin(requester)) {
+      return;
+    }
+
+    const requesterEmpId = this.getRequesterEmployeeId(requester);
+    const targetUser = await this.userRepository.findOne({
+      where: { id: opts.targetUserId },
+    });
+    if (!targetUser) {
+      throw new NotFoundException(
+        `Utilizatorul cu id ${opts.targetUserId} nu a fost găsit`,
+      );
+    }
+
+    // Same-company: requester company_id must equal target user's company
+    const requesterCompanyId = Number(requester.company_id);
+    if (!Number.isFinite(requesterCompanyId) || requesterCompanyId <= 0) {
+      throw new ForbiddenException(
+        'Context de companie lipsă pentru atribuirea rolurilor',
+      );
+    }
+    const targetContext = await this.resolveCompanyContext(
+      targetUser.id_employee,
+    );
+    if (
+      targetContext.company_id == null ||
+      Number(targetContext.company_id) !== requesterCompanyId
+    ) {
+      throw new ForbiddenException(
+        'Acces interzis la resurse din altă companie',
+      );
+    }
+
+    // Self-protection: cannot strip own client-admin role
+    if (
+      requesterEmpId != null &&
+      targetUser.id_employee === requesterEmpId &&
+      (opts.action === 'remove' || opts.action === 'replace')
+    ) {
+      let roleIdToCheck = opts.roleId ?? null;
+      if (opts.existingUserRoleId != null) {
+        const existing = await this.userRoleRepository.findOne({
+          where: { id: opts.existingUserRoleId },
+        });
+        if (existing) {
+          roleIdToCheck = existing.roleId;
+        }
+      }
+      if (roleIdToCheck != null) {
+        const role = await this.roleRepository.findOne({
+          where: { id: roleIdToCheck },
+        });
+        if (role && normalizeRoleName(role.name) === CLIENT_ADMIN_ROLE_NAME) {
+          throw new ForbiddenException(
+            'Nu vă puteți elimina propriul rol client-admin',
+          );
+        }
+      }
+      // delete all roles for self
+      if (opts.action === 'remove' && opts.roleId == null && opts.existingUserRoleId == null) {
+        const ownRoles = await this.userRoleRepository.find({
+          where: { userId: opts.targetUserId },
+        });
+        const roleIds = ownRoles.map((ur) => ur.roleId);
+        if (roleIds.length > 0) {
+          const roles = await this.roleRepository.find({
+            where: { id: In(roleIds) },
+          });
+          if (
+            roles.some(
+              (r) => normalizeRoleName(r.name) === CLIENT_ADMIN_ROLE_NAME,
+            )
+          ) {
+            throw new ForbiddenException(
+              'Nu vă puteți elimina propriul rol client-admin',
+            );
+          }
+        }
+      }
+    }
+
+    if (opts.action === 'assign' || opts.action === 'replace') {
+      if (opts.roleId == null) {
+        throw new BadRequestException('roleId este obligatoriu');
+      }
+      const role = await this.roleRepository.findOne({
+        where: { id: opts.roleId },
+      });
+      if (!role) {
+        throw new NotFoundException(`Rolul cu ID ${opts.roleId} nu a fost găsit`);
+      }
+      const rolePerms = await this.rolePermissionRepository.find({
+        where: { roleId: role.id },
+      });
+      const permissionIds = rolePerms.map((rp) => rp.permissionId);
+      let permissionNames: string[] = [];
+      if (permissionIds.length > 0) {
+        const perms = await this.permissionRepository.find({
+          where: { id: In(permissionIds) },
+        });
+        permissionNames = perms.map((p) => p.name);
+      }
+      const block = getClientAdminAssignRoleBlockReason({
+        roleName: role.name,
+        rolePermissionNames: permissionNames,
+      });
+      if (block) {
+        throw new ForbiddenException(block);
+      }
+    }
   }
 
   async assertCanManageUserAccount(
@@ -1405,6 +1560,37 @@ export class UsersService {
     return await this.roleRepository.find();
   }
 
+  /**
+   * Roles a requester may assign via user-roles APIs.
+   * Platform / permissions.read → all roles.
+   * Tenant users.assign_role → V1 allowlist only (angajat/magazioner/sofer).
+   */
+  async getAssignableRolesForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    isInternal: boolean,
+  ): Promise<Role[]> {
+    if (
+      isInternal ||
+      this.isGlobalUsersAdmin(requester) ||
+      hasPlatformRbacCatalogAccess(requester)
+    ) {
+      return this.getAllRoles();
+    }
+    const perms = requester?.permissions || [];
+    if (!perms.includes('users.assign_role')) {
+      throw new ForbiddenException(
+        'Permisiuni insuficiente pentru listarea rolurilor atribuibile',
+      );
+    }
+    const all = await this.getAllRoles();
+    const allow = new Set(
+      (CLIENT_ADMIN_ASSIGNABLE_ROLE_NAMES as readonly string[]).map((n) =>
+        n.toLowerCase(),
+      ),
+    );
+    return all.filter((r) => allow.has(normalizeRoleName(r.name)));
+  }
+
   async getRoleById(id: number): Promise<Role> {
     const role = await this.roleRepository.findOne({ where: { id } });
     if (!role) {
@@ -1646,6 +1832,48 @@ export class UsersService {
 
   async getAllUserRoles(): Promise<UserRole[]> {
     return await this.userRoleRepository.find();
+  }
+
+  /**
+   * Listează user_roles: platform/global = toate;
+   * tenant (users.assign_role fără platform) = doar users din requester.company_id
+   * (JWT company via employee → location → company).
+   * Filtrele userId/roleId se aplică după scope și nu pot bypass cross-company.
+   */
+  async getAllUserRolesForRequester(
+    requester: RequesterAuthContext | null | undefined,
+    isInternal: boolean,
+    filters?: UserRolesListFilters,
+  ): Promise<UserRole[]> {
+    const all = await this.getAllUserRoles();
+    const global = shouldListUserRolesGlobally(requester, isInternal);
+
+    let allowedUserIds: Set<number> | null = null;
+    if (!global) {
+      const companyId = Number(requester?.company_id);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        return [];
+      }
+      const employeeIds = await this.findEmployeeIdsByCompany(companyId);
+      if (employeeIds.length === 0) {
+        return [];
+      }
+      const users = await this.userRepository.find({
+        where: { id_employee: In(employeeIds) },
+        select: ['id', 'id_employee'],
+      });
+      allowedUserIds = new Set(
+        users
+          .map((u) => Number(u.id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+    }
+
+    return filterUserRolesForRequester(all, {
+      global,
+      allowedUserIds,
+      filters,
+    }) as UserRole[];
   }
 
   async getUserRoleById(id: number): Promise<UserRole> {

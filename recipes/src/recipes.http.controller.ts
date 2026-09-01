@@ -1,4 +1,4 @@
-﻿import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Permissions } from './permissions/permissions.decorator';
 import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
@@ -238,12 +238,23 @@ export class RecipesHttpController {
   getScaledIngredientsWithStock(
     @Param('id') id: string,
     @Query('quantity') quantity: string,
+    @Query('location_id') locationId?: string,
     @Request() req?: any,
   ) {
     const qty = Number(quantity) || 1000;
+    let resolvedLocationId: number | undefined;
+    const maybeLid = locationId !== undefined ? Number(locationId) : undefined;
+    if (Number.isFinite(maybeLid as number) && (maybeLid as number) > 0) {
+      resolvedLocationId = maybeLid as number;
+    } else {
+      const user = req?.user;
+      resolvedLocationId =
+        user?.work_location_id || user?.work_location_default_id;
+    }
     return this.recipes.getScaledIngredientsWithStock(
       Number(id),
       qty,
+      resolvedLocationId as number,
       buildRecipeAccessRequester(req?.user),
     );
   }

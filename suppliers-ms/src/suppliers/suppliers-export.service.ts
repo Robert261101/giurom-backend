@@ -133,6 +133,12 @@ export class SuppliersExportService {
     };
   }
 
+  /**
+   * Platform export job (manual trigger via `POST /suppliers/export/run-manual`).
+   * Intentionally cross-tenant: pushes recent/active orders to Giurom 2.0 sync URL.
+   * Each payload row carries its own `company_id` / `location_id`; the external
+   * consumer is responsible for routing per tenant. Not invoked from tenant UI flows.
+   */
   private async loadRecentAndActiveOrders(): Promise<SupplierOrder[]> {
     const threshold = new Date();
     threshold.setMonth(threshold.getMonth() - 3);
