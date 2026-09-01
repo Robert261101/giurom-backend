@@ -32,6 +32,8 @@ import { Giurom2ZonesService } from "./suppliers/giurom2-zones.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
 import { SuppliersHttpController } from "./suppliers/suppliers.http.controller";
+import { App2OrdersController } from "./suppliers/app2-orders.controller";
+import { App2OrdersService } from "./suppliers/app2-orders.service";
 import { AuthModule } from "./auth/auth.module";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
@@ -137,12 +139,17 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductLastGiurom2Zone,
       ]),
   ],
-  controllers: [SuppliersMicroController, SuppliersHttpController],
+  controllers: [
+    SuppliersMicroController,
+    SuppliersHttpController,
+    App2OrdersController,
+  ],
   providers: [
     SuppliersService,
     SuppliersExportService,
     EntryDocumentsExportService,
     Giurom2ZonesService,
+    App2OrdersService,
     StockHttpService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
