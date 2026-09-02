@@ -1,8 +1,9 @@
 -- Phase 2: client company subscriptions (plans + limits)
--- DB: giurombitap_company
--- Do NOT auto-run on other environments.
+-- Ruleaza pe baza din company/.env (restosoft_company in productie), prin
+-- scripts/migration-manifest.txt. Fara nume de baza hardcodat, ca sa fie
+-- portabila intre medii.
 
-CREATE TABLE IF NOT EXISTS giurombitap_company.subscription_plans (
+CREATE TABLE IF NOT EXISTS subscription_plans (
   code VARCHAR(32) NOT NULL,
   name VARCHAR(64) NOT NULL,
   sort_order INT NOT NULL DEFAULT 0,
@@ -12,7 +13,7 @@ CREATE TABLE IF NOT EXISTS giurombitap_company.subscription_plans (
   PRIMARY KEY (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS giurombitap_company.plan_limits (
+CREATE TABLE IF NOT EXISTS plan_limits (
   id INT NOT NULL AUTO_INCREMENT,
   plan_code VARCHAR(32) NOT NULL,
   limit_key VARCHAR(64) NOT NULL,
@@ -22,11 +23,11 @@ CREATE TABLE IF NOT EXISTS giurombitap_company.plan_limits (
   PRIMARY KEY (id),
   UNIQUE KEY UQ_plan_limits_plan_key (plan_code, limit_key),
   CONSTRAINT FK_plan_limits_plan
-    FOREIGN KEY (plan_code) REFERENCES giurombitap_company.subscription_plans (code)
+    FOREIGN KEY (plan_code) REFERENCES subscription_plans (code)
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS giurombitap_company.company_subscriptions (
+CREATE TABLE IF NOT EXISTS company_subscriptions (
   id INT NOT NULL AUTO_INCREMENT,
   company_id INT NOT NULL,
   plan_code VARCHAR(32) NOT NULL,
@@ -39,6 +40,6 @@ CREATE TABLE IF NOT EXISTS giurombitap_company.company_subscriptions (
   PRIMARY KEY (id),
   UNIQUE KEY UQ_company_subscriptions_company (company_id),
   CONSTRAINT FK_company_subscriptions_plan
-    FOREIGN KEY (plan_code) REFERENCES giurombitap_company.subscription_plans (code)
+    FOREIGN KEY (plan_code) REFERENCES subscription_plans (code)
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
