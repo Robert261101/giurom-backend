@@ -8397,16 +8397,35 @@ export class SuppliersService {
       
       const existingReceivedQty = Number(itemToUpdate.received_quantity) || 0;
       const existingReturnedQty = Number(itemToUpdate.returned_quantity) || 0;
-      let newlyReceivedQty = receivedQty - existingReceivedQty; // Diferența = cât se recepționează acum
-      let newlyReturnedQty = returnedQty - existingReturnedQty;
+
+      // PENDING neaprobat contează deja ca „în curs” — altfel a doua recepție parțială
+      // (înainte de approve) recalculează același delta și dublează documentul / stocul.
+      const pendingAgg = await this.orderItemReceptionRepo
+        .createQueryBuilder('r')
+        .select('COALESCE(SUM(r.received_delta), 0)', 'received')
+        .addSelect('COALESCE(SUM(r.returned_delta), 0)', 'returned')
+        .where('r.supplier_order_item_id = :itemId', { itemId: orderItem.id })
+        .andWhere('r.status = :status', { status: ReceptionStatus.PENDING })
+        .getRawOne<{ received: string; returned: string }>();
+      const pendingReceivedQty = Number(pendingAgg?.received) || 0;
+      const pendingReturnedQty = Number(pendingAgg?.returned) || 0;
+
+      let newlyReceivedQty = receivedQty - existingReceivedQty - pendingReceivedQty;
+      let newlyReturnedQty = returnedQty - existingReturnedQty - pendingReturnedQty;
       
       // Asigură-te că newlyReceivedQty nu este negativ (protecție împotriva erorilor)
       if (newlyReceivedQty < 0) {
         this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Calculated negative newlyReceivedQty for item ${orderItem.id}: ${newlyReceivedQty}. Setting to 0.`);
         newlyReceivedQty = 0;
       }
+      if (newlyReturnedQty < 0) {
+        newlyReturnedQty = 0;
+      }
       
-      this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${orderItem.id}: existing=${existingReceivedQty}, new total=${receivedQty}, newly received=${newlyReceivedQty}`);
+      this.logger.log(
+        `📦 [SUPPLIERS SERVICE] Item ${orderItem.id}: approved=${existingReceivedQty}, ` +
+          `pending=${pendingReceivedQty}, new total=${receivedQty}, newly received=${newlyReceivedQty}`,
+      );
       
       // NU actualizăm received_quantity în supplier_order_items imediat
       // Vom actualiza doar când recepția este aprobată

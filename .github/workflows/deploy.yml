@@ -149,15 +149,27 @@ jobs:
           REMOTE_USER_HOST="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
           REMOTE_ROOT="/home/${{ secrets.DEPLOY_USER }}/giurom-backend"
 
-          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/scripts' '$REMOTE_ROOT/suppliers-ms/migrations' '$REMOTE_ROOT/stock/migrations'"
+          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/scripts'"
 
-          rsync -avz -e "ssh ${SSH_OPTS}" \
-            suppliers-ms/migrations/ \
-            "$REMOTE_USER_HOST:$REMOTE_ROOT/suppliers-ms/migrations/"
+          # Orice serviciu cu folder migrations/ (suppliers-ms, company, auth, ...).
+          # Runner-ul le cauta la $ROOT/<serviciu>/migrations/, deci pastram numele.
+          for dir in */migrations; do
+            [ -d "$dir" ] || continue
+            service="${dir%%/*}"
+            echo "Sync migrations: $service"
+            ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/$service/migrations'"
+            rsync -avz -e "ssh ${SSH_OPTS}" \
+              "$dir/" \
+              "$REMOTE_USER_HOST:$REMOTE_ROOT/$service/migrations/"
+          done
 
-          rsync -avz -e "ssh ${SSH_OPTS}" \
-            stock/src/stock/migrations/ \
-            "$REMOTE_USER_HOST:$REMOTE_ROOT/stock/migrations/"
+          # stock: SQL-urile stau in src/stock/migrations, pe server le vrem ca stock/migrations.
+          if [ -d "stock/src/stock/migrations" ]; then
+            ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/stock/migrations'"
+            rsync -avz -e "ssh ${SSH_OPTS}" \
+              stock/src/stock/migrations/ \
+              "$REMOTE_USER_HOST:$REMOTE_ROOT/stock/migrations/"
+          fi
 
           rsync -avz -e "ssh ${SSH_OPTS}" \
             scripts/run-server-migrations.sh \
@@ -182,6 +194,6 @@ jobs:
           ssh ${SSH_OPTS} ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-            pm2 restart suppliers-ms stock auth --update-env
+            pm2 restart suppliers-ms stock auth company --update-env
             pm2 save
           '

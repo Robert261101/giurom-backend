@@ -68,6 +68,16 @@ export class SupplierOrder {
   @Column({ type: 'int', nullable: true })
   location_id: number;
 
+  /**
+   * Cheia de idempotenta a comenzii venite din giurom 2.0 (`app2:so:<id>`).
+   *
+   * Unica in DB: App2 dreneaza coada cu reincercari, iar un timeout de retea dupa ce
+   * comanda a fost deja creata aici nu trebuie sa produca un duplicat pe care magazionerul
+   * il vede ca doua livrari. NULL pentru comenzile create normal, din interfata App1.
+   */
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  app2_target: string | null;
+
   company_name?: string | null;
   location_name?: string | null;
   location_address?: string | null;
@@ -123,5 +133,3 @@ export class SupplierOrder {
   )
   itemChanges: SupplierOrderItemChange[];
 }
-
-
