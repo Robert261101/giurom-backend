@@ -31,6 +31,10 @@ import {
   RegisterSupplierCompanyLookupDto,
   RegisterSupplierDto,
 } from './dto/register-supplier.dto';
+import {
+  RegisterClientCompanyLookupDto,
+  RegisterClientDto,
+} from './dto/register-client.dto';
 import { HttpService } from '@nestjs/axios';
 import { logAction } from '../common/logging.util';
 
@@ -487,5 +491,29 @@ export class AuthController {
   @Post('register/supplier')
   registerSupplier(@Body() dto: RegisterSupplierDto) {
     return this.authService.registerSupplier(dto);
+  }
+
+  @ApiOperation({
+    summary: 'Caută datele firmei după CUI pentru înregistrare client (proxy ANAF, public)',
+    description:
+      'Reutilizează același lookup ANAF ca la înregistrarea furnizorului',
+  })
+  @ApiBody({ type: RegisterClientCompanyLookupDto })
+  @HttpCode(HttpStatus.OK)
+  @Post('register/client/company-lookup')
+  lookupRegisterClientCompany(@Body() dto: RegisterClientCompanyLookupDto) {
+    return this.authService.lookupRegisterClientCompany(dto.cui);
+  }
+
+  @ApiOperation({
+    summary: 'Înregistrare cont client (public)',
+    description:
+      'Creează compania (company_type=client), locația principală, angajatul reprezentant, contul utilizator și rolul client-admin, cu rollback compensatoriu la eșec. Nu creează supplier.',
+  })
+  @ApiBody({ type: RegisterClientDto })
+  @HttpCode(HttpStatus.CREATED)
+  @Post('register/client')
+  registerClient(@Body() dto: RegisterClientDto) {
+    return this.authService.registerClient(dto);
   }
 }

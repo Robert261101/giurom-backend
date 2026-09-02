@@ -13,6 +13,10 @@ export type SupplierAccountLookupInput = {
  * owner_company_id set AND at least one active user with role `furnizor`
  * whose employee default work location belongs to that company.
  *
+ * Cont vs Manual (quota / links):
+ * - Cont  = this helper returns true → may use client_supplier_links
+ * - Manual = false → supplier_locations only; never treat owner_company_id alone as Cont
+ *
  * Evaluated from supplier_id → owner_company_id (never guessed by name/email).
  * Does not assume 1:1 company↔supplier.
  */

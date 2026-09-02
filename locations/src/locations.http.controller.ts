@@ -62,7 +62,9 @@ export class LocationsHttpController {
 
 	@Post()
 	@Permissions('locations.create')
-	create(@Body() dto: CreateWorkLocationDto) { return this.service.createWorkLocation(dto); }
+	create(@Body() dto: CreateWorkLocationDto, @Request() req?: any) {
+		return this.service.createWorkLocation(dto, req?.user);
+	}
 
 	@Get()
 	@Permissions('locations.read')
@@ -131,8 +133,8 @@ export class LocationsHttpController {
 
 	@Get('work-location-departments/:id')
 	@Permissions('locations.read')
-	async findWorkLocationDepartmentById(@Param('id') id: string) {
-		const dept = await this.service.findWorkLocationDepartmentById(parseInt(id, 10));
+	async findWorkLocationDepartmentById(@Param('id') id: string, @Request() req?: any) {
+		const dept = await this.service.findWorkLocationDepartmentById(parseInt(id, 10), req?.user);
 		if (!dept) throw new NotFoundException('Department not found');
 		return dept;
 	}
@@ -153,13 +155,15 @@ export class LocationsHttpController {
 
 	@Get('company/:companyId/with-documents')
 	@Permissions('locations.read')
-	findByCompanyWithDocuments(@Param('companyId') companyId: string) {
-		return this.service.findWorkLocationsByCompanyWithDocuments(parseInt(companyId, 10));
+	findByCompanyWithDocuments(@Param('companyId') companyId: string, @Request() req?: any) {
+		return this.service.findWorkLocationsByCompanyWithDocuments(parseInt(companyId, 10), req?.user);
 	}
 
 	@Get('company/:companyId')
 	@Permissions('locations.read')
-	findByCompany(@Param('companyId') companyId: string) { return this.service.findWorkLocationsByCompany(parseInt(companyId, 10)); }
+	findByCompany(@Param('companyId') companyId: string, @Request() req?: any) {
+		return this.service.findWorkLocationsByCompany(parseInt(companyId, 10), req?.user);
+	}
 
 	@Patch(':id')
 	@Permissions('locations.update')
@@ -176,7 +180,9 @@ export class LocationsHttpController {
 	// Assignments
 	@Post('assignments')
 	@Permissions('locations.create')
-	createAssignment(@Body() dto: CreateTaskTemplateAssignmentDto) { return this.service.createTaskTemplateAssignment(dto); }
+	createAssignment(@Body() dto: CreateTaskTemplateAssignmentDto, @Request() req?: any) {
+		return this.service.createTaskTemplateAssignment(dto, req?.user);
+	}
 
 	@Get('assignments')
 	@Permissions('locations.read')
@@ -186,6 +192,7 @@ export class LocationsHttpController {
 		@Query('locationId') locationId?: string,
 		@Query('templateId') templateId?: string,
 		@Query('active') active?: string,
+		@Request() req?: any,
 	) {
 		return this.service.findAllTaskTemplateAssignments(
 			parseInt(page, 10),
@@ -193,54 +200,75 @@ export class LocationsHttpController {
 			locationId ? parseInt(locationId, 10) : undefined,
 			templateId ? parseInt(templateId, 10) : undefined,
 			active !== undefined ? active === 'true' : undefined,
+			req?.user,
 		);
 	}
 
 	@Get('assignments/:id')
 	@Permissions('locations.read')
-	findAssignment(@Param('id') id: string) { return this.service.findTaskTemplateAssignmentById(parseInt(id, 10)); }
+	findAssignment(@Param('id') id: string, @Request() req?: any) {
+		return this.service.findTaskTemplateAssignmentById(parseInt(id, 10), req?.user);
+	}
 
 	@Get(':locationId/assignments')
 	@Permissions('locations.read')
-	findAssignmentsByLocation(@Param('locationId') locationId: string) { return this.service.findTaskTemplateAssignmentsByLocation(parseInt(locationId, 10)); }
+	findAssignmentsByLocation(@Param('locationId') locationId: string, @Request() req?: any) {
+		return this.service.findTaskTemplateAssignmentsByLocation(parseInt(locationId, 10), req?.user);
+	}
 
 	// Departments
 	@Get(':locationId/departments')
 	@Permissions('locations.read')
-	findDepartmentsByLocation(@Param('locationId') locationId: string) { return this.service.findDepartmentsByLocation(parseInt(locationId, 10)); }
+	findDepartmentsByLocation(@Param('locationId') locationId: string, @Request() req?: any) {
+		return this.service.findDepartmentsByLocation(parseInt(locationId, 10), req?.user);
+	}
 
 	@Post(':locationId/departments')
 	@Permissions('locations.create')
-	createDepartment(@Param('locationId') locationId: string, @Body() body: Omit<CreateWorkLocationDepartmentsDto, 'work_location_id'> & { work_location_id?: number }) {
+	createDepartment(@Param('locationId') locationId: string, @Body() body: Omit<CreateWorkLocationDepartmentsDto, 'work_location_id'> & { work_location_id?: number }, @Request() req?: any) {
 		return this.service.createDepartment({
 			work_location_id: body.work_location_id ?? parseInt(locationId, 10),
 			name: body.name,
 			code: body.code,
 			description: body.description,
-		});
+		}, req?.user);
 	}
 
 	@Get('departments/:departmentId/positions')
 	@Permissions('locations.read')
-	findPositions(@Param('departmentId') departmentId: string) { return this.service.findPositionsByDepartment(parseInt(departmentId, 10)); }
+	findPositions(@Param('departmentId') departmentId: string, @Request() req?: any) {
+		return this.service.findPositionsByDepartment(parseInt(departmentId, 10), req?.user);
+	}
 
 	@Post('departments/:departmentId/positions')
 	@Permissions('locations.create')
-	createPosition(@Param('departmentId') departmentId: string, @Body() body: { name: string; code: string; description?: string }) {
-		return this.service.createDepartmentPosition({ department_id: parseInt(departmentId, 10), name: body.name, code: body.code, description: body.description });
+	createPosition(@Param('departmentId') departmentId: string, @Body() body: { name: string; code: string; description?: string }, @Request() req?: any) {
+		return this.service.createDepartmentPosition({ department_id: parseInt(departmentId, 10), name: body.name, code: body.code, description: body.description }, req?.user);
 	}
 
 	@Patch('assignments/:id')
-	updateAssignment(@Param('id') id: string, @Body() dto: UpdateTaskTemplateAssignmentDto) { return this.service.updateTaskTemplateAssignment(parseInt(id, 10), dto); }
+	@Permissions('locations.update')
+	updateAssignment(@Param('id') id: string, @Body() dto: UpdateTaskTemplateAssignmentDto, @Request() req?: any) {
+		return this.service.updateTaskTemplateAssignment(parseInt(id, 10), dto, req?.user);
+	}
 
 	@Patch('assignments/:id/toggle')
-	toggleAssignment(@Param('id') id: string, @Query('active') active = 'true') { return this.service.toggleAssignmentStatus(parseInt(id, 10), active === 'true'); }
+	@Permissions('locations.update')
+	toggleAssignment(@Param('id') id: string, @Query('active') active = 'true', @Request() req?: any) {
+		return this.service.toggleAssignmentStatus(parseInt(id, 10), active === 'true', req?.user);
+	}
 
 	@Patch('templates/:templateId/deactivate')
-	deactivateTemplate(@Param('templateId') templateId: string) { return this.service.deactivateTemplateAssignments(parseInt(templateId, 10)); }
+	@Permissions('locations.update')
+	deactivateTemplate(@Param('templateId') templateId: string, @Request() req?: any) {
+		return this.service.deactivateTemplateAssignments(parseInt(templateId, 10), req?.user);
+	}
 
 	@Delete('assignments/:id')
-	removeAssignment(@Param('id') id: string) { return this.service.removeTaskTemplateAssignment(parseInt(id, 10)); }
+	@Permissions('locations.delete')
+	removeAssignment(@Param('id') id: string, @Request() req?: any) {
+		return this.service.removeTaskTemplateAssignment(parseInt(id, 10), req?.user);
+	}
 
 	// Revenue points endpoints — configurare pe locație existentă = update, nu create
 	@Post(':id/revenue-intervals')
@@ -304,8 +332,9 @@ export class LocationsHttpController {
 	@Permissions('locations.read')
 	async getLocationFolders(
 		@Param('locationId', ParseIntPipe) locationId: number,
+		@Request() req?: any,
 	) {
-		return this.service.findFoldersByLocation(locationId);
+		return this.service.findFoldersByLocation(locationId, req?.user);
 	}
 
 	@Post(':locationId/folders')
@@ -313,8 +342,9 @@ export class LocationsHttpController {
 	async createLocationFolder(
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Body() body: { description: string; parent_id?: number | null },
+		@Request() req?: any,
 	) {
-		return this.service.createFolder(locationId, body);
+		return this.service.createFolder(locationId, body, req?.user);
 	}
 
 	@Patch(':locationId/folders/:folderId')
@@ -323,8 +353,9 @@ export class LocationsHttpController {
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Param('folderId', ParseIntPipe) folderId: number,
 		@Body() body: { description: string },
+		@Request() req?: any,
 	) {
-		return this.service.updateFolder(locationId, folderId, body);
+		return this.service.updateFolder(locationId, folderId, body, req?.user);
 	}
 
 	@Delete(':locationId/folders/:folderId')
@@ -332,8 +363,9 @@ export class LocationsHttpController {
 	async deleteLocationFolder(
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Param('folderId', ParseIntPipe) folderId: number,
+		@Request() req?: any,
 	) {
-		await this.service.removeFolder(locationId, folderId);
+		await this.service.removeFolder(locationId, folderId, req?.user);
 		return { success: true };
 	}
 
@@ -342,8 +374,9 @@ export class LocationsHttpController {
 	@Permissions('locations.read')
 	async getLocationFiles(
 		@Param('locationId', ParseIntPipe) locationId: number,
+		@Request() req?: any,
 	) {
-		return this.service.findFilesByLocation(locationId);
+		return this.service.findFilesByLocation(locationId, req?.user);
 	}
 
 	// Serve location file (download or inline based on query)
@@ -353,9 +386,10 @@ export class LocationsHttpController {
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Query('download') download: string,
 		@Res() res: Response,
+		@Request() req?: any,
 	) {
 		const forceDownload = download === 'true';
-		const served = await this.service.serveFile(fileId, forceDownload);
+		const served = await this.service.serveFile(fileId, forceDownload, req?.user);
 		const buffer = Buffer.from(served.data, 'base64');
 		res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
 		res.setHeader(
@@ -372,10 +406,11 @@ export class LocationsHttpController {
 	async viewLocationFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
 		@Res() res: Response,
+		@Request() req?: any,
 	) {
 		try {
 			console.log(`📥 [HTTP Controller] Received request to view location file ID: ${fileId}`);
-			const served = await this.service.serveFile(fileId, false);
+			const served = await this.service.serveFile(fileId, false, req?.user);
 			console.log(`✅ [HTTP Controller] File served successfully, preparing response`);
 			const buffer = Buffer.from(served.data, 'base64');
 			res.setHeader('Content-Type', served.mimeType || 'application/octet-stream');
@@ -395,6 +430,7 @@ export class LocationsHttpController {
 	async addLocationFile(
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Body() body: Omit<CreateWorkLocationFileDto, 'work_location_id'> & { work_location_id?: number; notes?: string; folder_id?: number },
+		@Request() req?: any,
 	) {
 		const dto: CreateWorkLocationFileDto & { notes?: string } = {
 			work_location_id: locationId,
@@ -405,14 +441,16 @@ export class LocationsHttpController {
 			notes: body.notes,
 			folder_id: body.folder_id,
 		} as CreateWorkLocationFileDto & { notes?: string };
-		return this.service.createFile(dto);
+		return this.service.createFile(dto, req?.user);
 	}
 
 	// Backwards-compatible route for document with content
 	@Post(':locationId/documents-with-content')
+	@Permissions('locations.create')
 	async addLocationDocumentWithContent(
 		@Param('locationId', ParseIntPipe) locationId: number,
 		@Body() body: { documents: Array<{ fileName: string; name?: string; size?: number; content: string; type?: string; document_type?: string; note?: string; notes?: string; expire_date?: string }> },
+		@Request() req?: any,
 	) {
 		if (!body?.documents || body.documents.length === 0) {
 			return { message: 'No documents provided' };
@@ -430,31 +468,33 @@ export class LocationsHttpController {
 			file_content: first.content,
 			expire_date: first.expire_date,
 			notes: notes,
-		} as CreateWorkLocationFileDto & { notes?: string });
+		} as CreateWorkLocationFileDto & { notes?: string }, req?.user);
 	}
 
 	// Delete location file
 	@Delete('file/:fileId')
+	@Permissions('locations.delete')
 	async deleteLocationFile(
 		@Param('fileId', ParseIntPipe) fileId: number,
+		@Request() req?: any,
 	) {
-		return this.service.removeFile(fileId);
+		return this.service.removeFile(fileId, req?.user);
 	}
 
 	// Get files expiring on a specific date
 	@Get('files/expiring/:targetDate')
 	@Permissions('locations.read')
-	getExpiringFiles(@Param('targetDate') targetDate: string) {
+	getExpiringFiles(@Param('targetDate') targetDate: string, @Request() req?: any) {
 		console.log(`[LOCATIONS CONTROLLER] Getting files expiring on ${targetDate}`);
-		return this.service.findExpiringFiles(targetDate);
+		return this.service.findExpiringFiles(targetDate, req?.user);
 	}
 
 	// Get files that have already expired
 	@Get('files/expired')
 	@Permissions('locations.read')
-	getExpiredFiles() {
+	getExpiredFiles(@Request() req?: any) {
 		console.log(`[LOCATIONS CONTROLLER] Getting expired files`);
-		return this.service.findExpiredFiles();
+		return this.service.findExpiredFiles(req?.user);
 	}
 
 	// === CASHING IMAGE UPLOAD ===

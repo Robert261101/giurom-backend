@@ -69,6 +69,13 @@ export class Supplier {
   @Column({ type: 'int', nullable: true })
   owner_company_id: number | null;
 
+  /**
+   * Unique invite/association code for account suppliers.
+   * NULL for Manual (client-managed) suppliers. Not an authentication credential.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, unique: true })
+  connection_code: string | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 
@@ -89,6 +96,12 @@ export class Supplier {
 
   /** Calculated (not persisted): supplier has authenticatable furnizor login. */
   has_supplier_account?: boolean;
+
+  /**
+   * Calculated (not persisted): client_supplier_links.is_active for the
+   * requesting client company. Only set for Cont associations.
+   */
+  client_association_is_active?: boolean | null;
 }
 
 

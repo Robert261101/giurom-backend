@@ -40,6 +40,9 @@ export interface SupplierAccessRequester {
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
   permissions?: string[];
+  roles?: string[];
+  company_id?: number | null;
+  company_type?: string | null;
 }
 
 export function buildSupplierAccessRequester(user?: {
@@ -49,6 +52,9 @@ export function buildSupplierAccessRequester(user?: {
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
   permissions?: string[];
+  roles?: string[];
+  company_id?: number | null;
+  company_type?: string | null;
 }): SupplierAccessRequester {
   return {
     userId: Number.isFinite(Number(user?.userId)) ? Number(user?.userId) : undefined,
@@ -61,6 +67,9 @@ export function buildSupplierAccessRequester(user?: {
     isAdmin: user?.isAdmin === true,
     isSuperAdmin: user?.isSuperAdmin === true,
     permissions: Array.isArray(user?.permissions) ? user.permissions : [],
+    roles: Array.isArray(user?.roles) ? user.roles : [],
+    company_id: user?.company_id ?? null,
+    company_type: user?.company_type ?? null,
   };
 }
 
@@ -88,6 +97,69 @@ export function isAdminOrSuperAdminFromPermissions(
     permissions.includes('assignment.read_all') ||
     permissions.includes('assignment.read_company')
   );
+}
+
+/**
+ * Cross-tenant / platform-wide supplier access.
+ * Intentionally does NOT treat assignment.read_company as global bypass.
+ *
+ * Any JWT bound to a company_id is tenant-scoped for supplier catalog/detail,
+ * even with role `admin` or `assignment.read_all`. This matches admin@giurom.ro
+ * (company_id=1, role admin, assignment.read_all, company_type=client): they must
+ * NOT see Manual suppliers of other clients.
+ *
+ * True platform operators: isSuperAdmin, or role super-admin/superadmin.
+ * Legacy unbound platform admin: assignment.read_all / role admin without company_id.
+ */
+export function hasPlatformWideSupplierAccess(
+  requester?: {
+    isSuperAdmin?: boolean;
+    permissions?: string[];
+    roles?: string[];
+    company_id?: number | null;
+    company_type?: string | null;
+  } | null,
+): boolean {
+  if (!requester) return false;
+  if (requester.isSuperAdmin === true) return true;
+
+  const roles = (Array.isArray(requester.roles) ? requester.roles : []).map(
+    (r) => String(r).toLowerCase().trim(),
+  );
+  if (roles.includes('super-admin') || roles.includes('superadmin')) {
+    return true;
+  }
+
+  const companyId = Number(requester.company_id);
+  if (Number.isFinite(companyId) && companyId > 0) {
+    return false;
+  }
+
+  const perms = Array.isArray(requester.permissions)
+    ? requester.permissions
+    : [];
+  if (perms.includes('assignment.read_all')) return true;
+  if (roles.includes('admin')) return true;
+  return false;
+}
+
+/**
+ * True when the caller is a real non-platform tenant (JWT company_id present).
+ * Empty/internal requesters are NOT tenant-scoped (preserve registerSupplier etc.).
+ */
+export function isTenantScopedSupplierRequester(
+  requester?: {
+    company_id?: number | null;
+    company_type?: string | null;
+    isSuperAdmin?: boolean;
+    permissions?: string[];
+    roles?: string[];
+  } | null,
+): boolean {
+  if (!requester) return false;
+  if (hasPlatformWideSupplierAccess(requester)) return false;
+  const companyId = Number(requester.company_id);
+  return Number.isFinite(companyId) && companyId > 0;
 }
 
 export function isAdminOrSuperAdminFromContext(

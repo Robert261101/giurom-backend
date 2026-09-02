@@ -25,8 +25,9 @@ export class SupplierProduct {
   @Column({ type: 'int', nullable: true })
   company_id: number | null;
 
-  @Column()
-  product_id: number;
+  /** Stock catalog product id; null for account-supplier commercial rows without nomenclator link. */
+  @Column({ type: 'int', nullable: true })
+  product_id: number | null;
 
   @Column({ type: 'varchar', length: 200, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   product_name: string;

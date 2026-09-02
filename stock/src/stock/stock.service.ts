@@ -57,6 +57,9 @@ import {
   getJwtCompanyId,
   getJwtWorkLocationId,
   isGlobalStockAdmin,
+  isTenantStockRequester,
+  assertTenantLocationIdRequired,
+  parseStockLocationId,
   assertLocationAllowed,
 } from './stock-access';
 import {
@@ -1000,10 +1003,25 @@ await this.assertNoNameOrSkuConflictAtLocation(
     return this.normalizeProductPhoto(merged);
   }
 
-  async findProduct(id: number, user?: StockJwtUser): Promise<Product> {
+  async findProduct(
+    id: number,
+    user?: StockJwtUser,
+    locationId?: number,
+  ): Promise<Product> {
     const product = await this.productRepo.findOne({ where: { id } });
     if (!product) throw new NotFoundException("Produsul nu a fost găsit");
-    if (user && !isGlobalStockAdmin(user)) {
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, locationId);
+      await this.assertLocationInCompany(locationId!, getJwtCompanyId(user));
+      const stock = await this.stockRepo.findOne({
+        where: { product_id: id, location_key: this.locationKey(locationId) },
+      });
+      if (!stock) {
+        throw new NotFoundException(
+          'Produsul nu a fost găsit în locația selectată',
+        );
+      }
+    } else if (user && !isGlobalStockAdmin(user)) {
       const stocks = await this.stockRepo.find({ where: { product_id: id } });
       const permitted = await this.resolvePermittedLocationIds(user);
       if (permitted.length > 0 && stocks.length > 0) {
@@ -1829,7 +1847,16 @@ await this.assertNoNameOrSkuConflictAtLocation(
     page = 1,
     limit = 9,
     filters: StockListQueryFilters = {},
+    user?: StockJwtUser,
   ): Promise<PaginatedStockResponse<Stock>> {
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, filters.locationId);
+      await this.assertLocationInCompany(
+        filters.locationId!,
+        getJwtCompanyId(user),
+      );
+    }
+
     const cappedLimit = Math.min(Math.max(1, Number(limit) || 9), 9);
     const pageNum = Math.max(1, Number(page) || 1);
     const skip = (pageNum - 1) * cappedLimit;
@@ -1917,6 +1944,8 @@ await this.assertNoNameOrSkuConflictAtLocation(
    */
   async checkStockAvailability(
     products: Array<{ product_id: number; quantity: number; location_id?: number }>,
+    user?: StockJwtUser,
+    defaultLocationId?: number,
   ): Promise<{
     available: boolean;
     missing: Array<{
@@ -1933,12 +1962,34 @@ await this.assertNoNameOrSkuConflictAtLocation(
       product_name?: string;
     }> = [];
 
+    const normalized = products.map((item) => ({
+      ...item,
+      location_id:
+        item.location_id != null
+          ? Number(item.location_id)
+          : defaultLocationId,
+    }));
+
+    if (isTenantStockRequester(user)) {
+      for (const item of normalized) {
+        assertTenantLocationIdRequired(user, item.location_id);
+      }
+      const tenantLocationId = normalized[0]?.location_id;
+      if (tenantLocationId != null) {
+        await this.assertLocationInCompany(
+          tenantLocationId,
+          getJwtCompanyId(user),
+        );
+      }
+    }
+
     const hasLocation = (item: { location_id?: number }) =>
       item.location_id != null && Number.isFinite(Number(item.location_id));
 
-    // Un singur query per grup (locație-specifică / globală) în loc de un query per produs.
-    const withLocation = products.filter(hasLocation);
-    const withoutLocation = products.filter((p) => !hasLocation(p));
+    const withLocation = normalized.filter(hasLocation);
+    const withoutLocation = isTenantStockRequester(user)
+      ? []
+      : normalized.filter((p) => !hasLocation(p));
 
     const availableByKey = new Map<string, number>();
     if (withLocation.length > 0) {
@@ -1975,7 +2026,7 @@ await this.assertNoNameOrSkuConflictAtLocation(
       }
     }
 
-    for (const item of products) {
+    for (const item of normalized) {
       const totalAvailable = hasLocation(item)
         ? availableByKey.get(
             `${item.product_id}:${this.locationKey(item.location_id)}`,
@@ -2019,22 +2070,40 @@ await this.assertNoNameOrSkuConflictAtLocation(
     employeeId?: number,
     locationId?: number,
     recipePreparationId?: number,
+    user?: StockJwtUser,
   ): Promise<void> {
     const resolvedLocationId =
       locationId != null && Number.isFinite(Number(locationId))
         ? Number(locationId)
         : undefined;
 
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, resolvedLocationId);
+      await this.assertLocationInCompany(
+        resolvedLocationId!,
+        getJwtCompanyId(user),
+      );
+    }
+
     this.logger.log(
       `[consumeProduct] productId=${productId}, quantity=${quantity}, location_id=${resolvedLocationId ?? 'ALL'}, target=${target}`,
     );
 
     if (
-      target?.startsWith('supplier-order-') &&
+      target?.startsWith("supplier-order-") &&
       resolvedLocationId === undefined
     ) {
       throw new BadRequestException(
         'location_id este obligatoriu pentru scăderea stocului la comanda furnizor',
+      );
+    }
+
+    if (
+      target?.startsWith("recipe-preparation") &&
+      resolvedLocationId === undefined
+    ) {
+      throw new BadRequestException(
+        'location_id este obligatoriu pentru consumul ingredientelor rețetei',
       );
     }
 
@@ -2379,12 +2448,43 @@ await this.assertNoNameOrSkuConflictAtLocation(
     }
   }
 
-  async findAllTransactions(filters?: {
-    product_id?: number;
-    location_id?: number;
-    stock_id?: number;
-    type?: TransactionType;
-  }): Promise<StockTransaction[]> {
+  async findAllTransactions(
+    filters?: {
+      product_id?: number;
+      location_id?: number;
+      stock_id?: number;
+      type?: TransactionType;
+    },
+    user?: StockJwtUser,
+  ): Promise<StockTransaction[]> {
+    let locationId = filters?.location_id;
+
+    if (filters?.stock_id != null) {
+      const stock = await this.stockRepo.findOne({
+        where: { id: filters.stock_id },
+      });
+      if (!stock) {
+        throw new NotFoundException("Stocul nu a fost găsit");
+      }
+      if (isTenantStockRequester(user)) {
+        if (
+          locationId != null &&
+          stock.location_id != null &&
+          Number(stock.location_id) !== Number(locationId)
+        ) {
+          throw new ForbiddenException(
+            "stock_id nu aparține locației cerute",
+          );
+        }
+        locationId = locationId ?? stock.location_id ?? undefined;
+      }
+    }
+
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, locationId);
+      await this.assertLocationInCompany(locationId!, getJwtCompanyId(user));
+    }
+
     const qb = this.txRepo
       .createQueryBuilder("tx")
       .leftJoinAndSelect("tx.stock", "stock")
@@ -2395,9 +2495,9 @@ await this.assertNoNameOrSkuConflictAtLocation(
         productId: filters.product_id,
       });
     }
-    if (filters?.location_id != null) {
+    if (locationId != null) {
       qb.andWhere("tx.location_key = :locationKey", {
-        locationKey: this.locationKey(filters.location_id),
+        locationKey: this.locationKey(locationId),
       });
     }
     if (filters?.stock_id != null) {
@@ -2753,21 +2853,29 @@ await this.assertNoNameOrSkuConflictAtLocation(
     return await this.consumptionRecordRepo.save(consumptionRecord);
   }
 
-  async findConsumptionRecord(id: number): Promise<ConsumptionRecord> {
+  async findConsumptionRecord(
+    id: number,
+    user?: StockJwtUser,
+  ): Promise<ConsumptionRecord> {
     const consumptionRecord = await this.consumptionRecordRepo.findOne({
       where: { id },
       relations: ["product"],
     });
     if (!consumptionRecord)
       throw new NotFoundException("Înregistrarea de consum nu a fost găsită");
+    await this.assertStockLocationAllowed(
+      user,
+      consumptionRecord.location_id ?? null,
+    );
     return consumptionRecord;
   }
 
   async updateConsumptionRecord(
     id: number,
-    dto: UpdateConsumptionRecordDto
+    dto: UpdateConsumptionRecordDto,
+    user?: StockJwtUser,
   ): Promise<ConsumptionRecord> {
-    const consumptionRecord = await this.findConsumptionRecord(id);
+    const consumptionRecord = await this.findConsumptionRecord(id, user);
 
     // If product_id is being updated, verify new product exists
     if (dto.product_id && dto.product_id !== consumptionRecord.product_id) {
@@ -2788,18 +2896,29 @@ await this.assertNoNameOrSkuConflictAtLocation(
     return await this.consumptionRecordRepo.save(consumptionRecord);
   }
 
-  async deleteConsumptionRecord(id: number): Promise<void> {
-    const consumptionRecord = await this.findConsumptionRecord(id);
+  async deleteConsumptionRecord(id: number, user?: StockJwtUser): Promise<void> {
+    const consumptionRecord = await this.findConsumptionRecord(id, user);
     await this.consumptionRecordRepo.remove(consumptionRecord);
   }
 
-  async findAllConsumptionRecords(filters?: {
-    product_id?: number;
-    location_id?: number;
-    employee_id?: number;
-    start_date?: string;
-    end_date?: string;
-  }): Promise<any[]> {
+  async findAllConsumptionRecords(
+    filters?: {
+      product_id?: number;
+      location_id?: number;
+      employee_id?: number;
+      start_date?: string;
+      end_date?: string;
+    },
+    user?: StockJwtUser,
+  ): Promise<any[]> {
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, filters?.location_id);
+      await this.assertLocationInCompany(
+        filters!.location_id!,
+        getJwtCompanyId(user),
+      );
+    }
+
     const queryBuilder = this.consumptionRecordRepo
       .createQueryBuilder("consumption")
       .leftJoinAndSelect("consumption.product", "product")
@@ -2924,13 +3043,16 @@ await this.assertNoNameOrSkuConflictAtLocation(
     });
   }
 
-  async getConsumptionStats(filters?: {
-    product_id?: number;
-    location_id?: number;
-    employee_id?: number;
-    start_date?: string;
-    end_date?: string;
-  }): Promise<{
+  async getConsumptionStats(
+    filters?: {
+      product_id?: number;
+      location_id?: number;
+      employee_id?: number;
+      start_date?: string;
+      end_date?: string;
+    },
+    user?: StockJwtUser,
+  ): Promise<{
     totalConsumed: number;
     byProduct: Array<{
       product_id: number;
@@ -2941,6 +3063,14 @@ await this.assertNoNameOrSkuConflictAtLocation(
     byLocation: Array<{ location_id: number; total_quantity: number }>;
     byEmployee: Array<{ employee_id: number; total_quantity: number }>;
   }> {
+    if (isTenantStockRequester(user)) {
+      assertTenantLocationIdRequired(user, filters?.location_id);
+      await this.assertLocationInCompany(
+        filters!.location_id!,
+        getJwtCompanyId(user),
+      );
+    }
+
     const queryBuilder = this.consumptionRecordRepo
       .createQueryBuilder("consumption")
       .leftJoin("consumption.product", "product");

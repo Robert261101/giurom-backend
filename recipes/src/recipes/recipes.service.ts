@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, MoreThan, LessThan, DeepPartial } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -21,6 +21,7 @@ import { CreateRecipeLocationDto } from './dto/create-recipe-location.dto';
 import { RecipeMediaService } from './recipes-media.service';
 import { ProductRef } from '../external/product-ref.entity';
 import { isRecipeAdminUser, type RecipeAccessRequester } from './recipe-access';
+import { resolveRecipeStockLocationId } from './recipe-stock-location.util';
 
 @Injectable()
 export class RecipeService {
@@ -761,6 +762,7 @@ export class RecipeService {
   async getScaledIngredientsWithStock(
     recipeId: number,
     quantity: number,
+    locationId: number,
     requester?: RecipeAccessRequester,
   ): Promise<Array<{
     product_id: number;
@@ -771,6 +773,12 @@ export class RecipeService {
     sufficient: boolean;
   }>> {
     await this.ensureRecipeAccess(recipeId, requester);
+    const operationLocationId = resolveRecipeStockLocationId(locationId);
+    await this.assertPreparationRecipeAccess(
+      recipeId,
+      operationLocationId,
+      requester,
+    );
     // Obține rețeta cu ingredientele (fără product pentru că nu e relație TypeORM)
     const recipe = await this.recipesRepository.findOne({
       where: { id: recipeId },
@@ -839,35 +847,34 @@ export class RecipeService {
           ? Math.ceil(scaledQuantity)
           : Math.round(scaledQuantity * 100) / 100;
 
-        // Verifică stocul disponibil prin comunicare internă cu stock service
+        // Verifică stocul disponibil la locația operației (fără agregare globală)
         let availableQuantity = 0;
         try {
           const stockResponse = await lastValueFrom(
-            this.httpService.get(`${this.stockServiceUrl}/stock/items`, {
-              headers,
-              params: {
-                product_id: rp.product_id,
-                limit: 1000
-              }
-            })
+            this.httpService.get(
+              `${this.stockServiceUrl}/stock/items/location/${operationLocationId}/quantities`,
+              {
+                headers,
+                params: {
+                  product_ids: String(rp.product_id),
+                },
+              },
+            ),
           );
+          const rows = Array.isArray(stockResponse.data)
+            ? stockResponse.data
+            : stockResponse.data?.data ?? [];
+          const match = rows.find(
+            (row: { product_id?: number }) =>
+              Number(row?.product_id) === Number(rp.product_id),
+          );
+          availableQuantity = match
+            ? parseFloat(String(match.quantity ?? 0)) || 0
+            : 0;
 
-          // Suma stocului disponibil pentru acest produs (doar stoc VALID cu quantity > 0)
-          const stockItems = stockResponse.data?.data || stockResponse.data || [];
-          if (Array.isArray(stockItems)) {
-            // Filtrează doar stocul VALID cu quantity > 0
-            const validStockItems = stockItems.filter((item: any) => {
-              const quantity = parseFloat(item.quantity?.toString() || '0') || 0;
-              const status = item.status?.toLowerCase();
-              return status === 'valid' && quantity > 0;
-            });
-            
-            availableQuantity = validStockItems.reduce((sum: number, item: any) => {
-              return sum + (parseFloat(item.quantity?.toString() || '0') || 0);
-            }, 0);
-            
-            console.log(`📊 [RecipeService] Product ${rp.product_id} (${productName}): total stock items=${stockItems.length}, valid items=${validStockItems.length}, availableQuantity=${availableQuantity}${productUnit}`);
-          }
+          console.log(
+            `📊 [RecipeService] Product ${rp.product_id} (${productName}) at location ${operationLocationId}: availableQuantity=${availableQuantity}${productUnit}`,
+          );
         } catch (error: any) {
           console.error(`⚠️ [RecipeService] Eroare la verificarea stocului pentru produs ${rp.product_id}:`, error?.response?.data || error?.message);
           // Dacă nu putem verifica stocul, setăm disponibil la 0

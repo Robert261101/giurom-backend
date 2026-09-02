@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -17,6 +17,7 @@ import { Recipe } from "./entities/recipe.entity";
 import { RecipeLocation } from "./entities/recipe-location.entity";
 import { RecipeService } from "./recipes.service";
 import { RecipeAccessRequester, isRecipeAdminUser } from "./recipe-access";
+import { resolveRecipeStockLocationId } from "./recipe-stock-location.util";
 
 @Injectable()
 export class RecipePreparationsService implements OnModuleInit {
@@ -257,6 +258,8 @@ export class RecipePreparationsService implements OnModuleInit {
     });
     if (!recipe) throw new NotFoundException("Rețeta nu a fost găsită");
 
+    const operationLocationId = resolveRecipeStockLocationId(dto.location_id);
+
     // STEP 1: Colectează toate ingredientele necesare (recursiv)
     const allIngredients = await this.collectAllIngredients(
       dto.recipe_id,
@@ -279,7 +282,10 @@ export class RecipePreparationsService implements OnModuleInit {
         const checkResponse = await lastValueFrom(
           this.httpService.post(
             `${this.stockServiceUrl}/stock/check-availability`,
-            { products: allIngredients },
+            {
+              products: allIngredients,
+              location_id: operationLocationId,
+            },
             { headers }
           )
         );
@@ -358,7 +364,8 @@ export class RecipePreparationsService implements OnModuleInit {
       await this.consumeRecipeIngredients(
         dto.recipe_id,
         dto.quantity,
-        saved.id
+        saved.id,
+        operationLocationId,
       );
     } catch (e) {
       // rollback preparation if stock consumption fails (shouldn't happen after check)
@@ -470,6 +477,7 @@ export class RecipePreparationsService implements OnModuleInit {
     recipeId: number,
     quantity: number,
     preparationId: number,
+    locationId: number,
     visitedRecipeIds: Set<number> = new Set()
   ): Promise<void> {
     // Previne referințe circulare
@@ -523,6 +531,8 @@ export class RecipePreparationsService implements OnModuleInit {
               {
                 product_id: rp.product_id,
                 quantity: neededTotal,
+                location_id: locationId,
+                recipe_preparation_id: preparationId,
                 target: `recipe-preparation:${preparationId}`,
               },
               { headers }
@@ -577,6 +587,7 @@ export class RecipePreparationsService implements OnModuleInit {
           rr.ingredient_recipe_id,
           neededRecipeQuantity,
           preparationId,
+          locationId,
           newVisitedSet
         );
 

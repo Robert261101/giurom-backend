@@ -24,6 +24,11 @@ import {
   ApiBearerAuth,
 } from "@nestjs/swagger";
 import { EmployeeService } from "./employee.service";
+import {
+  isEmployeeBatchGlobalScope,
+  isPlatformWideEmployeeUser,
+  resolveEmployeeBatchTenantCompanyId,
+} from "./employee-tenant.util";
 import { EmployeesExportService } from "./employees-export.service";
 import { CreateEmployeeDto } from "./dto/create-employee.dto";
 import { CreateSupplierRegistrationEmployeeDto } from "./dto/create-supplier-registration-employee.dto";
@@ -71,7 +76,11 @@ export class EmployeeHttpController {
   ): Promise<Employee> {
     const fromHeaderOrQuery = parseSelectedWorkLocationId(xWorkLocationId ?? location_id);
     const selectedWorkLocationId = fromHeaderOrQuery ?? req?.user?.work_location_id ?? req?.user?.work_location_default_id;
-    const created = await this.employeeService.create(createEmployeeDto, selectedWorkLocationId);
+    const created = await this.employeeService.create(
+      createEmployeeDto,
+      selectedWorkLocationId,
+      req?.user,
+    );
     // Fire-and-forget: crearea angajatului nu trebuie să eșueze fiindcă giurom 2.0 e picat.
     void this.employeesExportService.pushEmployeeSafe(created.id);
     return created;
@@ -188,15 +197,15 @@ export class EmployeeHttpController {
   ): Promise<{ employees: Employee[]; total: number; totalPages: number }> {
     const user = req?.user;
     const perms = (user?.permissions as string[]) || [];
-    const roles = ((user?.roles as string[]) || []).map((r) =>
-      String(r).toLowerCase().trim(),
-    );
     const isGlobalAdmin =
-      perms.includes("assignment.read_all") ||
-      roles.includes("admin") ||
-      roles.includes("super-admin") ||
-      roles.includes("superadmin") ||
-      Boolean(req?.bypassAuth);
+      req?.bypassAuth === true ||
+      isPlatformWideEmployeeUser({
+        company_id: user?.company_id,
+        companyId: user?.companyId,
+        isSuperAdmin: user?.isSuperAdmin,
+        permissions: perms,
+        roles: (user?.roles as string[]) || [],
+      });
 
     const companyId = Number(user?.company_id);
     const hasValidCompany =
@@ -345,7 +354,22 @@ export class EmployeeHttpController {
       return [];
     }
 
-    return this.employeeService.findByIdsBasic(idList);
+    const user = req?.user;
+    if (isEmployeeBatchGlobalScope(user, req?.bypassAuth === true)) {
+      return this.employeeService.findByIdsBasic(idList);
+    }
+
+    const tenantCompanyId = resolveEmployeeBatchTenantCompanyId(user);
+    if (tenantCompanyId == null) {
+      throw new ForbiddenException(
+        "Compania utilizatorului nu este determinată",
+      );
+    }
+
+    return this.employeeService.findByIdsBasicForCompany(
+      idList,
+      tenantCompanyId,
+    );
   }
 
   @Get("for-own")
@@ -482,8 +506,9 @@ export class EmployeeHttpController {
   @Permissions("employees.read", "employees.read_own")
   async getEmployeeFiles(
     @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Request() req?: any,
   ) {
-    return this.employeeService.findFilesByEmployee(employeeId);
+    return this.employeeService.findFilesByEmployee(employeeId, req?.user);
   }
 
   /** Creează un folder pentru angajat (body: description, parent_id opțional). */
@@ -493,8 +518,9 @@ export class EmployeeHttpController {
   async createFolder(
     @Param("employeeId", ParseIntPipe) employeeId: number,
     @Body() body: { description: string; parent_id?: number },
+    @Request() req?: any,
   ) {
-    return this.employeeService.createFolder(employeeId, body || { description: '' });
+    return this.employeeService.createFolder(employeeId, body || { description: '' }, req?.user);
   }
 
   /** Actualizează numele unui folder (body: description). */
@@ -505,8 +531,9 @@ export class EmployeeHttpController {
     @Param("employeeId", ParseIntPipe) employeeId: number,
     @Param("folderId", ParseIntPipe) folderId: number,
     @Body() body: { description: string },
+    @Request() req?: any,
   ) {
-    return this.employeeService.updateFolder(employeeId, folderId, body || { description: '' });
+    return this.employeeService.updateFolder(employeeId, folderId, body || { description: '' }, req?.user);
   }
 
   /** Șterge un folder și descendenții (inclusiv pe disk). */
@@ -516,14 +543,18 @@ export class EmployeeHttpController {
   async removeFolder(
     @Param("employeeId", ParseIntPipe) employeeId: number,
     @Param("folderId", ParseIntPipe) folderId: number,
+    @Request() req?: any,
   ) {
-    return this.employeeService.removeFolder(employeeId, folderId);
+    return this.employeeService.removeFolder(employeeId, folderId, req?.user);
   }
 
   // Optional: list via query (used by some legacy callers)
   @Get("files")
-  @Permissions("employees.read")
-  async getFilesByQuery(@Query("employee_id") employee_id?: string) {
+  @Permissions("employees.read", "employees.read_own")
+  async getFilesByQuery(
+    @Query("employee_id") employee_id?: string,
+    @Request() req?: any,
+  ) {
     if (!employee_id) {
       return [];
     }
@@ -531,7 +562,7 @@ export class EmployeeHttpController {
     if (!Number.isFinite(idNum)) {
       return [];
     }
-    return this.employeeService.findFilesByEmployee(idNum);
+    return this.employeeService.findFilesByEmployee(idNum, req?.user);
   }
 
   @Get("email/:email")
@@ -635,13 +666,14 @@ export class EmployeeHttpController {
   })
   async findNameById(
     @Param("id") id: string,
+    @Request() req?: any,
   ): Promise<{
     id: number;
     first_name: string;
     last_name: string;
     full_name: string;
   }> {
-    return this.employeeService.findNameById(+id);
+    return this.employeeService.findNameById(+id, req?.user);
   }
 
   @Get(":id")
@@ -692,7 +724,7 @@ export class EmployeeHttpController {
       }
     }
 
-    return this.employeeService.findOne(numericId);
+    // Always pass requester so tenant assert runs (IDOR fix for employees.read).
     return this.employeeService.findOne(numericId, req?.user);
   }
 
@@ -777,19 +809,8 @@ export class EmployeeHttpController {
     @Res() res: Response,
     @Request() req: any,
   ) {
-    const file = await this.employeeService.findOneFile(fileId);
-    const user = req?.user;
-    const perms = (user?.permissions as string[]) || [];
-    const hasReadOwn = perms.includes("employees.read_own");
-    const hasRead = perms.includes("employees.read");
-    if (user && hasReadOwn && !hasRead) {
-      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
-      if (file.employee_id !== employeeId) {
-        throw new ForbiddenException("Nu ai acces la acest fișier.");
-      }
-    }
     const forceDownload = download === "true";
-    const served = await this.employeeService.serveFile(fileId, forceDownload);
+    const served = await this.employeeService.serveFile(fileId, forceDownload, req?.user);
     const buffer = Buffer.from(served.data, "base64");
     res.setHeader(
       "Content-Type",
@@ -822,8 +843,9 @@ export class EmployeeHttpController {
   })
   async deleteEmployeeFile(
     @Param("fileId", ParseIntPipe) fileId: number,
+    @Request() req?: any,
   ): Promise<{ message: string }> {
-    return this.employeeService.removeFile(fileId);
+    return this.employeeService.removeFile(fileId, req?.user);
   }
 
   // Force inline view (inclusiv imagine profil – utilizatorul cu read_own vede doar fișierele proprii)
@@ -834,18 +856,7 @@ export class EmployeeHttpController {
     @Res() res: Response,
     @Request() req: any,
   ) {
-    const file = await this.employeeService.findOneFile(fileId);
-    const user = req?.user;
-    const perms = (user?.permissions as string[]) || [];
-    const hasReadOwn = perms.includes("employees.read_own");
-    const hasRead = perms.includes("employees.read");
-    if (user && hasReadOwn && !hasRead) {
-      const employeeId = user.id_employee ?? user.employee_id ?? user.id ?? user.sub;
-      if (file.employee_id !== employeeId) {
-        throw new ForbiddenException("Nu ai acces la acest fișier.");
-      }
-    }
-    const served = await this.employeeService.serveFile(fileId, false);
+    const served = await this.employeeService.serveFile(fileId, false, req?.user);
     const buffer = Buffer.from(served.data, "base64");
     res.setHeader(
       "Content-Type",
@@ -866,6 +877,7 @@ export class EmployeeHttpController {
     @Param("employeeId", ParseIntPipe) employeeId: number,
     @Body()
     body: Omit<CreateEmployeeFileDto, "employee_id"> & { employee_id?: number },
+    @Request() req?: any,
   ) {
     this.logger.log("📥 Received addEmployeeFile request:", { employeeId, body });
 
@@ -881,7 +893,7 @@ export class EmployeeHttpController {
     this.logger.log("📤 Sending to employee service from addEmployeeFile:", {
       dto,
     });
-    return this.employeeService.createFile(dto);
+    return this.employeeService.createFile(dto, req?.user);
   }
 
   // Backwards-compatible route used by frontend add form
@@ -903,6 +915,7 @@ export class EmployeeHttpController {
       }>;
       folder_id?: number;
     },
+    @Request() req?: any,
   ) {
     this.logger.log("📥 Received document upload request:", { employeeId, body });
 
@@ -913,7 +926,7 @@ export class EmployeeHttpController {
     const fileName = first.fileName || first.name || "document.bin";
 
     // Get employee to construct proper file link
-    const employee = await this.employeeService.findOne(employeeId);
+    const employee = await this.employeeService.findOne(employeeId, req?.user);
 
     // Check if this is a profile picture
     const isProfilePicture =
@@ -934,6 +947,7 @@ export class EmployeeHttpController {
 
     return this.employeeService.createFile(
       createFileDto as CreateEmployeeFileDto,
+      req?.user,
     );
   }
 
@@ -960,8 +974,9 @@ export class EmployeeHttpController {
   })
   async assignEmployeeToLocation(
     @Body() assignDto: CreateEmployeeLocationDto,
+    @Request() req: any,
   ): Promise<EmployeeLocation> {
-    return this.employeeService.assignEmployeeToLocation(assignDto);
+    return this.employeeService.assignEmployeeToLocation(assignDto, req?.user);
   }
 
   @Get(":employeeId/locations")
@@ -982,8 +997,9 @@ export class EmployeeHttpController {
   })
   async getEmployeeLocations(
     @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Request() req: any,
   ): Promise<EmployeeLocation[]> {
-    return this.employeeService.findEmployeeLocations(employeeId);
+    return this.employeeService.findEmployeeLocations(employeeId, req?.user);
   }
 
   @Get("locations/:locationId/employees")
@@ -1023,7 +1039,10 @@ export class EmployeeHttpController {
 
     this.logger.log("🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
       locationId,);
-    const result = await this.employeeService.findLocationEmployees(locationId);
+    const result = await this.employeeService.findLocationEmployees(
+      locationId,
+      user,
+    );
     this.logger.log("🔍 [EMPLOYEES CONTROLLER] Angajați returnați:", result.length);
     return result;
   }
@@ -1060,6 +1079,12 @@ export class EmployeeHttpController {
 
     this.logger.log("🔍 [EMPLOYEES CONTROLLER] Cerere pentru angajații din locația:",
       locationId,);
+    if (user?.company_id) {
+      await this.employeeService.assertLocationInCompany(
+        locationId,
+        Number(user.company_id),
+      );
+    }
     const employees = await this.employeeService.findAll(
       1,
       1000,
@@ -1093,10 +1118,12 @@ export class EmployeeHttpController {
   async removeEmployeeFromLocation(
     @Param("employeeId", ParseIntPipe) employeeId: number,
     @Param("locationId", ParseIntPipe) locationId: number,
+    @Request() req: any,
   ): Promise<{ message: string }> {
     return this.employeeService.removeEmployeeFromLocation(
       employeeId,
       locationId,
+      req?.user,
     );
   }
 
@@ -1111,15 +1138,13 @@ export class EmployeeHttpController {
   ) {
     const user = req?.user;
     if (!req?.bypassAuth && user) {
-      const perms = (user?.permissions as string[]) || [];
-      const roles = ((user?.roles as string[]) || []).map((r: string) =>
-        String(r).toLowerCase().trim(),
-      );
-      const isGlobalAdmin =
-        perms.includes("assignment.read_all") ||
-        roles.includes("admin") ||
-        roles.includes("super-admin") ||
-        roles.includes("superadmin");
+      const isGlobalAdmin = isPlatformWideEmployeeUser({
+        company_id: user.company_id,
+        companyId: user.companyId,
+        isSuperAdmin: user.isSuperAdmin,
+        permissions: (user?.permissions as string[]) || [],
+        roles: (user?.roles as string[]) || [],
+      });
       if (!isGlobalAdmin) {
         const jwtCompanyId = Number(user.company_id);
         if (

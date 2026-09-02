@@ -359,6 +359,23 @@ export class UsersController {
     return this.usersService.getAllRoles();
   }
 
+  @Get('assignable-roles')
+  @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
+  @Permissions('permissions.read', 'users.assign_role')
+  @ApiOperation({
+    summary:
+      'Returnează rolurile pe care requester-ul le poate atribui (global pentru platform; allowlist pentru client-admin)',
+  })
+  @ApiResponse({ status: 200, description: 'Lista rolurilor atribuibile', type: [Role] })
+  async getAssignableRoles(@Req() req: AuthedRequest): Promise<Role[]> {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    return this.usersService.getAssignableRolesForRequester(
+      req.user,
+      isInternal,
+    );
+  }
+
   @Get('roles/:id')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
   @Permissions('permissions.read')
@@ -630,7 +647,7 @@ export class UsersController {
   // ===== USER_ROLES CRUD ENDPOINTS =====
   @Post('user-roles')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
+  @Permissions('permissions.read', 'users.assign_role')
   @ApiOperation({ summary: 'Creează o asociere utilizator-rol' })
   @ApiBody({
     description: 'Datele pentru crearea unei asocieri utilizator-rol',
@@ -649,36 +666,67 @@ export class UsersController {
     @Req() req: AuthedRequest,
     @Body() createUserRoleDto: { userId: number; roleId: number },
   ): Promise<UserRole> {
-    await this.usersService.assertCanManageRoles(
-      req.user,
-      this.usersService.isInternalRequest(req),
-    );
-    if (!this.usersService.isInternalRequest(req)) {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    if (!isInternal) {
       await this.usersService.assertCanManageUserAccount(
         req.user,
         createUserRoleDto.userId,
         false,
       );
+      await this.usersService.assertClientAdminRoleAssignmentAllowed(req.user, {
+        targetUserId: createUserRoleDto.userId,
+        roleId: createUserRoleDto.roleId,
+        action: 'assign',
+      });
     }
     return this.usersService.createUserRole(createUserRoleDto);
   }
 
   @Get('user-roles')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
-  @ApiOperation({ summary: 'Returnează toate asocierile utilizator-rol' })
+  @Permissions('permissions.read', 'users.assign_role')
+  @ApiOperation({
+    summary:
+      'Returnează asocierile utilizator-rol (global pentru platform; doar propria companie pentru client-admin)',
+  })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    type: Number,
+    description: 'Filtru opțional după userId (aplicat după scope tenant)',
+  })
+  @ApiQuery({
+    name: 'roleId',
+    required: false,
+    type: Number,
+    description: 'Filtru opțional după roleId (aplicat după scope tenant)',
+  })
   @ApiResponse({ status: 200, description: 'Lista asocierilor', type: [UserRole] })
-  async getAllUserRoles(@Req() req: AuthedRequest): Promise<UserRole[]> {
-    await this.usersService.assertCanManageRoles(
-      req.user,
-      this.usersService.isInternalRequest(req),
-    );
-    return this.usersService.getAllUserRoles();
+  async getAllUserRoles(
+    @Req() req: AuthedRequest,
+    @Query('userId') userId?: string,
+    @Query('roleId') roleId?: string,
+  ): Promise<UserRole[]> {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    const parsedUserId = userId != null ? parseInt(userId, 10) : undefined;
+    const parsedRoleId = roleId != null ? parseInt(roleId, 10) : undefined;
+    return this.usersService.getAllUserRolesForRequester(req.user, isInternal, {
+      userId:
+        parsedUserId != null && Number.isFinite(parsedUserId)
+          ? parsedUserId
+          : undefined,
+      roleId:
+        parsedRoleId != null && Number.isFinite(parsedRoleId)
+          ? parsedRoleId
+          : undefined,
+    });
   }
 
   @Get('user-roles/:id')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
+  @Permissions('permissions.read', 'users.assign_role')
   @ApiOperation({ summary: 'Găsește o asociere utilizator-rol după ID' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiResponse({ status: 200, description: 'Asocierea găsită', type: UserRole })
@@ -687,7 +735,7 @@ export class UsersController {
     @Req() req: AuthedRequest,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<UserRole> {
-    await this.usersService.assertCanManageRoles(
+    await this.usersService.assertCanAssignUserRoles(
       req.user,
       this.usersService.isInternalRequest(req),
     );
@@ -696,7 +744,7 @@ export class UsersController {
 
   @Patch('user-roles/:id')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
+  @Permissions('permissions.read', 'users.assign_role')
   @ApiOperation({ summary: 'Actualizează o asociere utilizator-rol' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
   @ApiBody({
@@ -724,23 +772,39 @@ export class UsersController {
     @Param('id', ParseIntPipe) id: number,
     @Body() updateUserRoleDto: { userId?: number; roleId?: number },
   ): Promise<UserRole> {
-    await this.usersService.assertCanManageRoles(
-      req.user,
-      this.usersService.isInternalRequest(req),
-    );
-    if (!this.usersService.isInternalRequest(req) && updateUserRoleDto.userId) {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    if (!isInternal) {
+      const existing = await this.usersService.getUserRoleById(id);
+      const targetUserId = updateUserRoleDto.userId ?? existing.userId;
       await this.usersService.assertCanManageUserAccount(
         req.user,
-        updateUserRoleDto.userId,
+        targetUserId,
         false,
       );
+      // Changing away from / onto roles: treat as replace (cannot strip own client-admin)
+      await this.usersService.assertClientAdminRoleAssignmentAllowed(req.user, {
+        targetUserId: existing.userId,
+        existingUserRoleId: id,
+        action: 'remove',
+      });
+      if (updateUserRoleDto.roleId != null) {
+        await this.usersService.assertClientAdminRoleAssignmentAllowed(
+          req.user,
+          {
+            targetUserId,
+            roleId: updateUserRoleDto.roleId,
+            action: 'assign',
+          },
+        );
+      }
     }
     return this.usersService.updateUserRole(id, updateUserRoleDto);
   }
 
   @Delete('user-roles')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
+  @Permissions('permissions.read', 'users.assign_role')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge toate rolurile pentru un utilizator' })
   @ApiQuery({ name: 'userId', description: 'ID-ul utilizatorului', required: true, type: Number })
@@ -750,19 +814,21 @@ export class UsersController {
     @Req() req: AuthedRequest,
     @Query('userId', ParseIntPipe) userId: number,
   ): Promise<void> {
-    await this.usersService.assertCanManageRoles(
-      req.user,
-      this.usersService.isInternalRequest(req),
-    );
-    if (!this.usersService.isInternalRequest(req)) {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    if (!isInternal) {
       await this.usersService.assertCanManageUserAccount(req.user, userId, false);
+      await this.usersService.assertClientAdminRoleAssignmentAllowed(req.user, {
+        targetUserId: userId,
+        action: 'remove',
+      });
     }
     return this.usersService.deleteUserRolesByUserId(userId);
   }
 
   @Delete('user-roles/:id')
   @UseGuards(InternalServiceGuard, AuthGuard, RolesGuard)
-  @Permissions('permissions.read')
+  @Permissions('permissions.read', 'users.assign_role')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Șterge o asociere utilizator-rol' })
   @ApiParam({ name: 'id', description: 'ID-ul asocierii' })
@@ -772,17 +838,20 @@ export class UsersController {
     @Req() req: AuthedRequest,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<void> {
-    await this.usersService.assertCanManageRoles(
-      req.user,
-      this.usersService.isInternalRequest(req),
-    );
-    if (!this.usersService.isInternalRequest(req)) {
+    const isInternal = this.usersService.isInternalRequest(req);
+    await this.usersService.assertCanAssignUserRoles(req.user, isInternal);
+    if (!isInternal) {
       const userRole = await this.usersService.getUserRoleById(id);
       await this.usersService.assertCanManageUserAccount(
         req.user,
         userRole.userId,
         false,
       );
+      await this.usersService.assertClientAdminRoleAssignmentAllowed(req.user, {
+        targetUserId: userRole.userId,
+        existingUserRoleId: id,
+        action: 'remove',
+      });
     }
     return this.usersService.deleteUserRole(id);
   }

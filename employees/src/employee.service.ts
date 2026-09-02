@@ -25,6 +25,8 @@ import { UpdateGeneratedDocumentDto } from "./dto/update-generated-document.dto"
 import { CreateWorkLocationHistoryDto } from "./dto/create-work-location-history.dto";
 import { UpdateWorkLocationHistoryDto } from "./dto/update-work-location-history.dto";
 import { CreateEmployeeLocationDto } from "./dto/create-employee-location.dto";
+import { isPlatformWideEmployeeUser } from "./employee-tenant.util";
+import { normalizeEmployeeUpdatePayload } from "./normalize-employee-update.util";
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
@@ -149,7 +151,18 @@ export class EmployeeService {
   }
 
   // Crearea unui angajat nou. selectedWorkLocationId = locația selectată în UI (colț dreapta sus).
-  async create(createEmployeeDto: CreateEmployeeDto, selectedWorkLocationId?: number): Promise<Employee> {
+  async create(
+    createEmployeeDto: CreateEmployeeDto,
+    selectedWorkLocationId?: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<Employee> {
     // Verifică dacă email-ul există deja
     const existingEmployee = await this.employeeRepository.findOne({
       where: { email: createEmployeeDto.email },
@@ -206,6 +219,11 @@ export class EmployeeService {
     ) {
       createEmployeeDto.work_location_default_id = Number(selectedWorkLocationId);
     }
+
+    await this.assertCreateOrUpdateLocationAllowed(
+      createEmployeeDto.work_location_default_id,
+      user,
+    );
 
     const employee = this.employeeRepository.create(createEmployeeDto);
     const savedEmployee = await this.employeeRepository.save(employee);
@@ -489,6 +507,43 @@ export class EmployeeService {
     }
   }
 
+  /** True for platform / global admin — may operate cross-company. */
+  private isPlatformWideEmployeeUser(user?: {
+    bypassAuth?: boolean;
+    permissions?: string[];
+    roles?: string[];
+  }): boolean {
+    return isPlatformWideEmployeeUser(user);
+  }
+
+  /**
+   * Non-platform users may only place employees on locations of their JWT company.
+   * Platform admins / internal calls skip.
+   */
+  private async assertCreateOrUpdateLocationAllowed(
+    locationId: number | null | undefined,
+    user?: {
+      bypassAuth?: boolean;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+    },
+  ): Promise<void> {
+    if (locationId == null || !Number.isFinite(Number(locationId)) || Number(locationId) <= 0) {
+      return;
+    }
+    if (!user || this.isPlatformWideEmployeeUser(user)) {
+      return;
+    }
+    const companyId = Number(user.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new ForbiddenException(
+        "Compania utilizatorului nu este determinată",
+      );
+    }
+    await this.assertLocationInCompany(Number(locationId), companyId);
+  }
+
   // Returnează angajați activi din locația dată (scope colegi operaționali).
   async findForOwn(
     location_id: number,
@@ -533,19 +588,18 @@ export class EmployeeService {
     }));
   }
 
-  // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
-  async findAllByCompany(companyId: number): Promise<Employee[]> {
-    // 1) Preia toate locațiile companiei — endpoint dedicat (nu GET /locations?company_id=, care e ignorat)
+  /**
+   * Locațiile unei companii — ownership canonic employee → company (via work location).
+   */
+  private async fetchCompanyLocationIds(companyId: number): Promise<number[]> {
     const baseUrl = process.env.LOCATIONS_HTTP_URL || "http://localhost:3004";
-    let locationIds: number[] = [];
     try {
       const resp = await axios.get(
         `${baseUrl}/locations/company/${companyId}`,
         {
           headers: {
             "x-internal-service": "employees",
-            "x-service-secret":
-              process.env.SERVICE_SECRET || "",
+            "x-service-secret": process.env.SERVICE_SECRET || "",
             "Content-Type": "application/json",
           },
           timeout: 8000,
@@ -556,17 +610,21 @@ export class EmployeeService {
           ? resp.data
           : resp.data?.locations || resp.data?.data || []
       ) as any[];
-      locationIds = locations
+      return locations
         .map((l: any) => Number(l?.id))
         .filter((id: number) => Number.isFinite(id) && id > 0);
     } catch (e) {
       console.error(
-        `[EMPLOYEES] findAllByCompany: failed to load locations for company ${companyId}:`,
+        `[EMPLOYEES] fetchCompanyLocationIds: failed for company ${companyId}:`,
         (e as Error)?.message || e,
       );
       return [];
     }
+  }
 
+  // Listare toți angajații pentru o companie (după toate locațiile companiei din microserviciul locations)
+  async findAllByCompany(companyId: number): Promise<Employee[]> {
+    const locationIds = await this.fetchCompanyLocationIds(companyId);
     if (locationIds.length === 0) return [];
 
     // 2) Găște angajații care au fie locația implicită în acele locații, fie asociere în employees_locations
@@ -625,12 +683,21 @@ export class EmployeeService {
   // Returnează doar id, first_name, last_name pentru un angajat (pentru utilizatori cu permisiunea employees.read_own)
   async findNameById(
     id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<{
     id: number;
     first_name: string;
     last_name: string;
     full_name: string;
   }> {
+    await this.assertCanAccessEmployee(id, user);
     const employee = await this.employeeRepository.findOne({
       where: { id },
       select: ["id", "first_name", "last_name"],
@@ -655,14 +722,14 @@ export class EmployeeService {
       id?: number;
       company_id?: number | null;
       permissions?: string[];
+      roles?: string[];
       bypassAuth?: boolean;
     },
   ): Promise<void> {
     if (!user || user.bypassAuth) {
       return;
     }
-    const perms = user.permissions || [];
-    if (perms.includes('assignment.read_all')) {
+    if (isPlatformWideEmployeeUser(user)) {
       return;
     }
     const selfId = Number(user.sub ?? user.id);
@@ -690,9 +757,59 @@ export class EmployeeService {
       );
       return;
     }
+
+    const junctionLocations = await this.employeeLocationRepository.find({
+      where: { employeeId },
+      select: ['idLocation'],
+    });
+    for (const row of junctionLocations) {
+      if (row.idLocation == null) {
+        continue;
+      }
+      const locCompanyId = await this.getLocationCompanyId(row.idLocation);
+      if (locCompanyId === companyId) {
+        return;
+      }
+    }
+
     throw new ForbiddenException(
       'Angajatul nu aparține companiei dumneavoastră',
     );
+  }
+
+  /** VAL 4 alias — employee ownership via location membership. */
+  async assertEmployeeInCompany(
+    employeeId: number,
+    companyId: number | null | undefined,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<void> {
+    if (!user || user.bypassAuth || isPlatformWideEmployeeUser(user)) {
+      return;
+    }
+    const tenantCompanyId = Number(user.company_id);
+    if (!Number.isFinite(tenantCompanyId) || tenantCompanyId <= 0) {
+      throw new ForbiddenException(
+        'Compania utilizatorului nu este determinată',
+      );
+    }
+    if (
+      companyId != null &&
+      Number.isFinite(Number(companyId)) &&
+      Number(companyId) > 0 &&
+      Number(companyId) !== tenantCompanyId
+    ) {
+      throw new ForbiddenException(
+        'company_id nu aparține companiei dumneavoastră',
+      );
+    }
+    await this.assertCanAccessEmployee(employeeId, user);
   }
 
   async findOne(
@@ -702,6 +819,7 @@ export class EmployeeService {
       id?: number;
       company_id?: number | null;
       permissions?: string[];
+      roles?: string[];
       bypassAuth?: boolean;
     },
   ): Promise<Employee> {
@@ -838,6 +956,63 @@ export class EmployeeService {
     return employees;
   }
 
+  /**
+   * Batch lookup scoped la compania tenant: employee.id IN (:ids) și locație în compania JWT.
+   * Returnează doar rândurile accesibile (ID-uri cross-tenant sunt omise, nu resping request-ul).
+   */
+  async findByIdsBasicForCompany(
+    ids: number[],
+    companyId: number,
+  ): Promise<
+    Array<
+      Pick<
+        Employee,
+        | "id"
+        | "first_name"
+        | "last_name"
+        | "email"
+        | "is_active"
+        | "work_location_default_id"
+      >
+    >
+  > {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+    const uniqueIds = Array.from(new Set(ids)).filter(
+      (id) => Number.isFinite(id) && id > 0,
+    );
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const locationIds = await this.fetchCompanyLocationIds(companyId);
+    if (locationIds.length === 0) {
+      return [];
+    }
+
+    const employees = await this.employeeRepository
+      .createQueryBuilder("employee")
+      .leftJoin("employee.employeeLocations", "el")
+      .where("employee.id IN (:...ids)", { ids: uniqueIds })
+      .andWhere(
+        "(employee.work_location_default_id IN (:...locIds) OR el.idLocation IN (:...locIds))",
+        { locIds: locationIds },
+      )
+      .select([
+        "employee.id",
+        "employee.first_name",
+        "employee.last_name",
+        "employee.email",
+        "employee.is_active",
+        "employee.work_location_default_id",
+      ])
+      .distinct(true)
+      .getMany();
+
+    return employees;
+  }
+
   // Găsirea unui angajat după telefon
   async findByPhone(phone: string): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({
@@ -920,15 +1095,18 @@ export class EmployeeService {
       id?: number;
       company_id?: number | null;
       permissions?: string[];
+      roles?: string[];
       bypassAuth?: boolean;
     },
   ): Promise<Employee> {
     const employee = await this.findOne(id, user);
+    // "" pe DATE/ENUM (ex. hire_date/contract_type după self-reg NULL) → MySQL 500
+    const normalizedDto = normalizeEmployeeUpdatePayload(updateEmployeeDto);
 
     // Verifică unicitatea email-ului (dacă se schimbă)
-    if (updateEmployeeDto.email && updateEmployeeDto.email !== employee.email) {
+    if (normalizedDto.email && normalizedDto.email !== employee.email) {
       const existingEmployee = await this.employeeRepository.findOne({
-        where: { email: updateEmployeeDto.email },
+        where: { email: normalizedDto.email },
       });
 
       if (existingEmployee) {
@@ -938,11 +1116,11 @@ export class EmployeeService {
 
     // Verifică unicitatea CNP-ului (dacă se schimbă)
     if (
-      updateEmployeeDto.personal_number &&
-      updateEmployeeDto.personal_number !== employee.personal_number
+      normalizedDto.personal_number &&
+      normalizedDto.personal_number !== employee.personal_number
     ) {
       const existingCNP = await this.employeeRepository.findOne({
-        where: { personal_number: updateEmployeeDto.personal_number },
+        where: { personal_number: normalizedDto.personal_number },
       });
 
       if (existingCNP) {
@@ -951,8 +1129,8 @@ export class EmployeeService {
     }
 
     // Validări pentru date (dacă se actualizează)
-    if (updateEmployeeDto.hire_date) {
-      const hireDate = new Date(updateEmployeeDto.hire_date);
+    if (normalizedDto.hire_date) {
+      const hireDate = new Date(normalizedDto.hire_date);
       hireDate.setHours(0, 0, 0, 0);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -962,8 +1140,8 @@ export class EmployeeService {
       }
     }
 
-    if (updateEmployeeDto.birth_date) {
-      const birthDate = new Date(updateEmployeeDto.birth_date);
+    if (normalizedDto.birth_date) {
+      const birthDate = new Date(normalizedDto.birth_date);
       const minAge = new Date();
       minAge.setFullYear(minAge.getFullYear() - 16);
 
@@ -974,9 +1152,20 @@ export class EmployeeService {
       }
     }
 
+    if (
+      normalizedDto.work_location_default_id != null &&
+      Number(normalizedDto.work_location_default_id) !==
+        Number(employee.work_location_default_id)
+    ) {
+      await this.assertCreateOrUpdateLocationAllowed(
+        normalizedDto.work_location_default_id,
+        user,
+      );
+    }
+
     // Actualizează entitatea
-    await this.employeeRepository.update(id, updateEmployeeDto);
-    const updatedEmployee = await this.findOne(id);
+    await this.employeeRepository.update(id, normalizedDto as any);
+    const updatedEmployee = await this.findOne(id, user);
 
     await this.sendEmployeeNotification(
       "employee_updated",
@@ -1003,6 +1192,7 @@ export class EmployeeService {
       id?: number;
       company_id?: number | null;
       permissions?: string[];
+      roles?: string[];
       bypassAuth?: boolean;
     },
   ): Promise<{ message: string }> {
@@ -1201,9 +1391,33 @@ export class EmployeeService {
 
   // ==================== EMPLOYEE FILES METHODS ====================
 
+  private async assertEmployeeFileTenantAccess(
+    fileId: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<EmployeeFiles> {
+    const file = await this.findOneFile(fileId);
+    await this.assertCanAccessEmployee(file.employee_id, user);
+    return file;
+  }
+
   // Creează un nou fișier pentru angajat
   async createFile(
     createFileDto: CreateEmployeeFileDto,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<EmployeeFiles> {
     this.logger.log("📥 Received createFileDto:", {
       employee_id: createFileDto.employee_id,
@@ -1214,7 +1428,8 @@ export class EmployeeService {
       content_length: createFileDto.file_content?.length || 0,
     });
 
-    // Verifică dacă angajatul există
+    // Verifică dacă angajatul există și aparține tenantului
+    await this.assertCanAccessEmployee(createFileDto.employee_id, user);
     const employee = await this.employeeRepository.findOne({
       where: { id: createFileDto.employee_id },
     });
@@ -1534,16 +1749,18 @@ export class EmployeeService {
   }
 
   // Găsește toate fișierele unui angajat
-  async findFilesByEmployee(employee_id: number): Promise<EmployeeFiles[]> {
-    const employee = await this.employeeRepository.findOne({
-      where: { id: employee_id },
-    });
-
-    if (!employee) {
-      throw new NotFoundException(
-        `Angajatul cu ID-ul ${employee_id} nu a fost găsit`,
-      );
-    }
+  async findFilesByEmployee(
+    employee_id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<EmployeeFiles[]> {
+    await this.assertCanAccessEmployee(employee_id, user);
 
     return await this.filesRepository.find({
       where: { employee_id },
@@ -1556,6 +1773,14 @@ export class EmployeeService {
   async serveFile(
     file_id: number,
     forceDownload: boolean = false,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<{
     data: string;
     mimeType: string;
@@ -1564,7 +1789,7 @@ export class EmployeeService {
   }> {
     this.logger.log(`🔍 Serving file with ID: ${file_id}, forceDownload: ${forceDownload}`,);
 
-    const file = await this.findOneFile(file_id);
+    const file = await this.assertEmployeeFileTenantAccess(file_id, user);
     this.logger.log(`📄 File metadata:`, {
       id: file.id,
       name: file.file_name,
@@ -1714,8 +1939,18 @@ export class EmployeeService {
   }
 
   // Șterge un fișier
-  async removeFile(id: number): Promise<{ message: string }> {
-    const file = await this.findOneFile(id);
+  async removeFile(
+    id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<{ message: string }> {
+    const file = await this.assertEmployeeFileTenantAccess(id, user);
     await this.filesRepository.delete(id);
 
     return {
@@ -2359,19 +2594,45 @@ export class EmployeeService {
   async validateFileAccess(
     file_id: number,
     employee_id?: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<boolean> {
-    const file = await this.findOneFile(file_id);
-    if (employee_id && file.employee_id !== employee_id) {
+    try {
+      const file = await this.assertEmployeeFileTenantAccess(file_id, user);
+      if (employee_id && file.employee_id !== employee_id) {
+        return false;
+      }
+      return true;
+    } catch {
       return false;
     }
-    return true;
   }
 
   // ==================== EMPLOYEES LOCATIONS METHODS ====================
 
   async assignEmployeeToLocation(
     assignDto: CreateEmployeeLocationDto,
+    user?: {
+      bypassAuth?: boolean;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      sub?: number;
+      id?: number;
+    },
   ): Promise<EmployeeLocation> {
+    await this.assertEmployeeInCompany(
+      assignDto.employee_id,
+      user?.company_id,
+      user,
+    );
+    await this.assertCreateOrUpdateLocationAllowed(assignDto.id_location, user);
     // Verifică dacă angajatul există
     const employee = await this.employeeRepository.findOne({
       where: { id: assignDto.employee_id },
@@ -2405,16 +2666,16 @@ export class EmployeeService {
 
   async findEmployeeLocations(
     employee_id: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<EmployeeLocation[]> {
-    const employee = await this.employeeRepository.findOne({
-      where: { id: employee_id },
-    });
-    if (!employee) {
-      throw new NotFoundException(
-        `Angajatul cu ID-ul ${employee_id} nu a fost găsit`,
-      );
-    }
-
+    await this.assertCanAccessEmployee(employee_id, user);
     return await this.employeeLocationRepository.find({
       where: { employeeId: employee_id },
       order: { createdAt: "DESC" },
@@ -2448,7 +2709,14 @@ export class EmployeeService {
 
   async findLocationEmployees(
     id_location: number,
+    user?: {
+      bypassAuth?: boolean;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+    },
   ): Promise<EmployeeLocation[]> {
+    await this.assertCreateOrUpdateLocationAllowed(id_location, user);
     return await this.employeeLocationRepository.find({
       where: { idLocation: id_location },
       relations: ["employee"],
@@ -2459,7 +2727,17 @@ export class EmployeeService {
   async removeEmployeeFromLocation(
     employee_id: number,
     id_location: number,
+    user?: {
+      bypassAuth?: boolean;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      sub?: number;
+      id?: number;
+    },
   ): Promise<{ message: string }> {
+    await this.assertEmployeeInCompany(employee_id, user?.company_id, user);
+    await this.assertCreateOrUpdateLocationAllowed(id_location, user);
     const assignment = await this.employeeLocationRepository.findOne({
       where: {
         employeeId: employee_id,
@@ -2520,7 +2798,16 @@ export class EmployeeService {
   async createFolder(
     employeeId: number,
     body: { description: string; parent_id?: number },
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<EmployeeFolder> {
+    await this.assertCanAccessEmployee(employeeId, user);
     const description = (body?.description || "").trim();
     if (!description) {
       throw new BadRequestException("description este obligatoriu");
@@ -2685,7 +2972,16 @@ export class EmployeeService {
     employeeId: number,
     folderId: number,
     body: { description: string },
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
   ): Promise<EmployeeFolder> {
+    await this.assertCanAccessEmployee(employeeId, user);
     const newDescription = (body?.description || "").trim();
     if (!newDescription) {
       throw new BadRequestException("description este obligatoriu");
@@ -2755,7 +3051,19 @@ export class EmployeeService {
   /**
    * Șterge un folder și toți descendenții (recursiv), inclusiv pe disk.
    */
-  async removeFolder(employeeId: number, folderId: number): Promise<void> {
+  async removeFolder(
+    employeeId: number,
+    folderId: number,
+    user?: {
+      sub?: number;
+      id?: number;
+      company_id?: number | null;
+      permissions?: string[];
+      roles?: string[];
+      bypassAuth?: boolean;
+    },
+  ): Promise<void> {
+    await this.assertCanAccessEmployee(employeeId, user);
     const folder = await this.folderRepository.findOne({
       where: { id: folderId, employee_id: employeeId },
     });

@@ -26,10 +26,16 @@ export class CreateSupplierProductDto {
   @IsPositive()
   supplier_id: number;
 
-  @ApiProperty()
+  @ApiProperty({
+    required: false,
+    description:
+      'ID produs din nomenclatorul de stoc (client Manual / legătură depozit). Opțional pentru catalogul comercial al furnizorului cu cont.',
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsNumber()
   @IsPositive()
-  product_id: number;
+  product_id?: number | null;
 
   @ApiProperty()
   @IsString()

@@ -1,7 +1,9 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, Req, ParseIntPipe, UseGuards, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Res, Req, ParseIntPipe, UseGuards, Headers, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService, CompanyAccessRequester } from './company/company.service';
+import { SubscriptionService } from './company/subscription.service';
+import { isPlanCode } from './company/subscription.constants';
 import { CreateCompanyDto } from './company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
 import { UpdateCompanyDto } from './company/dto/update-company.dto';
@@ -9,10 +11,17 @@ import { CreateCompanyDocumentDto } from './company/dto/create-company-document.
 import { UpdateCompanyDocumentDto } from './company/dto/update-company-document.dto';
 import { Company } from './company/entity/company.entity';
 import { InternalServiceGuard } from './auth/internal-service.guard';
+import {
+	hasPlatformWideAccess,
+	resolveJwtCompanyId,
+} from '@giurom/tenant-access';
 
 @Controller('companies')
 export class CompanyHttpController {
-	constructor(private readonly service: CompanyService) {}
+	constructor(
+		private readonly service: CompanyService,
+		private readonly subscriptionService: SubscriptionService,
+	) {}
 
 	/**
 	 * Derivă identitatea cererii din JWT (nu din companyId trimis de client) pentru verificarea de acces.
@@ -22,15 +31,24 @@ export class CompanyHttpController {
 		const user = req?.user;
 		if (!user) return undefined;
 		const authHeader = req.headers?.authorization || req.headers?.Authorization;
-		const rawCompanyId = user.company_id ?? user.companyId;
-		const companyId = rawCompanyId != null ? Number(rawCompanyId) : undefined;
 		const permissions: string[] = Array.isArray(user.permissions) ? user.permissions : [];
+		const roles: string[] = Array.isArray(user.roles) ? user.roles : [];
 		const permSet = new Set(permissions.map((p) => String(p).toLowerCase().trim()));
 		const rawType = String(user.company_type ?? user.companyType ?? '').toLowerCase().trim();
 		const companyType =
 			rawType === 'client' || rawType === 'furnizor' ? (rawType as 'client' | 'furnizor') : undefined;
-		const isSuperAdmin =
-			user.isSuperAdmin === true || permSet.has('assignment.read_all');
+		const jwtCompanyId = resolveJwtCompanyId({
+			company_id: user.company_id ?? user.companyId,
+			companyId: user.companyId ?? user.company_id,
+		});
+		const platformWide = hasPlatformWideAccess({
+			company_id: user.company_id ?? user.companyId,
+			companyId: user.companyId ?? user.company_id,
+			isSuperAdmin: user.isSuperAdmin === true,
+			permissions,
+			roles,
+		});
+		const isSuperAdmin = user.isSuperAdmin === true || platformWide;
 		const isAdmin =
 			user.isAdmin === true ||
 			isSuperAdmin ||
@@ -38,10 +56,12 @@ export class CompanyHttpController {
 		return {
 			isAdmin,
 			isSuperAdmin,
-			hasPlatformWideAccess: isSuperAdmin || permSet.has('assignment.read_all'),
+			hasPlatformWideAccess: platformWide,
 			authHeader,
-			companyId: Number.isFinite(companyId) && (companyId as number) > 0 ? companyId : undefined,
+			companyId: jwtCompanyId ?? undefined,
 			companyType,
+			permissions,
+			roles,
 		};
 	}
 
@@ -55,6 +75,67 @@ export class CompanyHttpController {
 	@Post('with-documents')
 	@Permissions('companies.create')
 	createWithDocs(@Body() dto: CreateCompanyWithDocumentsDto) { return this.service.createCompanyWithDocuments(dto); }
+
+	@Get('me/subscription')
+	@Permissions('companies.read_own', 'companies.read')
+	getMySubscription(@Req() req: any) {
+		return this.subscriptionService.getMySubscription(this.buildAccessRequester(req));
+	}
+
+	@Patch('me/subscription')
+	@Permissions('companies.read_own', 'companies.read')
+	changeMySubscription(
+		@Body() body: {
+			plan_code?: string;
+			block_account_supplier_ids?: number[];
+			block_manual_supplier_ids?: number[];
+		},
+		@Req() req: any,
+	) {
+		const planCode = String(body?.plan_code || '').toLowerCase().trim();
+		const userId = req?.user?.userId ?? req?.user?.sub ?? null;
+		return this.subscriptionService.changeMySubscription(
+			this.buildAccessRequester(req),
+			planCode,
+			userId != null ? Number(userId) : null,
+			{
+				block_account_supplier_ids: body?.block_account_supplier_ids,
+				block_manual_supplier_ids: body?.block_manual_supplier_ids,
+			},
+		);
+	}
+
+	@Get('internal/:companyId/subscription')
+	async getSubscriptionInternal(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Req() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+		}
+		return this.subscriptionService.getSubscriptionForCompany(companyId);
+	}
+
+	@Patch(':companyId/subscription')
+	@Permissions('companies.update')
+	setCompanySubscription(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Body() body: { plan_code?: string },
+		@Req() req: any,
+	) {
+		const planCode = String(body?.plan_code || '').toLowerCase().trim();
+		if (!isPlanCode(planCode)) {
+			throw new BadRequestException('plan_code trebuie să fie free, silver sau gold');
+		}
+		const requester = this.buildAccessRequester(req);
+		const userId = req?.user?.userId ?? req?.user?.sub ?? null;
+		return this.subscriptionService.setCompanyPlan(
+			companyId,
+			planCode,
+			requester,
+			userId != null ? Number(userId) : null,
+		);
+	}
 
 	@Get()
 	@Permissions('companies.read')

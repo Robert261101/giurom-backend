@@ -16,3 +16,26 @@ stock/src/stock/migrations/008-products-name-sku-non-unique.sql
 stock/src/stock/migrations/009-stock-quantity-scale-3.sql
 stock/src/stock/migrations/010-waste-request-giurom2-zone.sql
 suppliers-ms/migrations/20260901_supplier_orders_app2_target.sql
+
+# PR #48 - multi-tenant client/supplier + abonamente.
+# Ordinea conteaza: tabela inainte de ALTER-ele pe ea.
+suppliers-ms/migrations/20260826_client_supplier_links.sql
+suppliers-ms/migrations/20260826_supplier_connection_code.sql
+suppliers-ms/migrations/20260827_client_supplier_links_is_active.sql
+suppliers-ms/migrations/20260827_supplier_products_product_id_nullable.sql
+suppliers-ms/migrations/20260828_client_manual_supplier_state.sql
+suppliers-ms/migrations/20260828_client_supplier_links_quota_status.sql
+suppliers-ms/migrations/20260831_client_manual_supplier_state_is_active.sql
+suppliers-ms/migrations/20260831_supplier_product_client_mappings_location_phase_a.sql
+company/migrations/20260827_01_subscription_schema.sql
+company/migrations/20260827_02_subscription_plans_seed.sql
+company/migrations/20260827_03_subscription_backfill_clients.sql
+auth/migrations/seed_client_admin_role.sql
+
+# NU adauga phase_b aici inca. Face client_location_id NOT NULL, iar phase_a lasa
+# explicit randurile legacy cu NULL. Backfill-ul VAL 5 nu exista in repo (doar mesaje
+# de eroare care trimit la el), deci pe date reale ori pica, ori in non-strict mode
+# transforma NULL in 0 si strica mapari. De rulat manual dupa ce
+#   SELECT COUNT(*) FROM supplier_product_client_mappings WHERE client_location_id IS NULL;
+# da 0, apoi de adaugat linia aici.
+# suppliers-ms/migrations/20260831_supplier_product_client_mappings_location_phase_b.sql

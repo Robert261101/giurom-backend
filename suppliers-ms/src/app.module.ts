@@ -20,6 +20,8 @@ import { SupplierProductClientPrice } from "./suppliers/entities/supplier-produc
 import { SupplierProductClientPriceHistory } from "./suppliers/entities/supplier-product-client-price-history.entity";
 import { SupplierProductClientVisibility } from "./suppliers/entities/supplier-product-client-visibility.entity";
 import { SupplierProductClientActivation } from "./suppliers/entities/supplier-product-client-activation.entity";
+import { ClientSupplierLink } from "./suppliers/entities/client-supplier-link.entity";
+import { ClientManualSupplierState } from "./suppliers/entities/client-manual-supplier-state.entity";
 import { Giurom2Zone } from "./suppliers/entities/giurom2-zone.entity";
 import { SupplierProductLastGiurom2Zone } from "./suppliers/entities/supplier-product-last-giurom2-zone.entity";
 import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-order-driver-assignment.entity";
@@ -30,6 +32,8 @@ import { SuppliersExportService } from "./suppliers/suppliers-export.service";
 import { EntryDocumentsExportService } from "./suppliers/entry-documents-export.service";
 import { Giurom2ZonesService } from "./suppliers/giurom2-zones.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
+import { SupplierQuotaService } from "./suppliers/supplier-quota.service";
+import { SupplierQuotaLifecycleService } from "./suppliers/supplier-quota-lifecycle.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
 import { SuppliersHttpController } from "./suppliers/suppliers.http.controller";
 import { App2OrdersController } from "./suppliers/app2-orders.controller";
@@ -93,6 +97,8 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientPriceHistory,
         SupplierProductClientVisibility,
         SupplierProductClientActivation,
+        ClientSupplierLink,
+        ClientManualSupplierState,
         Giurom2Zone,
         SupplierProductLastGiurom2Zone,
       ],
@@ -135,6 +141,8 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientPriceHistory,
         SupplierProductClientVisibility,
         SupplierProductClientActivation,
+        ClientSupplierLink,
+        ClientManualSupplierState,
         Giurom2Zone,
         SupplierProductLastGiurom2Zone,
       ]),
@@ -151,6 +159,8 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
     Giurom2ZonesService,
     App2OrdersService,
     StockHttpService,
+    SupplierQuotaService,
+    SupplierQuotaLifecycleService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
