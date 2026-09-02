@@ -4587,6 +4587,7 @@ export class SuppliersService {
   private async assertSupplierAccessibleToRequester(
     supplier: Supplier,
     requester?: SupplierAccessRequester,
+    options?: { operational?: boolean; adminDetail?: boolean },
   ): Promise<void> {
     if (!requester) {
       return;
@@ -4598,6 +4599,7 @@ export class SuppliersService {
     const accessible = await this.isSupplierAccessibleToRequester(
       supplier,
       requester,
+      options,
     );
     if (!accessible) {
       throw new NotFoundException(`Furnizorul cu ID ${supplier.id} nu a fost găsit`);
