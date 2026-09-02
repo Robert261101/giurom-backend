@@ -30,6 +30,8 @@ suppliers-ms/migrations/20260831_supplier_product_client_mappings_location_phase
 company/migrations/20260827_01_subscription_schema.sql
 company/migrations/20260827_02_subscription_plans_seed.sql
 company/migrations/20260827_03_subscription_backfill_clients.sql
+# Trebuie inaintea seed-ului: tabelele sunt latin1, iar seed-ul scrie diacritice.
+auth/migrations/20260902_auth_roles_permissions_utf8mb4.sql
 auth/migrations/seed_client_admin_role.sql
 
 # NU adauga phase_b aici inca. Face client_location_id NOT NULL, iar phase_a lasa
