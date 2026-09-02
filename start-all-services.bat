@@ -68,6 +68,12 @@ start "Auth MS" cmd /k "cd /d %~dp0auth && npm run start:dev"
 timeout /t 2 /nobreak >nul
 
 echo.
+echo Starting Tasks Microservice...
+start "Tasks MS" cmd /k "cd /d %~dp0veziv-tasks && npx tsc -p tsconfig.build.json --incremental false && node dist/main.js"
+
+timeout /t 2 /nobreak >nul
+
+echo.
 echo Starting Locations Microservice...
 start "Locations MS" cmd /k "cd /d %~dp0 && npm run start:ms:locations"
 

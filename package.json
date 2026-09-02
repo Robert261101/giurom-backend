@@ -18,6 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:libs:tenant-access": "jest --config libs/tenant-access/jest.config.js",
+    "build:libs:tenant-access": "tsc -p libs/tenant-access/tsconfig.json",
     "start:ms:employees": "ts-node -r tsconfig-paths/register -P employees/tsconfig.json employees/src/main.ts",
     "start:ms:company": "ts-node -r tsconfig-paths/register -P company/tsconfig.json company/src/main.ts",
     "start:ms:locations": "ts-node -r tsconfig-paths/register -P locations/tsconfig.json locations/src/main.ts",
@@ -29,6 +31,7 @@
     "start:ms:waste": "cd waste-records-ms && ts-node -r tsconfig-paths/register src/main.ts",
     "start:ms:requests": "ts-node -r tsconfig-paths/register -P requests-ms/tsconfig.json requests-ms/src/main.ts",
     "start:ms:notifications": "ts-node -r tsconfig-paths/register -P notifications-ms/tsconfig.json notifications-ms/src/main.ts",
+    "start:ms:tasks": "cd veziv-tasks && npx tsc -p tsconfig.build.json --incremental false && node dist/main.js",
     "start:gateway": "node api-gateway/src/main.js"
   },
   "dependencies": {

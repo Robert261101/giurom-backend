@@ -459,6 +459,20 @@ export class SuppliersHttpController {
     );
   }
 
+  @Post(":id/quota/block")
+  @PermissionsAny("suppliers.update", "suppliers.create")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Blochează manual un furnizor pentru clientul curent (quota_status = blocked)",
+  })
+  blockSupplierQuota(@Param("id") id: string, @Request() req?: any) {
+    return this.service.blockSupplierQuota(
+      Number(id),
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
   @Post(":id/quota/unblock")
   @PermissionsAny("suppliers.update", "suppliers.create")
   @HttpCode(200)
@@ -1008,8 +1022,14 @@ export class SuppliersHttpController {
   @ApiOperation({ summary: "Listă locațiile unui furnizor" })
   @ApiParam({ name: "supplierId", description: "ID-ul furnizorului" })
   @ApiResponse({ status: 200, description: "Lista locațiilor furnizorului" })
-  findSupplierLocations(@Param("supplierId") supplierId: string) {
-    return this.service.findSupplierLocations(Number(supplierId));
+  findSupplierLocations(
+    @Param("supplierId") supplierId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
+  ) {
+    return this.service.findSupplierLocations(
+      Number(supplierId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Get(":supplierId/stock-location")
@@ -1018,8 +1038,14 @@ export class SuppliersHttpController {
     summary:
       "Locația depozitului furnizorului (HQ/companie) — pentru filtrarea nomenclatorului la comandă",
   })
-  getSupplierStockLocation(@Param("supplierId") supplierId: string) {
-    return this.service.getSupplierStockLocationId(Number(supplierId));
+  getSupplierStockLocation(
+    @Param("supplierId") supplierId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
+  ) {
+    return this.service.getSupplierStockLocationId(
+      Number(supplierId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Get(":supplierId/stock-availability")
@@ -1204,8 +1230,14 @@ export class SuppliersHttpController {
   @ApiOperation({ summary: "Listă furnizorii unei locații" })
   @ApiParam({ name: "locationId", description: "ID-ul locației" })
   @ApiResponse({ status: 200, description: "Lista furnizorilor locației" })
-  findLocationSuppliers(@Param("locationId") locationId: string) {
-    return this.service.findLocationSuppliers(Number(locationId));
+  findLocationSuppliers(
+    @Param("locationId") locationId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
+  ) {
+    return this.service.findLocationSuppliers(
+      Number(locationId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Delete(":supplierId/locations/:locationId")
@@ -1220,10 +1252,12 @@ export class SuppliersHttpController {
   removeSupplierFromLocation(
     @Param("supplierId") supplierId: string,
     @Param("locationId") locationId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
     return this.service.removeSupplierFromLocation(
       Number(supplierId),
       Number(locationId),
+      buildSupplierAccessRequester(req?.user),
     );
   }
 
@@ -2150,11 +2184,19 @@ export class SuppliersHttpController {
   // Documents – upload: fie suppliers.create fie suppliers.update (cine poate edita furnizorul poate adăuga documente)
   @Post(":supplierId/documents")
   @PermissionsAny("suppliers.create", "suppliers.update")
-  addDocument(@Param("supplierId") supplierId: string, @Body() body: any) {
+  addDocument(
+    @Param("supplierId") supplierId: string,
+    @Body() body: any,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
+  ) {
     if (!body || typeof body !== 'object') {
       throw new BadRequestException('Body invalid sau lipsă (verifică că request-ul este JSON cu Content-Type: application/json).');
     }
-    return this.service.addDocument(Number(supplierId), body);
+    return this.service.addDocument(
+      Number(supplierId),
+      body,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   /** Creează un folder nou pentru furnizor (în DB și pe disk). Body: { description, parent_id? }. */
@@ -2164,12 +2206,18 @@ export class SuppliersHttpController {
     @Param("supplierId") supplierId: string,
     @Body() body: { description: string; parent_id?: number },
     @Query("location_id") location_id?: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
     if (!body || !body.description) {
       throw new BadRequestException('description is required');
     }
-    return this.service.createFolder(Number(supplierId), body, locationId);
+    return this.service.createFolder(
+      Number(supplierId),
+      body,
+      locationId,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   /** Actualizează numele unui folder (nu permite duplicate). */
@@ -2179,11 +2227,17 @@ export class SuppliersHttpController {
     @Param("supplierId") supplierId: string,
     @Param("folderId") folderId: string,
     @Body() body: { description: string },
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
     if (!body || !body.description) {
       throw new BadRequestException('description is required');
     }
-    return this.service.updateFolder(Number(supplierId), Number(folderId), body);
+    return this.service.updateFolder(
+      Number(supplierId),
+      Number(folderId),
+      body,
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   /** Șterge un folder al furnizorului (și documentele asociate). */
@@ -2192,8 +2246,13 @@ export class SuppliersHttpController {
   removeFolder(
     @Param("supplierId") supplierId: string,
     @Param("folderId") folderId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
-    return this.service.removeFolder(Number(supplierId), Number(folderId));
+    return this.service.removeFolder(
+      Number(supplierId),
+      Number(folderId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   /** Sincronizează documentele unui folder din disk în DB (creează înregistrări pentru fișiere existente pe disk). */
@@ -2202,15 +2261,26 @@ export class SuppliersHttpController {
   syncFolderFromDisk(
     @Param("supplierId") supplierId: string,
     @Param("folderId") folderId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
     this.logger.log(`[DOCUMENTE] POST /suppliers/${supplierId}/folders/${folderId}/sync-from-disk`);
-    return this.service.syncFolderFromDisk(Number(supplierId), Number(folderId));
+    return this.service.syncFolderFromDisk(
+      Number(supplierId),
+      Number(folderId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   @Delete("documents/:documentId")
   @Permissions("suppliers.delete")
-  removeDocument(@Param("documentId") documentId: string) {
-    return this.service.removeDocument(Number(documentId));
+  removeDocument(
+    @Param("documentId") documentId: string,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
+  ) {
+    return this.service.removeDocument(
+      Number(documentId),
+      buildSupplierAccessRequester(req?.user),
+    );
   }
 
   // Serve supplier document (download or inline)
@@ -2220,9 +2290,14 @@ export class SuppliersHttpController {
     @Param("fileId", ParseIntPipe) fileId: number,
     @Query("download") download: string,
     @Res() res: Response,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
     const forceDownload = download === "true";
-    const served = await this.service.serveDocument(fileId, forceDownload);
+    const served = await this.service.serveDocument(
+      fileId,
+      forceDownload,
+      buildSupplierAccessRequester(req?.user),
+    );
     const buffer = Buffer.from(served.data, "base64");
     res.setHeader(
       "Content-Type",
@@ -2241,8 +2316,13 @@ export class SuppliersHttpController {
   async viewSupplierFile(
     @Param("fileId", ParseIntPipe) fileId: number,
     @Res() res: Response,
+    @Request() req?: { user?: Parameters<typeof buildSupplierAccessRequester>[0] },
   ) {
-    const served = await this.service.serveDocument(fileId, false);
+    const served = await this.service.serveDocument(
+      fileId,
+      false,
+      buildSupplierAccessRequester(req?.user),
+    );
     const buffer = Buffer.from(served.data, "base64");
     res.setHeader(
       "Content-Type",

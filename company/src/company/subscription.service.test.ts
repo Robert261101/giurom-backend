@@ -19,7 +19,48 @@ function buildSubscriptionService(
       code: where.code,
       name: where.code.charAt(0).toUpperCase() + where.code.slice(1),
       is_active: true,
+      sort_order: where.code === 'free' ? 1 : where.code === 'silver' ? 2 : 3,
+      price: where.code === 'free' ? '0' : null,
+      currency: 'RON',
+      billing_period: where.code === 'free' ? 'none' : 'monthly',
+      billing_period_days: where.code === 'free' ? null : 30,
+      description: null,
     })),
+    find: jest.fn(async () => [
+      {
+        code: 'free',
+        name: 'Free',
+        is_active: true,
+        sort_order: 1,
+        price: '0',
+        currency: 'RON',
+        billing_period: 'none',
+        billing_period_days: null,
+        description: null,
+      },
+      {
+        code: 'silver',
+        name: 'Silver',
+        is_active: true,
+        sort_order: 2,
+        price: null,
+        currency: 'RON',
+        billing_period: 'monthly',
+        billing_period_days: 30,
+        description: null,
+      },
+      {
+        code: 'gold',
+        name: 'Gold',
+        is_active: true,
+        sort_order: 3,
+        price: null,
+        currency: 'RON',
+        billing_period: 'monthly',
+        billing_period_days: 30,
+        description: null,
+      },
+    ]),
     ...(overrides.planRepo || {}),
   };
   const planLimitRepo = {
@@ -59,6 +100,10 @@ function buildSubscriptionService(
     create: jest.fn((data: any) => data),
     ...(overrides.subscriptionRepo || {}),
   };
+  const invoiceRepo = {
+    findAndCount: jest.fn(async () => [[], 0]),
+    ...(overrides.invoiceRepo || {}),
+  };
   const httpService = {
     get: jest.fn(() =>
       of({
@@ -85,11 +130,12 @@ function buildSubscriptionService(
     planRepo as any,
     planLimitRepo as any,
     subscriptionRepo as any,
+    invoiceRepo as any,
     httpService as any,
     configService as any,
   );
 
-  return { service, companyRepo, planRepo, planLimitRepo, subscriptionRepo, httpService };
+  return { service, companyRepo, planRepo, planLimitRepo, subscriptionRepo, invoiceRepo, httpService };
 }
 
 describe('SubscriptionService.changeMySubscription', () => {

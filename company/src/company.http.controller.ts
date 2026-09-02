@@ -82,6 +82,12 @@ export class CompanyHttpController {
 		return this.subscriptionService.getMySubscription(this.buildAccessRequester(req));
 	}
 
+	@Get('me/subscription/invoices')
+	@Permissions('companies.read_own', 'companies.read')
+	getMySubscriptionInvoices(@Req() req: any) {
+		return this.subscriptionService.getMyInvoices(this.buildAccessRequester(req));
+	}
+
 	@Patch('me/subscription')
 	@Permissions('companies.read_own', 'companies.read')
 	changeMySubscription(

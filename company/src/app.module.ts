@@ -9,6 +9,7 @@ import { CompanyDocument } from './company/entity/company-document.entity';
 import { SubscriptionPlan } from './company/entity/subscription-plan.entity';
 import { PlanLimit } from './company/entity/plan-limit.entity';
 import { CompanySubscription } from './company/entity/company-subscription.entity';
+import { SubscriptionInvoice } from './company/entity/subscription-invoice.entity';
 import { CompanyService } from './company/company.service';
 import { SubscriptionService } from './company/subscription.service';
 import { CompanyMicroController } from './company.micro.controller';
@@ -51,6 +52,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         SubscriptionPlan,
         PlanLimit,
         CompanySubscription,
+        SubscriptionInvoice,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -75,6 +77,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       SubscriptionPlan,
       PlanLimit,
       CompanySubscription,
+      SubscriptionInvoice,
     ]),
   ],
   controllers: [CompanyMicroController, CompanyHttpController],
