@@ -53,14 +53,14 @@ mark_applied() {
 
 resolve_service_for_path() {
   local rel="$1"
-  case "$rel" in
-    suppliers-ms/*) echo "suppliers-ms" ;;
-    stock/*) echo "stock" ;;
-    *)
-      echo "ERROR: path necunoscut în manifest: $rel" >&2
-      exit 1
-      ;;
-  esac
+  local service="${rel%%/*}"
+  if [[ -z "$service" || "$service" == "$rel" ]]; then
+    echo "ERROR: path invalid în manifest (lipsește serviciul): $rel" >&2
+    exit 1
+  fi
+  # Serviciul = primul segment din cale. Fiecare are propriul .env/DB, iar
+  # load_db_env eșuează explicit dacă serviciul nu e deployat pe server.
+  echo "$service"
 }
 
 # Pe server fișierele stau sub ROOT (rsync din CI), nu sub structura sursă stock/src/...
