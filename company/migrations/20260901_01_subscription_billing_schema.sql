@@ -1,17 +1,17 @@
 -- Billing fields for subscription plans + company subscriptions + invoices (future)
--- DB: giurombitap_company
+-- Rulează pe baza din company/.env (restosoft_company în producție).
 -- Idempotent: safe to re-run
 
 -- Plan catalog billing metadata
 SET @col_exists = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = 'giurombitap_company'
+  WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'subscription_plans'
     AND COLUMN_NAME = 'price'
 );
 SET @sql = IF(
   @col_exists = 0,
-  'ALTER TABLE giurombitap_company.subscription_plans
+  'ALTER TABLE subscription_plans
      ADD COLUMN price DECIMAL(10,2) NULL AFTER is_active,
      ADD COLUMN currency VARCHAR(3) NULL DEFAULT ''RON'' AFTER price,
      ADD COLUMN billing_period VARCHAR(16) NULL AFTER currency,
@@ -26,13 +26,13 @@ DEALLOCATE PREPARE stmt;
 -- Per-company billing state
 SET @col_exists = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = 'giurombitap_company'
+  WHERE TABLE_SCHEMA = DATABASE()
     AND TABLE_NAME = 'company_subscriptions'
     AND COLUMN_NAME = 'current_period_start'
 );
 SET @sql = IF(
   @col_exists = 0,
-  'ALTER TABLE giurombitap_company.company_subscriptions
+  'ALTER TABLE company_subscriptions
      ADD COLUMN current_period_start DATETIME(3) NULL AFTER ends_at,
      ADD COLUMN current_period_end DATETIME(3) NULL AFTER current_period_start,
      ADD COLUMN next_billing_at DATETIME(3) NULL AFTER current_period_end,
@@ -46,7 +46,7 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- Future invoices (empty until payment provider is integrated)
-CREATE TABLE IF NOT EXISTS giurombitap_company.subscription_invoices (
+CREATE TABLE IF NOT EXISTS subscription_invoices (
   id INT NOT NULL AUTO_INCREMENT,
   company_id INT NOT NULL,
   invoice_number VARCHAR(64) NULL,

@@ -1,7 +1,7 @@
 -- Seed billing metadata for plans + backfill existing subscriptions (idempotent)
 -- NOTE: Silver/Gold prices are intentionally NULL until officially configured.
 
-INSERT INTO giurombitap_company.subscription_plans
+INSERT INTO subscription_plans
   (code, name, sort_order, is_active, price, currency, billing_period, billing_period_days, description)
 VALUES
   (
@@ -48,8 +48,8 @@ ON DUPLICATE KEY UPDATE
   price = IF(VALUES(code) = 'free', VALUES(price), price);
 
 -- Backfill billing period for existing subscriptions
-UPDATE giurombitap_company.company_subscriptions cs
-JOIN giurombitap_company.subscription_plans sp ON sp.code = cs.plan_code
+UPDATE company_subscriptions cs
+JOIN subscription_plans sp ON sp.code = cs.plan_code
 SET
   cs.current_period_start = COALESCE(cs.current_period_start, cs.starts_at),
   cs.current_period_end = CASE
