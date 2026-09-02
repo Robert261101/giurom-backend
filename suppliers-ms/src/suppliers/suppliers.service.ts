@@ -2984,14 +2984,28 @@ export class SuppliersService {
     const queryBuilder = this.supplierRepo.createQueryBuilder('supplier')
       .leftJoinAndSelect('supplier.folders', 'folders')
       .leftJoinAndSelect('supplier.orders', 'orders')
+      .leftJoinAndSelect('supplier.locations', 'locations')
       .innerJoin('supplier_locations', 'sl', 'sl.supplier_id = supplier.id')
       .where('sl.id_location = :locationId', { locationId })
       .orderBy('supplier.created_at', 'DESC');
     
     try {
       const suppliers = await queryBuilder.getMany();
-      this.logger.log(`[SUPPLIERS SERVICE] findAll returned ${suppliers.length} suppliers for locationId=${locationId}`);
-      return suppliers;
+      if (!requester || hasPlatformWideSupplierAccess(requester)) {
+        this.logger.log(`[SUPPLIERS SERVICE] findAll returned ${suppliers.length} suppliers for locationId=${locationId}`);
+        return suppliers;
+      }
+
+      const accessible: Supplier[] = [];
+      for (const supplier of suppliers) {
+        if (await this.isSupplierAccessibleToRequester(supplier, requester)) {
+          accessible.push(supplier);
+        }
+      }
+      this.logger.log(
+        `[SUPPLIERS SERVICE] findAll returned ${accessible.length}/${suppliers.length} accessible suppliers for locationId=${locationId}`,
+      );
+      return accessible;
     } catch (error) {
       this.logger.error(`[SUPPLIERS SERVICE] findAll failed for locationId=${locationId}:`, (error as any)?.message || error, (error as any)?.stack);
       throw error;
@@ -4496,23 +4510,18 @@ export class SuppliersService {
   }
 
   /**
-   * Acces tenant non-platform:
-   * - Cont: `client_supplier_links` SAU `owner_company_id === requester.company_id`
-   * - Manual: intersecție supplier_locations ∩ locațiile companiei requester
-   * Platform-wide (`assignment.read_all` / super-admin): sare peste verificare.
-   * `assignment.read_company` NU este bypass global.
-   * Fără `requester` = apel intern (server-to-server), comportament neschimbat.
+   * Acces tenant non-platform (fără aruncare) — aceleași reguli ca assertSupplierAccessibleToRequester.
    */
-  private async assertSupplierAccessibleToRequester(
+  private async isSupplierAccessibleToRequester(
     supplier: Supplier,
     requester?: SupplierAccessRequester,
     options?: { operational?: boolean; adminDetail?: boolean },
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!requester) {
-      return;
+      return true;
     }
     if (hasPlatformWideSupplierAccess(requester)) {
-      return;
+      return true;
     }
 
     const companyId = Number(requester.company_id);
@@ -4540,7 +4549,7 @@ export class SuppliersService {
     });
 
     if (!hasAccess) {
-      throw new NotFoundException(`Furnizorul cu ID ${supplier.id} nu a fost găsit`);
+      return false;
     }
 
     const companyType = resolveCompanyTypeFromAuth(
@@ -4553,8 +4562,89 @@ export class SuppliersService {
         : options?.adminDetail
           ? CLIENT_SUPPLIER_ADMIN_DETAIL_ACCESS_REQUIREMENTS
           : CLIENT_SUPPLIER_CATALOG_ACCESS_REQUIREMENTS;
-      await this.assertClientSupplierRelationship(companyId, supplier.id, requirements);
+      try {
+        await this.assertClientSupplierRelationship(
+          companyId,
+          supplier.id,
+          requirements,
+        );
+      } catch {
+        return false;
+      }
     }
+
+    return true;
+  }
+
+  /**
+   * Acces tenant non-platform:
+   * - Cont: `client_supplier_links` SAU `owner_company_id === requester.company_id`
+   * - Manual: intersecție supplier_locations ∩ locațiile companiei requester
+   * Platform-wide (`assignment.read_all` / super-admin): sare peste verificare.
+   * `assignment.read_company` NU este bypass global.
+   * Fără `requester` = apel intern (server-to-server), comportament neschimbat.
+   */
+  private async assertSupplierAccessibleToRequester(
+    supplier: Supplier,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    if (!requester) {
+      return;
+    }
+    if (hasPlatformWideSupplierAccess(requester)) {
+      return;
+    }
+
+    const accessible = await this.isSupplierAccessibleToRequester(
+      supplier,
+      requester,
+    );
+    if (!accessible) {
+      throw new NotFoundException(`Furnizorul cu ID ${supplier.id} nu a fost găsit`);
+    }
+  }
+
+  /**
+   * Batch: păstrează doar furnizorii accesibili requester-ului (nu aruncă pe primul invalid).
+   */
+  private async filterAccessibleSupplierIds(
+    supplierIds: number[],
+    requester?: SupplierAccessRequester,
+  ): Promise<number[]> {
+    if (!requester || !supplierIds?.length) {
+      return supplierIds;
+    }
+    if (hasPlatformWideSupplierAccess(requester)) {
+      return supplierIds;
+    }
+
+    const uniqueIds = Array.from(
+      new Set(
+        supplierIds.filter((id) => Number.isFinite(id) && Number(id) > 0),
+      ),
+    );
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const suppliers = await this.supplierRepo.find({
+      where: { id: In(uniqueIds) },
+      relations: ['locations'],
+    });
+    const byId = new Map(suppliers.map((s) => [s.id, s]));
+    const accessible: number[] = [];
+
+    for (const supplierId of uniqueIds) {
+      const supplier = byId.get(supplierId);
+      if (!supplier) {
+        continue;
+      }
+      if (await this.isSupplierAccessibleToRequester(supplier, requester)) {
+        accessible.push(supplierId);
+      }
+    }
+
+    return accessible;
   }
 
   /**
@@ -8496,16 +8586,35 @@ export class SuppliersService {
       
       const existingReceivedQty = Number(itemToUpdate.received_quantity) || 0;
       const existingReturnedQty = Number(itemToUpdate.returned_quantity) || 0;
-      let newlyReceivedQty = receivedQty - existingReceivedQty; // Diferența = cât se recepționează acum
-      let newlyReturnedQty = returnedQty - existingReturnedQty;
+
+      // PENDING neaprobat contează deja ca „în curs” — altfel a doua recepție parțială
+      // (înainte de approve) recalculează același delta și dublează documentul / stocul.
+      const pendingAgg = await this.orderItemReceptionRepo
+        .createQueryBuilder('r')
+        .select('COALESCE(SUM(r.received_delta), 0)', 'received')
+        .addSelect('COALESCE(SUM(r.returned_delta), 0)', 'returned')
+        .where('r.supplier_order_item_id = :itemId', { itemId: orderItem.id })
+        .andWhere('r.status = :status', { status: ReceptionStatus.PENDING })
+        .getRawOne<{ received: string; returned: string }>();
+      const pendingReceivedQty = Number(pendingAgg?.received) || 0;
+      const pendingReturnedQty = Number(pendingAgg?.returned) || 0;
+
+      let newlyReceivedQty = receivedQty - existingReceivedQty - pendingReceivedQty;
+      let newlyReturnedQty = returnedQty - existingReturnedQty - pendingReturnedQty;
       
       // Asigură-te că newlyReceivedQty nu este negativ (protecție împotriva erorilor)
       if (newlyReceivedQty < 0) {
         this.logger.warn(`⚠️ [SUPPLIERS SERVICE] Calculated negative newlyReceivedQty for item ${orderItem.id}: ${newlyReceivedQty}. Setting to 0.`);
         newlyReceivedQty = 0;
       }
+      if (newlyReturnedQty < 0) {
+        newlyReturnedQty = 0;
+      }
       
-      this.logger.log(`📦 [SUPPLIERS SERVICE] Item ${orderItem.id}: existing=${existingReceivedQty}, new total=${receivedQty}, newly received=${newlyReceivedQty}`);
+      this.logger.log(
+        `📦 [SUPPLIERS SERVICE] Item ${orderItem.id}: approved=${existingReceivedQty}, ` +
+          `pending=${pendingReceivedQty}, new total=${receivedQty}, newly received=${newlyReceivedQty}`,
+      );
       
       // NU actualizăm received_quantity în supplier_order_items imediat
       // Vom actualiza doar când recepția este aprobată
@@ -11450,10 +11559,25 @@ export class SuppliersService {
       return [];
     }
 
-    await this.prepareOrderListAccess(supplierIds, options?.requester, {
-      locationId: options?.locationId,
-      requestedCompanyId: options?.requestedCompanyId,
-    });
+    assertOrderListCompanyIdNotEscalated(
+      options?.requester,
+      options?.requestedCompanyId,
+    );
+
+    const accessibleSupplierIds = await this.filterAccessibleSupplierIds(
+      supplierIds,
+      options?.requester,
+    );
+    if (accessibleSupplierIds.length === 0) {
+      return [];
+    }
+
+    if (options?.locationId != null && options?.requester) {
+      await this.assertLocationBelongsToRequesterCompany(
+        options.locationId,
+        options.requester,
+      );
+    }
 
     const qb = this.orderRepo
       .createQueryBuilder('order')
@@ -11462,7 +11586,9 @@ export class SuppliersService {
       .leftJoinAndSelect('order.supplier', 'supplier')
       .leftJoinAndSelect('order.driverAssignments', 'driverAssignments')
       .leftJoinAndSelect('order.assignments', 'assignments')
-      .where('order.supplier_id IN (:...supplierIds)', { supplierIds });
+      .where('order.supplier_id IN (:...supplierIds)', {
+        supplierIds: accessibleSupplierIds,
+      });
 
     applyOrderListTenantScopeToQueryBuilder(qb, options?.requester);
 
@@ -11518,13 +11644,30 @@ export class SuppliersService {
       return buildOrdersPaginatedResponse([], page, limit, 0);
     }
 
-    await this.prepareOrderListAccess(supplierIds, options?.requester, {
-      locationId: options?.locationId,
-      requestedCompanyId: options?.requestedCompanyId,
-    });
+    assertOrderListCompanyIdNotEscalated(
+      options?.requester,
+      options?.requestedCompanyId,
+    );
+
+    const accessibleSupplierIds = await this.filterAccessibleSupplierIds(
+      supplierIds,
+      options?.requester,
+    );
+    if (accessibleSupplierIds.length === 0) {
+      return buildOrdersPaginatedResponse([], page, limit, 0);
+    }
+
+    if (options?.locationId != null && options?.requester) {
+      await this.assertLocationBelongsToRequesterCompany(
+        options.locationId,
+        options.requester,
+      );
+    }
 
     const applyFilters = (qb: SelectQueryBuilder<SupplierOrder>) => {
-      qb.where('order.supplier_id IN (:...supplierIds)', { supplierIds });
+      qb.where('order.supplier_id IN (:...supplierIds)', {
+        supplierIds: accessibleSupplierIds,
+      });
       applyOrderListTenantScopeToQueryBuilder(qb, options?.requester);
       if (options?.locationId !== undefined) {
         qb.andWhere(

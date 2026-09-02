@@ -1,5 +1,5 @@
 -- Seed Free / Silver / Gold + limits (idempotent)
-INSERT INTO giurombitap_company.subscription_plans (code, name, sort_order, is_active)
+INSERT INTO subscription_plans (code, name, sort_order, is_active)
 VALUES
   ('free', 'Free', 1, 1),
   ('silver', 'Silver', 2, 1),
@@ -9,7 +9,7 @@ ON DUPLICATE KEY UPDATE
   sort_order = VALUES(sort_order),
   is_active = VALUES(is_active);
 
-INSERT INTO giurombitap_company.plan_limits (plan_code, limit_key, limit_value)
+INSERT INTO plan_limits (plan_code, limit_key, limit_value)
 VALUES
   ('free', 'suppliers.account.max', 1),
   ('free', 'suppliers.manual.max', 3),

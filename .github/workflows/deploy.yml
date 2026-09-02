@@ -10,8 +10,41 @@ jobs:
   # git de pe main), deci nu exista ce sa se compileze. Functionalitatea pare sa fi
   # fost preluata de serviciul auth/ (veziv-auth2), care are cod sursa complet.
 
+  # Pachetele `file:../libs/*` din package.json devin symlink in node_modules dupa
+  # `npm ci`. `rsync -a` le copiaza ca symlink, iar tinta e in afara folderului
+  # serviciului — deci pe server pica cu MODULE_NOT_FOUND daca libs/ nu e acolo.
+  # Sincronizat o singura data, inaintea deploy-urilor, ca sa nu se calce joburile
+  # paralele pe acelasi director.
+  sync-libs:
+    name: Sync shared libs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync libs/ pe server
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3"
+          REMOTE_USER_HOST="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
+          REMOTE_ROOT="/home/${{ secrets.DEPLOY_USER }}/giurom-backend"
+
+          if [ ! -d libs ]; then
+            echo "Nu exista libs/, nimic de sincronizat."
+            exit 0
+          fi
+
+          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/libs'"
+          rsync -avz --delete -e "ssh ${SSH_OPTS}" libs/ "$REMOTE_USER_HOST:$REMOTE_ROOT/libs/"
+
   deploy:
     name: Build & deploy ${{ matrix.service }}
+    needs: sync-libs
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -149,15 +182,27 @@ jobs:
           REMOTE_USER_HOST="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
           REMOTE_ROOT="/home/${{ secrets.DEPLOY_USER }}/giurom-backend"
 
-          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/scripts' '$REMOTE_ROOT/suppliers-ms/migrations' '$REMOTE_ROOT/stock/migrations'"
+          ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/scripts'"
 
-          rsync -avz -e "ssh ${SSH_OPTS}" \
-            suppliers-ms/migrations/ \
-            "$REMOTE_USER_HOST:$REMOTE_ROOT/suppliers-ms/migrations/"
+          # Orice serviciu cu folder migrations/ (suppliers-ms, company, auth, ...).
+          # Runner-ul le cauta la $ROOT/<serviciu>/migrations/, deci pastram numele.
+          for dir in */migrations; do
+            [ -d "$dir" ] || continue
+            service="${dir%%/*}"
+            echo "Sync migrations: $service"
+            ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/$service/migrations'"
+            rsync -avz -e "ssh ${SSH_OPTS}" \
+              "$dir/" \
+              "$REMOTE_USER_HOST:$REMOTE_ROOT/$service/migrations/"
+          done
 
-          rsync -avz -e "ssh ${SSH_OPTS}" \
-            stock/src/stock/migrations/ \
-            "$REMOTE_USER_HOST:$REMOTE_ROOT/stock/migrations/"
+          # stock: SQL-urile stau in src/stock/migrations, pe server le vrem ca stock/migrations.
+          if [ -d "stock/src/stock/migrations" ]; then
+            ssh ${SSH_OPTS} "$REMOTE_USER_HOST" "mkdir -p '$REMOTE_ROOT/stock/migrations'"
+            rsync -avz -e "ssh ${SSH_OPTS}" \
+              stock/src/stock/migrations/ \
+              "$REMOTE_USER_HOST:$REMOTE_ROOT/stock/migrations/"
+          fi
 
           rsync -avz -e "ssh ${SSH_OPTS}" \
             scripts/run-server-migrations.sh \
@@ -182,6 +227,6 @@ jobs:
           ssh ${SSH_OPTS} ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-            pm2 restart suppliers-ms stock auth --update-env
+            pm2 restart suppliers-ms stock auth company --update-env
             pm2 save
           '
