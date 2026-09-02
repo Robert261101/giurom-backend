@@ -123,6 +123,11 @@ import {
   type ClientSupplierRelationshipRequirement,
   type ClientSupplierRelationshipSnapshot,
 } from './client-supplier-relationship.util';
+import {
+  CLIENT_SUPPLIER_CATALOG_ACCESS_REQUIREMENTS,
+  CLIENT_SUPPLIER_ADMIN_DETAIL_ACCESS_REQUIREMENTS,
+  CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+} from './client-supplier-operational-access';
 import { missingLocationIds } from './supplier-company-locations.util';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { CreateSupplierWithDocumentsDto } from './dto/create-supplier-with-documents.dto';
@@ -1943,8 +1948,7 @@ export class SuppliersService {
       );
     }
     await this.assertClientSupplierRelationship(clientCompanyId, supplierId, {
-      requireOperationalActive: false,
-      requireAccessibleQuota: true,
+      ...CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
     });
   }
 
@@ -2845,11 +2849,25 @@ export class SuppliersService {
     return keys.map((k) => labels[k] ?? k).join(', ');
   }
 
-  async serveDocument(fileId: number, forceDownload: boolean): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
-    const document = await this.supplierDocumentRepo.findOne({ where: { id: fileId } });
+  async serveDocument(
+    fileId: number,
+    forceDownload: boolean,
+    requester?: SupplierAccessRequester,
+  ): Promise<{ data: string; mimeType: string; fileName: string; disposition: 'inline' | 'attachment' }> {
+    const document = await this.supplierDocumentRepo.findOne({
+      where: { id: fileId },
+      relations: ['folder'],
+    });
     if (!document) {
       this.logger.warn(`Document with ID ${fileId} not found in database`);
       throw new NotFoundException('Documentul nu a fost găsit');
+    }
+    const supplierId = Number(document.folder?.supplier_id);
+    if (Number.isFinite(supplierId) && supplierId > 0) {
+      await this.assertClientSupplierOperationalAccessFromRequester(
+        supplierId,
+        requester,
+      );
     }
     
     this.logger.log(`📄 Serving document ID: ${fileId}, Name: ${document.file_name}, Path: ${document.file_path}`);
@@ -3835,6 +3853,34 @@ export class SuppliersService {
     }
   }
 
+  /**
+   * Client-tenant operational gate from JWT requester (platform / furnizor bypass).
+   */
+  private async assertClientSupplierOperationalAccessFromRequester(
+    supplierId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    if (!requester || hasPlatformWideSupplierAccess(requester)) {
+      return;
+    }
+    const companyType = resolveCompanyTypeFromAuth(
+      requester.company_type,
+      requester.roles,
+    );
+    if (companyType !== 'client') {
+      return;
+    }
+    const companyId = Number(requester.company_id);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      return;
+    }
+    await this.assertClientSupplierRelationship(
+      companyId,
+      supplierId,
+      CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+    );
+  }
+
   private async seedManualClientAssociationStateOnCreate(
     clientCompanyId: number,
     supplierId: number,
@@ -3857,8 +3903,7 @@ export class SuppliersService {
     isActive: boolean,
   ): Promise<void> {
     await this.assertClientSupplierRelationship(clientCompanyId, supplierId, {
-      requireOperationalActive: false,
-      requireAccessibleQuota: true,
+      ...CLIENT_SUPPLIER_CATALOG_ACCESS_REQUIREMENTS,
     });
 
     const repo = this.connection.getRepository(ClientManualSupplierState);
@@ -4461,6 +4506,7 @@ export class SuppliersService {
   private async assertSupplierAccessibleToRequester(
     supplier: Supplier,
     requester?: SupplierAccessRequester,
+    options?: { operational?: boolean; adminDetail?: boolean },
   ): Promise<void> {
     if (!requester) {
       return;
@@ -4502,10 +4548,12 @@ export class SuppliersService {
       requester?.roles,
     );
     if (companyType === 'client' && Number.isFinite(companyId) && companyId > 0) {
-      await this.assertClientSupplierRelationship(companyId, supplier.id, {
-        requireOperationalActive: false,
-        requireAccessibleQuota: true,
-      });
+      const requirements = options?.operational
+        ? CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS
+        : options?.adminDetail
+          ? CLIENT_SUPPLIER_ADMIN_DETAIL_ACCESS_REQUIREMENTS
+          : CLIENT_SUPPLIER_CATALOG_ACCESS_REQUIREMENTS;
+      await this.assertClientSupplierRelationship(companyId, supplier.id, requirements);
     }
   }
 
@@ -4516,6 +4564,7 @@ export class SuppliersService {
   private async assertSuppliersAccessibleToRequester(
     supplierIds: number[],
     requester?: SupplierAccessRequester,
+    options?: { operational?: boolean; adminDetail?: boolean },
   ): Promise<void> {
     if (!requester || !supplierIds?.length) {
       return;
@@ -4546,7 +4595,7 @@ export class SuppliersService {
           `Furnizorul cu ID ${supplierId} nu a fost găsit`,
         );
       }
-      await this.assertSupplierAccessibleToRequester(supplier, requester);
+      await this.assertSupplierAccessibleToRequester(supplier, requester, options);
     }
   }
 
@@ -4556,7 +4605,9 @@ export class SuppliersService {
     opts?: { locationId?: number; requestedCompanyId?: number | null },
   ): Promise<void> {
     assertOrderListCompanyIdNotEscalated(requester, opts?.requestedCompanyId);
-    await this.assertSuppliersAccessibleToRequester(supplierIds, requester);
+    await this.assertSuppliersAccessibleToRequester(supplierIds, requester, {
+      operational: true,
+    });
     if (opts?.locationId != null && requester) {
       await this.assertLocationBelongsToRequesterCompany(
         opts.locationId,
@@ -4600,7 +4651,9 @@ export class SuppliersService {
     }
 
     // Verificare reală de acces (independentă de ce location_id a trimis clientul) — vezi assertSupplierAccessibleToRequester.
-    await this.assertSupplierAccessibleToRequester(supplier, requester);
+    await this.assertSupplierAccessibleToRequester(supplier, requester, {
+      adminDetail: true,
+    });
 
     const folders = (supplier as any).folders || [];
     this.logger.log(`📂 [findOne] Furnizor ${id}: ${folders.length} foldere returnate`);
@@ -4917,6 +4970,56 @@ export class SuppliersService {
     );
   }
 
+  async blockSupplierQuota(
+    supplierId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<{ supplier_id: number; quota_status: string }> {
+    const companyType = resolveCompanyTypeFromAuth(
+      requester?.company_type,
+      requester?.roles,
+    );
+    const clientCompanyId = Number(requester?.company_id);
+    if (
+      !isTenantScopedSupplierRequester(requester) ||
+      companyType !== 'client' ||
+      !Number.isFinite(clientCompanyId) ||
+      clientCompanyId <= 0
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant client autentificat poate bloca furnizori',
+      );
+    }
+
+    const id = Number(supplierId);
+    const supplier = await this.supplierRepo.findOne({ where: { id } });
+    if (!supplier) {
+      throw new NotFoundException('Furnizorul nu a fost găsit');
+    }
+
+    const locationIds = await this.fetchCompanyLocationIds(clientCompanyId);
+    const hasAccount = await this.hasSupplierLoginAccount(supplier.id);
+    if (hasAccount) {
+      const result = await this.supplierQuotaLifecycleService.blockAccountSupplier(
+        clientCompanyId,
+        supplier.id,
+      );
+      return {
+        supplier_id: result.supplier_id,
+        quota_status: result.quota_status,
+      };
+    }
+
+    const result = await this.supplierQuotaLifecycleService.blockManualSupplier(
+      clientCompanyId,
+      supplier.id,
+      locationIds,
+    );
+    return {
+      supplier_id: result.supplier_id,
+      quota_status: result.quota_status,
+    };
+  }
+
   async unblockSupplierQuota(
     supplierId: number,
     requester?: SupplierAccessRequester,
@@ -5174,7 +5277,12 @@ export class SuppliersService {
    */
   async getSupplierStockLocationId(
     supplierId: number,
+    requester?: SupplierAccessRequester,
   ): Promise<{ location_id: number }> {
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
     if (!supplier) {
       throw new NotFoundException(`Furnizorul ${supplierId} nu a fost găsit`);
@@ -5201,6 +5309,17 @@ export class SuppliersService {
       unit: string;
     }>;
   }> {
+    if (
+      userContext?.companyType !== 'furnizor' &&
+      userContext?.companyId != null &&
+      userContext.companyId > 0
+    ) {
+      await this.assertClientSupplierRelationship(
+        Number(userContext.companyId),
+        supplierId,
+        CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+      );
+    }
     const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
     if (!supplier) {
       throw new NotFoundException(`Furnizorul ${supplierId} nu a fost găsit`);
@@ -6484,34 +6603,10 @@ export class SuppliersService {
     supplierId: number,
     clientCompanyId: number,
   ): Promise<void> {
-    if (await this.hasClientSupplierLink(clientCompanyId, supplierId)) {
-      return;
-    }
-
-    const rows = await this.supplierLocationsRepo.find({
-      where: { supplier_id: supplierId },
-    });
-    let hadFetchFailure = false;
-    for (const row of rows) {
-      const { location, failed } = await this.fetchLocationOrFail(row.id_location);
-      if (failed) {
-        hadFetchFailure = true;
-        continue;
-      }
-      const locCompanyId = Number(
-        location?.company_id ?? location?.companyId ?? 0,
-      );
-      if (locCompanyId === clientCompanyId) {
-        return;
-      }
-    }
-    if (hadFetchFailure) {
-      throw new ServiceUnavailableException(
-        'Nu am putut verifica asocierea furnizorului (serviciul de locații nu a răspuns). Reîncearcă.',
-      );
-    }
-    throw new ForbiddenException(
-      'Furnizorul nu este asociat companiei client autentificate',
+    await this.assertClientSupplierRelationship(
+      clientCompanyId,
+      supplierId,
+      CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
     );
   }
 
@@ -7095,6 +7190,12 @@ export class SuppliersService {
       clientCompanyId,
     );
 
+    await this.assertClientSupplierRelationship(
+      clientCompanyId,
+      supplierId,
+      CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+    );
+
     await this.ensureSupplierLinkedToClientCompany(
       supplierId,
       clientCompanyId,
@@ -7553,10 +7654,7 @@ export class SuppliersService {
       await this.assertClientSupplierRelationship(
         Number(userContext.companyId),
         supplierId,
-        {
-          requireOperationalActive: false,
-          requireAccessibleQuota: true,
-        },
+        CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
       );
     }
 
@@ -7843,10 +7941,11 @@ export class SuppliersService {
           'Furnizorul este inactiv și nu poate primi comenzi noi',
         );
       }
-      await this.assertClientSupplierRelationship(orderCompanyId, supplier.id, {
-        requireOperationalActive: true,
-        requireAccessibleQuota: true,
-      });
+      await this.assertClientSupplierRelationship(
+        orderCompanyId,
+        supplier.id,
+        CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+      );
     } else if (supplier.is_active === false) {
       throw new BadRequestException(
         'Furnizorul este inactiv și nu poate primi comenzi noi',
@@ -9098,6 +9197,22 @@ export class SuppliersService {
       throw new NotFoundException('Comanda nu a fost găsită');
     }
     assertOrderCompanyAccess(order, user);
+    if (user && !isPlatformOrderRequester(user)) {
+      const companyType = resolveCompanyTypeFromAuth(
+        user.company_type,
+        user.roles,
+      );
+      if (companyType === 'client') {
+        const clientCompanyId = resolveOrderTenantCompanyId(user);
+        if (clientCompanyId != null) {
+          await this.assertClientSupplierRelationship(
+            clientCompanyId,
+            order.supplier_id,
+            CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+          );
+        }
+      }
+    }
     return order;
   }
 
@@ -11977,6 +12092,7 @@ export class SuppliersService {
   async addDocument(
     supplierId: number,
     documentData: { fileName: string; folderId?: number; folderName?: string; notes?: string; content?: string; file_content?: string; expire_date?: string },
+    requester?: SupplierAccessRequester,
   ) {
     try {
       this.logger.log(`📥 [addDocument] Starting document upload for supplier ${supplierId}`);
@@ -11989,7 +12105,14 @@ export class SuppliersService {
         expire_date: documentData.expire_date
       });
 
-      const supplier = await this.findOne(supplierId);
+      await this.assertClientSupplierOperationalAccessFromRequester(
+        supplierId,
+        requester,
+      );
+      const supplier = await this.supplierRepo.findOne({ where: { id: supplierId } });
+      if (!supplier) {
+        throw new NotFoundException(`Furnizorul cu ID ${supplierId} nu a fost găsit`);
+      }
       this.logger.log(`✅ [addDocument] Found supplier: ${supplier.supplier_name} (ID: ${supplier.id})`);
 
       // Get the supplier name simplified (needed for path and folder resolution)
@@ -12221,7 +12344,15 @@ export class SuppliersService {
    * folder_path + description și creează înregistrări în supplier_documents pentru fișierele
    * care nu există deja. Util când fișierele au fost puse pe disk de alt flux (ex. locații).
    */
-  async syncFolderFromDisk(supplierId: number, folderId: number): Promise<{ folder: SupplierFolder; documents: SupplierDocument[] }> {
+  async syncFolderFromDisk(
+    supplierId: number,
+    folderId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<{ folder: SupplierFolder; documents: SupplierDocument[] }> {
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const folder = await this.folderRepo.findOne({
       where: { id: folderId, supplier_id: supplierId },
       relations: ['documents'],
@@ -12327,7 +12458,16 @@ export class SuppliersService {
    * @param body { description: string, parent_id?: number } numele folderului și opțional părintele
    * @param locationId opțional – dacă e setat, se folosește path-ul specific locației
    */
-  async createFolder(supplierId: number, body: { description: string; parent_id?: number }, locationId?: number): Promise<SupplierFolder> {
+  async createFolder(
+    supplierId: number,
+    body: { description: string; parent_id?: number },
+    locationId?: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<SupplierFolder> {
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const description = (body?.description || '').trim();
     if (!description) {
       throw new BadRequestException('description este obligatoriu');
@@ -12441,7 +12581,16 @@ export class SuppliersService {
    * Actualizează numele unui folder (în DB și pe disk).
    * Nu permite duplicate: dacă există deja un folder cu același nume pentru același furnizor, aruncă BadRequest.
    */
-  async updateFolder(supplierId: number, folderId: number, body: { description: string }): Promise<SupplierFolder> {
+  async updateFolder(
+    supplierId: number,
+    folderId: number,
+    body: { description: string },
+    requester?: SupplierAccessRequester,
+  ): Promise<SupplierFolder> {
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const newDescription = (body?.description || '').trim();
     if (!newDescription) {
       throw new BadRequestException('description este obligatoriu');
@@ -12487,7 +12636,15 @@ export class SuppliersService {
   /**
    * Șterge un folder al furnizorului și toți descendenții (recursiv).
    */
-  async removeFolder(supplierId: number, folderId: number): Promise<void> {
+  async removeFolder(
+    supplierId: number,
+    folderId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const folder = await this.folderRepo.findOne({ where: { id: folderId, supplier_id: supplierId } });
     if (!folder) {
       throw new NotFoundException(`Folderul cu ID ${folderId} nu a fost găsit pentru furnizorul ${supplierId}`);
@@ -12521,11 +12678,24 @@ export class SuppliersService {
     }
   }
 
-  async removeDocument(documentId: number): Promise<void> {
-    const document = await this.supplierDocumentRepo.findOne({ where: { id: documentId } });
+  async removeDocument(
+    documentId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    const document = await this.supplierDocumentRepo.findOne({
+      where: { id: documentId },
+      relations: ['folder'],
+    });
     if (!document) {
       this.logger.warn(`Document with ID ${documentId} not found in database`);
       throw new NotFoundException('Documentul nu a fost găsit');
+    }
+    const supplierId = Number(document.folder?.supplier_id);
+    if (Number.isFinite(supplierId) && supplierId > 0) {
+      await this.assertClientSupplierOperationalAccessFromRequester(
+        supplierId,
+        requester,
+      );
     }
     
     // Remove physical file if it exists
@@ -12752,8 +12922,15 @@ export class SuppliersService {
     }
   }
 
-  async findSupplierLocations(supplierId: number): Promise<any[]> {
-    await this.findOne(supplierId, undefined); // Nu verificăm location_id pentru această operație
+  async findSupplierLocations(
+    supplierId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<any[]> {
+    await this.findOne(supplierId, undefined, requester);
+    await this.assertClientSupplierOperationalAccessFromRequester(
+      supplierId,
+      requester,
+    );
     const rows = await this.supplierLocationsRepo.find({
       where: { supplier_id: supplierId },
       relations: ['supplier'],
@@ -12761,12 +12938,48 @@ export class SuppliersService {
     return await this.enrichWithLocations(rows);
   }
 
-  async findLocationSuppliers(locationId: number): Promise<any[]> {
+  async findLocationSuppliers(
+    locationId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<any[]> {
+    if (requester) {
+      await this.assertLocationBelongsToRequesterCompany(locationId, requester);
+    }
     const rows = await this.supplierLocationsRepo.find({
       where: { id_location: locationId },
       relations: ['supplier'],
     });
-    return await this.enrichWithLocations(rows);
+    if (!requester) {
+      return await this.enrichWithLocations(rows);
+    }
+    const companyType = resolveCompanyTypeFromAuth(
+      requester.company_type,
+      requester.roles,
+    );
+    if (companyType !== 'client' || hasPlatformWideSupplierAccess(requester)) {
+      return await this.enrichWithLocations(rows);
+    }
+    const companyId = Number(requester.company_id);
+    const filtered: SupplierLocations[] = [];
+    for (const row of rows) {
+      try {
+        await this.assertClientSupplierRelationship(
+          companyId,
+          row.supplier_id,
+          CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+        );
+        filtered.push(row);
+      } catch (error) {
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    return await this.enrichWithLocations(filtered);
   }
 
   /**
@@ -12818,7 +13031,22 @@ export class SuppliersService {
     return results;
   }
 
-  async removeSupplierFromLocation(supplierId: number, locationId: number): Promise<void> {
+  async removeSupplierFromLocation(
+    supplierId: number,
+    locationId: number,
+    requester?: SupplierAccessRequester,
+  ): Promise<void> {
+    if (requester) {
+      await this.assertLocationBelongsToRequesterCompany(locationId, requester);
+      const supplier = await this.supplierRepo.findOne({
+        where: { id: supplierId },
+        relations: ['locations'],
+      });
+      if (!supplier) {
+        throw new NotFoundException(`Furnizorul cu ID ${supplierId} nu a fost găsit`);
+      }
+      await this.assertSupplierAccessibleToRequester(supplier, requester);
+    }
     const assignment = await this.supplierLocationsRepo.findOne({
       where: { supplier_id: supplierId, id_location: locationId }
     });

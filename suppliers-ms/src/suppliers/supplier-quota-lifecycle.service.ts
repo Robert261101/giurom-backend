@@ -9,7 +9,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectRepository } from '@nestjs/typeorm';
-import { Connection, In, Repository } from 'typeorm';
+import { Connection, Repository } from 'typeorm';
 import { ClientSupplierLink } from './entities/client-supplier-link.entity';
 import { ClientManualSupplierState } from './entities/client-manual-supplier-state.entity';
 import { Supplier } from './entities/supplier.entity';
@@ -57,6 +57,13 @@ export type DowngradeBlockRollbackItem = {
   kind: 'account' | 'manual';
   supplier_id: number;
   previous_status: SupplierQuotaStatus;
+};
+
+export type BlockSupplierQuotaResult = {
+  supplier_id: number;
+  quota_status: SupplierQuotaStatus;
+  previous_status: SupplierQuotaStatus;
+  changed: boolean;
 };
 
 export type ApplyDowngradeBlocksInput = {
@@ -444,49 +451,148 @@ export class SupplierQuotaLifecycleService {
         const accountIds = [...new Set(input.blockAccountSupplierIds.map(Number))];
         const manualIds = [...new Set(input.blockManualSupplierIds.map(Number))];
 
-        if (accountIds.length) {
-          const links = await this.clientSupplierLinkRepo.find({
-            where: {
-              client_company_id: companyId,
-              supplier_id: In(accountIds),
-            },
-          });
-          for (const link of links) {
-            const previous = this.resolveAccountQuotaStatus(link);
-            if (previous === SUPPLIER_QUOTA_STATUS.BLOCKED) continue;
+        for (const supplierId of accountIds) {
+          const result = await this.blockAccountSupplierState(
+            companyId,
+            supplierId,
+          );
+          if (result.changed) {
             rollback.push({
               kind: 'account',
-              supplier_id: Number(link.supplier_id),
-              previous_status: previous,
+              supplier_id: supplierId,
+              previous_status: result.previous_status,
             });
-            link.quota_status = SUPPLIER_QUOTA_STATUS.BLOCKED;
           }
-          await this.clientSupplierLinkRepo.save(links);
         }
 
         for (const supplierId of manualIds) {
-          let state = await this.getManualState(companyId, supplierId);
-          const previous = this.resolveManualQuotaStatus(state);
-          if (previous === SUPPLIER_QUOTA_STATUS.BLOCKED) continue;
-          rollback.push({
-            kind: 'manual',
-            supplier_id: supplierId,
-            previous_status: previous,
-          });
-          if (!state) {
-            state = this.manualStateRepo.create({
-              client_company_id: companyId,
+          const result = await this.blockManualSupplierState(
+            companyId,
+            supplierId,
+            input.companyLocationIds,
+          );
+          if (result.changed) {
+            rollback.push({
+              kind: 'manual',
               supplier_id: supplierId,
-              quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+              previous_status: result.previous_status,
             });
-          } else {
-            state.quota_status = SUPPLIER_QUOTA_STATUS.BLOCKED;
           }
-          await this.manualStateRepo.save(state);
         }
 
         return rollback;
       },
+    );
+  }
+
+  private async blockAccountSupplierState(
+    companyId: number,
+    supplierId: number,
+  ): Promise<BlockSupplierQuotaResult> {
+    const link = await this.getAccountLink(companyId, supplierId);
+    if (!link) {
+      throw new NotFoundException(
+        'Nu există asociere Cont pentru acest furnizor',
+      );
+    }
+    const previous = this.resolveAccountQuotaStatus(link);
+    if (previous === SUPPLIER_QUOTA_STATUS.REMOVED) {
+      throw new NotFoundException(
+        `Furnizorul cu ID ${supplierId} nu a fost găsit`,
+      );
+    }
+    if (previous === SUPPLIER_QUOTA_STATUS.BLOCKED) {
+      return {
+        supplier_id: supplierId,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        previous_status: previous,
+        changed: false,
+      };
+    }
+    link.quota_status = SUPPLIER_QUOTA_STATUS.BLOCKED;
+    await this.clientSupplierLinkRepo.save(link);
+    return {
+      supplier_id: supplierId,
+      quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+      previous_status: previous,
+      changed: true,
+    };
+  }
+
+  async blockAccountSupplier(
+    companyId: number,
+    supplierId: number,
+  ): Promise<BlockSupplierQuotaResult> {
+    return this.supplierQuotaService.withCompanySupplierQuotaLock(
+      companyId,
+      () => this.blockAccountSupplierState(companyId, supplierId),
+    );
+  }
+
+  private async blockManualSupplierState(
+    companyId: number,
+    supplierId: number,
+    companyLocationIds: number[],
+  ): Promise<BlockSupplierQuotaResult> {
+    const manualSuppliers = await this.listManualSuppliersForQuota(
+      companyId,
+      companyLocationIds,
+      false,
+    );
+    const item = manualSuppliers.find((s) => s.supplier_id === supplierId);
+    if (!item) {
+      throw new NotFoundException(
+        `Furnizorul cu ID ${supplierId} nu a fost găsit`,
+      );
+    }
+    const previous = item.quota_status;
+    if (previous === SUPPLIER_QUOTA_STATUS.REMOVED) {
+      throw new NotFoundException(
+        `Furnizorul cu ID ${supplierId} nu a fost găsit`,
+      );
+    }
+    if (previous === SUPPLIER_QUOTA_STATUS.BLOCKED) {
+      return {
+        supplier_id: supplierId,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        previous_status: previous,
+        changed: false,
+      };
+    }
+
+    let state = await this.getManualState(companyId, supplierId);
+    if (!state) {
+      state = this.manualStateRepo.create({
+        client_company_id: companyId,
+        supplier_id: supplierId,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+      });
+    } else {
+      state.quota_status = SUPPLIER_QUOTA_STATUS.BLOCKED;
+    }
+    await this.manualStateRepo.save(state);
+
+    return {
+      supplier_id: supplierId,
+      quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+      previous_status: previous,
+      changed: true,
+    };
+  }
+
+  async blockManualSupplier(
+    companyId: number,
+    supplierId: number,
+    companyLocationIds: number[],
+  ): Promise<BlockSupplierQuotaResult> {
+    return this.supplierQuotaService.withCompanySupplierQuotaLock(
+      companyId,
+      () =>
+        this.blockManualSupplierState(
+          companyId,
+          supplierId,
+          companyLocationIds,
+        ),
     );
   }
 

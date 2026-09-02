@@ -1,0 +1,21 @@
+-- =============================================================================
+-- DEPRECATED — DO NOT RUN on QA/prod.
+--
+-- This migration incorrectly treated `owner_company_id IS NOT NULL` as Cont and
+-- inserted client_supplier_links for suppliers WITHOUT a real furnizor login.
+-- That polluted Cont quota.
+--
+-- Correct classification (same as app hasSupplierLoginAccount):
+--   Cont  = owner company has ≥1 active user with role `furnizor`
+--   Manual = no real furnizor login → supplier_locations only, NO links
+--
+-- Repair tools (generic, no company hardcoding):
+--   node scripts/diagnose-false-cont-links.js
+--   node scripts/fix-false-cont-links-to-manual.js --dry-run
+--   node scripts/fix-false-cont-links-to-manual.js --apply
+--
+-- Company-wide location seed (after classification is correct):
+--   node scripts/backfill-company-wide-supplier-locations.js --dry-run
+-- =============================================================================
+
+SELECT 'DEPRECATED: use scripts/fix-false-cont-links-to-manual.js' AS notice;

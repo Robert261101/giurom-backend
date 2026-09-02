@@ -22,6 +22,22 @@ export class SubscriptionPlan {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  price: string | null;
+
+  @Column({ type: 'varchar', length: 3, nullable: true, default: 'RON' })
+  currency: string | null;
+
+  /** none | monthly | yearly */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  billing_period: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  billing_period_days: number | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  description: string | null;
+
   @OneToMany(() => PlanLimit, (limit) => limit.plan)
   limits?: PlanLimit[];
 

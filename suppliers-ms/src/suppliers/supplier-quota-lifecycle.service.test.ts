@@ -368,4 +368,250 @@ describe('SupplierQuotaLifecycleService', () => {
       'supplier_id',
     );
   });
+
+  describe('manual quota block', () => {
+    it('blockAccountSupplier sets quota_status blocked from active', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+      });
+
+      const result = await service.blockAccountSupplier(15, 9);
+
+      expect(result).toEqual({
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        previous_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        changed: true,
+      });
+      expect(clientSupplierLinkRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        }),
+      );
+    });
+
+    it('blockAccountSupplier is idempotent when already blocked', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        is_active: true,
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+      });
+
+      const result = await service.blockAccountSupplier(15, 9);
+
+      expect(result.changed).toBe(false);
+      expect(result.quota_status).toBe(SUPPLIER_QUOTA_STATUS.BLOCKED);
+      expect(clientSupplierLinkRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('blockAccountSupplier rejects removed supplier', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.REMOVED,
+        is_active: true,
+      };
+      const { service } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+        },
+      });
+
+      await expect(service.blockAccountSupplier(15, 9)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('blockAccountSupplier keeps association row (not removed)', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+      });
+
+      await service.blockAccountSupplier(15, 9);
+
+      expect(clientSupplierLinkRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client_company_id: 15,
+          supplier_id: 9,
+          quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        }),
+      );
+    });
+
+    it('blockManualSupplier sets quota_status blocked from active', async () => {
+      const qb: any = {
+        innerJoin: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        distinct: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn(async () => [
+          {
+            supplier_id: 10,
+            supplier_name: 'Manual S',
+            is_active: 1,
+            quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+          },
+        ]),
+      };
+      const { service, manualStateRepo } = buildLifecycleService({
+        supplierLocationsRepo: {
+          createQueryBuilder: jest.fn(() => qb),
+        },
+        manualStateRepo: {
+          findOne: jest.fn(async () => null),
+          save: jest.fn(async (x: any) => x),
+          create: jest.fn((x: any) => x),
+        },
+      });
+
+      const result = await service.blockManualSupplier(15, 10, [101]);
+
+      expect(result).toEqual({
+        supplier_id: 10,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        previous_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        changed: true,
+      });
+      expect(manualStateRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client_company_id: 15,
+          supplier_id: 10,
+          quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        }),
+      );
+    });
+
+    it('blocked supplier is denied for operational access', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 16,
+        supplier_id: 1,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        is_active: true,
+      };
+      const { service } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+        },
+      });
+
+      await expect(
+        service.assertSupplierQuotaAccessible(
+          16,
+          { id: 1, owner_company_id: 2 } as any,
+          true,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('unblock after manual block restores active quota status', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        is_active: true,
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+          count: jest.fn(async () => 0),
+        },
+      });
+
+      await service.unblockAccountSupplier(15, 9);
+
+      expect(clientSupplierLinkRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        }),
+      );
+    });
+
+    it('applyDowngradeBlocks uses the same blocked state as manual block', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          find: jest.fn(async () => [
+            {
+              supplier_id: 9,
+              is_active: true,
+              quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+              supplier: { supplier_name: 'A' },
+            },
+          ]),
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+        supplierLocationsRepo: {
+          createQueryBuilder: jest.fn(() => ({
+            innerJoin: jest.fn().mockReturnThis(),
+            leftJoin: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            addSelect: jest.fn().mockReturnThis(),
+            distinct: jest.fn().mockReturnThis(),
+            where: jest.fn().mockReturnThis(),
+            andWhere: jest.fn().mockReturnThis(),
+            orderBy: jest.fn().mockReturnThis(),
+            getRawMany: jest.fn(async () => []),
+          })),
+        },
+      });
+
+      await service.applyDowngradeBlocks({
+        companyId: 15,
+        companyLocationIds: [101],
+        accountLimit: 0,
+        manualLimit: 3,
+        blockAccountSupplierIds: [9],
+        blockManualSupplierIds: [],
+      });
+
+      expect(clientSupplierLinkRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+        }),
+      );
+    });
+  });
 });

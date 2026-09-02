@@ -1,15 +1,13 @@
+/** @type {import('jest').Config} */
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  roots: ['<rootDir>/test'],
-  moduleFileExtensions: ['ts', 'js', 'json'],
+  moduleFileExtensions: ['js', 'json', 'ts'],
+  rootDir: 'src',
+  testRegex: '.*\\.(spec|test)\\.ts$',
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
+  testEnvironment: 'node',
   moduleNameMapper: {
-    '^src/(.*)$': '<rootDir>/src/$1',
+    '^@giurom/tenant-access$': '<rootDir>/../../libs/tenant-access/src/index.ts',
   },
-  maxWorkers: 1,
 };
-
-
