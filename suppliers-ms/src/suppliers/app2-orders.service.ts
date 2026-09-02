@@ -86,6 +86,12 @@ export class App2OrdersService {
 
     const bySupplier = new Map<number, App2CatalogProduct[]>();
     for (const product of products) {
+      // product_id e nullable de la migrarea 20260827: un furnizor adaugat manual de client
+      // poate avea produse nemapate la nomenclatorul de stoc. App2 compune comanda strict
+      // dupa produsul de stoc, iar `placeOrder` cauta tot dupa product_id — deci un produs
+      // nemapat ar aparea in catalog si ar esua la plasare. Il tinem afara.
+      if (product.product_id == null) continue;
+
       const list = bySupplier.get(product.supplier_id) ?? [];
       list.push({
         supplier_product_id: product.id,
