@@ -12,6 +12,7 @@ import { CompanySubscription } from './company/entity/company-subscription.entit
 import { SubscriptionInvoice } from './company/entity/subscription-invoice.entity';
 import { CompanyService } from './company/company.service';
 import { SubscriptionService } from './company/subscription.service';
+import { PartnerLinkService } from './company/partner-link.service';
 import { CompanyMicroController } from './company.micro.controller';
 import { CompanyHttpController } from './company.http.controller';
 import { AuthModule } from './auth/auth.module';
@@ -84,6 +85,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   providers: [
     CompanyService,
     SubscriptionService,
+    PartnerLinkService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

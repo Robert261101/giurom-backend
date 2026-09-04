@@ -1205,6 +1205,111 @@ export class UsersService {
   }
 
   /**
+   * Contul de tenant al unei companii client: cine se loghează pentru firma asta.
+   *
+   * Se preferă `client-admin` — rolul primit la self-registration, deci contul „firmei",
+   * nu al unui angajat oarecare. Fără el se întoarce primul cont activ, ca ecranul care
+   * întreabă „există cont?" să nu răspundă „nu" pentru o firmă care are totuși logări.
+   *
+   * Apel intern (x-service-secret): nu are requester, deci nu poate face verificare de
+   * scope — de aceea nu e expus pe nicio rută cu JWT.
+   */
+  async findTenantAccountForCompany(companyId: number): Promise<{
+    exists: boolean;
+    employee_id: number | null;
+    email: string | null;
+    name: string | null;
+    is_active: boolean | null;
+    roles: string[];
+    /** Cate conturi de autentificare are firma in total. */
+    accounts_total: number;
+  }> {
+    const empty = {
+      exists: false,
+      employee_id: null,
+      email: null,
+      name: null,
+      is_active: null,
+      roles: [] as string[],
+      accounts_total: 0,
+    };
+    if (!Number.isFinite(companyId) || companyId <= 0) return empty;
+
+    const employees = await this.findEmployeesByCompany(companyId);
+    if (employees.length === 0) return empty;
+
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+    const users = await this.userRepository.find({
+      where: { id_employee: In([...employeeById.keys()]) },
+    });
+    if (users.length === 0) return empty;
+
+    const withRoles = await Promise.all(
+      users.map(async (user) => ({
+        user,
+        roles: (await this.getUserRoles(user.id)).map((r) =>
+          normalizeRoleName(r.name),
+        ),
+      })),
+    );
+
+    const chosen =
+      withRoles.find(
+        (c) => c.user.is_active && c.roles.includes(CLIENT_ADMIN_ROLE_NAME),
+      ) ??
+      withRoles.find((c) => c.roles.includes(CLIENT_ADMIN_ROLE_NAME)) ??
+      withRoles.find((c) => c.user.is_active) ??
+      withRoles[0];
+
+    const employee = employeeById.get(chosen.user.id_employee);
+    const fullName = [employee?.first_name, employee?.last_name]
+      .filter((part) => (part || '').trim())
+      .join(' ')
+      .trim();
+
+    return {
+      exists: true,
+      employee_id: chosen.user.id_employee,
+      email: employee?.email?.trim() || null,
+      name: fullName || null,
+      is_active: chosen.user.is_active,
+      roles: chosen.roles,
+      accounts_total: users.length,
+    };
+  }
+
+  /** Angajatii companiei, cu datele de contact (via microserviciul employees, apel intern). */
+  private async findEmployeesByCompany(companyId: number): Promise<
+    Array<{ id: number; email: string; first_name: string; last_name: string }>
+  > {
+    try {
+      const employeesUrl =
+        process.env.EMPLOYEES_SERVICE_URL || 'http://localhost:3011';
+      const response = await firstValueFrom(
+        this.httpService.get(`${employeesUrl}/employees/company/${companyId}`, {
+          headers: this.internalServiceHeaders(),
+        }),
+      );
+      const data = response.data?.data || response.data;
+      const list = Array.isArray(data) ? data : [];
+      return list
+        .map((e: Record<string, unknown>) => ({
+          id: Number(e?.id),
+          email: String(e?.email ?? ''),
+          first_name: String(e?.first_name ?? e?.firstName ?? ''),
+          last_name: String(e?.last_name ?? e?.lastName ?? ''),
+        }))
+        .filter((e) => Number.isFinite(e.id) && e.id > 0);
+    } catch (error) {
+      console.error(
+        `Eroare la listarea angajatilor pentru company ${companyId}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
    * ID-uri angajați din compania dată (via microserviciul employees, apel intern).
    */
   async findEmployeeIdsByCompany(companyId: number): Promise<number[]> {

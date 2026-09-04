@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService, CompanyAccessRequester } from './company/company.service';
 import { SubscriptionService } from './company/subscription.service';
+import { PartnerLinkService } from './company/partner-link.service';
 import { isPlanCode } from './company/subscription.constants';
 import { CreateCompanyDto } from './company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
@@ -21,6 +22,7 @@ export class CompanyHttpController {
 	constructor(
 		private readonly service: CompanyService,
 		private readonly subscriptionService: SubscriptionService,
+		private readonly partnerLinkService: PartnerLinkService,
 	) {}
 
 	/**
@@ -109,6 +111,40 @@ export class CompanyHttpController {
 				block_manual_supplier_ids: body?.block_manual_supplier_ids,
 			},
 		);
+	}
+
+	/**
+	 * Abonamentul din aplicatia 2 (RestoSoft), pentru locatiile legate ale firmei curente.
+	 * Firma vine din JWT, nu din query: altfel un tenant ar putea citi abonamentul altuia.
+	 */
+	@Get('me/partner-link/subscription')
+	@Permissions('companies.read_own', 'companies.read')
+	getMyPartnerSubscription(@Req() req: any) {
+		const companyId = Number(this.buildAccessRequester(req)?.companyId);
+		if (!Number.isFinite(companyId) || companyId <= 0) {
+			throw new ForbiddenException('Doar un tenant client autentificat poate citi legatura cu aplicatia 2');
+		}
+		return this.partnerLinkService.fetchApp2SideForCompany(companyId);
+	}
+
+	/**
+	 * Ce vede aplicatia 2 despre abonamentul unei firme de aici. Apelat server-to-server cu
+	 * `X-Stock-Sync-Key` (vezi `JwtAuthGuard`), ca restul canalelor dintre cele doua aplicatii —
+	 * de partea cealalta nu exista JWT de aici.
+	 */
+	@Get('integrations/partner-link/subscription')
+	async getPartnerSubscriptionForApp2(
+		@Query('company_id') companyIdRaw: string,
+		@Req() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint de integrare — necesita X-Stock-Sync-Key');
+		}
+		const companyId = Number.parseInt(String(companyIdRaw ?? ''), 10);
+		if (!Number.isFinite(companyId) || companyId <= 0) {
+			throw new BadRequestException('company_id invalid');
+		}
+		return this.partnerLinkService.describeOwnSideForCompany(companyId);
 	}
 
 	@Get('internal/:companyId/subscription')

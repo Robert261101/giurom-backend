@@ -15,6 +15,7 @@
   ArgumentMetadata,
   Injectable,
   NotFoundException,
+  ForbiddenException,
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -854,6 +855,26 @@ export class UsersController {
       });
     }
     return this.usersService.deleteUserRole(id);
+  }
+
+  /**
+   * Contul de tenant al unei companii client — pentru afisarea abonamentului in
+   * aplicatia 2. Strict intern (`x-service-secret`): raspunde cu datele de contact ale
+   * contului, deci nu are ce cauta pe o ruta cu JWT, unde ar putea fi interogat pentru
+   * orice companie.
+   */
+  @Get('internal/company/:companyId/tenant-account')
+  @UseGuards(InternalServiceGuard)
+  @ApiOperation({ summary: 'Contul de tenant al unei companii (apel intern)' })
+  @ApiParam({ name: 'companyId', description: 'ID-ul companiei' })
+  async getCompanyTenantAccount(
+    @Req() req: AuthedRequest,
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ) {
+    if (req.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesita x-service-secret');
+    }
+    return this.usersService.findTenantAccountForCompany(companyId);
   }
 
   @Get('batch')

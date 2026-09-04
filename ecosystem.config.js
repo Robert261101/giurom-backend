@@ -60,7 +60,16 @@ module.exports = {
       name: 'company',
       cwd: `${REPO_ROOT}/giurom-backend/company`,
       script: 'dist/main.js',
-      env: { ...nestjsEnv, REPO_ROOT, LOCATIONS_HTTP_URL: 'http://127.0.0.1:3004' },
+      env: {
+        ...nestjsEnv,
+        REPO_ROOT,
+        LOCATIONS_HTTP_URL: 'http://127.0.0.1:3004',
+        // Abonamentul din giurom 2.0, afișat în ecranul de abonament de aici.
+        // Cheia partajată (GIUROM2_STOCK_SYNC_API_KEY) rămâne în company/.env — e secretă
+        // și e aceeași cu a celorlalte servicii care vorbesc cu App2.
+        GIUROM2_PARTNER_SUBSCRIPTION_URL:
+          'https://api.restosoft.ro/integrations/partner-link/subscription',
+      },
     },
     {
       name: 'locations',
