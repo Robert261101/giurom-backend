@@ -36,6 +36,9 @@ company/migrations/20260901_02_subscription_billing_seed.sql
 auth/migrations/20260902_auth_roles_permissions_utf8mb4.sql
 auth/migrations/seed_client_admin_role.sql
 
+# Branding per firma (logo + paleta). Randul 0 = implicitul platformei.
+company/migrations/20260904_01_company_branding.sql
+
 # NU adauga phase_b aici inca. Face client_location_id NOT NULL, iar phase_a lasa
 # explicit randurile legacy cu NULL. Backfill-ul VAL 5 nu exista in repo (doar mesaje
 # de eroare care trimit la el), deci pe date reale ori pica, ori in non-strict mode

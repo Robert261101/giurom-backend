@@ -4,6 +4,7 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';
 import { ensurePr35CompanySchema } from './database/ensure-pr35-schema';
+import { ensureCompanyBrandingSchema } from './database/ensure-company-branding-schema';
 
 // DB_* sunt în company/.env — trebuie încărcate înainte de migrarea automată la boot
 loadEnv({ path: join(__dirname, '..', '.env') });
@@ -24,6 +25,7 @@ async function bootstrap() {
   }
 
   await ensurePr35CompanySchema();
+  await ensureCompanyBrandingSchema();
 
   const httpApp = await NestFactory.create(AppModule, { bodyParser: false });
   httpApp.use(json({ limit: '50mb' }));

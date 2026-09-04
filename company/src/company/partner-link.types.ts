@@ -7,9 +7,12 @@
  * de aceea câmpurile sunt `snake_case` și orice adăugire trebuie făcută în ambele fișiere.
  */
 
-/** Contul cu care se face login în aplicația parteneră. */
+/** Contul / firma din aplicația parteneră. */
 export interface PartnerAccountInfo {
-  /** `false` = legătura există, dar nu există (încă) un cont de firmă de partea cealaltă. */
+  /**
+   * `true` = firma există de partea cealaltă (rând în `companies` / `tenants`).
+   * Contul de autentificare (email/login) poate lipsi — vezi `email` / `login`.
+   */
   exists: boolean;
   /** Denumirea firmei din aplicația parteneră. */
   name: string | null;

@@ -90,15 +90,18 @@ export class PartnerLinkService {
   }
 
   /**
-   * Firma + contul cu care se loghează. Emailul contului (al persoanei) are prioritate
-   * față de cel al firmei: e adresa la care se poate ajunge cineva, nu o cutie generică.
+   * Firma + contul cu care se loghează.
+   *
+   * `exists` = firma există în App1 (rândul din `companies`). Contul de autentificare
+   * (email / admin) e opțional — o firmă legată doar pe locații tot e „cont existent"
+   * ca firmă, chiar dacă nimeni nu s-a logat încă pe client-admin.
    */
   private async describeAccount(company: Company): Promise<PartnerAccountInfo> {
     const tenantAccount = await this.fetchTenantAccount(company.id);
     const companyEmail = (company.email || '').trim() || null;
 
     return {
-      exists: tenantAccount?.exists === true,
+      exists: true,
       name: (company.company_name || '').trim() || null,
       email: tenantAccount?.email || companyEmail,
       login: tenantAccount?.email || null,

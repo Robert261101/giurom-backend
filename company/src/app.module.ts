@@ -10,9 +10,11 @@ import { SubscriptionPlan } from './company/entity/subscription-plan.entity';
 import { PlanLimit } from './company/entity/plan-limit.entity';
 import { CompanySubscription } from './company/entity/company-subscription.entity';
 import { SubscriptionInvoice } from './company/entity/subscription-invoice.entity';
+import { CompanyBranding } from './company/entity/company-branding.entity';
 import { CompanyService } from './company/company.service';
 import { SubscriptionService } from './company/subscription.service';
 import { PartnerLinkService } from './company/partner-link.service';
+import { BrandingService } from './company/branding.service';
 import { CompanyMicroController } from './company.micro.controller';
 import { CompanyHttpController } from './company.http.controller';
 import { AuthModule } from './auth/auth.module';
@@ -54,6 +56,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         PlanLimit,
         CompanySubscription,
         SubscriptionInvoice,
+        CompanyBranding,
       ],
       synchronize: process.env.DB_SYNCHRONIZE === 'true',
       logging: process.env.DB_LOGGING === 'true',
@@ -79,6 +82,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       PlanLimit,
       CompanySubscription,
       SubscriptionInvoice,
+      CompanyBranding,
     ]),
   ],
   controllers: [CompanyMicroController, CompanyHttpController],
@@ -86,6 +90,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
     CompanyService,
     SubscriptionService,
     PartnerLinkService,
+    BrandingService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
