@@ -27,6 +27,8 @@ interface EmployeeSyncItem {
   month_points?: number | null;
   /** Eficiență sarcini 0–100 pe luna curentă; null dacă tasks e indisponibil. */
   kpi_efficiency?: number | null;
+  /** Zile lucrate (pontaj) pe luna curentă, din attendance-ms. */
+  month_worked_days?: number | null;
 }
 
 interface LocationMeta {
@@ -194,6 +196,11 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
       startDate,
       endDate,
     );
+    const workedDaysByEmployee = await this.fetchWorkedDaysByEmployee(
+      distinctEmployeeIds,
+      startDate,
+      endDate,
+    );
 
     const items: EmployeeSyncItem[] = [];
     for (const { employee, locationId } of pairs) {
@@ -218,6 +225,7 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         is_active: this.isActive(employee),
         month_points: pointsByEmployee.get(employeeId) ?? 0,
         kpi_efficiency: efficiencyByEmployee.get(employeeId) ?? null,
+        month_worked_days: workedDaysByEmployee.get(employeeId) ?? 0,
       });
     }
 
@@ -452,6 +460,63 @@ export class EmployeesExportService implements OnModuleInit, OnModuleDestroy {
         }
       }
     });
+
+    await Promise.all(workers);
+    return result;
+  }
+
+  private attendanceBaseUrl(): string {
+    return (
+      this.configService.get<string>('ATTENDANCE_HTTP_URL') ||
+      process.env.ATTENDANCE_HTTP_URL ||
+      'http://localhost:3016'
+    ).replace(/\/+$/, '');
+  }
+
+  /**
+   * Zile lucrate (pontaj) pe luna curentă — GET /attendance/worked-days.
+   * Fail-soft: angajat eșuat → 0.
+   */
+  private async fetchWorkedDaysByEmployee(
+    employeeIds: number[],
+    startDate: string,
+    endDate: string,
+  ): Promise<Map<number, number>> {
+    const result = new Map<number, number>();
+    if (employeeIds.length === 0) return result;
+
+    const base = this.attendanceBaseUrl();
+    const headers = this.internalHeaders();
+    const concurrency = 8;
+    let index = 0;
+
+    const workers = Array.from(
+      { length: Math.min(concurrency, employeeIds.length) },
+      async () => {
+        while (index < employeeIds.length) {
+          const employeeId = employeeIds[index++];
+          try {
+            const res: any = await firstValueFrom(
+              this.httpService.get(`${base}/attendance/worked-days`, {
+                headers,
+                params: {
+                  employee_id: employeeId,
+                  start_date: startDate,
+                  end_date: endDate,
+                },
+              }),
+            );
+            const days = Number(res?.data?.worked_days ?? 0);
+            result.set(employeeId, Number.isFinite(days) && days > 0 ? days : 0);
+          } catch (err: any) {
+            this.logger.warn(
+              `⚠️ [EmployeesExport] Pontaj angajat ${employeeId} indisponibil: ${err?.message}`,
+            );
+            result.set(employeeId, 0);
+          }
+        }
+      },
+    );
 
     await Promise.all(workers);
     return result;

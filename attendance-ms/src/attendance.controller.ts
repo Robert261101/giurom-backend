@@ -594,4 +594,31 @@ export class AttendanceController {
       end_date,
     );
   }
+
+  /**
+   * Zile lucrate (prezență full/partial) pe interval — pentru sync App2 / apeluri interne.
+   * Auth: JWT cu attendance.read SAU x-internal-service + x-service-secret.
+   */
+  @Get('worked-days')
+  @Permissions('attendance.read')
+  @ApiOperation({
+    summary: 'Număr zile lucrate pe angajat',
+    description:
+      'Numără zilele distincte cu prezență (present_full / present_partial) în interval.',
+  })
+  @ApiQuery({ name: 'employee_id', required: true, example: 1 })
+  @ApiQuery({ name: 'start_date', required: true, example: '2024-01-01' })
+  @ApiQuery({ name: 'end_date', required: true, example: '2024-01-31' })
+  async getWorkedDays(
+    @Query('employee_id', ParseIntPipe) employee_id: number,
+    @Query('start_date') start_date: string,
+    @Query('end_date') end_date: string,
+  ) {
+    const worked_days = await this.attendanceService.countWorkedDays(
+      employee_id,
+      start_date,
+      end_date,
+    );
+    return { employee_id, start_date, end_date, worked_days };
+  }
 }

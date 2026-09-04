@@ -2163,6 +2163,33 @@ export class AttendanceService implements OnModuleInit {
   }
 
   // STATISTICS AND REPORTS
+  /**
+   * Zile distincte cu prezență (full sau partial) pe interval.
+   * Folosit de exportul angajaților către App2 („zile lucrate” pe luna curentă).
+   */
+  async countWorkedDays(
+    employeeId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number> {
+    if (!employeeId || !startDate || !endDate) return 0;
+    const raw = await this.presenceRepository
+      .createQueryBuilder('presence')
+      .innerJoin('presence.shift', 'shift')
+      .where('shift.employee_id = :employeeId', { employeeId })
+      .andWhere('presence.date BETWEEN :start AND :end', {
+        start: startDate,
+        end: endDate,
+      })
+      .andWhere('presence.status IN (:...statuses)', {
+        statuses: [PresenceStatus.PRESENT_FULL, PresenceStatus.PRESENT_PARTIAL],
+      })
+      .select('COUNT(DISTINCT DATE(presence.date))', 'cnt')
+      .getRawOne();
+    const n = Number(raw?.cnt ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+
   async getAttendanceStatistics(
     employee_id?: number,
     start_date?: string,
