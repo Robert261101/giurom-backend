@@ -4,8 +4,6 @@ import { Permissions } from './permissions/permissions.decorator';
 import { CompanyService, CompanyAccessRequester } from './company/company.service';
 import { SubscriptionService } from './company/subscription.service';
 import { PartnerLinkService } from './company/partner-link.service';
-import { BrandingService } from './company/branding.service';
-import { BrandingColorKey } from './company/branding.constants';
 import { isPlanCode } from './company/subscription.constants';
 import { CreateCompanyDto } from './company/dto/create-company.dto';
 import { CreateCompanyWithDocumentsDto } from './company/dto/create-company-with-documents.dto';
@@ -25,7 +23,6 @@ export class CompanyHttpController {
 		private readonly service: CompanyService,
 		private readonly subscriptionService: SubscriptionService,
 		private readonly partnerLinkService: PartnerLinkService,
-		private readonly brandingService: BrandingService,
 	) {}
 
 	/**
@@ -68,14 +65,6 @@ export class CompanyHttpController {
 			permissions,
 			roles,
 		};
-	}
-
-	/** Cine face cererea, pentru coloanele de audit. `null` la apel intern (fara JWT). */
-	private requesterUserId(req: any): number | null {
-		const raw = req?.user?.userId ?? req?.user?.sub ?? null;
-		if (raw == null) return null;
-		const id = Number(raw);
-		return Number.isFinite(id) && id > 0 ? id : null;
 	}
 
 	@Post()
@@ -122,87 +111,6 @@ export class CompanyHttpController {
 				block_manual_supplier_ids: body?.block_manual_supplier_ids,
 			},
 		);
-	}
-
-	/**
-	 * Brandingul firmei curente: logo + paleta de culori, cu implicitele deja aplicate.
-	 *
-	 * Se cere la fiecare incarcare de pagina (provider-ul din frontend il injecteaza ca
-	 * variabile CSS), deci ramane pe permisiunile de citire proprie — nu pe `companies.update`.
-	 */
-	@Get('me/branding')
-	@Permissions('companies.read_own', 'companies.read')
-	getMyBranding(@Req() req: any) {
-		return this.brandingService.getForRequester(this.buildAccessRequester(req));
-	}
-
-	/** Salveaza culorile trimise. Cele absente raman neatinse; `null` le readuce pe implicit. */
-	@Patch('me/branding')
-	@Permissions('companies.update')
-	updateMyBranding(
-		@Body() body: Partial<Record<BrandingColorKey, string | null>>,
-		@Req() req: any,
-	) {
-		return this.brandingService.updateColors(
-			this.buildAccessRequester(req),
-			body || {},
-			this.requesterUserId(req),
-		);
-	}
-
-	/** Readuce toate culorile pe implicit. Logo-ul ramane — se sterge separat. */
-	@Post('me/branding/reset')
-	@Permissions('companies.update')
-	resetMyBranding(@Req() req: any) {
-		return this.brandingService.resetColors(
-			this.buildAccessRequester(req),
-			this.requesterUserId(req),
-		);
-	}
-
-	/**
-	 * Logo nou, ca data URL base64. Nu multipart: proxy-ul Next.js prin care trec toate
-	 * apelurile citeste body-ul ca text, deci un upload binar ar ajunge corupt aici.
-	 */
-	@Post('me/branding/logo')
-	@Permissions('companies.update')
-	uploadMyLogo(@Body() body: { data_url?: string }, @Req() req: any) {
-		const dataUrl = String(body?.data_url || '');
-		if (!dataUrl) {
-			throw new BadRequestException('Lipseste `data_url`');
-		}
-		return this.brandingService.saveLogo(
-			this.buildAccessRequester(req),
-			dataUrl,
-			this.requesterUserId(req),
-		);
-	}
-
-	@Delete('me/branding/logo')
-	@Permissions('companies.update')
-	deleteMyLogo(@Req() req: any) {
-		return this.brandingService.deleteLogo(
-			this.buildAccessRequester(req),
-			this.requesterUserId(req),
-		);
-	}
-
-	/**
-	 * Fisierul logo-ului. Firma vine din JWT, nu din URL: altfel o firma ar putea cere
-	 * logo-ul alteia numarand id-uri.
-	 */
-	@Get('me/branding/logo')
-	@Permissions('companies.read_own', 'companies.read')
-	async serveMyLogo(@Req() req: any, @Res() res: Response) {
-		const { buffer, mime } = await this.brandingService.readLogoForRequester(
-			this.buildAccessRequester(req),
-		);
-		res.setHeader('Content-Type', mime);
-		res.setHeader('Content-Length', String(buffer.length));
-		// Versiunea din query sparge cache-ul la fiecare logo nou, deci raspunsul poate fi
-		// tinut mult: URL-ul se schimba oricum cand se schimba imaginea.
-		res.setHeader('Cache-Control', 'private, max-age=86400');
-		res.end(buffer);
 	}
 
 	/**
