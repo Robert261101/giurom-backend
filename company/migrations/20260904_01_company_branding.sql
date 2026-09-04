@@ -32,5 +32,5 @@ CREATE TABLE IF NOT EXISTS company_branding (
 -- Randul implicit al platformei. Fara culori: aplicatia porneste exact cum arata acum,
 -- iar prima schimbare este o decizie explicita a cuiva, nu un efect al migrarii.
 INSERT INTO company_branding (company_id)
-SELECT 0
+SELECT 0 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM company_branding WHERE company_id = 0);
