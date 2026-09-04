@@ -189,6 +189,10 @@ export class PartnerLinkService {
   /**
    * Abonamentul App2 al locațiilor legate ale firmei.
    *
+   * `companyId` vine din JWT (vezi controller) — nu din query: altfel un tenant ar
+   * putea citi abonamentul App2 al altuia. App2 răspunde doar dacă există legături
+   * de locație pentru acel `company_id`; fără legătură lista e goală, fără date.
+   *
    * Când App2 nu răspunde întoarcem un `warning`, nu o eroare: ecranul de abonament al
    * firmei nu trebuie să pice fiindcă cealaltă aplicație e jos.
    */
@@ -199,11 +203,7 @@ export class PartnerLinkService {
       return { source: 'giurom2', partners: [], warning: null };
     }
 
-    const base = (
-      this.configService.get<string>('GIUROM2_PARTNER_SUBSCRIPTION_URL') ||
-      process.env.GIUROM2_PARTNER_SUBSCRIPTION_URL ||
-      ''
-    ).trim();
+    const base = this.app2PartnerUrl();
     if (!base) {
       return {
         source: 'giurom2',
@@ -218,6 +218,14 @@ export class PartnerLinkService {
       process.env.GIUROM2_STOCK_SYNC_API_KEY ||
       ''
     ).trim();
+    if (!apiKey) {
+      return {
+        source: 'giurom2',
+        partners: [],
+        warning:
+          'Legătura cu aplicația 2 nu e configurată pe server (GIUROM2_STOCK_SYNC_API_KEY).',
+      };
+    }
 
     try {
       const response = await firstValueFrom(
@@ -228,11 +236,15 @@ export class PartnerLinkService {
         }),
       );
       const body = response?.data as Partial<PartnerSubscriptionResponse> | null;
+      // Nu afișăm ce vine „în plus": App2 trebuie să răspundă doar pentru company_id-ul
+      // cerut; filtrăm local ca o greșeală sau un răspuns compromis să nu scurgă altceva.
+      const partners = (
+        Array.isArray(body?.partners) ? (body.partners as PartnerEntry[]) : []
+      ).filter((p) => Number(p?.company_id) === companyId);
+
       return {
         source: 'giurom2',
-        partners: Array.isArray(body?.partners)
-          ? (body.partners as PartnerEntry[])
-          : [],
+        partners,
         warning: body?.warning ?? null,
       };
     } catch (error) {
@@ -247,5 +259,40 @@ export class PartnerLinkService {
         warning: 'Aplicația 2 nu a răspuns — abonamentul de acolo nu poate fi afișat.',
       };
     }
+  }
+
+  /**
+   * URL-ul endpoint-ului de abonament din App2.
+   *
+   * Dacă lipsește variabila dedicată, îl derivăm din celelalte URL-uri App2
+   * (aceeași origine: restosoft.ro). Path-ul public e sub `/api/integrations/...`.
+   */
+  private app2PartnerUrl(): string {
+    const explicit = (
+      this.configService.get<string>('GIUROM2_PARTNER_SUBSCRIPTION_URL') ||
+      process.env.GIUROM2_PARTNER_SUBSCRIPTION_URL ||
+      ''
+    ).trim();
+    if (explicit) return explicit;
+
+    const siblings = [
+      'GIUROM2_STOCK_SYNC_URL',
+      'GIUROM2_WASTE_SYNC_URL',
+    ];
+    for (const key of siblings) {
+      const raw = (
+        this.configService.get<string>(key) ||
+        process.env[key] ||
+        ''
+      ).trim();
+      if (!raw) continue;
+      try {
+        const origin = new URL(raw).origin;
+        return `${origin}/api/integrations/partner-link/subscription`;
+      } catch {
+        /* URL invalid — încercăm următorul */
+      }
+    }
+    return '';
   }
 }

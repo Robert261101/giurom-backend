@@ -67,8 +67,9 @@ module.exports = {
         // Abonamentul din giurom 2.0, afișat în ecranul de abonament de aici.
         // Cheia partajată (GIUROM2_STOCK_SYNC_API_KEY) rămâne în company/.env — e secretă
         // și e aceeași cu a celorlalte servicii care vorbesc cu App2.
+        // Public: /api/... pe restosoft.ro (api.restosoft.ro nu există pe DNS).
         GIUROM2_PARTNER_SUBSCRIPTION_URL:
-          'https://api.restosoft.ro/integrations/partner-link/subscription',
+          'https://restosoft.ro/api/integrations/partner-link/subscription',
       },
     },
     {
