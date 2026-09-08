@@ -16,6 +16,10 @@ async function main() {
     '20260901_01_subscription_billing_schema.sql',
     '20260901_02_subscription_billing_seed.sql',
     '20260901_03_subscription_demo_prices.sql',
+    '20260908_01_plan_features_schema.sql',
+    '20260908_02_plan_features_seed.sql',
+    '20260908_03_plan_limits_seed_v2.sql',
+    '20260908_04_subscription_backfill_furnizor.sql',
   ];
 
   const c = await mysql.createConnection({
@@ -23,10 +27,11 @@ async function main() {
     port: Number(process.env.DB_PORT || 3307),
     user: process.env.DB_USERNAME || 'root',
     password: process.env.DB_PASSWORD || 'root',
+    database: process.env.DB_DATABASE || 'giurombitap_company',
     multipleStatements: true,
   });
 
-  console.log('Connected (no default DB — SQL uses giurombitap_company.*)');
+  console.log(`Connected to ${process.env.DB_DATABASE || 'giurombitap_company'}`);
 
   // Cleanup accidental tables created in suppliers DB from a prior mis-run
   await c.query(`

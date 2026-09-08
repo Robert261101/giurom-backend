@@ -10,6 +10,7 @@ import {
   HttpStatus,
   ParseIntPipe,
   Request,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -39,9 +40,14 @@ import {
 import { Shift } from './entities/shift.entity';
 import { Presence, PresenceStatus } from './entities/presence.entity';
 import { PresenceInflexion, InflexionType } from './entities/presence-inflexion.entity';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
 
 @ApiTags('attendance')
 @Controller('attendance')
+// Subscription gate (after RBAC): whole HTTP surface requires the "pontaj" feature.
+// Internal service calls (x-internal-service) are exempt.
+@RequiresPlanFeature('pontaj')
+@UseGuards(PlanFeatureGuard)
 @ApiBearerAuth()
 @ApiExtraModels(Shift, Presence, PresenceInflexion)
 export class AttendanceController {

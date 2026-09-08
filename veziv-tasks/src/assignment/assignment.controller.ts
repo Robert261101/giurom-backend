@@ -8,9 +8,12 @@ import { TaskAssignment } from './entity/task-assignment.entity';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { Permissions } from '../permissions/permissions.decorator';
+import { PlanFeatureGuard, RequiresPlanFeature } from '../plan-access/plan-access.nest';
 
 @ApiTags('Assignments')
 @Controller('assignments')
+// Subscription gate: "sarcini" feature (guard appended after JWT+RBAC on each method).
+@RequiresPlanFeature('sarcini')
 export class AssignmentController {
   constructor(
     private readonly assignmentService: AssignmentService,
@@ -18,7 +21,7 @@ export class AssignmentController {
   ) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează un assignment nou cu toate elementele sale' })
   @ApiResponse({ 
@@ -38,7 +41,7 @@ export class AssignmentController {
   }
 
   @Post('batch')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.create', 'suppliers.create')
   @ApiOperation({ summary: 'Creează mai multe assignments într-o singură tranzacție (batch)' })
   @ApiResponse({ 
@@ -58,7 +61,7 @@ export class AssignmentController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -96,7 +99,7 @@ export class AssignmentController {
   }
 
   @Get('stats/efficiency')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -130,7 +133,7 @@ export class AssignmentController {
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -156,7 +159,7 @@ export class AssignmentController {
     );
   }
   
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.update', 'suppliers.create')
   @Patch(':id')
   @ApiOperation({ summary: 'Actualizează un assignment și elementele sale' })
@@ -180,7 +183,7 @@ export class AssignmentController {
     );
   }
 
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.update')
   @Post(':id/reallocate')
   @ApiOperation({ summary: 'Realochează sarcina: scade puncte la assignee curent, creează copie pentru alt angajat (sau alege automat unul pontat)' })
@@ -200,7 +203,7 @@ export class AssignmentController {
     );
   }
 
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.read_own')
   @Post(':id/trigger-reallocate')
   @ApiOperation({ summary: 'Declanșează reatribuirea unei sarcini amânate (doar pentru asignatul curent)' })
@@ -218,7 +221,7 @@ export class AssignmentController {
     return this.assignmentService.triggerReallocateByEmployee(id, employeeId);
   }
 
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.delete')
   @Delete(':id')
   @ApiOperation({ summary: 'Șterge un assignment și toate elementele sale' })
@@ -238,7 +241,7 @@ export class AssignmentController {
 
   // Endpoint-uri pentru sarcinile programate
   @Get('scheduled')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -258,7 +261,7 @@ export class AssignmentController {
   }
 
   @Get('scheduled/for-date')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -280,7 +283,7 @@ export class AssignmentController {
   }
 
   @Get('overdue')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'assignment.read_own',
     'assignment.read_location',
@@ -300,7 +303,7 @@ export class AssignmentController {
   }
 
   @Post('scheduled/:id/activate')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.update')
   @ApiOperation({ summary: 'Activează manual o sarcină programată' })
   @ApiParam({ name: 'id', description: 'ID-ul assignment-ului programat' })
@@ -314,7 +317,7 @@ export class AssignmentController {
   }
 
   @Post('scheduled/check-and-update')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.update')
   @ApiOperation({ summary: 'Verifică și actualizează manual sarcinile programate pentru ziua curentă' })
   @ApiResponse({ 
@@ -333,7 +336,7 @@ export class AssignmentController {
   }
 
   @Post('recurring/test')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.create')
   @ApiOperation({ summary: 'Testează manual sistemul de recurență pentru ziua curentă' })
   @ApiResponse({ 
@@ -353,7 +356,7 @@ export class AssignmentController {
   }
 
   @Post('recurring/test/:date')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.create')
   @ApiOperation({ summary: 'Testează manual sistemul de recurență pentru o dată specifică (YYYY-MM-DD)' })
   @ApiParam({ 
@@ -388,7 +391,7 @@ export class AssignmentController {
   }
 
   @Post(':id/accept')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create', 'assignment.read_own', 'assignment.read_location', 'assignment.read_company', 'assignment.read_all')
   @ApiOperation({ summary: 'Acceptă un task (angajat preia taskul FCFS/loc sau manager atribuie)' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de acceptat' })
@@ -410,7 +413,7 @@ export class AssignmentController {
   }
 
   @Post(':id/approve')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.read_location', 'assignment.read_company', 'assignment.read_all')
   @ApiOperation({ summary: 'Aprobă un task cu requires_manager_check și îl finalizează' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de aprobat' })
@@ -432,7 +435,7 @@ export class AssignmentController {
   }
 
   @Post(':id/reject')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.read_location', 'assignment.read_company', 'assignment.read_all')
   @ApiOperation({ summary: 'Marchează task-ul verificat de manager ca nefinalizat pentru eficiență (fără modificare puncte)' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de respins' })
@@ -454,7 +457,7 @@ export class AssignmentController {
   }
 
   @Post(':id/postpone')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create')
   @ApiOperation({ summary: 'Amână un task cu allow_postpone activat' })
   @ApiParam({ name: 'id', description: 'ID-ul task-ului de amânat' })
@@ -476,7 +479,7 @@ export class AssignmentController {
   }
 
   @Post(':id/start-work')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create', 'order.read', 'assignment.read_own')
   @ApiOperation({ summary: 'Participant: marchează sarcina proprie ca În lucru' })
   startParticipantWork(
@@ -491,7 +494,7 @@ export class AssignmentController {
   }
 
   @Post(':id/complete-own')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create', 'order.read', 'assignment.read_own')
   @ApiOperation({ summary: 'Participant: confirmare individuală Am terminat' })
   completeParticipantParticipation(
@@ -506,7 +509,7 @@ export class AssignmentController {
   }
 
   @Post(':id/cancel')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('assignment.update', 'suppliers.create')
   @ApiOperation({ summary: 'Furnizor/admin: anulează sarcina (grup sau individual)' })
   cancelAssignment(

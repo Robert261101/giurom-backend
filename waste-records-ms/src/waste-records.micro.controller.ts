@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Param, Patch, Body, Req } from '@nestjs/common';
+import { Controller, Get, Post, Param, Patch, Body, Req, UseGuards } from '@nestjs/common';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
 import { Request } from 'express';
 import { Permissions } from './permissions/permissions.decorator';
 import {
@@ -11,6 +12,9 @@ import type { WasteRecordsJwtUser } from './waste-records-access';
 type AuthedRequest = Request & { user?: WasteRecordsJwtUser };
 
 @Controller('waste-records')
+// Subscription gate (after RBAC): waste records require the "arunca_consuma" feature.
+@RequiresPlanFeature('arunca_consuma')
+@UseGuards(PlanFeatureGuard)
 export class WasteRecordsMicroController {
   constructor(private readonly service: WasteRecordsService) {}
 

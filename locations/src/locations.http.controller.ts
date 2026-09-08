@@ -11,15 +11,112 @@ import { UpdateTaskTemplateAssignmentDto } from './locations/dto/update-task-tem
 import { CreateWorkLocationFileDto } from './locations/dto/create-work-location-file.dto';
 import { RevenueStatus } from './locations/entity/work-location-revenue.entity';
 import { WorkLocation } from './locations/entity/work-location.entity';
+import { LocationsQuotaService } from './locations/locations-quota.service';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
+
+/** Query: include_inactive=1|true or includeInactive=true → list blocked (is_active=0) locations. */
+function parseIncludeInactive(
+	includeInactive?: string,
+	include_inactive?: string,
+): boolean {
+	const raw = includeInactive ?? include_inactive;
+	if (raw == null || raw === '') return false;
+	const v = String(raw).toLowerCase().trim();
+	return v === '1' || v === 'true' || v === 'yes';
+}
 
 @Controller('locations')
 @UseGuards(PermissionsGuard)
 export class LocationsHttpController {
-	constructor(private readonly service: LocationsService) {}
+	constructor(
+		private readonly service: LocationsService,
+		private readonly quotaService: LocationsQuotaService,
+	) {}
+
+	/**
+	 * Internal (x-service-secret): număr locații ale unei companii, pentru usage-ul de abonament (company-ms).
+	 * Declarat înaintea rutelor cu `:id` ca să nu fie interceptat.
+	 */
+	@Get('internal/companies/:companyId/count')
+	async countCompanyLocationsInternal(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Request() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+		}
+		const count = await this.quotaService.countCompanyLocations(companyId);
+		return { company_id: companyId, count };
+	}
+
+	@Get('internal/companies/:companyId/subscription/downgrade-preview')
+	async getDowngradePreviewInternal(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Query('location_limit') locationLimit: string,
+		@Request() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+		}
+		return this.quotaService.getDowngradePreview(
+			companyId,
+			Number(locationLimit),
+		);
+	}
+
+	@Post('internal/companies/:companyId/subscription/apply-downgrade-blocks')
+	async applyDowngradeBlocksInternal(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Body()
+		body: { block_location_ids?: number[]; location_limit?: number },
+		@Request() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+		}
+		const rollbackItems = await this.quotaService.applyDowngradeBlocks(
+			companyId,
+			body?.block_location_ids || [],
+			Number(body?.location_limit),
+		);
+		return { rollback_items: rollbackItems };
+	}
+
+	@Post('internal/companies/:companyId/subscription/rollback-downgrade-blocks')
+	async rollbackDowngradeBlocksInternal(
+		@Param('companyId', ParseIntPipe) companyId: number,
+		@Body() body: { rollback_items?: Array<{ location_id: number; previous_is_active: boolean }> },
+		@Request() req?: { bypassAuth?: boolean },
+	) {
+		if (req?.bypassAuth !== true) {
+			throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+		}
+		await this.quotaService.rollbackDowngradeBlocks(
+			companyId,
+			body?.rollback_items || [],
+		);
+		return { ok: true };
+	}
+
+	@Post(':id/quota/reactivate')
+	@Permissions('locations.update', 'locations.create')
+	async reactivateLocation(
+		@Param('id', ParseIntPipe) id: number,
+		@Request() req?: any,
+	) {
+		const companyId = Number(req?.user?.company_id);
+		if (!Number.isFinite(companyId) || companyId <= 0) {
+			throw new ForbiddenException('Contextul companiei lipsește din sesiune');
+		}
+		await this.quotaService.reactivateLocation(companyId, id);
+		return { id, is_active: true };
+	}
 
 	// Revenue endpoints - trebuie să fie înainte de @Post() pentru a nu fi interceptate
 	@Post(':id/revenue')
 	@Permissions('cashing.create')
+	@RequiresPlanFeature('incasare')
+	@UseGuards(PlanFeatureGuard)
 	recordRevenue(
 		@Param('id') id: string, 
 		@Body() body: { revenue_date: string; online_amount: number; cash_amount: number; card_amount: number; total_amount: number; status?: RevenueStatus; image_url?: string; employee_id?: number },
@@ -74,6 +171,8 @@ export class LocationsHttpController {
 		@Query('companyId') companyId?: string,
 		@Query('city') city?: string,
 		@Query('search') search?: string,
+		@Query('includeInactive') includeInactive?: string,
+		@Query('include_inactive') include_inactive?: string,
 		@Request() req?: any,
 	) {
 		const user = req?.user;
@@ -83,13 +182,15 @@ export class LocationsHttpController {
 			companyId ? parseInt(companyId, 10) : undefined, 
 			city, 
 			search,
-			user
+			user,
+			parseIncludeInactive(includeInactive, include_inactive),
 		);
 	}
 
 	/**
 	 * Batch: returnează mai multe locații într-un singur request.
 	 * IMPORTANT: pentru utilizatori fără `locations.read`, service-ul filtrează automat doar locațiile proprii.
+	 * Implicit doar active; `include_inactive=1` pentru admin / istoric batch.
 	 *
 	 * Ex: GET /locations/batch?ids=1,2,3
 	 */
@@ -97,6 +198,8 @@ export class LocationsHttpController {
 	@Permissions('locations.read')
 	findBatch(
 		@Query('ids') ids: string,
+		@Query('includeInactive') includeInactive?: string,
+		@Query('include_inactive') include_inactive?: string,
 		@Request() req?: any,
 	): Promise<WorkLocation[]> {
 		if (!ids) return Promise.resolve([]);
@@ -106,7 +209,11 @@ export class LocationsHttpController {
 			.map((id) => parseInt(id.trim(), 10))
 			.filter((id) => Number.isFinite(id) && id > 0);
 		if (idList.length === 0) return Promise.resolve([]);
-		return this.service.findWorkLocationsByIds(idList, user);
+		return this.service.findWorkLocationsByIds(
+			idList,
+			user,
+			parseIncludeInactive(includeInactive, include_inactive),
+		);
 	}
 
 	@Get('statistics')
@@ -155,14 +262,32 @@ export class LocationsHttpController {
 
 	@Get('company/:companyId/with-documents')
 	@Permissions('locations.read')
-	findByCompanyWithDocuments(@Param('companyId') companyId: string, @Request() req?: any) {
-		return this.service.findWorkLocationsByCompanyWithDocuments(parseInt(companyId, 10), req?.user);
+	findByCompanyWithDocuments(
+		@Param('companyId') companyId: string,
+		@Query('includeInactive') includeInactive?: string,
+		@Query('include_inactive') include_inactive?: string,
+		@Request() req?: any,
+	) {
+		return this.service.findWorkLocationsByCompanyWithDocuments(
+			parseInt(companyId, 10),
+			req?.user,
+			parseIncludeInactive(includeInactive, include_inactive),
+		);
 	}
 
 	@Get('company/:companyId')
 	@Permissions('locations.read')
-	findByCompany(@Param('companyId') companyId: string, @Request() req?: any) {
-		return this.service.findWorkLocationsByCompany(parseInt(companyId, 10), req?.user);
+	findByCompany(
+		@Param('companyId') companyId: string,
+		@Query('includeInactive') includeInactive?: string,
+		@Query('include_inactive') include_inactive?: string,
+		@Request() req?: any,
+	) {
+		return this.service.findWorkLocationsByCompany(
+			parseInt(companyId, 10),
+			req?.user,
+			parseIncludeInactive(includeInactive, include_inactive),
+		);
 	}
 
 	@Patch(':id')
@@ -315,12 +440,16 @@ export class LocationsHttpController {
 
 	@Delete('revenue/:revenueId')
 	@Permissions('cashing.delete')
+	@RequiresPlanFeature('incasare')
+	@UseGuards(PlanFeatureGuard)
 	deleteRevenue(@Param('revenueId') revenueId: string) {
 		return this.service.deleteRevenue(parseInt(revenueId, 10));
 	}
 
 	@Patch('revenue/:revenueId')
 	@Permissions('cashing.update')
+	@RequiresPlanFeature('incasare')
+	@UseGuards(PlanFeatureGuard)
 	updateRevenue(@Param('revenueId') revenueId: string, @Body() body: { revenue_date?: string; online_amount?: number; cash_amount?: number; card_amount?: number; total_amount?: number; status?: RevenueStatus; image_url?: string }) {
 		return this.service.updateRevenue(parseInt(revenueId, 10), body);
 	}
@@ -500,6 +629,8 @@ export class LocationsHttpController {
 	// === CASHING IMAGE UPLOAD ===
 	@Post('cashing/upload-image')
 	@Permissions('cashing.create')
+	@RequiresPlanFeature('incasare')
+	@UseGuards(PlanFeatureGuard)
 	async uploadCashingImage(@Body() payload: { fileName: string; content: string }) {
 		const imageUrl = await this.service.uploadCashingImage(payload.fileName, payload.content);
 		return { imageUrl };
@@ -518,6 +649,8 @@ export class LocationsHttpController {
 	// === CASHING IMAGE DELETE ===
 	@Post('cashing/delete-image')
 	@Permissions('cashing.update')
+	@RequiresPlanFeature('incasare')
+	@UseGuards(PlanFeatureGuard)
 	async deleteCashingImage(@Body() payload: { imageUrl: string }) {
 		await this.service.deleteCashingImage(payload.imageUrl);
 		return { success: true, message: 'Imaginea a fost ștearsă cu succes' };

@@ -14,6 +14,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceMicroController } from './attendance.micro.controller';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 
 @Module({
   imports: [
@@ -56,6 +57,8 @@ import { AttendanceMicroController } from './attendance.micro.controller';
   controllers: [AttendanceController, AttendanceMicroController],
   providers: [
     AttendanceService,
+    PlanAccessService,
+    PlanFeatureGuard,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

@@ -218,11 +218,7 @@ describe('SuppliersService client-supplier relationship A/B', () => {
 
       await expect(
         service.createOrder({ ...orderDtoBase, company_id: CLIENT_A }, userA),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          code: 'SUPPLIER_QUOTA_BLOCKED',
-        }),
-      });
+      ).rejects.toBeInstanceOf(NotFoundException);
 
       await expect(
         service.createOrder({ ...orderDtoBase, company_id: CLIENT_B }, userB),
@@ -304,6 +300,83 @@ describe('SuppliersService client-supplier relationship A/B', () => {
       expect(rowsA).toHaveLength(0);
       expect(rowsB).toHaveLength(1);
       expect(rowsB[0].id).toBe(SUPPLIER_ID);
+    });
+
+    it('includeBlocked keeps blocked suppliers for existing-order listing', async () => {
+      const linkByClient = new Map<number, LinkRow>([
+        [CLIENT_A, { is_active: true, quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED }],
+      ]);
+      const { service } = buildSharedContService(linkByClient);
+
+      jest.spyOn(service, 'findCatalog').mockResolvedValue([
+        {
+          id: SUPPLIER_ID,
+          supplier_name: 'Blocked Cont',
+          phone: '0700',
+          registration_number: 'RO1',
+          vat_number: 'RO1',
+          address: 'a',
+          city: 'c',
+          region: 'r',
+          country: 'ro',
+          postal_code: '0',
+          email: 'e@e.e',
+          contact_person: 'cp',
+          is_active: true,
+          owner_company_id: 99,
+          has_supplier_account: true,
+          client_association_is_active: true,
+          quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ] as any);
+
+      const without = await service.findForOrders(undefined, requesterA);
+      const withBlocked = await service.findForOrders(undefined, requesterA, {
+        includeBlocked: true,
+      });
+
+      expect(without).toHaveLength(0);
+      expect(withBlocked).toHaveLength(1);
+      expect(withBlocked[0].id).toBe(SUPPLIER_ID);
+    });
+
+    it('includeBlocked still excludes removed suppliers', async () => {
+      const { service } = buildSharedContService(
+        new Map([
+          [CLIENT_A, { is_active: true, quota_status: SUPPLIER_QUOTA_STATUS.REMOVED }],
+        ]),
+      );
+
+      jest.spyOn(service, 'findCatalog').mockResolvedValue([
+        {
+          id: SUPPLIER_ID,
+          supplier_name: 'Removed Cont',
+          phone: null,
+          registration_number: 'RO1',
+          vat_number: 'RO1',
+          address: 'a',
+          city: 'c',
+          region: 'r',
+          country: 'ro',
+          postal_code: '0',
+          email: 'e@e.e',
+          contact_person: 'cp',
+          is_active: true,
+          owner_company_id: 99,
+          has_supplier_account: true,
+          client_association_is_active: true,
+          quota_status: SUPPLIER_QUOTA_STATUS.REMOVED,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ] as any);
+
+      const rows = await service.findForOrders(undefined, requesterA, {
+        includeBlocked: true,
+      });
+      expect(rows).toHaveLength(0);
     });
   });
 

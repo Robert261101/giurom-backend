@@ -8,6 +8,7 @@ import {
   Delete,
   ParseIntPipe,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,10 +22,13 @@ import { AuthOnly, Permissions } from './permissions/permissions.decorator';
 import { CreateEventCategoryDto } from './dto/create-event-category.dto';
 import { UpdateEventCategoryDto } from './dto/update-event-category.dto';
 import { EventCategory } from './entities/event-category.entity';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
 
 @ApiTags('calendar')
 @Controller('calendar/categories')
 @ApiBearerAuth()
+@RequiresPlanFeature('evenimente')
+@UseGuards(PlanFeatureGuard)
 export class EventCategoryController {
   constructor(private readonly categoryService: EventCategoryService) {}
 

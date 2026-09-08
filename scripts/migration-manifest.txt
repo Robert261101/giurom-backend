@@ -16,6 +16,7 @@ stock/src/stock/migrations/008-products-name-sku-non-unique.sql
 stock/src/stock/migrations/009-stock-quantity-scale-3.sql
 stock/src/stock/migrations/010-waste-request-giurom2-zone.sql
 suppliers-ms/migrations/20260901_supplier_orders_app2_target.sql
+suppliers-ms/migrations/20260907_client_supplier_connection_attempts.sql
 
 # PR #48 - multi-tenant client/supplier + abonamente.
 # Ordinea conteaza: tabela inainte de ALTER-ele pe ea.
@@ -32,6 +33,13 @@ company/migrations/20260827_02_subscription_plans_seed.sql
 company/migrations/20260827_03_subscription_backfill_clients.sql
 company/migrations/20260901_01_subscription_billing_schema.sql
 company/migrations/20260901_02_subscription_billing_seed.sql
+company/migrations/20260908_01_plan_features_schema.sql
+company/migrations/20260908_02_plan_features_seed.sql
+company/migrations/20260908_03_plan_limits_seed_v2.sql
+company/migrations/20260908_04_subscription_backfill_furnizor.sql
+suppliers-ms/migrations/20260908_employees_suppliers_is_active.sql
+suppliers-ms/migrations/20260908_employees_suppliers_unique.sql
+locations/migrations/20260908_work_location_is_active.sql
 # Trebuie inaintea seed-ului: tabelele sunt latin1, iar seed-ul scrie diacritice.
 auth/migrations/20260902_auth_roles_permissions_utf8mb4.sql
 auth/migrations/seed_client_admin_role.sql

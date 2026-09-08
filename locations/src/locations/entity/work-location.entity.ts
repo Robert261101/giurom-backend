@@ -11,6 +11,10 @@ export class WorkLocation {
   @Column()
   company_id: number;
 
+  /** Soft-block for locations.max; inactive locations do not consume slots. */
+  @Column({ type: 'boolean', default: true })
+  is_active: boolean;
+
   @Column({ type: 'varchar', length: 255, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   location_name: string;
 

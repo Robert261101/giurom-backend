@@ -126,6 +126,7 @@ import {
 import {
   CLIENT_SUPPLIER_CATALOG_ACCESS_REQUIREMENTS,
   CLIENT_SUPPLIER_ADMIN_DETAIL_ACCESS_REQUIREMENTS,
+  CLIENT_SUPPLIER_EXISTING_ORDER_ACCESS_REQUIREMENTS,
   CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
 } from './client-supplier-operational-access';
 import { missingLocationIds } from './supplier-company-locations.util';
@@ -153,11 +154,18 @@ import { CancelOrderItemsDto } from './dto/cancel-order-items.dto';
 import { SendBackToMagazionerDto } from './dto/send-back-to-magazioner.dto';
 import { StockHttpService, CreateStockItemDto } from './stock-http.service';
 import { SupplierQuotaService } from './supplier-quota.service';
+import {
+  normalizeStaffRole,
+  SupplierPlanQuotaService,
+} from './supplier-plan-quota.service';
 import { SupplierQuotaLifecycleService } from './supplier-quota-lifecycle.service';
+import { FurnizorQuotaLifecycleService } from './furnizor-quota-lifecycle.service';
+import { SupplierConnectionCodeAttemptService } from './supplier-connection-code-attempt.service';
 import {
   SUPPLIER_QUOTA_STATUS,
   normalizeSupplierQuotaStatus,
   isSupplierEligibleForNewOrder,
+  supplierQuotaStatusIsAccessible,
 } from './supplier-quota-status';
 import {
   assertClientViewOnlyOnMutations,
@@ -364,7 +372,10 @@ export class SuppliersService {
     private readonly giurom2ZonesService: Giurom2ZonesService,
     private readonly supplierQuotaService: SupplierQuotaService,
     private readonly supplierQuotaLifecycleService: SupplierQuotaLifecycleService,
+    private readonly furnizorQuotaLifecycleService: FurnizorQuotaLifecycleService,
+    private readonly connectionCodeAttemptService: SupplierConnectionCodeAttemptService,
     @Inject('NOTIFICATIONS_RMQ') private readonly notificationsClient: ClientProxy,
+    private readonly supplierPlanQuotaService: SupplierPlanQuotaService,
   ) {
     this.locationsServiceUrl =
       this.configService.get<string>('LOCATIONS_HTTP_URL') ||
@@ -1200,6 +1211,7 @@ export class SuppliersService {
 
     return rows.map((row) => {
       const names = nameById.get(Number(row.employee_id));
+      const linkActive = (row as { is_active?: boolean }).is_active;
       return {
         ...row,
         first_name: names?.first_name ?? null,
@@ -1207,7 +1219,11 @@ export class SuppliersService {
         full_name: names?.full_name ?? null,
         email: names?.email ?? null,
         work_location_default_id: names?.work_location_default_id ?? null,
-        is_active: names?.is_active ?? true,
+        // Prefer employees_suppliers.is_active when provided by caller; else employee account.
+        is_active:
+          linkActive !== undefined
+            ? linkActive !== false
+            : names?.is_active ?? true,
       };
     });
   }
@@ -1215,6 +1231,7 @@ export class SuppliersService {
   async getSupplierDrivers(
     supplierId: number,
     user?: OrderRequesterUser,
+    includeInactive = false,
   ): Promise<
     Array<{
       employee_id: number;
@@ -1223,16 +1240,24 @@ export class SuppliersService {
       last_name: string | null;
       full_name: string | null;
       email: string | null;
+      is_active: boolean;
     }>
   > {
     await this.assertSupplierStaffListAccess(supplierId, user);
-    const rows = await this.employeeSupplierRepo.find({
-      where: { supplier_id: supplierId, role: 'driver' },
-      order: { employee_id: 'ASC' },
-    });
+    const qb = this.employeeSupplierRepo
+      .createQueryBuilder('link')
+      .where('link.supplier_id = :supplierId', { supplierId })
+      .andWhere('link.role = :role', { role: 'driver' })
+      .orderBy('link.employee_id', 'ASC');
+    if (!includeInactive) {
+      // Match quota semantics: NULL/true = operational active; false = soft-blocked.
+      qb.andWhere('(link.is_active IS NULL OR link.is_active = true)');
+    }
+    const rows = await qb.getMany();
     const base = rows.map((row) => ({
       employee_id: row.employee_id,
       role: row.role,
+      is_active: row.is_active !== false,
     }));
     return this.enrichSupplierStaffWithEmployeeNames(base);
   }
@@ -1240,6 +1265,7 @@ export class SuppliersService {
   async getSupplierWarehouseEmployees(
     supplierId: number,
     user?: OrderRequesterUser,
+    includeInactive = false,
   ): Promise<
     Array<{
       employee_id: number;
@@ -1248,16 +1274,23 @@ export class SuppliersService {
       last_name: string | null;
       full_name: string | null;
       email: string | null;
+      is_active: boolean;
     }>
   > {
     await this.assertSupplierStaffListAccess(supplierId, user);
-    const rows = await this.employeeSupplierRepo.find({
-      where: { supplier_id: supplierId, role: 'warehouse' },
-      order: { employee_id: 'ASC' },
-    });
+    const qb = this.employeeSupplierRepo
+      .createQueryBuilder('link')
+      .where('link.supplier_id = :supplierId', { supplierId })
+      .andWhere('link.role = :role', { role: 'warehouse' })
+      .orderBy('link.employee_id', 'ASC');
+    if (!includeInactive) {
+      qb.andWhere('(link.is_active IS NULL OR link.is_active = true)');
+    }
+    const rows = await qb.getMany();
     const base = rows.map((row) => ({
       employee_id: row.employee_id,
       role: row.role,
+      is_active: row.is_active !== false,
     }));
     return this.enrichSupplierStaffWithEmployeeNames(base);
   }
@@ -1265,7 +1298,7 @@ export class SuppliersService {
   /** Distinct supplier_id values linked to an employee (employees_suppliers). */
   async getEmployeeSupplierIds(employeeId: number): Promise<number[]> {
     const rows = await this.employeeSupplierRepo.find({
-      where: { employee_id: employeeId },
+      where: { employee_id: employeeId, is_active: true },
       select: ['supplier_id'],
     });
     return [...new Set(rows.map((row) => row.supplier_id))];
@@ -1915,6 +1948,20 @@ export class SuppliersService {
         'Nu aveți o atribuire activă pentru această comandă',
       );
     }
+    const order = await this.orderRepo.findOne({
+      where: { id: orderId },
+      select: ['id', 'supplier_id'],
+    });
+    if (order?.supplier_id) {
+      const warehouseLink = await this.employeeSupplierRepo.findOne({
+        where: {
+          employee_id: employeeId,
+          supplier_id: order.supplier_id,
+          role: 'warehouse',
+        },
+      });
+      this.assertEmployeeSupplierLinkActive(warehouseLink, 'magazioner');
+    }
   }
 
   private async assertSupplierStaffListAccess(
@@ -1976,6 +2023,7 @@ export class SuppliersService {
         'Angajatul nu este magazioner pentru acest furnizor',
       );
     }
+    this.assertEmployeeSupplierLinkActive(warehouseLink, 'magazioner');
     return this.connection.transaction(async (manager) => {
       const order = await manager.findOne(SupplierOrder, {
         where: { id: supplierOrderId },
@@ -2046,6 +2094,7 @@ export class SuppliersService {
       if (!driverLink) {
         throw new BadRequestException('Șoferul nu este asociat acestui furnizor');
       }
+      this.assertEmployeeSupplierLinkActive(driverLink, 'șofer');
 
       const scheduledAt = new Date(dto.scheduled_at);
       if (Number.isNaN(scheduledAt.getTime())) {
@@ -2375,7 +2424,12 @@ export class SuppliersService {
       throw new NotFoundException('Atribuirea nu a fost găsită');
     }
     assertDriverSelfOrOperationalAdmin(user, Number(existing.driver_id));
-    await this.findOrderForRequester(existing.supplier_order_id, user);
+    const orderForGuard = await this.findOrderForRequester(existing.supplier_order_id, user);
+    await this.assertDriverStaffLinkActiveForOps(
+      Number(existing.driver_id),
+      orderForGuard.supplier_id,
+      user,
+    );
     return this.connection.transaction(async (manager) => {
       const da = await manager.findOne(SupplierOrderDriverAssignment, {
         where: { id: assignmentId },
@@ -2439,6 +2493,11 @@ export class SuppliersService {
         'Doar șoferul atribuit poate confirma „Ajuns în locație”',
       );
     }
+    await this.assertDriverStaffLinkActiveForOps(
+      Number(existing.driver_id),
+      order.supplier_id,
+      user,
+    );
 
     if (
       existing.status === SupplierOrderDriverAssignmentStatus.ARRIVED ||
@@ -3013,15 +3072,19 @@ export class SuppliersService {
   }
 
   /**
-   * Dropdown comenzi noi: același scope tenant ca /catalog.
+   * Dropdown comenzi noi / listă comenzi existente: același scope tenant ca /catalog.
    * Pentru tenant client: eligibilitate per-client (link.is_active / manual state),
    * nu suppliers.is_active global pentru Manual.
    * Manual și Cont sunt deja filtrați în findCatalog (asociere la nivel de companie);
    * locația de livrare se validează la createOrder, nu în dropdown.
+   *
+   * `includeBlocked`: pentru pagina Comenzi — păstrează furnizorii blocked ca comenzile
+   * legacy să rămână vizibile. Dropdown-ul „Comandă nouă” NU setează flag-ul.
    */
   async findForOrders(
     _locationId?: number,
     requester?: SupplierAccessRequester,
+    options?: { includeBlocked?: boolean },
   ): Promise<
     Array<{
       id: number;
@@ -3035,7 +3098,16 @@ export class SuppliersService {
       tenantScoped ? {} : { is_active: true },
       requester,
     );
-    let eligible = rows.filter((s) => isSupplierEligibleForNewOrder(s));
+    const includeBlocked = options?.includeBlocked === true;
+    const eligible = rows.filter((s) => {
+      if (includeBlocked) {
+        return (
+          normalizeSupplierQuotaStatus(s.quota_status) !==
+          SUPPLIER_QUOTA_STATUS.REMOVED
+        );
+      }
+      return isSupplierEligibleForNewOrder(s);
+    });
 
     // Cont: company-wide via client_supplier_links (catalog scope).
     // Manual: company association via supplier_locations on any company location (catalog scope).
@@ -3083,6 +3155,7 @@ export class SuppliersService {
       owner_company_id?: number | null;
       has_supplier_account?: boolean;
       client_association_is_active?: boolean | null;
+      quota_status?: string | null;
       created_at: Date;
       updated_at: Date;
     }>
@@ -3343,6 +3416,7 @@ export class SuppliersService {
   /**
    * Client tenant redeems a connection code → client_supplier_links (+ seed locations).
    * client_company_id comes exclusively from JWT/requester — never from body.
+   * Wrong-code lockout is per client_company_id (persistent, atomic).
    */
   async connectSupplierByCode(
     rawCode: string,
@@ -3359,69 +3433,18 @@ export class SuppliersService {
       requester?.roles,
     );
     const clientCompanyId = Number(requester?.company_id);
-    const code = normalizeSupplierConnectionCode(rawCode);
-
-    const supplier = code
-      ? await this.supplierRepo.findOne({ where: { connection_code: code } })
-      : null;
-
-    const existing =
-      supplier && Number.isFinite(clientCompanyId) && clientCompanyId > 0
-        ? await this.clientSupplierLinkRepo.findOne({
-            where: {
-              client_company_id: clientCompanyId,
-              supplier_id: supplier.id,
-            },
-          })
-        : null;
-
-    const existingActiveLink =
-      !!existing &&
-      this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(
-        existing,
-      ) !== SUPPLIER_QUOTA_STATUS.REMOVED;
-
-    const decision = decideConnectAttempt({
-      companyType,
-      clientCompanyId: Number.isFinite(clientCompanyId) ? clientCompanyId : null,
-      normalizedCode: code,
-      supplier: supplier
-        ? {
-            id: supplier.id,
-            owner_company_id: supplier.owner_company_id,
-            is_active: supplier.is_active !== false,
-          }
-        : null,
-      alreadyLinked: existingActiveLink,
-    });
-
-    if (!decision.ok) {
-      if (decision.reason === 'forbidden_furnizor') {
-        throw new ForbiddenException(
-          'Conturile de tip furnizor nu pot folosi asocierea prin cod',
-        );
-      }
-      if (decision.reason === 'forbidden_no_company') {
-        throw new ForbiddenException(
-          'Doar un tenant client autentificat poate asocia un furnizor prin cod',
-        );
-      }
-      if (decision.reason === 'self_link') {
-        throw new BadRequestException(
-          'Nu poți asocia firma ta ca furnizor pentru propria firmă',
-        );
-      }
-      if (decision.reason === 'already_linked') {
-        throw new ConflictException('Furnizorul este deja asociat firmei tale');
-      }
-      throw new NotFoundException('Cod invalid');
+    if (
+      !Number.isFinite(clientCompanyId) ||
+      clientCompanyId <= 0 ||
+      !isTenantScopedSupplierRequester(requester)
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant client autentificat poate asocia un furnizor prin cod',
+      );
     }
-
-    // Cont quota / links only for suppliers with a real furnizor login.
-    // owner_company_id alone is NOT enough (legacy false Cont).
-    if (!(await this.hasSupplierLoginAccount(supplier!.id))) {
-      throw new BadRequestException(
-        'Acest furnizor nu are un cont de login activ. Adaugă-l ca furnizor Manual.',
+    if (companyType === 'furnizor') {
+      throw new ForbiddenException(
+        'Conturile de tip furnizor nu pot folosi asocierea prin cod',
       );
     }
 
@@ -3430,61 +3453,219 @@ export class SuppliersService {
         ? Number(requester.userId)
         : null;
 
+    const prepared =
+      await this.connectionCodeAttemptService.withCompanyAttemptLock(
+        clientCompanyId,
+        async () => {
+          await this.connectionCodeAttemptService.assertNotLocked(
+            clientCompanyId,
+          );
+
+          const code = normalizeSupplierConnectionCode(rawCode);
+          const supplier = code
+            ? await this.supplierRepo.findOne({
+                where: { connection_code: code },
+              })
+            : null;
+
+          const existing =
+            supplier != null
+              ? await this.clientSupplierLinkRepo.findOne({
+                  where: {
+                    client_company_id: clientCompanyId,
+                    supplier_id: supplier.id,
+                  },
+                })
+              : null;
+
+          const existingActiveLink =
+            !!existing &&
+            this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(
+              existing,
+            ) !== SUPPLIER_QUOTA_STATUS.REMOVED;
+
+          const decision = decideConnectAttempt({
+            companyType,
+            clientCompanyId,
+            normalizedCode: code,
+            supplier: supplier
+              ? {
+                  id: supplier.id,
+                  owner_company_id: supplier.owner_company_id,
+                  is_active: supplier.is_active !== false,
+                }
+              : null,
+            alreadyLinked: existingActiveLink,
+          });
+
+          if (!decision.ok && decision.reason === 'invalid_code') {
+            await this.connectionCodeAttemptService.recordInvalidAttempt(
+              clientCompanyId,
+              linkedBy,
+            );
+          }
+
+          if (
+            decision.ok ||
+            decision.reason === 'already_linked' ||
+            decision.reason === 'self_link'
+          ) {
+            await this.connectionCodeAttemptService.resetAttempts(
+              clientCompanyId,
+              linkedBy,
+            );
+          }
+
+          if (!decision.ok) {
+            if (decision.reason === 'self_link') {
+              throw new BadRequestException(
+                'Nu poți asocia firma ta ca furnizor pentru propria firmă',
+              );
+            }
+            if (decision.reason === 'already_linked') {
+              throw new ConflictException(
+                'Furnizorul este deja asociat firmei tale',
+              );
+            }
+            throw new NotFoundException('Cod invalid');
+          }
+
+          if (!(await this.hasSupplierLoginAccount(supplier!.id))) {
+            throw new BadRequestException(
+              'Acest furnizor nu are un cont de login activ. Adaugă-l ca furnizor Manual.',
+            );
+          }
+
+          return { supplier: supplier!, existing };
+        },
+      );
+
     return this.supplierQuotaService.withCompanySupplierQuotaLock(
       clientCompanyId,
       async () => {
+        const { supplier, existing } = prepared;
+        const furnizorOwnerCompanyId = Number(supplier.owner_company_id);
+
+        // clients.max (freeze-create) on the FURNIZOR's plan: a new or reactivated
+        // link consumes one client slot of the supplier's owner company.
+        const assertFurnizorClientsQuota = () =>
+          this.supplierPlanQuotaService.assertFurnizorCanAcceptClient(
+            furnizorOwnerCompanyId,
+          );
+
         if (
           existing &&
           this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(
             existing,
           ) === SUPPLIER_QUOTA_STATUS.REMOVED
         ) {
-          await this.supplierQuotaLifecycleService.reactivateAccountLink(
-            clientCompanyId,
-            supplier!.id,
-            linkedBy,
+          await this.supplierPlanQuotaService.withFurnizorQuotaLock(
+            furnizorOwnerCompanyId,
+            async () => {
+              await assertFurnizorClientsQuota();
+              await this.supplierQuotaLifecycleService.reactivateAccountLink(
+                clientCompanyId,
+                supplier.id,
+                linkedBy,
+              );
+            },
           );
         } else {
           await this.supplierQuotaService.assertCanConnectAccountSupplier(
             clientCompanyId,
           );
 
-          try {
-            await this.clientSupplierLinkRepo.save(
-              this.clientSupplierLinkRepo.create({
-                client_company_id: clientCompanyId,
-                supplier_id: supplier!.id,
-                linked_by_user_id: linkedBy,
-                is_active: true,
-                quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
-              }),
-            );
-          } catch (error: any) {
-            const msg = String(error?.message || error || '');
-            if (
-              /UQ_client_supplier_links_client_supplier|Duplicate|ER_DUP_ENTRY/i.test(
-                msg,
-              )
-            ) {
-              throw new ConflictException('Furnizorul este deja asociat firmei tale');
-            }
-            throw error;
-          }
+          await this.supplierPlanQuotaService.withFurnizorQuotaLock(
+            furnizorOwnerCompanyId,
+            async () => {
+              await assertFurnizorClientsQuota();
+              await this.saveNewClientSupplierLink(
+                clientCompanyId,
+                supplier.id,
+                linkedBy,
+              );
+            },
+          );
         }
 
         await this.seedSupplierLocationsForCompany(
-          supplier!.id,
+          supplier.id,
           clientCompanyId,
         );
 
         return {
-          supplier_id: supplier!.id,
-          supplier_name: supplier!.supplier_name,
-          is_active: supplier!.is_active !== false,
+          supplier_id: supplier.id,
+          supplier_name: supplier.supplier_name,
+          is_active: supplier.is_active !== false,
           already_linked: false,
           has_supplier_account: true,
         };
       },
+    );
+  }
+
+  private async saveNewClientSupplierLink(
+    clientCompanyId: number,
+    supplierId: number,
+    linkedBy: number | null,
+  ): Promise<void> {
+    try {
+      await this.clientSupplierLinkRepo.save(
+        this.clientSupplierLinkRepo.create({
+          client_company_id: clientCompanyId,
+          supplier_id: supplierId,
+          linked_by_user_id: linkedBy,
+          is_active: true,
+          quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        }),
+      );
+    } catch (error: any) {
+      const msg = String(error?.message || error || '');
+      if (
+        /UQ_client_supplier_links_client_supplier|Duplicate|ER_DUP_ENTRY/i.test(
+          msg,
+        )
+      ) {
+        throw new ConflictException(
+          'Furnizorul este deja asociat firmei tale',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getConnectionCodeAttemptStatus(
+    requester?: SupplierAccessRequester,
+  ): Promise<{
+    failed_count: number;
+    attempts_remaining: number;
+    locked: boolean;
+    locked_until: string | null;
+    seconds_remaining: number;
+    max_attempts: number;
+  }> {
+    const companyType = resolveCompanyTypeFromAuth(
+      requester?.company_type,
+      requester?.roles,
+    );
+    const clientCompanyId = Number(requester?.company_id);
+    if (
+      !isTenantScopedSupplierRequester(requester) ||
+      !Number.isFinite(clientCompanyId) ||
+      clientCompanyId <= 0
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant client autentificat poate citi starea încercărilor',
+      );
+    }
+    if (companyType === 'furnizor') {
+      throw new ForbiddenException(
+        'Conturile de tip furnizor nu pot folosi asocierea prin cod',
+      );
+    }
+    return this.connectionCodeAttemptService.withCompanyAttemptLock(
+      clientCompanyId,
+      () => this.connectionCodeAttemptService.getStatus(clientCompanyId),
     );
   }
 
@@ -3718,6 +3899,7 @@ export class SuppliersService {
   private async hasClientSupplierLink(
     clientCompanyId: number,
     supplierId: number,
+    options?: { requireAccessible?: boolean },
   ): Promise<boolean> {
     if (
       !Number.isFinite(clientCompanyId) ||
@@ -3735,10 +3917,15 @@ export class SuppliersService {
       select: ['id', 'quota_status'],
     });
     if (!link) return false;
-    return (
-      this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(link) !==
-      SUPPLIER_QUOTA_STATUS.REMOVED
-    );
+    const status =
+      this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(link);
+    if (status === SUPPLIER_QUOTA_STATUS.REMOVED) {
+      return false;
+    }
+    if (options?.requireAccessible) {
+      return supplierQuotaStatusIsAccessible(status);
+    }
+    return true;
   }
 
   private mapClientSupplierRelationshipError(
@@ -4062,24 +4249,243 @@ export class SuppliersService {
   ): Promise<{ employee_id: number; supplier_id: number; role: 'warehouse' | 'driver' }> {
     const summary = await this.findMySupplierForFurnizorTenant(companyId, companyType);
     const role: 'warehouse' | 'driver' = staffType === 'magazioner' ? 'warehouse' : 'driver';
-
-    const existing = await this.employeeSupplierRepo.findOne({
-      where: { employee_id: employeeId, supplier_id: summary.id },
-    });
-
-    if (existing) {
-      existing.role = role;
-      await this.employeeSupplierRepo.save(existing);
-      return { employee_id: employeeId, supplier_id: summary.id, role };
+    const eid = Number(employeeId);
+    if (!Number.isFinite(eid) || eid <= 0) {
+      throw new BadRequestException('employee_id invalid');
     }
 
-    const link = this.employeeSupplierRepo.create({
-      employee_id: employeeId,
-      supplier_id: summary.id,
-      role,
+    // staff.warehouse.max / staff.driver.max (freeze-assign) on the furnizor company.
+    // One operational role per employee: changing role frees the old slot and
+    // consumes one in the new role (never counted twice).
+    const ownerCompanyId =
+      (await this.supplierPlanQuotaService.getOwnerCompanyIdForSupplier(summary.id)) ??
+      (Number.isFinite(Number(companyId)) && Number(companyId) > 0
+        ? Number(companyId)
+        : null);
+    if (ownerCompanyId == null) {
+      throw new ForbiddenException(
+        'Compania furnizorului nu a putut fi determinată pentru verificarea abonamentului',
+      );
+    }
+
+    return this.supplierPlanQuotaService.withFurnizorQuotaLock(
+      ownerCompanyId,
+      async () => {
+        await this.supplierPlanQuotaService.assertFurnizorCanAssignStaff(
+          ownerCompanyId,
+          role,
+          eid,
+        );
+
+        const existing = await this.employeeSupplierRepo.findOne({
+          where: { employee_id: eid, supplier_id: summary.id },
+        });
+
+        if (existing) {
+          const wasInactive = existing.is_active === false;
+          const roleChanged = existing.role !== role;
+          // Reactivating or switching role into a new slot already asserted above
+          // when the employee does not hold an *active* link for `role`.
+          existing.role = role;
+          existing.is_active = true;
+          await this.employeeSupplierRepo.save(existing);
+          if (wasInactive || roleChanged) {
+            this.logger.log(
+              `Staff link upsert employee=${eid} supplier=${summary.id} role=${role} reactivated=${wasInactive}`,
+            );
+          }
+          return { employee_id: eid, supplier_id: summary.id, role };
+        }
+
+        const link = this.employeeSupplierRepo.create({
+          employee_id: eid,
+          supplier_id: summary.id,
+          role,
+          is_active: true,
+        });
+        await this.employeeSupplierRepo.save(link);
+        return { employee_id: eid, supplier_id: summary.id, role };
+      },
+    );
+  }
+
+  /**
+   * Internal (employees-ms): assert that `employeeId` may receive `role` under the
+   * furnizor company's plan. Companies without an operational (Cont) supplier have
+   * no staff quota → `applicable: false`.
+   */
+  async assertStaffQuotaInternal(
+    companyId: number,
+    roleRaw: unknown,
+    employeeId?: number | null,
+  ): Promise<{
+    ok: true;
+    applicable: boolean;
+    company_id: number;
+    role: 'warehouse' | 'driver' | null;
+  }> {
+    const cid = Number(companyId);
+    if (!Number.isFinite(cid) || cid <= 0) {
+      throw new BadRequestException('companyId invalid');
+    }
+    const role = normalizeStaffRole(roleRaw);
+    if (!role) {
+      throw new BadRequestException('role trebuie să fie warehouse|driver');
+    }
+    const supplierIds =
+      await this.supplierPlanQuotaService.getSupplierIdsForOwnerCompany(cid);
+    if (!supplierIds.length) {
+      return { ok: true, applicable: false, company_id: cid, role };
+    }
+    await this.supplierPlanQuotaService.withFurnizorQuotaLock(cid, () =>
+      this.supplierPlanQuotaService.assertFurnizorCanAssignStaff(
+        cid,
+        role,
+        employeeId ?? null,
+      ),
+    );
+    return { ok: true, applicable: true, company_id: cid, role };
+  }
+
+  /**
+   * Internal (company-ms usage aggregate): all quota usages for one company.
+   * client → account/manual (existing counters); furnizor → clients/staff.
+   */
+  async getQuotaUsageForCompanyInternal(companyId: number): Promise<{
+    company_id: number;
+    account_used: number;
+    manual_used: number;
+    clients_used: number;
+    staff_warehouse_used: number;
+    staff_driver_used: number;
+  }> {
+    const cid = Number(companyId);
+    if (!Number.isFinite(cid) || cid <= 0) {
+      throw new BadRequestException('companyId invalid');
+    }
+    const locationIds = await this.fetchCompanyLocationIds(cid);
+    const [supplierUsage, furnizorUsage] = await Promise.all([
+      this.supplierQuotaService.getSupplierUsage(cid, locationIds),
+      this.supplierPlanQuotaService.getUsageForOwnerCompany(cid),
+    ]);
+    return {
+      company_id: cid,
+      account_used: supplierUsage.account_used,
+      manual_used: supplierUsage.manual_used,
+      ...furnizorUsage,
+    };
+  }
+
+  /** Internal (employees-ms delete cascade): remove ops links so staff slots are freed. */
+  async removeStaffLinksForEmployeeInternal(
+    employeeId: number,
+  ): Promise<{ employee_id: number; removed: number }> {
+    const removed =
+      await this.supplierPlanQuotaService.removeStaffLinksForEmployee(employeeId);
+    return { employee_id: Number(employeeId), removed };
+  }
+
+  /**
+   * Internal (employees-ms create/update position 4/5): upsert ops link so staff
+   * quota consumption stays in sync with position_default_id (not only FE linkMySupplierStaff).
+   */
+  async upsertStaffLinkForOwnerCompanyInternal(
+    ownerCompanyId: number,
+    employeeId: number,
+    roleRaw: unknown,
+  ): Promise<{
+    ok: true;
+    applicable: boolean;
+    company_id: number;
+    employee_id: number;
+    role: 'warehouse' | 'driver' | null;
+    supplier_id: number | null;
+  }> {
+    const cid = Number(ownerCompanyId);
+    const eid = Number(employeeId);
+    if (!Number.isFinite(cid) || cid <= 0) {
+      throw new BadRequestException('companyId invalid');
+    }
+    if (!Number.isFinite(eid) || eid <= 0) {
+      throw new BadRequestException('employee_id invalid');
+    }
+    const roleNorm = String(roleRaw || '')
+      .toLowerCase()
+      .trim();
+    const role: 'warehouse' | 'driver' | null =
+      roleNorm === 'warehouse' || roleNorm === 'magazioner'
+        ? 'warehouse'
+        : roleNorm === 'driver' || roleNorm === 'sofer' || roleNorm === 'șofer'
+          ? 'driver'
+          : null;
+    if (!role) {
+      throw new BadRequestException('role trebuie să fie warehouse sau driver');
+    }
+
+    const supplierIds =
+      await this.supplierPlanQuotaService.getSupplierIdsForOwnerCompany(cid);
+    if (!supplierIds.length) {
+      return {
+        ok: true,
+        applicable: false,
+        company_id: cid,
+        employee_id: eid,
+        role,
+        supplier_id: null,
+      };
+    }
+    const supplierId = supplierIds[0];
+
+    return this.supplierPlanQuotaService.withFurnizorQuotaLock(cid, async () => {
+      const existing = await this.employeeSupplierRepo.findOne({
+        where: { employee_id: eid, supplier_id: supplierId },
+      });
+      // Soft-blocked links must stay inactive until explicit
+      // POST /suppliers/me/staff/:id/quota/reactivate (no auto-reactivate on
+      // employees-ms position sync / upgrade).
+      if (existing && existing.is_active === false) {
+        if (existing.role !== role) {
+          existing.role = role;
+          await this.employeeSupplierRepo.save(existing);
+        }
+        return {
+          ok: true as const,
+          applicable: true,
+          company_id: cid,
+          employee_id: eid,
+          role,
+          supplier_id: supplierId,
+        };
+      }
+
+      await this.supplierPlanQuotaService.assertFurnizorCanAssignStaff(
+        cid,
+        role,
+        eid,
+      );
+      if (existing) {
+        existing.role = role;
+        existing.is_active = true;
+        await this.employeeSupplierRepo.save(existing);
+      } else {
+        await this.employeeSupplierRepo.save(
+          this.employeeSupplierRepo.create({
+            employee_id: eid,
+            supplier_id: supplierId,
+            role,
+            is_active: true,
+          }),
+        );
+      }
+      return {
+        ok: true as const,
+        applicable: true,
+        company_id: cid,
+        employee_id: eid,
+        role,
+        supplier_id: supplierId,
+      };
     });
-    await this.employeeSupplierRepo.save(link);
-    return { employee_id: employeeId, supplier_id: summary.id, role };
   }
 
   /** Full supplier record for furnizor tenant (no supplier_locations scope). */
@@ -4106,6 +4512,7 @@ export class SuppliersService {
    */
   private mapSupplierClientCompany(
     company: Record<string, unknown>,
+    extras?: { quota_status?: string | null },
   ): {
     id: number;
     company_name: string;
@@ -4124,6 +4531,7 @@ export class SuppliersService {
     bank_account_number: string | null;
     incorporation_date: string | null;
     vat_payer: boolean;
+    quota_status: string;
   } {
     return {
       id: Number(company.id),
@@ -4155,13 +4563,16 @@ export class SuppliersService {
           ? String(company.incorporation_date)
           : null,
       vat_payer: Boolean(company.vat_payer),
+      quota_status: normalizeSupplierQuotaStatus(
+        extras?.quota_status ?? SUPPLIER_QUOTA_STATUS.ACTIVE,
+      ),
     };
   }
 
   async findMySupplierClientsForFurnizorTenant(
     companyId: number | null | undefined,
     companyType: string | null | undefined,
-    options?: { search?: string; status?: string },
+    options?: { search?: string; status?: string; includeBlocked?: boolean },
   ): Promise<
     Array<{
       id: number;
@@ -4181,6 +4592,7 @@ export class SuppliersService {
       bank_account_number: string | null;
       incorporation_date: string | null;
       vat_payer: boolean;
+      quota_status: string;
     }>
   > {
     const summary = await this.findMySupplierForFurnizorTenant(
@@ -4188,6 +4600,8 @@ export class SuppliersService {
       companyType,
     );
     const resolvedCompanyId = Number(companyId);
+    /** Admin /clienti keeps blocked by default; operational callers may pass includeBlocked=false. */
+    const includeBlocked = options?.includeBlocked !== false;
     const rows = await this.supplierLocationsRepo.find({
       where: { supplier_id: summary.id },
     });
@@ -4211,6 +4625,7 @@ export class SuppliersService {
       where: { supplier_id: summary.id },
       select: ['client_company_id', 'quota_status'],
     });
+    const quotaByClientId = new Map<number, string>();
     for (const link of contLinks) {
       const clientCompanyId = Number(link.client_company_id);
       if (!Number.isFinite(clientCompanyId) || clientCompanyId <= 0) {
@@ -4219,13 +4634,20 @@ export class SuppliersService {
       if (clientCompanyId === resolvedCompanyId) {
         continue;
       }
-      if (
-        this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(link) ===
-        SUPPLIER_QUOTA_STATUS.REMOVED
-      ) {
+      const status =
+        this.supplierQuotaLifecycleService.resolveAccountQuotaStatus(link);
+      if (status === SUPPLIER_QUOTA_STATUS.REMOVED) {
+        continue;
+      }
+      if (!includeBlocked && status === SUPPLIER_QUOTA_STATUS.BLOCKED) {
         continue;
       }
       clientCompanyIds.add(clientCompanyId);
+      const prev = quotaByClientId.get(clientCompanyId);
+      // Prefer blocked if any Cont link is blocked for this client.
+      if (prev !== SUPPLIER_QUOTA_STATUS.BLOCKED) {
+        quotaByClientId.set(clientCompanyId, status);
+      }
     }
 
     const companiesUrl =
@@ -4237,6 +4659,13 @@ export class SuppliersService {
       [];
 
     for (const clientCompanyId of clientCompanyIds) {
+      const linkStatus = quotaByClientId.get(clientCompanyId);
+      if (
+        !includeBlocked &&
+        linkStatus === SUPPLIER_QUOTA_STATUS.BLOCKED
+      ) {
+        continue;
+      }
       try {
         const response = await firstValueFrom(
           this.httpService.get(`${companiesUrl}/companies/${clientCompanyId}`, {
@@ -4245,7 +4674,9 @@ export class SuppliersService {
           }),
         );
         const company = response.data as Record<string, unknown>;
-        const mapped = this.mapSupplierClientCompany(company);
+        const mapped = this.mapSupplierClientCompany(company, {
+          quota_status: linkStatus ?? SUPPLIER_QUOTA_STATUS.ACTIVE,
+        });
         if (
           options?.status &&
           options.status !== 'all' &&
@@ -4312,6 +4743,7 @@ export class SuppliersService {
 
     return this.mapSupplierClientCompany(
       response.data as Record<string, unknown>,
+      { quota_status: allowed.quota_status },
     );
   }
 
@@ -4507,6 +4939,7 @@ export class SuppliersService {
         'Locația selectată nu aparține companiei dumneavoastră',
       );
     }
+    this.assertLocationActiveForNewOps(location, locationId);
   }
 
   /**
@@ -4612,6 +5045,7 @@ export class SuppliersService {
   private async filterAccessibleSupplierIds(
     supplierIds: number[],
     requester?: SupplierAccessRequester,
+    options?: { operational?: boolean; adminDetail?: boolean },
   ): Promise<number[]> {
     if (!requester || !supplierIds?.length) {
       return supplierIds;
@@ -4641,7 +5075,7 @@ export class SuppliersService {
       if (!supplier) {
         continue;
       }
-      if (await this.isSupplierAccessibleToRequester(supplier, requester)) {
+      if (await this.isSupplierAccessibleToRequester(supplier, requester, options)) {
         accessible.push(supplierId);
       }
     }
@@ -5141,6 +5575,16 @@ export class SuppliersService {
     const locationIds = await this.fetchCompanyLocationIds(clientCompanyId);
     const hasAccount = await this.hasSupplierLoginAccount(supplier.id);
     if (hasAccount) {
+      const furnizorOwner = Number(supplier.owner_company_id);
+      if (Number.isFinite(furnizorOwner) && furnizorOwner > 0) {
+        await this.supplierPlanQuotaService.withFurnizorQuotaLock(
+          furnizorOwner,
+          () =>
+            this.supplierPlanQuotaService.assertFurnizorCanAcceptClient(
+              furnizorOwner,
+            ),
+        );
+      }
       await this.supplierQuotaLifecycleService.unblockAccountSupplier(
         clientCompanyId,
         supplier.id,
@@ -5237,6 +5681,288 @@ export class SuppliersService {
       companyId,
       rollbackItems as any,
     );
+  }
+
+  /**
+   * Furnizor downgrade preview: clients + staff buckets (locations merged by
+   * company-ms / FE from locations-ms or passed through).
+   */
+  async getFurnizorDowngradePreviewForPlan(
+    planCode: string,
+    limits: {
+      clients_limit: number;
+      warehouse_limit: number;
+      driver_limit: number;
+      location_limit?: number;
+    },
+    requester?: SupplierAccessRequester,
+  ) {
+    const companyType = resolveCompanyTypeFromAuth(
+      requester?.company_type,
+      requester?.roles,
+    );
+    const ownerCompanyId = Number(requester?.company_id);
+    if (
+      !isTenantScopedSupplierRequester(requester) ||
+      companyType !== 'furnizor' ||
+      !Number.isFinite(ownerCompanyId) ||
+      ownerCompanyId <= 0
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant furnizor autentificat poate previzualiza downgrade-ul',
+      );
+    }
+    return this.buildFurnizorDowngradePreview(ownerCompanyId, planCode, limits);
+  }
+
+  async getFurnizorDowngradePreviewInternal(
+    companyId: number,
+    planCode: string,
+    limits: {
+      clients_limit: number;
+      warehouse_limit: number;
+      driver_limit: number;
+      location_limit?: number;
+    },
+  ) {
+    return this.buildFurnizorDowngradePreview(companyId, planCode, limits);
+  }
+
+  private async buildFurnizorDowngradePreview(
+    ownerCompanyId: number,
+    planCode: string,
+    limits: {
+      clients_limit: number;
+      warehouse_limit: number;
+      driver_limit: number;
+      location_limit?: number;
+    },
+  ) {
+    const [clientsRaw, warehouseRaw, driversRaw] = await Promise.all([
+      this.furnizorQuotaLifecycleService.listCountableClients(ownerCompanyId),
+      this.furnizorQuotaLifecycleService.listActiveStaff(
+        ownerCompanyId,
+        'warehouse',
+      ),
+      this.furnizorQuotaLifecycleService.listActiveStaff(
+        ownerCompanyId,
+        'driver',
+      ),
+    ]);
+
+    const clientNameById = await this.fetchCompanyNamesMap(
+      clientsRaw.map((c) => c.id),
+    );
+    const staffNameById = await this.fetchEmployeeNamesMap([
+      ...warehouseRaw.map((s) => s.id),
+      ...driversRaw.map((s) => s.id),
+    ]);
+
+    const clients = clientsRaw.map((c) => ({
+      id: c.id,
+      name: clientNameById.get(c.id) || c.name,
+    }));
+    const warehouse = warehouseRaw.map((s) => ({
+      id: s.id,
+      name: staffNameById.get(s.id) || s.name,
+    }));
+    const drivers = driversRaw.map((s) => ({
+      id: s.id,
+      name: staffNameById.get(s.id) || s.name,
+    }));
+
+    let locationsBucket:
+      | {
+          limit: number;
+          used: number;
+          minimum_to_block: number;
+          items: Array<{ id: number; name: string }>;
+        }
+      | undefined;
+    if (limits.location_limit != null && Number.isFinite(Number(limits.location_limit))) {
+      try {
+        const locPreview = await this.fetchLocationsDowngradePreview(
+          ownerCompanyId,
+          Number(limits.location_limit),
+        );
+        locationsBucket = locPreview?.locations;
+      } catch (error: any) {
+        this.logger.warn(
+          `Furnizor downgrade locations preview failed company=${ownerCompanyId}: ${error?.message || error}`,
+        );
+      }
+    }
+
+    return this.furnizorQuotaLifecycleService.buildDowngradePreview(
+      planCode,
+      Number(limits.clients_limit),
+      Number(limits.warehouse_limit),
+      Number(limits.driver_limit),
+      clients,
+      warehouse,
+      drivers,
+      locationsBucket,
+    );
+  }
+
+  private async fetchCompanyNamesMap(
+    companyIds: number[],
+  ): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    const ids = [...new Set(companyIds.filter((id) => id > 0))];
+    if (!ids.length) return map;
+    const companiesUrl =
+      this.configService.get<string>('COMPANIES_HTTP_URL') ||
+      process.env.COMPANIES_HTTP_URL ||
+      'http://localhost:3003';
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(`${companiesUrl}/companies/${id}`, {
+              headers: this.internalServiceHeaders(),
+              timeout: 4000,
+            }),
+          );
+          const name =
+            response?.data?.company_name ||
+            response?.data?.name ||
+            `Client #${id}`;
+          map.set(id, String(name));
+        } catch {
+          map.set(id, `Client #${id}`);
+        }
+      }),
+    );
+    return map;
+  }
+
+  private async fetchEmployeeNamesMap(
+    employeeIds: number[],
+  ): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    const ids = [...new Set(employeeIds.filter((id) => id > 0))];
+    if (!ids.length) return map;
+    const enriched = await this.enrichSupplierStaffWithEmployeeNames(
+      ids.map((id) => ({ employee_id: id, role: 'warehouse' })),
+    );
+    for (const row of enriched) {
+      map.set(
+        Number(row.employee_id),
+        row.full_name ||
+          [row.first_name, row.last_name].filter(Boolean).join(' ').trim() ||
+          `Angajat #${row.employee_id}`,
+      );
+    }
+    return map;
+  }
+
+  private async fetchLocationsDowngradePreview(
+    companyId: number,
+    locationLimit: number,
+  ) {
+    const response = await firstValueFrom(
+      this.httpService.get(
+        `${this.locationsServiceUrl}/locations/internal/companies/${companyId}/subscription/downgrade-preview`,
+        {
+          headers: this.internalServiceHeaders(),
+          params: { location_limit: locationLimit },
+          timeout: 8000,
+        },
+      ),
+    );
+    return response?.data;
+  }
+
+  async applyFurnizorDowngradeBlocksInternal(
+    companyId: number,
+    input: {
+      clients_limit: number;
+      warehouse_limit: number;
+      driver_limit: number;
+      block_client_company_ids?: number[];
+      block_staff_warehouse_employee_ids?: number[];
+      block_staff_driver_employee_ids?: number[];
+    },
+  ) {
+    return this.furnizorQuotaLifecycleService.applyDowngradeBlocks({
+      companyId,
+      clientsLimit: Number(input.clients_limit),
+      warehouseLimit: Number(input.warehouse_limit),
+      driverLimit: Number(input.driver_limit),
+      blockClientCompanyIds: input.block_client_company_ids || [],
+      blockStaffWarehouseEmployeeIds:
+        input.block_staff_warehouse_employee_ids || [],
+      blockStaffDriverEmployeeIds: input.block_staff_driver_employee_ids || [],
+    });
+  }
+
+  async rollbackFurnizorDowngradeBlocksInternal(
+    companyId: number,
+    rollbackItems: unknown[],
+  ): Promise<void> {
+    await this.furnizorQuotaLifecycleService.rollbackDowngradeBlocks(
+      companyId,
+      (rollbackItems || []) as any,
+    );
+  }
+
+  async unblockFurnizorClient(
+    clientCompanyId: number,
+    requester?: SupplierAccessRequester,
+  ) {
+    const companyType = resolveCompanyTypeFromAuth(
+      requester?.company_type,
+      requester?.roles,
+    );
+    const ownerCompanyId = Number(requester?.company_id);
+    if (
+      !isTenantScopedSupplierRequester(requester) ||
+      companyType !== 'furnizor' ||
+      !Number.isFinite(ownerCompanyId) ||
+      ownerCompanyId <= 0
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant furnizor autentificat poate debloca clienți',
+      );
+    }
+    await this.furnizorQuotaLifecycleService.unblockClientForOwner(
+      ownerCompanyId,
+      clientCompanyId,
+    );
+    return { client_company_id: clientCompanyId, quota_status: 'active' };
+  }
+
+  async reactivateFurnizorStaff(
+    employeeId: number,
+    roleRaw: unknown,
+    requester?: SupplierAccessRequester,
+  ) {
+    const companyType = resolveCompanyTypeFromAuth(
+      requester?.company_type,
+      requester?.roles,
+    );
+    const ownerCompanyId = Number(requester?.company_id);
+    const role = normalizeStaffRole(roleRaw);
+    if (!role) {
+      throw new BadRequestException('role trebuie să fie warehouse|driver');
+    }
+    if (
+      !isTenantScopedSupplierRequester(requester) ||
+      companyType !== 'furnizor' ||
+      !Number.isFinite(ownerCompanyId) ||
+      ownerCompanyId <= 0
+    ) {
+      throw new ForbiddenException(
+        'Doar un tenant furnizor autentificat poate reactiva personalul',
+      );
+    }
+    await this.furnizorQuotaLifecycleService.reactivateStaffForOwner(
+      ownerCompanyId,
+      employeeId,
+      role,
+    );
+    return { employee_id: employeeId, role, is_active: true };
   }
 
   async addProduct(
@@ -7044,6 +7770,60 @@ export class SuppliersService {
         'Locația selectată nu aparține companiei autentificate',
       );
     }
+    this.assertLocationActiveForNewOps(location, locationId);
+  }
+
+  /** Soft-blocked locations (is_active=0) stay readable for history but cannot be used for new ops. */
+  private assertLocationActiveForNewOps(
+    location: { is_active?: boolean | number | null },
+    locationId: number,
+  ): void {
+    if (location?.is_active === false || location?.is_active === 0) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'LOCATION_QUOTA_BLOCKED',
+        message: `Locația ${locationId} este blocată de abonament și nu poate fi folosită pentru operațiuni noi`,
+      });
+    }
+  }
+
+  /** Soft-blocked staff links (is_active=0); NULL/true treated as active for backfill. */
+  private assertEmployeeSupplierLinkActive(
+    link: { is_active?: boolean | null } | null | undefined,
+    roleLabel: string,
+  ): void {
+    if (link && link.is_active === false) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'STAFF_QUOTA_BLOCKED',
+        message: `Acest ${roleLabel} este blocat de abonament și nu poate fi folosit pentru operațiuni noi`,
+      });
+    }
+  }
+
+  /**
+   * Magazioner/șofer ops: when the actor is the ops employee (not platform/admin),
+   * require an active employees_suppliers link for that supplier.
+   */
+  private async assertDriverStaffLinkActiveForOps(
+    driverId: number,
+    supplierId: number,
+    user?: OrderRequesterUser,
+  ): Promise<void> {
+    if (!user || isPlatformOrderRequester(user)) {
+      return;
+    }
+    if (canManageCompanyOperationalEmployees(user)) {
+      return;
+    }
+    const link = await this.employeeSupplierRepo.findOne({
+      where: {
+        employee_id: driverId,
+        supplier_id: supplierId,
+        role: 'driver',
+      },
+    });
+    this.assertEmployeeSupplierLinkActive(link, 'șofer');
   }
 
   private async assertClientStockProductInCompanyNomenclator(
@@ -8052,6 +8832,17 @@ export class SuppliersService {
             Number(dto.location_id) > 0
           ? Number(dto.location_id)
           : null;
+
+    if (
+      orderLocationId != null &&
+      Number.isFinite(orderCompanyId) &&
+      orderCompanyId > 0
+    ) {
+      await this.assertClientLocationBelongsToCompany(
+        orderLocationId,
+        orderCompanyId,
+      );
+    }
 
     // Rezolvă toate liniile + validează stocul ÎNAINTE de a crea comanda (fără creare parțială).
     const resolvedLines: Array<{
@@ -9319,7 +10110,7 @@ export class SuppliersService {
           await this.assertClientSupplierRelationship(
             clientCompanyId,
             order.supplier_id,
-            CLIENT_SUPPLIER_OPERATIONAL_ACCESS_REQUIREMENTS,
+            CLIENT_SUPPLIER_EXISTING_ORDER_ACCESS_REQUIREMENTS,
           );
         }
       }
@@ -11569,6 +12360,7 @@ export class SuppliersService {
     const accessibleSupplierIds = await this.filterAccessibleSupplierIds(
       supplierIds,
       options?.requester,
+      { adminDetail: true },
     );
     if (accessibleSupplierIds.length === 0) {
       return [];
@@ -11654,6 +12446,7 @@ export class SuppliersService {
     const accessibleSupplierIds = await this.filterAccessibleSupplierIds(
       supplierIds,
       options?.requester,
+      { adminDetail: true },
     );
     if (accessibleSupplierIds.length === 0) {
       return buildOrdersPaginatedResponse([], page, limit, 0);

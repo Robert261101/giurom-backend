@@ -8,6 +8,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
 import { SuppliersService } from './suppliers.service';
@@ -51,11 +53,39 @@ function buildService(overrides: Record<string, any> = {}) {
       limits: {},
     })),
   };
+  (service as any).supplierPlanQuotaService = {
+    withFurnizorQuotaLock: jest.fn(async (_id: number, fn: () => Promise<unknown>) =>
+      fn(),
+    ),
+    assertFurnizorCanAcceptClient: jest.fn(async () => undefined),
+    assertFurnizorCanAssignStaff: jest.fn(async () => undefined),
+    getOwnerCompanyIdForSupplier: jest.fn(async () => 50),
+    ...(overrides.supplierPlanQuotaService || {}),
+  };
   (service as any).supplierQuotaLifecycleService = {
     resolveAccountQuotaStatus: jest.fn((link: any) =>
       String(link?.quota_status || 'active').toLowerCase(),
     ),
     reactivateAccountLink: jest.fn(async () => ({})),
+  };
+  (service as any).connectionCodeAttemptService = {
+    withCompanyAttemptLock: jest.fn(async (_id: number, fn: () => Promise<unknown>) =>
+      fn(),
+    ),
+    assertNotLocked: jest.fn(async () => ({})),
+    recordInvalidAttempt: jest.fn(async () => {
+      throw new NotFoundException('Cod invalid');
+    }),
+    resetAttempts: jest.fn(async () => {}),
+    getStatus: jest.fn(async () => ({
+      failed_count: 0,
+      attempts_remaining: 5,
+      locked: false,
+      locked_until: null,
+      seconds_remaining: 0,
+      max_attempts: 5,
+    })),
+    ...(overrides.connectionCodeAttemptService || {}),
   };
   (service as any).hasSupplierLoginAccount = jest.fn(async () => true);
   (service as any).findMySupplierForFurnizorTenant = jest.fn(async () => ({
@@ -155,6 +185,63 @@ describe('SuppliersService connection code + connect', () => {
     expect(clientSupplierLinkRepo.save).toHaveBeenCalled();
     expect((service as any).assignSupplierToLocation).toHaveBeenCalledWith(10, 101);
     expect((service as any).assignSupplierToLocation).toHaveBeenCalledWith(10, 102);
+  });
+
+  it('connect enforces clients.max on the FURNIZOR owner company (freeze-create)', async () => {
+    const { service, supplierRepo, clientSupplierLinkRepo } = buildService({
+      supplierPlanQuotaService: {
+        assertFurnizorCanAcceptClient: jest.fn(async () => {
+          throw new ForbiddenException({
+            statusCode: 403,
+            error: 'SUBSCRIPTION_LIMIT_REACHED',
+            code: 'SUPPLIER_CLIENTS_LIMIT_REACHED',
+            details: { limit_key: 'clients.max', used: 3, limit: 3 },
+          });
+        }),
+      },
+    });
+    supplierRepo.findOne.mockResolvedValue({
+      id: 10,
+      supplier_name: 'Full Co',
+      owner_company_id: 99,
+      is_active: true,
+      connection_code: 'ABCDEFGHJKLM',
+    });
+    clientSupplierLinkRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.connectSupplierByCode('ABCDEFGHJKLM', {
+        company_id: 5,
+        company_type: 'client',
+        permissions: ['suppliers.read'],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect((service as any).supplierPlanQuotaService.assertFurnizorCanAcceptClient).toHaveBeenCalledWith(99);
+    expect((service as any).supplierPlanQuotaService.withFurnizorQuotaLock).toHaveBeenCalledWith(99, expect.any(Function));
+    expect(clientSupplierLinkRepo.save).not.toHaveBeenCalled();
+    expect((service as any).assignSupplierToLocation).not.toHaveBeenCalled();
+  });
+
+  it('connect reactivation of a removed link also consumes a furnizor client slot', async () => {
+    const { service, supplierRepo, clientSupplierLinkRepo } = buildService();
+    supplierRepo.findOne.mockResolvedValue({
+      id: 10,
+      supplier_name: 'Back Co',
+      owner_company_id: 99,
+      is_active: true,
+      connection_code: 'ABCDEFGHJKLM',
+    });
+    clientSupplierLinkRepo.findOne.mockResolvedValue({ id: 1, quota_status: 'removed' });
+
+    const result = await service.connectSupplierByCode('ABCDEFGHJKLM', {
+      company_id: 5,
+      company_type: 'client',
+      permissions: ['suppliers.read'],
+    });
+    expect(result.supplier_id).toBe(10);
+    expect((service as any).supplierPlanQuotaService.assertFurnizorCanAcceptClient).toHaveBeenCalledWith(99);
+    expect((service as any).supplierQuotaLifecycleService.reactivateAccountLink).toHaveBeenCalled();
+    expect((service as any).supplierQuotaService.assertCanConnectAccountSupplier).not.toHaveBeenCalled();
   });
 
   it('connect rejects invalid code with 404', async () => {
@@ -312,5 +399,108 @@ describe('SuppliersService connection code + connect', () => {
         permissions: ['suppliers.read'],
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('valid connect resets failed attempts', async () => {
+    const { service, supplierRepo, clientSupplierLinkRepo } = buildService();
+    const attempts = (service as any).connectionCodeAttemptService;
+    supplierRepo.findOne.mockResolvedValue({
+      id: 10,
+      supplier_name: 'Linked Co',
+      owner_company_id: 99,
+      is_active: true,
+      connection_code: 'ABCDEFGHJKLM',
+    });
+    clientSupplierLinkRepo.findOne.mockResolvedValue(null);
+    await service.connectSupplierByCode('ABCDEFGHJKLM', {
+      company_id: 5,
+      company_type: 'client',
+      permissions: ['suppliers.read'],
+      userId: 3,
+    });
+    expect(attempts.resetAttempts).toHaveBeenCalledWith(5, 3);
+    expect(attempts.recordInvalidAttempt).not.toHaveBeenCalled();
+  });
+
+  it('already-linked does not consume invalid attempts', async () => {
+    const { service, supplierRepo, clientSupplierLinkRepo } = buildService();
+    const attempts = (service as any).connectionCodeAttemptService;
+    supplierRepo.findOne.mockResolvedValue({
+      id: 10,
+      owner_company_id: 99,
+      is_active: true,
+      connection_code: 'ABCDEFGHJKLM',
+    });
+    clientSupplierLinkRepo.findOne.mockResolvedValue({
+      id: 1,
+      quota_status: 'active',
+    });
+    await expect(
+      service.connectSupplierByCode('ABCDEFGHJKLM', {
+        company_id: 5,
+        company_type: 'client',
+        permissions: ['suppliers.read'],
+        userId: 8,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(attempts.recordInvalidAttempt).not.toHaveBeenCalled();
+    expect(attempts.resetAttempts).toHaveBeenCalledWith(5, 8);
+  });
+
+  it('quota exceeded after valid code does not consume attempts', async () => {
+    const { service, supplierRepo, clientSupplierLinkRepo } = buildService();
+    const attempts = (service as any).connectionCodeAttemptService;
+    supplierRepo.findOne.mockResolvedValue({
+      id: 10,
+      supplier_name: 'X',
+      owner_company_id: 99,
+      is_active: true,
+      connection_code: 'ABCDEFGHJKLM',
+    });
+    clientSupplierLinkRepo.findOne.mockResolvedValue(null);
+    (service as any).supplierQuotaService.assertCanConnectAccountSupplier =
+      jest.fn(async () => {
+        throw new ForbiddenException({
+          code: 'SUPPLIER_ACCOUNT_LIMIT_REACHED',
+          message: 'limit',
+        });
+      });
+    await expect(
+      service.connectSupplierByCode('ABCDEFGHJKLM', {
+        company_id: 5,
+        company_type: 'client',
+        permissions: ['suppliers.read'],
+        userId: 2,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(attempts.resetAttempts).toHaveBeenCalledWith(5, 2);
+    expect(attempts.recordInvalidAttempt).not.toHaveBeenCalled();
+  });
+
+  it('while locked does not look up supplier code', async () => {
+    const { service, supplierRepo } = buildService({
+      connectionCodeAttemptService: {
+        withCompanyAttemptLock: jest.fn(
+          async (_id: number, fn: () => Promise<unknown>) => fn(),
+        ),
+        assertNotLocked: jest.fn(async () => {
+          throw new HttpException(
+            { code: 'SUPPLIER_CONNECTION_CODE_LOCKED' },
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }),
+        recordInvalidAttempt: jest.fn(),
+        resetAttempts: jest.fn(),
+        getStatus: jest.fn(),
+      },
+    });
+    await expect(
+      service.connectSupplierByCode('ABCDEFGHJKLM', {
+        company_id: 5,
+        company_type: 'client',
+        permissions: ['suppliers.read'],
+      }),
+    ).rejects.toBeInstanceOf(HttpException);
+    expect(supplierRepo.findOne).not.toHaveBeenCalled();
   });
 });

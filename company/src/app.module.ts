@@ -8,6 +8,7 @@ import { Company } from './company/entity/company.entity';
 import { CompanyDocument } from './company/entity/company-document.entity';
 import { SubscriptionPlan } from './company/entity/subscription-plan.entity';
 import { PlanLimit } from './company/entity/plan-limit.entity';
+import { PlanFeature } from './company/entity/plan-feature.entity';
 import { CompanySubscription } from './company/entity/company-subscription.entity';
 import { SubscriptionInvoice } from './company/entity/subscription-invoice.entity';
 import { CompanyService } from './company/company.service';
@@ -15,6 +16,7 @@ import { SubscriptionService } from './company/subscription.service';
 import { PartnerLinkService } from './company/partner-link.service';
 import { CompanyMicroController } from './company.micro.controller';
 import { CompanyHttpController } from './company.http.controller';
+import { PlanFeatureGuard } from './plan-access/plan-feature.guard';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -52,6 +54,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
         CompanyDocument,
         SubscriptionPlan,
         PlanLimit,
+        PlanFeature,
         CompanySubscription,
         SubscriptionInvoice,
       ],
@@ -77,6 +80,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
       CompanyDocument,
       SubscriptionPlan,
       PlanLimit,
+      PlanFeature,
       CompanySubscription,
       SubscriptionInvoice,
     ]),
@@ -86,6 +90,7 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
     CompanyService,
     SubscriptionService,
     PartnerLinkService,
+    PlanFeatureGuard,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

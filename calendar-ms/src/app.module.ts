@@ -15,6 +15,7 @@ import { PermissionsGuard } from './permissions/permissions.guard';
 import { CalendarController } from './calendar.controller';
 import { EventCategoryController } from './event-category.controller';
 import { CalendarMicroController } from './calendar.micro.controller';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 
 @Module({
   imports: [
@@ -49,6 +50,8 @@ import { CalendarMicroController } from './calendar.micro.controller';
   providers: [
     CalendarService,
     EventCategoryService,
+    PlanAccessService,
+    PlanFeatureGuard,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

@@ -27,6 +27,12 @@ import { UpdateWorkLocationHistoryDto } from "./dto/update-work-location-history
 import { CreateEmployeeLocationDto } from "./dto/create-employee-location.dto";
 import { isPlatformWideEmployeeUser } from "./employee-tenant.util";
 import { normalizeEmployeeUpdatePayload } from "./normalize-employee-update.util";
+import {
+  EmployeeStaffQuotaService,
+  StaffRole,
+  staffRoleForPosition,
+  staffRoleRequiringAssertOnUpdate,
+} from "./employee-staff-quota.service";
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
@@ -51,9 +57,61 @@ export class EmployeeService {
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
     private httpService: HttpService,
+    private readonly staffQuotaService?: EmployeeStaffQuotaService,
   ) {}
 
   private _filesRepoRootCache: string | null = null;
+
+  /**
+   * Staff quota (freeze-assign) when a position implies magazioner/șofer.
+   * Company: tenant JWT; platform/internal callers → company of the employee's location.
+   */
+  private async assertStaffQuotaForPosition(
+    role: StaffRole | null,
+    user:
+      | { bypassAuth?: boolean; company_id?: number | null; companyId?: number | null }
+      | undefined,
+    locationId: number | null | undefined,
+    employeeId?: number | null,
+  ): Promise<void> {
+    if (!role || !this.staffQuotaService) return;
+    let locationCompanyId: number | null = null;
+    const jwtCompany = Number(user?.company_id ?? user?.companyId);
+    if (
+      (!Number.isFinite(jwtCompany) || jwtCompany <= 0) &&
+      locationId != null &&
+      Number.isFinite(Number(locationId)) &&
+      Number(locationId) > 0
+    ) {
+      locationCompanyId = await this.getLocationCompanyId(Number(locationId));
+    }
+    const companyId = this.staffQuotaService.resolveCompanyId(user, locationCompanyId);
+    await this.staffQuotaService.assertStaffQuota(companyId, role, employeeId ?? null);
+  }
+
+  /** Sync employees_suppliers after position create/update (consume or free staff slots). */
+  private async syncStaffRoleAfterPositionChange(
+    role: StaffRole | null,
+    user:
+      | { bypassAuth?: boolean; company_id?: number | null; companyId?: number | null }
+      | undefined,
+    locationId: number | null | undefined,
+    employeeId: number,
+  ): Promise<void> {
+    if (!this.staffQuotaService) return;
+    let locationCompanyId: number | null = null;
+    const jwtCompany = Number(user?.company_id ?? user?.companyId);
+    if (
+      (!Number.isFinite(jwtCompany) || jwtCompany <= 0) &&
+      locationId != null &&
+      Number.isFinite(Number(locationId)) &&
+      Number(locationId) > 0
+    ) {
+      locationCompanyId = await this.getLocationCompanyId(Number(locationId));
+    }
+    const companyId = this.staffQuotaService.resolveCompanyId(user, locationCompanyId);
+    await this.staffQuotaService.syncStaffRole(companyId, employeeId, role);
+  }
 
   /**
    * Rădăcina pentru toate fișierele – același arbore ca company/locations/furnizori.
@@ -225,8 +283,27 @@ export class EmployeeService {
       user,
     );
 
+    // staff.warehouse.max / staff.driver.max: position 5/4 consumes a furnizor staff slot.
+    await this.assertStaffQuotaForPosition(
+      staffRoleForPosition(createEmployeeDto.position_default_id),
+      user,
+      createEmployeeDto.work_location_default_id,
+      null,
+    );
+
     const employee = this.employeeRepository.create(createEmployeeDto);
     const savedEmployee = await this.employeeRepository.save(employee);
+
+    // Consume staff slot when position is magazioner/șofer (ops link in suppliers-ms).
+    const createdOpsRole = staffRoleForPosition(savedEmployee.position_default_id);
+    if (createdOpsRole) {
+      await this.syncStaffRoleAfterPositionChange(
+        createdOpsRole,
+        user,
+        savedEmployee.work_location_default_id,
+        savedEmployee.id,
+      );
+    }
 
     // Populează automat tabela Employees_Locations dacă există work_location_default_id
     if (savedEmployee.work_location_default_id) {
@@ -1163,9 +1240,40 @@ export class EmployeeService {
       );
     }
 
+    // staff quota when the position becomes magazioner/șofer (role change only).
+    await this.assertStaffQuotaForPosition(
+      staffRoleRequiringAssertOnUpdate(
+        employee.position_default_id,
+        (normalizedDto as any).position_default_id,
+      ),
+      user,
+      (normalizedDto as any).work_location_default_id ?? employee.work_location_default_id,
+      id,
+    );
+
+    const previousOpsRole = staffRoleForPosition(employee.position_default_id);
+    const nextPositionId =
+      (normalizedDto as any).position_default_id !== undefined
+        ? (normalizedDto as any).position_default_id
+        : employee.position_default_id;
+    const nextOpsRole = staffRoleForPosition(nextPositionId);
+
     // Actualizează entitatea
     await this.employeeRepository.update(id, normalizedDto as any);
     const updatedEmployee = await this.findOne(id, user);
+
+    // Keep ops staff links in sync: role switch consumes new quota; leaving ops frees slot.
+    if (
+      (normalizedDto as any).position_default_id !== undefined &&
+      previousOpsRole !== nextOpsRole
+    ) {
+      await this.syncStaffRoleAfterPositionChange(
+        nextOpsRole,
+        user,
+        updatedEmployee.work_location_default_id,
+        id,
+      );
+    }
 
     await this.sendEmployeeNotification(
       "employee_updated",
@@ -1290,6 +1398,11 @@ export class EmployeeService {
     // 6. Finally, delete the employee record
     await this.employeeRepository.remove(employee);
     this.logger.log(`✅ Deleted employee record: ${employee.first_name} ${employee.last_name}`,);
+
+    // 7. Free furnizor staff slots (employees_suppliers) — best-effort, never blocks delete.
+    if (this.staffQuotaService) {
+      await this.staffQuotaService.removeStaffLinks(id);
+    }
 
     await this.sendEmployeeNotification(
       "employee_deleted",

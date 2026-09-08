@@ -26,11 +26,14 @@ import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.dto';
 import { FilterLeaveRequestsDto } from './dto/filter-leave-requests.dto';
 import { LeaveRequest } from './entities/leave-request.entity';
+import { PlanFeatureGuard, RequiresPlanFeature } from '../plan-access/plan-access.nest';
 
 @ApiTags('leave-requests')
 @Controller('leave-requests')
 @ApiBearerAuth()
-@UseGuards(PermissionsGuard)
+// Subscription gate (after RBAC): leave requests require the "concedii" feature.
+@RequiresPlanFeature('concedii')
+@UseGuards(PermissionsGuard, PlanFeatureGuard)
 export class LeaveRequestsController {
   constructor(private readonly leaveRequestsService: LeaveRequestsService) {}
 

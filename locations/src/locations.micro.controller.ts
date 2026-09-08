@@ -18,7 +18,14 @@ export class LocationsMicroController {
   @MessagePattern('locations.findAll')
   findAll(
     @Payload()
-    payload: { page: number; limit: number; companyId?: number; city?: string; search?: string },
+    payload: {
+      page: number;
+      limit: number;
+      companyId?: number;
+      city?: string;
+      search?: string;
+      includeInactive?: boolean;
+    },
   ) {
     return this.locationsService.findAllWorkLocations(
       payload.page,
@@ -26,6 +33,8 @@ export class LocationsMicroController {
       payload.companyId,
       payload.city,
       payload.search,
+      undefined,
+      payload.includeInactive === true,
     );
   }
 
@@ -35,8 +44,17 @@ export class LocationsMicroController {
   }
 
   @MessagePattern('locations.findByCompany')
-  findByCompany(@Payload() companyId: number) {
-    return this.locationsService.findWorkLocationsByCompany(companyId);
+  findByCompany(
+    @Payload() payload: number | { companyId: number; includeInactive?: boolean },
+  ) {
+    if (typeof payload === 'number') {
+      return this.locationsService.findWorkLocationsByCompany(payload);
+    }
+    return this.locationsService.findWorkLocationsByCompany(
+      payload.companyId,
+      undefined,
+      payload.includeInactive === true,
+    );
   }
 
   @MessagePattern('locations.findById')

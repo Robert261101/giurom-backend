@@ -13,6 +13,7 @@ import { JwtStrategy } from './auth/jwt.strategy';
 import { InternalServiceGuard } from './auth/internal-service.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { RequestsCronService } from './requests-cron.service';
+import { PlanAccessModule } from './plan-access/plan-access.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { RequestsCronService } from './requests-cron.service';
       logging: process.env.DB_LOGGING === 'true',
       charset: 'utf8mb4',
     }),
+    PlanAccessModule,
     EmployeeModule,
     LeaveRequestsModule,
     ShiftChangeRequestsModule,

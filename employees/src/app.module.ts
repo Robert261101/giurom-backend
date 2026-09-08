@@ -8,6 +8,8 @@ import { EmployeeMicroController } from './employee.micro.controller';
 import { EmployeeHttpController } from './employee.http.controller';
 import { EmployeesExportController } from './employees-export.controller';
 import { EmployeeService } from './employee.service';
+import { EmployeeStaffQuotaService } from './employee-staff-quota.service';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 import { EmployeesExportService } from './employees-export.service';
 import { AuthModule } from './auth/auth.module';
 import { APP_GUARD } from '@nestjs/core';
@@ -65,6 +67,9 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   ],
   providers: [
     EmployeeService,
+    EmployeeStaffQuotaService,
+    PlanAccessService,
+    PlanFeatureGuard,
     EmployeesExportService,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },

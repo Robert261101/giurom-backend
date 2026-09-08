@@ -13,14 +13,17 @@ import { ManagerDailyPayout } from './entity/manager-daily-payout.entity';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { Permissions } from '../permissions/permissions.decorator';
+import { PlanFeatureGuard, RequiresPlanFeature } from '../plan-access/plan-access.nest';
 
 @ApiTags('Executions')
 @Controller('executions')
+// Subscription gate: "sarcini" feature (guard appended after JWT+RBAC on each method).
+@RequiresPlanFeature('sarcini')
 export class ExecutionController {
   constructor(private readonly executionService: ExecutionService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create', 'order.read', 'assignment.read_own')
   @ApiOperation({ summary: 'Creează o execuție nouă' })
   @ApiBody({
@@ -82,7 +85,7 @@ export class ExecutionController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'execution.read_own',
     'execution.read_location',
@@ -115,7 +118,7 @@ export class ExecutionController {
   }
 
   @Get('daily-task-points-list')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
   @ApiOperation({ summary: 'Listă înregistrări Employee Daily Task Points pentru rapoarte' })
   @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD' })
@@ -139,7 +142,7 @@ export class ExecutionController {
   }
 
   @Get('manager-daily-payouts')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
   @ApiOperation({ summary: 'Listă înregistrări punctaj manager (manager_daily_payout) pentru rapoarte' })
   @ApiQuery({ name: 'work_location_id', required: false, description: 'Filtru locație' })
@@ -175,7 +178,7 @@ export class ExecutionController {
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'execution.read_own',
     'execution.read_location',
@@ -204,7 +207,7 @@ export class ExecutionController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.update')
   @ApiOperation({ summary: 'Actualizează o execuție' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
@@ -265,7 +268,7 @@ export class ExecutionController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.delete')
   @ApiOperation({ summary: 'Șterge o execuție' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției' })
@@ -278,7 +281,7 @@ export class ExecutionController {
   }
 
   @Post(':id/reactivate')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.update', 'execution.delete')
   @ApiOperation({ summary: 'Reactivează o execuție (respinge și reactivează assignment-ul)' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției care trebuie reactivată' })
@@ -302,7 +305,7 @@ export class ExecutionController {
   }
 
   @Post(':id/approve')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.update', 'execution.delete')
   @ApiOperation({ summary: 'Aprobă o execuție finalizată (marchează assignment-ul ca completed)' })
   @ApiParam({ name: 'id', description: 'ID-ul execuției care trebuie aprobată' })
@@ -346,7 +349,7 @@ export class ExecutionController {
   }
 
   @Get('daily-points/:employeeId/:workDate')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'execution.read_own',
     'execution.read_location',
@@ -395,7 +398,7 @@ export class ExecutionController {
   }
 
   @Get('employee-points/:employeeId')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'execution.read_own',
     'execution.read_location',
@@ -432,7 +435,7 @@ export class ExecutionController {
   }
 
   @Get('employee-total-points/:employeeId')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions(
     'execution.read_own',
     'execution.read_location',
@@ -498,7 +501,7 @@ export class ExecutionController {
 
   // ===== AGREGAȚI PUNCTE PE LOCAȚIE/ANGAJAT ÎNTR-UN INTERVAL =====
   @Get('location-total-points')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
   @ApiOperation({ summary: 'Puncte totale pe locație într-un interval' })
   @ApiResponse({ status: 200, description: 'Total puncte', schema: { type: 'number' } })
@@ -517,7 +520,7 @@ export class ExecutionController {
   }
 
   @Get('location-employee-points')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.read_location', 'execution.read_company', 'execution.read_all')
   @ApiOperation({ summary: 'Puncte pe angajat pentru o locație într-un interval' })
   @ApiResponse({ 
@@ -550,7 +553,7 @@ export class ExecutionController {
 
   // === TASK IMAGE UPLOAD ===
   @Post('upload-image')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.create', 'order.read', 'assignment.read_own')
   async uploadTaskImage(@Body() payload: { fileName: string; content: string }) {
     const imageUrl = await this.executionService.uploadTaskImage(payload.fileName, payload.content);
@@ -559,7 +562,7 @@ export class ExecutionController {
 
   // === TASK IMAGE SERVE ===
   @Get('image/:fileName')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.read_own', 'execution.read_location', 'execution.read_company', 'execution.read_all', 'execution.read')
   async serveTaskImage(@Param('fileName') fileName: string, @Res() res: Response) {
     const { buffer, mimeType } = await this.executionService.serveTaskImage(fileName);
@@ -570,7 +573,7 @@ export class ExecutionController {
 
   // === TASK IMAGE DELETE ===
   @Post('delete-image')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard, PlanFeatureGuard)
   @Permissions('execution.update')
   async deleteTaskImage(@Body() payload: { imageUrl: string }) {
     await this.executionService.deleteTaskImage(payload.imageUrl);

@@ -207,18 +207,30 @@ export class SuppliersHttpController {
   @Permissions("order.read")
   @ApiOperation({
     summary:
-      "Furnizori activi pentru dropdown comenzi (tenant-scoped ca /catalog)",
+      "Furnizori pentru comenzi (tenant-scoped ca /catalog)",
     description:
-      "Platform-wide: toți activi. Client: Manual pe locațiile companiei + Cont via client_supplier_links. Excluie inactivii și quota_status blocked/removed.",
+      "Platform-wide: toți activi. Client: Manual pe locațiile companiei + Cont via client_supplier_links. Implicit exclude blocked/removed (comandă nouă). include_blocked=1 păstrează blocked pentru listarea comenzilor existente.",
+  })
+  @ApiQuery({
+    name: "include_blocked",
+    required: false,
+    description:
+      "1/true: include furnizori blocked (pagina Comenzi). Omit: doar eligibili pentru comandă nouă.",
   })
   getSuppliersForOrders(
     @Query("location_id") location_id?: string,
+    @Query("include_blocked") include_blocked?: string,
     @Request() req?: any,
   ) {
     const locationId = location_id ? parseInt(location_id, 10) : undefined;
+    const includeBlocked =
+      include_blocked === "1" ||
+      include_blocked === "true" ||
+      include_blocked === "yes";
     return this.service.findForOrders(
       locationId,
       buildSupplierAccessRequester(req?.user),
+      { includeBlocked },
     );
   }
 
@@ -253,6 +265,78 @@ export class SuppliersHttpController {
         is_active: isActive,
       },
       buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Get("internal/companies/:companyId/quota-usage")
+  @ApiOperation({
+    summary:
+      "Internal (company-ms): usage pentru toate cotele — account/manual (client), clients/staff (furnizor)",
+  })
+  getQuotaUsageInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    return this.service.getQuotaUsageForCompanyInternal(companyId);
+  }
+
+  @Post("internal/companies/:companyId/staff-quota/assert")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Internal (employees-ms): verifică staff.warehouse.max / staff.driver.max înainte ca un angajat să primească poziția magazioner/șofer",
+  })
+  assertStaffQuotaInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body() body: { role?: string; employee_id?: number | null },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    return this.service.assertStaffQuotaInternal(
+      companyId,
+      body?.role,
+      body?.employee_id ?? null,
+    );
+  }
+
+  @Delete("internal/employees/:employeeId/staff-links")
+  @ApiOperation({
+    summary:
+      "Internal (employees-ms): șterge legăturile ops ale unui angajat șters — eliberează sloturile de staff",
+  })
+  removeStaffLinksInternal(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    return this.service.removeStaffLinksForEmployeeInternal(employeeId);
+  }
+
+  @Post("internal/companies/:companyId/staff-links")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Internal (employees-ms): upsert link ops (warehouse/driver) după create/update poziție 4/5",
+  })
+  upsertStaffLinkInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body() body: { employee_id?: number; role?: string },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException('Endpoint intern — necesită x-service-secret');
+    }
+    return this.service.upsertStaffLinkForOwnerCompanyInternal(
+      companyId,
+      Number(body?.employee_id),
+      body?.role,
     );
   }
 
@@ -357,13 +441,21 @@ export class SuppliersHttpController {
   getMySupplierClients(
     @Query("search") search?: string,
     @Query("status") status?: string,
+    @Query("includeBlocked") includeBlocked?: string,
+    @Query("include_blocked") include_blocked?: string,
     @Request() req?: { user?: { company_id?: number | null; company_type?: string | null } },
   ) {
     const user = req?.user;
+    const includeBlockedRaw = includeBlocked ?? include_blocked;
+    // Default true (admin /clienti lists blocked). Pass 0/false to exclude.
+    const includeBlockedBool =
+      includeBlockedRaw == null || includeBlockedRaw === ""
+        ? true
+        : !["0", "false"].includes(String(includeBlockedRaw).toLowerCase());
     return this.service.findMySupplierClientsForFurnizorTenant(
       user?.company_id,
       user?.company_type,
-      { search, status },
+      { search, status, includeBlocked: includeBlockedBool },
     );
   }
 
@@ -455,6 +547,71 @@ export class SuppliersHttpController {
       String(planCode || "").toLowerCase().trim(),
       Number(accountLimit),
       Number(manualLimit),
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Get("me/subscription/furnizor-downgrade-preview")
+  @PermissionsAny("companies.read_own", "companies.read", "suppliers.read")
+  @ApiOperation({
+    summary:
+      "Previzualizare downgrade furnizor: clienți / staff / locații de blocat",
+  })
+  getFurnizorDowngradePreview(
+    @Query("plan_code") planCode: string,
+    @Query("clients_limit") clientsLimit: string,
+    @Query("warehouse_limit") warehouseLimit: string,
+    @Query("driver_limit") driverLimit: string,
+    @Query("location_limit") locationLimit: string,
+    @Request() req?: any,
+  ) {
+    return this.service.getFurnizorDowngradePreviewForPlan(
+      String(planCode || "").toLowerCase().trim(),
+      {
+        clients_limit: Number(clientsLimit),
+        warehouse_limit: Number(warehouseLimit),
+        driver_limit: Number(driverLimit),
+        location_limit:
+          locationLimit != null && locationLimit !== ""
+            ? Number(locationLimit)
+            : undefined,
+      },
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Post("me/clients/:clientCompanyId/quota/unblock")
+  @PermissionsAny("suppliers.update", "suppliers.create")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Deblochează un client blocat de abonament (furnizor; dacă există slot)",
+  })
+  unblockFurnizorClient(
+    @Param("clientCompanyId", ParseIntPipe) clientCompanyId: number,
+    @Request() req?: any,
+  ) {
+    return this.service.unblockFurnizorClient(
+      clientCompanyId,
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
+  @Post("me/staff/:employeeId/quota/reactivate")
+  @PermissionsAny("suppliers.update", "suppliers.create")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Reactivează un link staff (magazioner/șofer) blocat de abonament, dacă există slot",
+  })
+  reactivateFurnizorStaff(
+    @Param("employeeId", ParseIntPipe) employeeId: number,
+    @Body() body: { role?: string },
+    @Request() req?: any,
+  ) {
+    return this.service.reactivateFurnizorStaff(
+      employeeId,
+      body?.role,
       buildSupplierAccessRequester(req?.user),
     );
   }
@@ -568,15 +725,118 @@ export class SuppliersHttpController {
     );
   }
 
+  @Get("internal/companies/:companyId/subscription/furnizor-downgrade-preview")
+  @ApiOperation({ summary: "Internal: furnizor downgrade preview for company-ms" })
+  getFurnizorDowngradePreviewInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Query("plan_code") planCode: string,
+    @Query("clients_limit") clientsLimit: string,
+    @Query("warehouse_limit") warehouseLimit: string,
+    @Query("driver_limit") driverLimit: string,
+    @Query("location_limit") locationLimit: string,
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    return this.service.getFurnizorDowngradePreviewInternal(
+      companyId,
+      String(planCode || "").toLowerCase().trim(),
+      {
+        clients_limit: Number(clientsLimit),
+        warehouse_limit: Number(warehouseLimit),
+        driver_limit: Number(driverLimit),
+        location_limit:
+          locationLimit != null && locationLimit !== ""
+            ? Number(locationLimit)
+            : undefined,
+      },
+    );
+  }
+
+  @Post("internal/companies/:companyId/subscription/apply-furnizor-downgrade-blocks")
+  @HttpCode(200)
+  @ApiOperation({ summary: "Internal: apply furnizor client/staff blocks before plan change" })
+  async applyFurnizorDowngradeBlocksInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body()
+    body: {
+      clients_limit?: number;
+      warehouse_limit?: number;
+      driver_limit?: number;
+      block_client_company_ids?: number[];
+      block_staff_warehouse_employee_ids?: number[];
+      block_staff_driver_employee_ids?: number[];
+    },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    const rollbackItems = await this.service.applyFurnizorDowngradeBlocksInternal(
+      companyId,
+      {
+        clients_limit: Number(body?.clients_limit),
+        warehouse_limit: Number(body?.warehouse_limit),
+        driver_limit: Number(body?.driver_limit),
+        block_client_company_ids: body?.block_client_company_ids || [],
+        block_staff_warehouse_employee_ids:
+          body?.block_staff_warehouse_employee_ids || [],
+        block_staff_driver_employee_ids:
+          body?.block_staff_driver_employee_ids || [],
+      },
+    );
+    return { rollback_items: rollbackItems };
+  }
+
+  @Post("internal/companies/:companyId/subscription/rollback-furnizor-downgrade-blocks")
+  @HttpCode(200)
+  @ApiOperation({
+    summary: "Internal: rollback furnizor client/staff blocks on plan activation failure",
+  })
+  rollbackFurnizorDowngradeBlocksInternal(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body() body: { rollback_items?: unknown[] },
+    @Request() req?: { bypassAuth?: boolean },
+  ) {
+    if (req?.bypassAuth !== true) {
+      throw new ForbiddenException("Endpoint intern — necesită x-service-secret");
+    }
+    return this.service.rollbackFurnizorDowngradeBlocksInternal(
+      companyId,
+      body?.rollback_items || [],
+    );
+  }
+
+  @Get("connect/attempt-status")
+  @PermissionsAny("suppliers.read", "suppliers.create")
+  @ApiOperation({
+    summary:
+      "Starea tentativelor de connection code (lockout) pentru tenantul client din JWT",
+  })
+  @ApiResponse({ status: 200, description: "Stare lockout / attempts remaining" })
+  getConnectAttemptStatus(@Request() req?: any) {
+    return this.service.getConnectionCodeAttemptStatus(
+      buildSupplierAccessRequester(req?.user),
+    );
+  }
+
   @Post("connect")
   @PermissionsAny("suppliers.read", "suppliers.create")
   @HttpCode(201)
   @ApiOperation({
     summary:
-      "Asociază un furnizor cu cont la firma client folosind codul unic (company_id doar din JWT)",
+      "Asociază un furnizor cu cont la firma client folosind codul unic (company_id doar din JWT). Lockout anti-bruteforce per client_company_id.",
   })
   @ApiResponse({ status: 201, description: "Asociere creată" })
-  @ApiResponse({ status: 404, description: "Cod invalid" })
+  @ApiResponse({
+    status: 404,
+    description: "Cod invalid (include attempts_remaining)",
+  })
+  @ApiResponse({
+    status: 429,
+    description: "Lockout temporar (SUPPLIER_CONNECTION_CODE_LOCKED)",
+  })
   @ApiResponse({ status: 409, description: "Deja asociat" })
   connectSupplier(
     @Body() dto: ConnectSupplierDto,
@@ -1263,22 +1523,42 @@ export class SuppliersHttpController {
 
   @Get(":supplierId/drivers")
   @Permissions("order.read")
-  getDrivers(@Param("supplierId") supplierId: string, @Request() req?: any) {
+  getDrivers(
+    @Param("supplierId") supplierId: string,
+    @Query("includeInactive") includeInactive?: string,
+    @Query("include_inactive") include_inactive?: string,
+    @Request() req?: any,
+  ) {
     const id = Number(supplierId);
     if (!Number.isFinite(id) || id <= 0) {
       throw new BadRequestException("Invalid supplier id");
     }
-    return this.service.getSupplierDrivers(id, req?.user);
+    const include =
+      includeInactive === "1" ||
+      includeInactive?.toLowerCase() === "true" ||
+      include_inactive === "1" ||
+      include_inactive?.toLowerCase() === "true";
+    return this.service.getSupplierDrivers(id, req?.user, include);
   }
 
   @Get(":supplierId/warehouse")
   @Permissions("order.read")
-  getWarehouseEmployees(@Param("supplierId") supplierId: string, @Request() req?: any) {
+  getWarehouseEmployees(
+    @Param("supplierId") supplierId: string,
+    @Query("includeInactive") includeInactive?: string,
+    @Query("include_inactive") include_inactive?: string,
+    @Request() req?: any,
+  ) {
     const id = Number(supplierId);
     if (!Number.isFinite(id) || id <= 0) {
       throw new BadRequestException("Invalid supplier id");
     }
-    return this.service.getSupplierWarehouseEmployees(id, req?.user);
+    const include =
+      includeInactive === "1" ||
+      includeInactive?.toLowerCase() === "true" ||
+      include_inactive === "1" ||
+      include_inactive?.toLowerCase() === "true";
+    return this.service.getSupplierWarehouseEmployees(id, req?.user, include);
   }
 
   @Patch("order-items/:itemId/toggle-availability")

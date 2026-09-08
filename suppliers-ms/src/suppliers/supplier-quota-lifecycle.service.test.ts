@@ -33,7 +33,11 @@ function buildLifecycleService(overrides: Record<string, any> = {}) {
     ...(overrides.supplierLocationsRepo || {}),
   };
   const supplierOrderRepo = {
-    createQueryBuilder: jest.fn(),
+    createQueryBuilder: jest.fn(() => ({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getCount: jest.fn(async () => 0),
+    })),
     ...(overrides.supplierOrderRepo || {}),
   };
   const connection = { query: jest.fn() };
@@ -370,6 +374,102 @@ describe('SupplierQuotaLifecycleService', () => {
   });
 
   describe('manual quota block', () => {
+    it('blockAccountSupplier rejects when non-terminal orders exist for same client', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const qb: any = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getCount: jest.fn(async () => 2),
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+        supplierOrderRepo: { createQueryBuilder: jest.fn(() => qb) },
+      });
+
+      await expect(service.blockAccountSupplier(15, 9)).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'SUPPLIER_BLOCK_BLOCKED_BY_ORDERS',
+        }),
+      });
+      expect(clientSupplierLinkRepo.save).not.toHaveBeenCalled();
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'o.company_id = :companyId',
+        { companyId: 15 },
+      );
+    });
+
+    it('blockAccountSupplier allows when only terminal orders exist', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const qb: any = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getCount: jest.fn(async () => 0),
+      };
+      const { service, clientSupplierLinkRepo } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+        supplierOrderRepo: { createQueryBuilder: jest.fn(() => qb) },
+      });
+
+      const result = await service.blockAccountSupplier(15, 9);
+      expect(result.changed).toBe(true);
+      expect(clientSupplierLinkRepo.save).toHaveBeenCalled();
+    });
+
+    it('blockAccountSupplier scopes active-order check to client company (not other clients)', async () => {
+      const link = {
+        id: 1,
+        client_company_id: 15,
+        supplier_id: 9,
+        quota_status: SUPPLIER_QUOTA_STATUS.ACTIVE,
+        is_active: true,
+      };
+      const qb: any = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getCount: jest.fn(async () => 0),
+      };
+      const { service } = buildLifecycleService({
+        clientSupplierLinkRepo: {
+          findOne: jest.fn(async () => link),
+          save: jest.fn(async (x: any) => x),
+        },
+        supplierOrderRepo: { createQueryBuilder: jest.fn(() => qb) },
+      });
+
+      await service.blockAccountSupplier(15, 9);
+      expect(qb.where).toHaveBeenCalledWith('o.supplier_id = :supplierId', {
+        supplierId: 9,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'o.company_id = :companyId',
+        { companyId: 15 },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'o.status NOT IN (:...terminal)',
+        expect.objectContaining({
+          terminal: expect.arrayContaining(['delivered', 'cancelled']),
+        }),
+      );
+    });
+
     it('blockAccountSupplier sets quota_status blocked from active', async () => {
       const link = {
         id: 1,

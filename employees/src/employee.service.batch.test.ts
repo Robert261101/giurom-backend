@@ -12,6 +12,7 @@ import { GeneratedDocuments } from './entities/generated-documents.entity';
 import { EmployeeWorkLocationHistory } from './entities/employee-work-location-history.entity';
 import { EmployeeLocation } from './entities/employee-location.entity';
 import { EmployeeFolder } from './entities/employee-folder.entity';
+import { EmployeeStaffQuotaService } from './employee-staff-quota.service';
 
 describe('EmployeeService batch tenant scope', () => {
   let service: EmployeeService;
@@ -48,6 +49,14 @@ describe('EmployeeService batch tenant scope', () => {
         { provide: getRepositoryToken(EmployeeFolder), useValue: {} },
         { provide: 'NOTIFICATIONS_RMQ', useValue: { emit: jest.fn() } },
         { provide: HttpService, useValue: { get: jest.fn() } },
+        {
+          provide: EmployeeStaffQuotaService,
+          useValue: {
+            resolveCompanyId: jest.fn(() => 1),
+            assertStaffQuota: jest.fn(async () => undefined),
+            removeStaffLinks: jest.fn(async () => undefined),
+          },
+        },
       ],
     }).compile();
 

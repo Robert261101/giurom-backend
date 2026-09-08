@@ -13,4 +13,8 @@ export class EmployeeSupplier {
 
   @Column({ type: 'enum', enum: ['driver', 'warehouse'] })
   role: 'driver' | 'warehouse'
+
+  /** Soft-block for furnizor staff quotas; inactive links do not consume slots. */
+  @Column({ type: 'boolean', default: true })
+  is_active: boolean
 }

@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   HttpStatus,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,10 +31,14 @@ import { CalendarEventParticipant } from './entities/calendar-event-participant.
 import { EventCategory } from './entities/event-category.entity';
 import { Request } from 'express';
 import { CalendarJwtUser } from './calendar-access';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
 
 @ApiTags('calendar')
 @Controller('calendar')
 @ApiBearerAuth()
+// Subscription gate (after RBAC): calendar events require the "evenimente" feature.
+@RequiresPlanFeature('evenimente')
+@UseGuards(PlanFeatureGuard)
 export class CalendarController {
   constructor(private readonly calendarService: CalendarService) {}
 

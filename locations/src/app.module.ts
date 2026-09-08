@@ -20,6 +20,8 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { InternalServiceGuard } from './auth/internal-service.guard';
+import { LocationsQuotaService } from './locations/locations-quota.service';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 
 @Module({
   imports: [
@@ -74,6 +76,9 @@ import { InternalServiceGuard } from './auth/internal-service.guard';
   controllers: [LocationsMicroController, LocationsHttpController],
   providers: [
     LocationsService,
+    LocationsQuotaService,
+    PlanAccessService,
+    PlanFeatureGuard,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

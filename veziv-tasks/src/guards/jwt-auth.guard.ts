@@ -19,6 +19,8 @@ export class JwtAuthGuard {
     const expectedSecret = process.env.SERVICE_SECRET;
     if (internalService && serviceSecret && expectedSecret && serviceSecret === expectedSecret) {
       // Read-only larg: locations (bonus) + employees-export (puncte/KPI către App2).
+      // Marcăm apelul ca intern (exempt de plan gating; PlanFeatureGuard citește flag-ul).
+      request.internalService = internalService;
       request.user = {
         sub: 'internal',
         permissions: [

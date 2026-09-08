@@ -9,6 +9,7 @@ import { TemplateModule } from './template/template.module';
 import { ExecutionModule } from './execution/execution.module';
 import { AssignmentModule } from './assignment/assignment.module';
 import { CronModule } from './cron/cron.module';
+import { PlanAccessModule } from './plan-access/plan-access.module';
 import { TaskTemplate } from './template/entity/task-template.entity';
 import { TaskElement } from './template/entity/task-element.entity';
 import { TemplateLocation } from './template/entity/template-location.entity';
@@ -28,6 +29,7 @@ import { AllElementsCompletedValidator } from './assignment/validators/all-eleme
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    PlanAccessModule,
     TypeOrmModule.forRoot({
       type: 'mariadb',
       host: process.env.DB_HOST || 'localhost',

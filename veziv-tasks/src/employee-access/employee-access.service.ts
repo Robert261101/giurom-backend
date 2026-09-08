@@ -9,12 +9,8 @@ import {
   type EmployeeAccessUser,
 } from './employee-access';
 
-// Cache scurt per proces pentru staff-ul furnizorului — evită 3 apeluri HTTP redundante
-// (my-supplier + drivers + warehouse) per element atunci când verificarea rulează într-o
-// buclă (ex. createBatch pe zeci de assignment-uri cu același token de autorizare).
-const supplierStaffIdsCache = new Map<string, { ids: number[]; timestamp: number }>();
-const SUPPLIER_STAFF_IDS_CACHE_TTL_MS = 10 * 1000;
-
+// Cache-ul pe staff IDs a fost eliminat: după soft-block/reactivate pe employees_suppliers.is_active
+// un TTL scurt producea 403 stale pe employee-points (lista activă rămânea fără angajatul reactivat).
 @Injectable()
 export class EmployeeAccessService {
   constructor(private readonly httpService: HttpService) {}
@@ -98,12 +94,6 @@ export class EmployeeAccessService {
   async fetchSupplierStaffEmployeeIds(
     authorization?: string,
   ): Promise<number[]> {
-    const cacheKey = authorization ?? '__internal__';
-    const cached = supplierStaffIdsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < SUPPLIER_STAFF_IDS_CACHE_TTL_MS) {
-      return cached.ids;
-    }
-
     const base = this.suppliersBaseUrl();
     const headers = this.userAuthHeaders(authorization);
     try {
@@ -117,6 +107,7 @@ export class EmployeeAccessService {
       if (!Number.isFinite(supplierId) || supplierId <= 0) {
         return [];
       }
+      // Default endpoints return only operational-active staff (is_active != 0).
       const [driversResp, warehouseResp] = await Promise.all([
         firstValueFrom(
           this.httpService.get(`${base}/suppliers/${supplierId}/drivers`, {
@@ -141,9 +132,7 @@ export class EmployeeAccessService {
           ids.add(id);
         }
       }
-      const result = [...ids];
-      supplierStaffIdsCache.set(cacheKey, { ids: result, timestamp: Date.now() });
-      return result;
+      return [...ids];
     } catch {
       return [];
     }

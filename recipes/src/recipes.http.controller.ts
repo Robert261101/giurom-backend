@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, Request, NotFoundException, BadRequestException, UseGuards } from '@nestjs/common';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-access.nest';
 import { Permissions } from './permissions/permissions.decorator';
 import { RecipeService } from './recipes/recipes.service';
 import { RecipeMediaService } from './recipes/recipes-media.service';
@@ -22,6 +23,9 @@ import { CreateRecipeLocationDto } from './recipes/dto/create-recipe-location.dt
 import { buildRecipeAccessRequester } from './recipes/recipe-access';
 
 @Controller()
+// Subscription gate (after RBAC): all recipe HTTP routes require the "retetar" feature.
+@RequiresPlanFeature('retetar')
+@UseGuards(PlanFeatureGuard)
 export class RecipesHttpController {
   constructor(
     private readonly recipes: RecipeService,

@@ -12,12 +12,15 @@ import { CreateCompanyDocumentDto } from './company/dto/create-company-document.
 import { UpdateCompanyDocumentDto } from './company/dto/update-company-document.dto';
 import { Company } from './company/entity/company.entity';
 import { InternalServiceGuard } from './auth/internal-service.guard';
+import { PlanFeatureGuard, RequiresPlanFeature } from './plan-access/plan-feature.guard';
 import {
 	hasPlatformWideAccess,
 	resolveJwtCompanyId,
 } from '@giurom/tenant-access';
 
 @Controller('companies')
+// Subscription gating per-method: managing additional companies ("Firme") is a plan feature.
+@UseGuards(PlanFeatureGuard)
 export class CompanyHttpController {
 	constructor(
 		private readonly service: CompanyService,
@@ -68,6 +71,7 @@ export class CompanyHttpController {
 	}
 
 	@Post()
+	@RequiresPlanFeature('firme')
 	@Permissions('companies.create')
 	create(@Body() dto: CreateCompanyDto, @Headers('x-work-location-id') xWorkLocationId?: string) {
 		const work_location_id = xWorkLocationId != null ? parseInt(xWorkLocationId, 10) : undefined;
@@ -75,6 +79,7 @@ export class CompanyHttpController {
 	}
 
 	@Post('with-documents')
+	@RequiresPlanFeature('firme')
 	@Permissions('companies.create')
 	createWithDocs(@Body() dto: CreateCompanyWithDocumentsDto) { return this.service.createCompanyWithDocuments(dto); }
 
@@ -90,6 +95,21 @@ export class CompanyHttpController {
 		return this.subscriptionService.getMyInvoices(this.buildAccessRequester(req));
 	}
 
+	/** Consum vs. limite pentru tenant-ul autentificat (client sau furnizor). Informativ. */
+	@Get('me/subscription/usage')
+	@Permissions('companies.read_own', 'companies.read')
+	getMySubscriptionUsage(@Req() req: any) {
+		return this.subscriptionService.getMyUsage(this.buildAccessRequester(req));
+	}
+
+	/** Preview informativ pentru cotele freeze-create la schimbarea planului (nu blochează nimic). */
+	@Get('me/subscription/downgrade-preview')
+	@Permissions('companies.read_own', 'companies.read')
+	previewMySubscriptionDowngrade(@Query('plan_code') planCodeRaw: string, @Req() req: any) {
+		const planCode = String(planCodeRaw || '').toLowerCase().trim();
+		return this.subscriptionService.previewMyDowngrade(this.buildAccessRequester(req), planCode);
+	}
+
 	@Patch('me/subscription')
 	@Permissions('companies.read_own', 'companies.read')
 	changeMySubscription(
@@ -97,6 +117,10 @@ export class CompanyHttpController {
 			plan_code?: string;
 			block_account_supplier_ids?: number[];
 			block_manual_supplier_ids?: number[];
+			block_client_company_ids?: number[];
+			block_staff_warehouse_employee_ids?: number[];
+			block_staff_driver_employee_ids?: number[];
+			block_location_ids?: number[];
 		},
 		@Req() req: any,
 	) {
@@ -109,6 +133,11 @@ export class CompanyHttpController {
 			{
 				block_account_supplier_ids: body?.block_account_supplier_ids,
 				block_manual_supplier_ids: body?.block_manual_supplier_ids,
+				block_client_company_ids: body?.block_client_company_ids,
+				block_staff_warehouse_employee_ids:
+					body?.block_staff_warehouse_employee_ids,
+				block_staff_driver_employee_ids: body?.block_staff_driver_employee_ids,
+				block_location_ids: body?.block_location_ids,
 			},
 		);
 	}
@@ -258,6 +287,7 @@ export class CompanyHttpController {
 	}
 
 	@Delete(':id')
+	@RequiresPlanFeature('firme')
 	@Permissions('companies.delete')
 	remove(@Param('id') id: string, @Req() req: any, @Headers('x-work-location-id') xWorkLocationId?: string) {
 		const work_location_id = xWorkLocationId != null ? parseInt(xWorkLocationId, 10) : undefined;

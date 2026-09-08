@@ -37,6 +37,7 @@ import { WorkLocationFiles } from "./entity/work-location-files.entity";
 import { WorkLocationFolder } from "./entity/work-location-folder.entity";
 import { CreateWorkLocationFileDto } from "./dto/create-work-location-file.dto";
 import { encodeRestosoftLinkCode } from "./restosoft-link-code";
+import { LocationsQuotaService } from "./locations-quota.service";
 
 @Injectable()
 export class LocationsService {
@@ -62,6 +63,7 @@ export class LocationsService {
     @Inject("NOTIFICATIONS_RMQ")
     private readonly notificationsClient: ClientProxy,
     @Inject(DataSource) private readonly dataSource: DataSource,
+    private readonly locationsQuotaService: LocationsQuotaService,
   ) {}
 
   private async getEmployeeLocationIdsForAccess(user?: any): Promise<number[]> {
@@ -138,6 +140,7 @@ export class LocationsService {
   async findWorkLocationsByIds(
     ids: number[],
     user?: any,
+    includeInactive = false,
   ): Promise<WorkLocation[]> {
     const uniqueIds = Array.from(
       new Set(
@@ -146,19 +149,21 @@ export class LocationsService {
     );
     if (uniqueIds.length === 0) return [];
 
+    const activeFilter = includeInactive ? {} : { is_active: true };
+
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
     if (hasLocationReadPermission) {
       if (isPlatformWideLocationsUser(user)) {
         return this.workLocationRepository.find({
-          where: { id: In(uniqueIds) },
+          where: { id: In(uniqueIds), ...activeFilter },
           order: { id: "ASC" } as any,
         });
       }
       const jwtCompanyId = resolveJwtCompanyId(user);
       if (jwtCompanyId == null) return [];
       return this.workLocationRepository.find({
-        where: { id: In(uniqueIds), company_id: jwtCompanyId },
+        where: { id: In(uniqueIds), company_id: jwtCompanyId, ...activeFilter },
         order: { id: "ASC" } as any,
       });
     }
@@ -170,7 +175,7 @@ export class LocationsService {
     if (intersection.length === 0) return [];
 
     return this.workLocationRepository.find({
-      where: { id: In(intersection) },
+      where: { id: In(intersection), ...activeFilter },
       order: { id: "ASC" } as any,
     });
   }
@@ -410,13 +415,20 @@ export class LocationsService {
         err?.message || 'Nu puteți crea locația pentru altă companie',
       );
     }
-    const entity: WorkLocation = this.workLocationRepository.create({
-      ...(dto as unknown as Partial<WorkLocation>),
-      company_id: companyId,
-    }) as WorkLocation;
-    const saved: WorkLocation = await this.workLocationRepository.save(
-      entity as WorkLocation,
-    );
+    // locations.max (freeze-create): checked on the TARGET company, serialized per company.
+    const saved: WorkLocation =
+      await this.locationsQuotaService.withCompanyLocationsQuotaLock(
+        companyId,
+        async () => {
+          await this.locationsQuotaService.assertCanCreateLocation(companyId);
+          const entity: WorkLocation = this.workLocationRepository.create({
+            ...(dto as unknown as Partial<WorkLocation>),
+            company_id: companyId,
+            is_active: true,
+          }) as WorkLocation;
+          return this.workLocationRepository.save(entity as WorkLocation);
+        },
+      );
 
     // Create the required folder structure for the new location
     await this.createLocationFolderStructure(saved);
@@ -495,6 +507,7 @@ export class LocationsService {
     city?: string,
     search?: string,
     user?: any,
+    includeInactive = false,
   ): Promise<{ locations: WorkLocation[]; total: number; totalPages: number }> {
     const hasLocationReadPermission =
       user?.permissions?.includes("locations.read");
@@ -513,6 +526,9 @@ export class LocationsService {
         qb.where("location.company_id = :companyId", {
           companyId: effectiveCompanyId,
         });
+      if (!includeInactive) {
+        qb.andWhere("location.is_active = :isActive", { isActive: true });
+      }
       if (city) qb.andWhere("location.city = :city", { city });
       if (search)
         qb.andWhere(
@@ -659,6 +675,9 @@ export class LocationsService {
         locationIds: employeeLocationIds,
       });
 
+    if (!includeInactive) {
+      qb.andWhere("location.is_active = :isActive", { isActive: true });
+    }
     if (companyId)
       qb.andWhere("location.company_id = :companyId", { companyId });
     if (city) qb.andWhere("location.city = :city", { city });
@@ -1026,6 +1045,7 @@ export class LocationsService {
   async findWorkLocationsByCompany(
     companyId: number,
     user?: any,
+    includeInactive = false,
   ): Promise<WorkLocation[]> {
     if (user && !isPlatformWideLocationsUser(user)) {
       const jwtCompanyId = resolveJwtCompanyId(user);
@@ -1035,8 +1055,12 @@ export class LocationsService {
         );
       }
     }
+    const where: Record<string, unknown> = { company_id: companyId };
+    if (!includeInactive) {
+      where.is_active = true;
+    }
     return await this.workLocationRepository.find({
-      where: { company_id: companyId },
+      where,
       relations: ["task_templates"],
       order: { id: "DESC" },
     });
@@ -1046,12 +1070,17 @@ export class LocationsService {
   async findWorkLocationsByCompanyWithDocuments(
     companyId: number,
     user?: any,
+    includeInactive = false,
   ): Promise<{
     locations: WorkLocation[];
     foldersByLocationId: Record<number, WorkLocationFolder[]>;
     filesByLocationId: Record<number, WorkLocationFiles[]>;
   }> {
-    const locations = await this.findWorkLocationsByCompany(companyId, user);
+    const locations = await this.findWorkLocationsByCompany(
+      companyId,
+      user,
+      includeInactive,
+    );
     const locationIds = locations.map((l) => l.id);
     if (locationIds.length === 0) {
       return { locations, foldersByLocationId: {}, filesByLocationId: {} };

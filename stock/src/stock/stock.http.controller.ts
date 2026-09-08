@@ -10,7 +10,9 @@ import { Controller,
   Request,
   BadRequestException,
   UsePipes,
+  UseGuards,
   ValidationPipe, Logger } from '@nestjs/common';
+import { PlanFeatureGuard, RequiresPlanFeature } from "../plan-access/plan-access.nest";
 import { Response } from "express";
 import { Permissions } from "../permissions/permissions.decorator";
 import { getJwtCompanyId, isGlobalStockAdmin, isTenantStockRequester, assertTenantLocationIdRequired, parseStockLocationId } from "./stock-access";
@@ -35,6 +37,10 @@ import { CreateOrderListDto } from "./dto/create-order-list.dto";
 import { UpdateOrderListDto } from "./dto/update-order-list.dto";
 
 @Controller("stock")
+// Subscription gating is per-method (see @RequiresPlanFeature): products / stock items /
+// order-lists stay available on every plan (Necesar, Comenzi, Nomenclator use them);
+// stock movements → "stoc", consumption & waste → "arunca_consuma", recipe consume → "retetar".
+@UseGuards(PlanFeatureGuard)
 export class StockHttpController {
   private readonly logger = new Logger(StockHttpController.name);
 
@@ -83,7 +89,11 @@ export class StockHttpController {
   @Permissions("products.read")
   async getProducts(
     @Query("location_id") locationId?: string,
-    @Request() req?: { user?: { permissions?: string[]; company_id?: number | null } },
+    @Request()
+    req?: {
+      bypassAuth?: boolean;
+      user?: { permissions?: string[]; company_id?: number | null };
+    },
   ) {
     const parsedLocationId = parseStockLocationId(locationId);
 
@@ -97,7 +107,10 @@ export class StockHttpController {
     }
 
     if (parsedLocationId !== undefined) {
-      if (!isGlobalStockAdmin(req?.user)) {
+      // Internal service-to-service calls (x-internal-service, no JWT) have already
+      // resolved the tenant's location upstream (e.g. suppliers-ms nomenclator);
+      // same exemption as getQuantitiesAtLocation.
+      if (!isGlobalStockAdmin(req?.user) && !req?.bypassAuth) {
         await this.service.assertLocationInCompany(
           parsedLocationId,
           getJwtCompanyId(req?.user),
@@ -295,11 +308,13 @@ export class StockHttpController {
   }
 
   // Transactions
+  @RequiresPlanFeature("stoc")
   @Post("transactions") @Permissions("stock.create") async createTx(
     @Body() dto: CreateStockTransactionDto,
   ) {
     return await this.service.createTransaction(dto);
   }
+  @RequiresPlanFeature("stoc")
   @Get("transactions") @Permissions("stock.read") async getTxs(
     @Query("product_id") productId?: string,
     @Query("location_id") locationId?: string,
@@ -346,6 +361,7 @@ export class StockHttpController {
   }
 
   // Consume product (FEFO by expiration)
+  @RequiresPlanFeature("arunca_consuma")
   @Post("consume")
   @Permissions("stock.update")
   async consume(
@@ -377,6 +393,7 @@ export class StockHttpController {
 
   // === EMPLOYEE-SPECIFIC ENDPOINTS ===
   // Consume product for employees (with separate permission)
+  @RequiresPlanFeature("arunca_consuma")
   @Post("employee/consume")
   @Permissions("stock.consume_own")
   async employeeConsume(
@@ -407,6 +424,7 @@ export class StockHttpController {
   }
 
   // Waste record for employees (with separate permission)
+  @RequiresPlanFeature("arunca_consuma")
   @Post("employee/waste")
   @Permissions("stock.waste_own")
   async employeeWaste(@Body() dto: CreateWasteRecordDto, @Request() req?: any) {
@@ -440,6 +458,7 @@ export class StockHttpController {
   }
 
   // === WASTE RECORDS ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste-records")
   @Permissions("stock.create")
   async createWasteRecord(
@@ -463,6 +482,7 @@ export class StockHttpController {
   }
 
   // === WASTE REQUESTS ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste-requests")
   @Permissions("stock.waste_own")
   async createWasteRequest(
@@ -494,6 +514,7 @@ export class StockHttpController {
     return created;
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("waste-requests")
   @Permissions("stock.waste_approve")
   async listWasteRequests(
@@ -517,6 +538,7 @@ export class StockHttpController {
     );
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste-requests/:id/approve")
   @Permissions("stock.waste_approve")
   async approveWasteRequest(@Param("id") id: string, @Request() req?: any) {
@@ -532,6 +554,7 @@ export class StockHttpController {
     return { success: true };
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste-requests/:id/reject")
   @Permissions("stock.waste_approve")
   async rejectWasteRequest(@Param("id") id: string, @Request() req?: any) {
@@ -545,18 +568,21 @@ export class StockHttpController {
     return { success: true };
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("waste-records")
   @Permissions("stock.read")
   async getWasteRecords(@Request() req?: any) {
     return await this.service.findAllWasteRecords(req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("waste-records/:id")
   @Permissions("stock.read")
   async getWasteRecord(@Param("id") id: string, @Request() req?: any) {
     return await this.service.findWasteRecord(Number(id), req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Patch("waste-records/:id")
   @Permissions("stock.update")
   async updateWasteRecord(
@@ -567,6 +593,7 @@ export class StockHttpController {
     return await this.service.updateWasteRecord(Number(id), dto, req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Delete("waste-records/:id")
   @Permissions("stock.delete")
   async deleteWasteRecord(@Param("id") id: string, @Request() req?: any) {
@@ -615,12 +642,14 @@ export class StockHttpController {
   }
 
   // === CONSUMPTION RECORDS ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("consumption-records")
   @Permissions("stock.create")
   async createConsumptionRecord(@Body() dto: CreateConsumptionRecordDto) {
     return await this.service.createConsumptionRecord(dto);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("consumption-records")
   @Permissions("stock.read")
   async getConsumptionRecords(
@@ -645,12 +674,14 @@ export class StockHttpController {
     );
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("consumption-records/:id")
   @Permissions("stock.read")
   async getConsumptionRecord(@Param("id") id: string, @Request() req?: any) {
     return await this.service.findConsumptionRecord(Number(id), req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Patch("consumption-records/:id")
   @Permissions("stock.update")
   async updateConsumptionRecord(
@@ -661,12 +692,14 @@ export class StockHttpController {
     return await this.service.updateConsumptionRecord(Number(id), dto, req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Delete("consumption-records/:id")
   @Permissions("stock.delete")
   async deleteConsumptionRecord(@Param("id") id: string, @Request() req?: any) {
     return await this.service.deleteConsumptionRecord(Number(id), req?.user);
   }
 
+  @RequiresPlanFeature("arunca_consuma")
   @Get("consumption-records/stats")
   @Permissions("stock.read")
   async getConsumptionStats(
@@ -691,6 +724,7 @@ export class StockHttpController {
     );
   }
 
+  @RequiresPlanFeature("retetar")
   @Post("consume-for-recipe")
   @Permissions("stock.update")
   async consumeForRecipe(
@@ -719,6 +753,7 @@ export class StockHttpController {
   }
 
   // === PDF UPLOAD ===
+  @RequiresPlanFeature("stoc")
   @Post("insert/upload-pdf")
   @Permissions("stock.create")
   async uploadStockInsertPdf(
@@ -745,6 +780,7 @@ export class StockHttpController {
   }
 
   // === WASTE IMAGE UPLOAD ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste/upload-image")
   @Permissions("stock.update")
   async uploadWasteImage(
@@ -758,6 +794,7 @@ export class StockHttpController {
   }
 
   // === WASTE IMAGE UPLOAD FOR EMPLOYEES (with stock.waste_own permission) ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("employee/waste/upload-image")
   @Permissions("stock.waste_own")
   async employeeUploadWasteImage(
@@ -784,6 +821,7 @@ export class StockHttpController {
   }
 
   // === WASTE IMAGE DELETE ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("waste/delete-image")
   @Permissions("stock.update")
   async deleteWasteImage(@Body() payload: { imageUrl: string }) {
@@ -792,6 +830,7 @@ export class StockHttpController {
   }
 
   // === CONSUME IMAGE UPLOAD ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("consume/upload-image")
   @Permissions("stock.update")
   async uploadConsumeImage(
@@ -805,6 +844,7 @@ export class StockHttpController {
   }
 
   // === CONSUME IMAGE UPLOAD FOR EMPLOYEES (with stock.consume_own permission) ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("employee/consume/upload-image")
   @Permissions("stock.consume_own")
   async employeeUploadConsumeImage(
@@ -831,6 +871,7 @@ export class StockHttpController {
   }
 
   // === CONSUME IMAGE DELETE ===
+  @RequiresPlanFeature("arunca_consuma")
   @Post("consume/delete-image")
   @Permissions("stock.update")
   async deleteConsumeImage(@Body() payload: { imageUrl: string }) {

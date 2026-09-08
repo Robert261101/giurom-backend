@@ -223,11 +223,15 @@ export class SupplierQuotaLifecycleService {
     }
   }
 
-  async assertNoActiveOrdersForRemove(
+  /**
+   * Comenzi non-terminale pentru perechea client↔furnizor.
+   * Definiție canonică: status ∉ TERMINAL_SUPPLIER_ORDER_STATUSES (delivered, cancelled).
+   */
+  async countNonTerminalOrdersForClientSupplier(
     companyId: number,
     supplierId: number,
-  ): Promise<void> {
-    const active = await this.supplierOrderRepo
+  ): Promise<number> {
+    return this.supplierOrderRepo
       .createQueryBuilder('o')
       .where('o.supplier_id = :supplierId', { supplierId: Number(supplierId) })
       .andWhere('o.company_id = :companyId', { companyId: Number(companyId) })
@@ -235,13 +239,40 @@ export class SupplierQuotaLifecycleService {
         terminal: Array.from(TERMINAL_SUPPLIER_ORDER_STATUSES),
       })
       .getCount();
+  }
 
+  async assertNoActiveOrdersForRemove(
+    companyId: number,
+    supplierId: number,
+  ): Promise<void> {
+    const active = await this.countNonTerminalOrdersForClientSupplier(
+      companyId,
+      supplierId,
+    );
     if (active > 0) {
       throw new BadRequestException({
         statusCode: 400,
         code: 'SUPPLIER_REMOVE_BLOCKED_BY_ORDERS',
         message:
           'Furnizorul nu poate fi eliminat cât timp există comenzi în curs. Finalizează sau anulează comenzile înainte de eliminare.',
+      });
+    }
+  }
+
+  async assertNoActiveOrdersForBlock(
+    companyId: number,
+    supplierId: number,
+  ): Promise<void> {
+    const active = await this.countNonTerminalOrdersForClientSupplier(
+      companyId,
+      supplierId,
+    );
+    if (active > 0) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SUPPLIER_BLOCK_BLOCKED_BY_ORDERS',
+        message:
+          'Furnizorul nu poate fi blocat deoarece există comenzi active asociate acestuia. Finalizează sau anulează comenzile înainte de a bloca furnizorul.',
       });
     }
   }
@@ -509,6 +540,7 @@ export class SupplierQuotaLifecycleService {
         changed: false,
       };
     }
+    await this.assertNoActiveOrdersForBlock(companyId, supplierId);
     link.quota_status = SUPPLIER_QUOTA_STATUS.BLOCKED;
     await this.clientSupplierLinkRepo.save(link);
     return {
@@ -559,6 +591,8 @@ export class SupplierQuotaLifecycleService {
         changed: false,
       };
     }
+
+    await this.assertNoActiveOrdersForBlock(companyId, supplierId);
 
     let state = await this.getManualState(companyId, supplierId);
     if (!state) {

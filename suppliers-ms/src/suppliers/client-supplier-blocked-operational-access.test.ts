@@ -287,7 +287,7 @@ describe('Client supplier blocked operational access', () => {
     ).resolves.toBeDefined();
   });
 
-  it('findOrderForRequester blocks client when supplier is blocked for that client', async () => {
+  it('findOrderForRequester allows client when supplier is blocked (legacy finish/cancel)', async () => {
     const linkByClient = new Map<number, LinkRow>([
       [CLIENT_A, { is_active: true, quota_status: SUPPLIER_QUOTA_STATUS.BLOCKED }],
     ]);
@@ -304,7 +304,7 @@ describe('Client supplier blocked operational access', () => {
 
     await expect(
       service.findOrderForRequester(1, clientAUser),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).resolves.toMatchObject({ id: 1, supplier_id: SUPPLIER_ID });
   });
 
   it('assertClientSupplierRelationship operational preset matches service gate', async () => {

@@ -11,6 +11,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { WasteRecordsMicroController } from './waste-records.micro.controller';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 
 @Module({
   imports: [
@@ -58,6 +59,8 @@ import { WasteRecordsMicroController } from './waste-records.micro.controller';
   controllers: [WasteRecordsMicroController],
   providers: [
     WasteRecordsService,
+    PlanAccessService,
+    PlanFeatureGuard,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

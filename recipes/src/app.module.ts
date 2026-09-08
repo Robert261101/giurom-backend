@@ -19,6 +19,7 @@ import { StockRef } from './external/stock-ref.entity';
 import { StockTransactionRef } from './external/stock-transaction-ref.entity';
 import { RecipesMicroController } from './recipes.micro.controller';
 import { RecipesHttpController } from './recipes.http.controller';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 import { RecipePreparationsService } from './recipes/recipes-preparations.service';
 import { RecipesLabelsService } from './recipes/recipes-labels.service';
 import { RecipesPrinterService } from './recipes/recipes-printer.service';
@@ -80,6 +81,8 @@ import { PermissionsGuard } from './permissions/permissions.guard';
     RecipePreparationsService,
     RecipesLabelsService,
     RecipesPrinterService,
+    PlanAccessService,
+    PlanFeatureGuard,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],

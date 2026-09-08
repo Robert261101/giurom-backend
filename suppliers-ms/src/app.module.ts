@@ -22,6 +22,7 @@ import { SupplierProductClientVisibility } from "./suppliers/entities/supplier-p
 import { SupplierProductClientActivation } from "./suppliers/entities/supplier-product-client-activation.entity";
 import { ClientSupplierLink } from "./suppliers/entities/client-supplier-link.entity";
 import { ClientManualSupplierState } from "./suppliers/entities/client-manual-supplier-state.entity";
+import { ClientSupplierConnectionAttempt } from "./suppliers/entities/client-supplier-connection-attempt.entity";
 import { Giurom2Zone } from "./suppliers/entities/giurom2-zone.entity";
 import { SupplierProductLastGiurom2Zone } from "./suppliers/entities/supplier-product-last-giurom2-zone.entity";
 import { SupplierOrderDriverAssignment } from "./suppliers/entities/supplier-order-driver-assignment.entity";
@@ -33,7 +34,11 @@ import { EntryDocumentsExportService } from "./suppliers/entry-documents-export.
 import { Giurom2ZonesService } from "./suppliers/giurom2-zones.service";
 import { StockHttpService } from "./suppliers/stock-http.service";
 import { SupplierQuotaService } from "./suppliers/supplier-quota.service";
+import { SupplierPlanQuotaService } from "./suppliers/supplier-plan-quota.service";
+import { PlanAccessService, PlanFeatureGuard } from "./plan-access/plan-access.nest";
 import { SupplierQuotaLifecycleService } from "./suppliers/supplier-quota-lifecycle.service";
+import { FurnizorQuotaLifecycleService } from "./suppliers/furnizor-quota-lifecycle.service";
+import { SupplierConnectionCodeAttemptService } from "./suppliers/supplier-connection-code-attempt.service";
 import { SuppliersMicroController } from "./suppliers.micro.controller";
 import { SuppliersHttpController } from "./suppliers/suppliers.http.controller";
 import { App2OrdersController } from "./suppliers/app2-orders.controller";
@@ -99,6 +104,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientActivation,
         ClientSupplierLink,
         ClientManualSupplierState,
+        ClientSupplierConnectionAttempt,
         Giurom2Zone,
         SupplierProductLastGiurom2Zone,
       ],
@@ -143,6 +149,7 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
         SupplierProductClientActivation,
         ClientSupplierLink,
         ClientManualSupplierState,
+        ClientSupplierConnectionAttempt,
         Giurom2Zone,
         SupplierProductLastGiurom2Zone,
       ]),
@@ -161,6 +168,11 @@ import { EmployeeSupplier } from './suppliers/entities/employee-supplier.entity'
     StockHttpService,
     SupplierQuotaService,
     SupplierQuotaLifecycleService,
+    FurnizorQuotaLifecycleService,
+    SupplierConnectionCodeAttemptService,
+    SupplierPlanQuotaService,
+    PlanAccessService,
+    PlanFeatureGuard,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

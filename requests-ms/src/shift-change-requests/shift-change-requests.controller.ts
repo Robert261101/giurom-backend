@@ -27,11 +27,14 @@ import { CreateShiftChangeRequestDto } from './dto/create-shift-change-request.d
 import { UpdateShiftChangeStatusDto } from './dto/update-shift-change-status.dto';
 import { FilterShiftChangeRequestsDto } from './dto/filter-shift-change-requests.dto';
 import { ShiftChangeRequest } from './entities/shift-change-request.entity';
+import { PlanFeatureGuard, RequiresPlanFeature } from '../plan-access/plan-access.nest';
 
 @ApiTags('shift-change-requests')
 @Controller('shift-change-requests')
 @ApiBearerAuth()
-@UseGuards(PermissionsGuard)
+// Subscription gate (after RBAC): shift changes are part of the "pontaj" feature.
+@RequiresPlanFeature('pontaj')
+@UseGuards(PermissionsGuard, PlanFeatureGuard)
 export class ShiftChangeRequestsController {
   constructor(private readonly shiftChangeRequestsService: ShiftChangeRequestsService) {}
 

@@ -21,6 +21,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './permissions/permissions.guard';
 import { InternalServiceGuard } from './auth/internal-service.guard';
+import { PlanAccessService, PlanFeatureGuard } from './plan-access/plan-access.nest';
 import { StockMicroController } from './stock/stock.micro.controller';
 import { StockHttpController } from './stock/stock.http.controller';
 import { StockHealthController } from './stock/stock.health.controller';
@@ -76,6 +77,8 @@ import { WasteExportService } from './stock/waste-export.service';
     StockSyncCronService,
     WasteExportService,
     Giurom2ZonesService,
+    PlanAccessService,
+    PlanFeatureGuard,
     InternalServiceGuard,
     { provide: APP_GUARD, useClass: InternalServiceGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

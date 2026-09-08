@@ -14,13 +14,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    const rawCompanyId = payload.company_id ?? payload.companyId;
+    const companyId =
+      rawCompanyId != null && Number.isFinite(Number(rawCompanyId))
+        ? Number(rawCompanyId)
+        : null;
     const user = {
       userId: payload.sub,
       sub: payload.sub,
       username: payload.username,
       permissions: payload.permissions || [],
       roles: payload.roles || [],
-      company_id: payload.company_id ?? undefined,
+      // Required by PlanFeatureGuard → resolveJwtCompanyId
+      company_id: companyId,
       company_type: payload.company_type ?? undefined,
       position_default_id: payload.position_default_id ?? undefined,
       work_location_id: payload.work_location_id ?? undefined,

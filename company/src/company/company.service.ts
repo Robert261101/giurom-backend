@@ -266,16 +266,14 @@ export class CompanyService {
     const company = this.companyRepository.create(dto);
     const saved = await this.companyRepository.save(company);
 
-    // Client companies get Free subscription (idempotent). Furnizor: skip.
-    if (saved.company_type === 'client') {
-      try {
-        await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
-      } catch (error: any) {
-        console.error(
-          `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
-          error?.message || error,
-        );
-      }
+    // Every company (client or furnizor) gets a Free subscription (idempotent).
+    try {
+      await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
+    } catch (error: any) {
+      console.error(
+        `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
+        error?.message || error,
+      );
     }
     
     // Create the required folder structure for the new company
@@ -316,15 +314,13 @@ export class CompanyService {
     const companyEntity: Company = this.companyRepository.create(companyData as Partial<Company>);
     const saved: Company = await this.companyRepository.save(companyEntity);
 
-    if (saved.company_type === 'client') {
-      try {
-        await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
-      } catch (error: any) {
-        console.error(
-          `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
-          error?.message || error,
-        );
-      }
+    try {
+      await this.subscriptionService.ensureDefaultFreeSubscription(saved.id);
+    } catch (error: any) {
+      console.error(
+        `❌ [COMPANY SERVICE] Failed Free subscription for company ${saved.id}:`,
+        error?.message || error,
+      );
     }
     
     // Create the required folder structure for the new company

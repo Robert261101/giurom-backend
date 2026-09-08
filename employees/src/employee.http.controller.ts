@@ -42,10 +42,14 @@ import { Buffer } from "buffer";
 import { Permissions } from "./permissions/permissions.decorator";
 import { InternalServiceGuard } from "./auth/internal-service.guard";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import { PlanFeatureGuard, RequiresPlanFeature } from "./plan-access/plan-access.nest";
 
 @ApiTags("employees")
 @Controller("employees")
 @ApiBearerAuth()
+// Subscription gating is per-method (@RequiresPlanFeature("angajati") on employee
+// create/update/delete/assign). Reads stay open: comenzi/pontaj/dashboard depend on them.
+@UseGuards(PlanFeatureGuard)
 export class EmployeeHttpController {
   private readonly logger = new Logger(EmployeeHttpController.name);
 
@@ -55,6 +59,7 @@ export class EmployeeHttpController {
   ) {}
 
   @Post()
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.create")
   @ApiOperation({
     summary: "Creează un angajat nou",
@@ -729,6 +734,7 @@ export class EmployeeHttpController {
   }
 
   @Patch(":id")
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.update")
   @ApiOperation({
     summary: "Actualizează un angajat",
@@ -757,6 +763,7 @@ export class EmployeeHttpController {
   }
 
   @Patch(":id/toggle-active")
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.update")
   @ApiOperation({
     summary: "Activează/dezactivează un angajat",
@@ -776,6 +783,7 @@ export class EmployeeHttpController {
   }
 
   @Delete(":id")
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.delete")
   @ApiOperation({
     summary: "Șterge un angajat",
@@ -898,6 +906,7 @@ export class EmployeeHttpController {
 
   // Backwards-compatible route used by frontend add form
   @Post(":employeeId/documents-with-content")
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.create")
   async addEmployeeDocumentWithContent(
     @Param("employeeId", ParseIntPipe) employeeId: number,
@@ -954,6 +963,7 @@ export class EmployeeHttpController {
   // ==================== EMPLOYEES LOCATIONS ENDPOINTS ====================
 
   @Post("locations/assign")
+  @RequiresPlanFeature("angajati")
   @Permissions("employees.update")
   @ApiOperation({
     summary: "Asignă un angajat la o locație",
