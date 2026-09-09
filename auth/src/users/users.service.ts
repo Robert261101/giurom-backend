@@ -852,6 +852,10 @@ export class UsersService {
       'leave-requests.create',
       'leave-requests.read',
       'leave-requests.update',
+      // Locații proprii: listare / creare / editare (quota locations.max pe locations-ms)
+      'locations.read',
+      'locations.create',
+      'locations.update',
       // Setări → Conturi: creare cont autentificare pentru angajații propriei companii
       'users.read',
       'users.create',

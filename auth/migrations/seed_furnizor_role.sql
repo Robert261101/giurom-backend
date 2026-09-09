@@ -9,6 +9,7 @@
 INSERT INTO permissions (name, `group`, description)
 SELECT v.name, v.grp, v.descr FROM (
   SELECT 'locations.update' AS name, 'locations' AS grp, 'Permite editarea locațiilor' AS descr
+  UNION ALL SELECT 'locations.create', 'locations', 'Permite crearea locațiilor'
   UNION ALL SELECT 'users.read', 'users', 'Vizualizare conturi de autentificare'
   UNION ALL SELECT 'users.create', 'users', 'Creare conturi de autentificare'
   UNION ALL SELECT 'products.read', 'products', 'Vizualizare produse stoc'
@@ -30,7 +31,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON p.name IN (
-  'locations.update', 'users.read', 'users.create',
+  'locations.update', 'locations.create', 'users.read', 'users.create',
   'companies.read_own', 'locations.read',
   'products.read', 'stock.read', 'preparation.read', 'suppliers.read'
 )
